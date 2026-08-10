@@ -28,7 +28,7 @@ from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.external]
 
 
 async def _build_integration_executor():

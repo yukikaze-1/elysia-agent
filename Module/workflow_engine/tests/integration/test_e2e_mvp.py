@@ -40,7 +40,7 @@ from Module.workflow_engine.tests.helpers import (
     get_tools_from_manager,
 )
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.external]
 
 # ── 格式化 ────────────────────────────────────────────────────────────────────
 

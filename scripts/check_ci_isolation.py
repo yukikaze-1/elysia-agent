@@ -43,15 +43,17 @@ _HOST_ENV_MARKERS = (
 
 
 def _is_push_only(job: dict[str, Any]) -> bool:
-    """job 是否显式限定只跑 push（受信 ref）。
+    """job 是否显式限定只跑受信触发（push / workflow_dispatch / schedule）。
 
-    if 表达式中显式限定 `github.event_name == 'push'` 且不含 pull_request
-    视为 push-only；否则视为 PR 可达。
+    非 PR 触发（push 到受信 ref、受信管理员手工 workflow_dispatch、定时 schedule）
+    视为受信——不受信 pull_request 永不触发它们。if 表达式含任一受信 guard 且不含
+    pull_request → 受信 job（允许 self-hosted + 宿主凭据，F1 external E2E 用）。
     """
     cond = str(job.get("if", ""))
-    has_push_guard = "== 'push'" in cond and "github.event_name" in cond
+    trusted_guard = any(g in cond for g in (
+        "== 'push'", "== 'workflow_dispatch'", "== 'schedule'"))
     has_pr_ref = "pull_request" in cond
-    return has_push_guard and not has_pr_ref
+    return trusted_guard and not has_pr_ref
 
 
 def _step_text(step: dict[str, Any]) -> str:

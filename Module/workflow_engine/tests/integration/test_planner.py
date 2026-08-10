@@ -45,7 +45,7 @@ from Module.workflow_engine.schema import (
     Plan,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.external]
 
 
 def make_tools() -> list[Tool]:

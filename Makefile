@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-workflow-engine lint pyright start gen-types gen-frames check-types check-compose
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright start gen-types gen-frames check-types check-compose
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -15,22 +15,27 @@ test-tools:
 	$(PYTEST) core/tools/ -v
 
 test-all:
-	$(PYTEST) Module/ core/tests/ core/tools/ -v --tb=short
+	# F1：真正全仓非 external pytest——合并门禁的可复现全量（旧"部分仓"语义由 test 承接；
+	# 真实 LLM/DB 外部 E2E 经 external marker 排除，独立 opt-in）
+	$(PYTEST) -m "not external" -q --tb=short
 
 # 测试分层命令
-# WorkflowEngine 尚未完善、非当前开发重点，CI + 日常跳过
-TASK_SYSTEM_IGNORE = --ignore=Module/workflow_engine/tests
-
+# F1：external marker 取代 --ignore——WorkflowEngine unit/service 入合并门禁，
+# 真实 LLM/DB 集成测试标 external、独立 opt-in（test-external）。
 test-quick:
-	conda run -n Elysia python -m pytest -m "unit or service" -q -x --tb=short $(TASK_SYSTEM_IGNORE)
+	conda run -n Elysia python -m pytest -m "unit or service" -q -x --tb=short
 
 test-normal:
-	conda run -n Elysia python -m pytest -m "not slow" -q --tb=short $(TASK_SYSTEM_IGNORE)
+	conda run -n Elysia python -m pytest -m "not slow and not external" -q --tb=short
 
 test-full:
 	conda run -n Elysia python -m pytest -q
 
-# workflow_engine / workflow_contract 独立迭代门禁（不含 integration——需真实 LLM/DB）
+# F1：外部 E2E 显式 opt-in（真实 LLM/DB，受保护凭据/受信 ref 才能跑）
+test-external:
+	conda run -n Elysia python -m pytest -m "external" -q --tb=short
+
+# workflow_engine / workflow_contract 独立迭代门禁（不含 external——真实 LLM）
 test-workflow-engine:
 	conda run -n Elysia python -m pytest Module/workflow_engine/tests Module/workflow_contract/tests -m "unit or service" -q --tb=short
 

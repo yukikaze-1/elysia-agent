@@ -19,7 +19,7 @@ from Module.workflow_contract import (
 from Module.tool.tool_descriptor import Tool
 from core.cognitive.user_profile import UserProfile
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.external]
 
 
 def _make_integration_tools() -> list[Tool]:
