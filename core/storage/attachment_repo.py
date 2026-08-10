@@ -172,6 +172,10 @@ class AttachmentRepository(Repository):
         重复关联不双计（$ne 过滤 + addToSet 幂等）。记录不存在时为 no-op
         （由 GC 规则 3 兜底）。
 
+        review 复核 #7：过滤条件含 ``status: active``——已软删（如 GC 规则 2 文件
+        缺失软删、消息删除归零软删）的附件不能再积累新引用；否则 ref_count>0 使
+        GC 永不回收（文件永久泄漏）。新增引用只对 active 附件生效。
+
         Args:
             attachment_id: 附件 ID。
             message_id: 引用该附件的消息 ID。
@@ -182,7 +186,8 @@ class AttachmentRepository(Repository):
         db = self._require_db()
         await db.update_one(
             COLLECTION,
-            {"attachment_id": attachment_id, "refs": {"$ne": message_id}},
+            {"attachment_id": attachment_id, "status": STATUS_ACTIVE,
+             "refs": {"$ne": message_id}},
             {"$addToSet": {"refs": message_id}, "$inc": {"ref_count": 1}},
         )
 
@@ -249,6 +254,32 @@ class AttachmentRepository(Repository):
         await db.update_one(
             COLLECTION, {"attachment_id": attachment_id},
             {"$set": {"status": STATUS_DELETED, "deleted_at": now_iso()}})
+
+    async def soft_delete_if_unreferenced(self, attachment_id: AttachmentId) -> bool:
+        """GC 条件软删（review 复核 #7）：仅当 ref_count==0 且 status==active 才软删。
+
+        GC 先查询 ref_count=0 候选再软删，若直接 mark_deleted（无条件）会在查询与
+        删除之间 add_ref 竞入时把「消息已 accepted」的附件标记删除。本方法把
+        ref_count==0 + active 放进**同一原子条件 update**——竞态内 add_ref 落库
+        （ref_count≥1）则条件失败、附件保持 active；软删后 add_ref 也因 active
+        过滤 no-op，杜绝文件被 GC 永久跳过。调用方按返回值决定是否计数/注销。
+
+        Args:
+            attachment_id: 附件 ID。
+
+        Returns:
+            True 表示条件命中已软删（ref_count==0 且 active），False 表示 no-op
+            （已被引用或已删）。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（离线）。
+        """
+        db = self._require_db()
+        result = await db.update_one(
+            COLLECTION,
+            {"attachment_id": attachment_id, "ref_count": 0, "status": STATUS_ACTIVE},
+            {"$set": {"status": STATUS_DELETED, "deleted_at": now_iso()}})
+        return result > 0
 
     async def delete_record(self, attachment_id: AttachmentId) -> None:
         """物理删除附件记录（GC 规则 1 用：软删记录直接删记录，再删文件）。

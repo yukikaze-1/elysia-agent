@@ -104,6 +104,17 @@ class _FakeAttachmentRepo:
             doc["status"] = "deleted"
             doc["deleted_at"] = "now"
 
+    async def soft_delete_if_unreferenced(self, attachment_id: str) -> bool:
+        """review 复核 #7：条件软删——仅 ref_count==0 且 active 时软删，返回是否命中。"""
+        self._require()
+        doc = self.records.get(attachment_id)
+        if doc is not None and (doc.get("ref_count") or 0) == 0 \
+                and doc.get("status") == "active":
+            doc["status"] = "deleted"
+            doc["deleted_at"] = "now"
+            return True
+        return False
+
 
 def _add_attachment(repo, aid: str = "att_x", kind: str = "image",
                     mime: str = "image/png") -> None:

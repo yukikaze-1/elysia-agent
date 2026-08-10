@@ -191,7 +191,10 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
             if dry_run:
                 stats["soft_deleted"] += 1
                 continue
-            await repo.mark_deleted(aid)
+            # review 复核 #7：条件软删（ref_count==0 且 active 原子判定）——查询与
+            # 删除之间 add_ref 竞入则 no-op，防「消息已 accepted 但附件被标记删除」
+            if not await repo.soft_delete_if_unreferenced(aid):
+                continue  # 竞态内已被引用/已删——不计数不注销
             attachment_resolver.unregister(aid)
             soft_deleted_ids.add(aid)
             stats["soft_deleted"] += 1
@@ -208,7 +211,10 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
             if dry_run:
                 stats["soft_deleted"] += 1
                 continue
-            await repo.mark_deleted(aid)
+            # review 复核 #7：条件软删（ref_count==0 且 active 原子判定）——查询与
+            # 删除之间 add_ref 竞入则 no-op，防「消息已 accepted 但附件被标记删除」
+            if not await repo.soft_delete_if_unreferenced(aid):
+                continue  # 竞态内已被引用/已删——不计数不注销
             attachment_resolver.unregister(aid)
             soft_deleted_ids.add(aid)
             stats["soft_deleted"] += 1

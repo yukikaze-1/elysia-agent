@@ -172,6 +172,40 @@ class TestReferences:
         _run(repo.remove_ref("att_1", "msg_1"))
         doc = _run(repo.get("att_1"))
         assert doc["refs"] == []
+
+    def test_add_ref_skips_soft_deleted(self):
+        """review 复核 #7：add_ref 仅对 active 附件生效——已软删（如 GC 规则 2 文件缺失
+        软删）的附件不能再积累新引用，否则 ref_count>0 使 GC 永不回收（文件永久泄漏）。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _run(repo.create(_doc(attachment_id="att_x", status=STATUS_DELETED,
+                              deleted_at=_NOW)))
+        _run(repo.add_ref("att_x", "msg_1"))
+        doc = _run(repo.get("att_x"))
+        assert doc["refs"] == []
+        assert doc["ref_count"] == 0
+        assert doc["status"] == STATUS_DELETED
+
+    def test_soft_delete_if_unreferenced_noop_when_ref_count_gt_0(self):
+        """review 复核 #7：GC 条件软删必须原子判定 ref_count==0 且 active——查询与删除
+        之间 add_ref 竞入（ref_count=1）时 no-op，附件保持 active；否则「消息已 accepted
+        但附件被标记删除」。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _run(repo.create(_doc(attachment_id="att_race")))
+        # 模拟竞态窗口内消息引用已落库：ref_count=1（查询快照与条件更新之间）
+        _run(repo.add_ref("att_race", "msg_1"))
+        _run(repo.soft_delete_if_unreferenced("att_race"))
+        doc = _run(repo.get("att_race"))
+        assert doc["status"] == STATUS_ACTIVE   # 条件失败 → 不软删
+        assert doc["ref_count"] == 1
+
+    def test_soft_delete_if_unreferenced_applies_when_zero(self):
+        """ref_count==0 且 active → 条件软删生效（GC 规则 2/3 正常路径）。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _run(repo.create(_doc(attachment_id="att_clean")))
+        _run(repo.soft_delete_if_unreferenced("att_clean"))
+        doc = _run(repo.get("att_clean"))
+        assert doc["status"] == STATUS_DELETED
+        assert doc["deleted_at"]
         assert doc["ref_count"] == 0
         assert doc["status"] == STATUS_DELETED
         assert doc["deleted_at"]

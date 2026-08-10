@@ -172,9 +172,9 @@ class TestRule2ActiveFileMissing:
 
     def test_active_record_missing_file_soft_deleted(self, uploads, caplog):
         repo = AttachmentRepository(db=FakeDocumentDBBackend())
-        # ref_count=1 排除规则 3（未关联）干扰；created_at 新排除超期
+        # ref_count=0（未关联）；created_at 新排除规则 3 干扰
         _run(repo.create(_doc(
-            attachment_id="att_missing", ref_count=1, refs=["m1"],
+            attachment_id="att_missing", ref_count=0, refs=[],
             kind="file", stored_name="gone.bin")))
         # 文件从不落盘
 
@@ -186,6 +186,21 @@ class TestRule2ActiveFileMissing:
         assert doc["status"] == STATUS_DELETED
         assert doc["deleted_at"]
         assert any("文件缺失" in r.getMessage() for r in caplog.records)
+
+    def test_active_record_missing_file_referenced_kept(self, uploads):
+        """review 复核 #7：文件缺失但被消息引用（ref_count>0）→ 条件软删 no-op，
+        附件保持 active——不得在「消息已 accepted」后把附件标记删除。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _run(repo.create(_doc(
+            attachment_id="att_ref_missing", ref_count=1, refs=["m1"],
+            kind="file", stored_name="gone.bin")))
+        # 文件从不落盘
+
+        result = _run(run_attachment_gc(repo))
+
+        assert result["soft_deleted"] == 0
+        doc = _run(repo.get("att_ref_missing"))
+        assert doc["status"] == STATUS_ACTIVE
 
     def test_active_record_with_file_untouched(self, uploads):
         repo = AttachmentRepository(db=FakeDocumentDBBackend())
