@@ -4,6 +4,7 @@ Run:
     python -m pytest core/memory/tests/test_consolidator.py -v --asyncio-mode=auto
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -215,6 +216,66 @@ class TestMemoryConsolidator:
         items = await c.flush()
         assert len(items) > 0
         assert mem.count > 0
+
+    @pytest.mark.asyncio
+    async def test_concurrent_consolidate_keeps_new_messages(self):
+        """B5/P1-11：第一轮 consolidation 等待 LLM 时，第二轮新消息不被 clear 掉。"""
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingLLM:
+            async def think(self, messages, extra_body=None):
+                entered.set()
+                await release.wait()
+
+                class R:
+                    text = "[]"
+                return R()
+
+        mem = LongTermMemory()
+        c = MemoryConsolidator(BlockingLLM(), mem, "Bot", buffer_threshold=2)  # type: ignore[arg-type]
+
+        t1 = asyncio.create_task(c.consolidate("u1", "a1"))
+        await asyncio.sleep(0.01)
+        t2 = asyncio.create_task(c.consolidate("u2", "a2"))  # 触发阈值并阻塞在 LLM
+        await asyncio.wait_for(entered.wait(), 1.0)
+        assert c._buffer == []  # batch(u1,u2) 已原子 detach  # noqa: SLF001
+
+        # 第二轮消息 append 到 fresh buffer
+        await c.consolidate("u3", "a3")
+        assert len(c._buffer) == 1  # 未被第一轮 clear 掉  # noqa: SLF001
+
+        release.set()
+        await asyncio.gather(t1, t2)
+        # 第一轮结束，u3 仍保留（不被清掉）
+        assert len(c._buffer) == 1  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_storage_failure_requeues_batch(self):
+        """B5/P1-11：存储失败（insert 抛错）→ batch 重新入队待重试，不静默丢。"""
+        class OkLLM:
+            async def think(self, messages, extra_body=None):
+                class R:
+                    text = '[{"type": "Fact", "content": "x", "poignancy": 5}]'
+                return R()
+
+        class FailingMemory:
+            def get_all(self):
+                return []  # 无已有记忆 → 直接 insert 路径（对齐 LongTermMemory 同步接口）
+
+            async def insert(self, content, **kw):
+                raise RuntimeError("storage down")
+
+            async def search(self, **kw):
+                raise AssertionError("不应搜索")
+
+            async def update_text(self, *a, **kw):
+                raise AssertionError("不应 update")
+
+        c = MemoryConsolidator(OkLLM(), FailingMemory(), "Bot", buffer_threshold=1)  # type: ignore[arg-type]
+        items = await c.consolidate("u", "a")
+        assert items == []
+        assert len(c._buffer) == 1  # batch 已 requeue（待重试）  # noqa: SLF001
 
 
 # ============================================================================

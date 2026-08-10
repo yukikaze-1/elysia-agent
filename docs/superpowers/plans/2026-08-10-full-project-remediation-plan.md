@@ -97,7 +97,7 @@ A1/A2
 - [x] B2 Session durable save/load/pending 恢复
 - [x] B3 归档任务所有权与 durable 删除
 - [x] B4 accepted ACK 前建立附件引用
-- [ ] B5 Consolidator/LTM 离线一致性
+- [x] B5 Consolidator/LTM 离线一致性
 - [ ] B6 Session 查询、TTL 迁移与 reflector
 - [ ] C1 用户消息 FIFO 与 work lease
 - [ ] C2 Per-call ToolInvocation 与 call-ID task
@@ -1224,6 +1224,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：新增 `attachment_repo.release_reservation`（幂等 pull，不触发归零软删）；无索引变化
 - 契约或 Electron 影响：无 wire 变化；附件 refs 持久化失败 → rejected STORAGE_UNAVAILABLE retryable（新增稳定错误码）
 - 剩余风险：预留后进程崩溃的悬挂 ref（消息未接受但 ref 存在）——安全方向（附件保留，不误删），由消息删除/reconciler 释放；当前无独立 reconciler
+
+### B5 — Consolidator/LTM 离线一致性
+
+- 状态：完成
+- Commit：`<见 B5 提交>`
+- 变更文件：`core/memory/consolidator.py`、`core/memory/long_term.py`、`paths.py`、`core/memory/tests/test_consolidator.py`、`core/memory/tests/test_long_term.py`
+- 新增失败测试：`test_concurrent_consolidate_keeps_new_messages`（锁内原子 detach，LLM 等待期间新消息不被 clear）、`test_storage_failure_requeues_batch`；`TestMemoryOfflineConsistency`（空 PK insert 标 dirty、sync 空 PK 保留 dirty、离线删除记 tombstone、reload 去重、pending delete 重连应用）
+- 目标测试：`pytest core/memory/tests/test_consolidator.py core/memory/tests/test_long_term.py` → 45 passed；`pytest core/memory/` → 126 passed
+- 批次门禁：`ruff check paths.py core/memory/` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：新增 `data/memory_pending_deletes.json` 持久 tombstone（原子写，空则删除）；无索引变化
+- 契约或 Electron 影响：无
+- 剩余风险：pending-delete journal 重连应用失败保留待下次（无独立 outbox worker）；consolidation 永久失败时 buffer 无限增长（数据保留方向，flush 兜底）
 
 ## 14. 需要停止并请求决策的情况
 

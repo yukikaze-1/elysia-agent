@@ -198,6 +198,9 @@ class MemoryConsolidator:
 
         如果已有 consolidation 正在运行则跳过本轮（防止并发 LLM 调用）。
 
+        B5/P1-11：锁内原子 detach 当前 batch——LLM 等待期间的新消息进入新 buffer，
+        不被本轮 clear() 误删；提取/存储失败时 batch 重新入队（requeue）待重试。
+
         Args:
             user_message: 用户消息文本。
             assistant_response: 助手回复文本。
@@ -218,7 +221,12 @@ class MemoryConsolidator:
             return []
 
         async with self._consolidate_lock:
-            return await self._do_consolidate()
+            if len(self._buffer) < self._threshold:
+                return []  # 已被并发 consolidate 处理
+            # 原子 detach 当前 batch——之后 append 的新消息进新 buffer
+            batch = self._buffer
+            self._buffer = []
+            return await self._do_consolidate(batch)
 
     async def flush(self) -> list[ExtractedMemory]:
         """强制整合缓冲中的对话轮次，不等待阈值。
@@ -236,17 +244,24 @@ class MemoryConsolidator:
             return []
 
         async with self._consolidate_lock:
-            return await self._do_consolidate()
+            if not self._buffer:
+                return []
+            batch = self._buffer
+            self._buffer = []
+            return await self._do_consolidate(batch)
 
-    async def _do_consolidate(self) -> list[ExtractedMemory]:
-        """执行实际的 LLM 提取和存储（需持有 consolidate_lock）。
+    async def _do_consolidate(self, batch: list[tuple[str, str]]) -> list[ExtractedMemory]:
+        """执行实际的 LLM 提取和存储（需持有 consolidate_lock；batch 已 detach）。
+
+        Args:
+            batch: 本批待整合的 (user_msg, assistant_msg) 列表。
 
         Returns:
             提取并比对后的 ExtractedMemory 列表，LLM 失败时为空。
         """
         # 合并缓冲中的多轮对话为一段文本
         turns: list[str] = []
-        for u, a in self._buffer:
+        for u, a in batch:
             turns.append(f"{self._user_name}: {u[:300]}")
             turns.append(f"{self._character_name}: {a[:500]}")
         conversation_text = "\n".join(turns)
@@ -262,17 +277,24 @@ class MemoryConsolidator:
                 extra_body={"thinking": {"type": "disabled"}})
             items = _parse_extraction(result.text)
         except Exception:
-            # 解析失败（含 _JsonArrayParseError）→ 保留缓冲待下轮重试，
+            # 解析失败（含 _JsonArrayParseError）→ batch 重新入队待下轮重试，
             # 整合机会不静默丢失（S9）。warning 可见 LLM 输出异常。
-            logger.warning("Consolidation extraction failed（保留缓冲待重试）", exc_info=True)
+            logger.warning("Consolidation extraction failed（requeue batch 待重试）",
+                           exc_info=True)
+            self._buffer = batch + self._buffer
             return []
 
-        # LLM 成功 → 清空缓冲区，防止数据丢失
-        self._buffer.clear()
-
+        # batch 已在锁内 detach——不再 clear self._buffer（B5/P1-11：不清掉并发新消息）
         if items:
-            inserted = await self._compare_and_resolve(items)
-            logger.debug("Consolidation compared: %d items → %d inserted", len(items), inserted)
+            try:
+                inserted = await self._compare_and_resolve(items)
+                logger.debug("Consolidation compared: %d items → %d inserted",
+                             len(items), inserted)
+            except Exception:
+                # 存储失败（含 compare 回退 insert 仍失败）→ batch 重新入队待重试
+                logger.warning("Consolidation 存储失败（requeue batch 待重试）", exc_info=True)
+                self._buffer = batch + self._buffer
+                return []
 
         for item in items:
             self._history.append(item.model_dump())

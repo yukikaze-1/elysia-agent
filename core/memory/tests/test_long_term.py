@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from core.memory.long_term import LongTermMemory, MemoryEntry
 from core.schema.memory import MemoryType
+from core.schema.types import MemoryId
 
 
 @pytest.mark.service
@@ -298,3 +299,126 @@ class TestMemoryTypeNormalization:
         await mem.insert("工作计划A", memory_type="plan")
         hits = await mem.search(query_text="工作", memory_type="bogus", top_k=10)
         assert hits == []
+
+
+class FakeMemoryRepo:
+    """B5/P1-12 专用 fake：可配置 insert PK / delete 返回值。"""
+
+    def __init__(self, insert_pks=None, delete_result=1):
+        self.insert_pks = list(insert_pks or [])
+        self.delete_result = delete_result
+        self.insert_calls = 0
+        self.deleted: list[list[int]] = []
+        self.query_results: list[dict] = []
+
+    async def insert(self, vectors, metadata):
+        self.insert_calls += 1
+        if not self.insert_pks:
+            return []
+        return [self.insert_pks.pop(0)]
+
+    async def delete(self, ids):
+        self.deleted.append(list(ids))
+        return self.delete_result
+
+    async def query(self, *, filter_expr=None, output_fields=None, limit=100):
+        return self.query_results
+
+    async def search(self, *a, **kw):
+        return []
+
+    async def connect(self):
+        return True
+
+    async def health_check(self):
+        return True
+
+    async def count(self):
+        return 0
+
+    async def clear_all(self):
+        return 0
+
+    async def close(self):
+        pass
+
+
+@pytest.mark.service
+class TestMemoryOfflineConsistency:
+    """B5/P1-12：离线 insert/sync/delete 不丢数据、不复活旧数据。"""
+
+    async def _ltm_with_embedding(self, repo):
+        from unittest.mock import AsyncMock
+        ltm = LongTermMemory(repo=repo)
+        ltm._embedding_provider.embed = AsyncMock(return_value=[0.1, 0.2])  # noqa: SLF001
+        return ltm
+
+    @pytest.mark.asyncio
+    async def test_insert_empty_pk_marks_dirty(self):
+        """repo 离线（insert 返回空 PK）→ 不能视为成功，标记 dirty 待同步。"""
+        repo = FakeMemoryRepo()  # insert 返回 []
+        ltm = await self._ltm_with_embedding(repo)
+
+        await ltm.insert("离线记忆", source="consolidation")
+
+        entry = ltm._entries[0]  # noqa: SLF001
+        assert entry._milvus_pk is None  # noqa: SLF001
+        assert entry.id in ltm._dirty_ids  # noqa: SLF001 — 未假成功
+
+    @pytest.mark.asyncio
+    async def test_sync_dirty_keeps_dirty_on_empty_pk(self):
+        """sync 遇空 PK（仍离线）→ 保留 dirty 不计数；拿到 PK 后才移除。"""
+        repo = FakeMemoryRepo()  # 第一轮 []，第二轮可补
+        ltm = await self._ltm_with_embedding(repo)
+        await ltm.insert("x", source="consolidation")
+        eid = ltm._entries[0].id  # noqa: SLF001
+
+        first = await ltm.sync_dirty_entries()
+        assert first == 0
+        assert eid in ltm._dirty_ids  # noqa: SLF001 — 空 PK 不丢弃
+
+        repo.insert_pks.append(42)
+        second = await ltm.sync_dirty_entries()
+        assert second == 1
+        assert eid not in ltm._dirty_ids  # noqa: SLF001
+        assert ltm._entries[0]._milvus_pk == 42  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_delete_offline_records_pending_tombstone(self):
+        """离线删除（repo.delete 返回 0）→ 记持久 tombstone，不复活旧行。"""
+        repo = FakeMemoryRepo(delete_result=0)
+        ltm = await self._ltm_with_embedding(repo)
+        await ltm.insert("x", source="consolidation")
+        entry = ltm._entries[0]  # noqa: SLF001
+        entry._milvus_pk = 7  # noqa: SLF001 — 已同步
+        await ltm.sync_dirty_entries()
+
+        assert await ltm.delete(entry.id) is True
+        assert entry.id in ltm._pending_deletes  # noqa: SLF001 — tombstone
+        assert ltm._pending_deletes[entry.id] == 7  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_reload_dedup_no_duplicates(self):
+        """连续 connect 幂等 reload：按 entry_id 去重，不重复 append。"""
+        repo = FakeMemoryRepo()
+        repo.query_results = [
+            {"id": 1, "entry_id": "mem_a", "text": "t", "memory_type": "Note",
+             "poignancy": 5, "timestamp": 0.0},
+        ]
+        ltm = LongTermMemory(repo=repo)
+        await ltm.connect()
+        assert ltm.count == 1
+        await ltm.connect()  # 再连一次
+        assert ltm.count == 1  # 不倍增
+
+    @pytest.mark.asyncio
+    async def test_pending_delete_applied_on_connect(self):
+        """重启后 pending tombstone 应用：重连清理旧行。"""
+        repo = FakeMemoryRepo()
+        ltm = LongTermMemory(repo=repo)
+        ltm._pending_deletes = {MemoryId("mem_gone"): 5}  # noqa: SLF001
+
+        await ltm.connect()
+
+        assert repo.deleted and 5 in repo.deleted[0]
+        assert MemoryId("mem_gone") not in ltm._pending_deletes  # noqa: SLF001

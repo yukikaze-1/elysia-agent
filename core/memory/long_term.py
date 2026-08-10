@@ -5,11 +5,16 @@
 """
 
 import asyncio
+import json
 import logging
 import math
+import os
 import time as _time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from paths import ProjectPath
 
 from core.memory.embedding_provider import EmbeddingProvider
 from core.schema.memory import MemoryType
@@ -76,6 +81,10 @@ class LongTermMemory:
         self._absorbed_ids: set[MemoryId] = set()  # 被 merge 吸收但尚未 delete 的条目 ID
         self._enable_eviction = enable_eviction
         self._write_lock = asyncio.Lock()     # 保护所有修改操作的并发锁
+        # B5/P1-12：离线删除的持久 tombstone（entry_id → milvus pk）——重连/重启后
+        # 清理旧行，防止删除意图丢失、旧数据复活。
+        self._pending_deletes: dict[MemoryId, int] = {}
+        self._load_pending_deletes()
 
     async def connect(self) -> bool:
         """连接 Milvus（快速）。嵌入推迟到首次使用时加载。
@@ -91,12 +100,65 @@ class LongTermMemory:
             loaded = await self._load_from_milvus()
             if loaded:
                 logger.info("LongTermMemory: loaded %d entries from Milvus", loaded)
+            # B5/P1-12：重连后清理离线删除的 tombstone（防止删除意图丢失/旧数据复活）
+            await self._apply_pending_deletes()
             return True
         else:
             return False
 
+    def _pending_deletes_file(self) -> str:
+        """pending deletes journal 路径。"""
+        return str(ProjectPath.MEMORY_PENDING_DELETES.resolve())
+
+    def _load_pending_deletes(self) -> None:
+        """启动时从 journal 加载离线删除 tombstone（损坏/缺失忽略）。"""
+        try:
+            path = self._pending_deletes_file()
+            if not Path(path).is_file():
+                return
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            self._pending_deletes = {
+                MemoryId(str(eid)): int(pk)
+                for eid, pk in (data or {}).items()
+            }
+        except Exception:
+            logger.warning("读取 memory pending-deletes journal 失败", exc_info=True)
+            self._pending_deletes = {}
+
+    def _save_pending_deletes(self) -> None:
+        """持久化离线删除 tombstone（原子写）。"""
+        try:
+            path = self._pending_deletes_file()
+            if not self._pending_deletes:
+                # 空集合 → 删除/清空 journal（避免陈旧 tombstone 误删已重建条目）
+                if Path(path).is_file():
+                    os.remove(path)
+                return
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({str(k): v for k, v in self._pending_deletes.items()}, f)
+            os.replace(tmp, path)
+        except Exception:
+            logger.warning("写入 memory pending-deletes journal 失败", exc_info=True)
+
+    async def _apply_pending_deletes(self) -> None:
+        """重连/重启后清理离线删除的 Milvus 旧行（尽力而为，失败保留待下次）。"""
+        if self._repo is None or not self._pending_deletes:
+            return
+        for eid, pk in list(self._pending_deletes.items()):
+            try:
+                await self._repo.delete([pk])
+                self._pending_deletes.pop(eid, None)
+            except Exception:
+                logger.debug("pending delete 重试失败 entry=%s pk=%s", eid, pk, exc_info=True)
+        self._save_pending_deletes()
+
     async def _load_from_milvus(self) -> int:
         """从 Milvus 恢复已有条目到内存。
+
+        B5/P1-12：按 entry_id 幂等去重——连续 connect（/restart）不重复 append。
 
         Returns:
             成功加载的条目数量。加载失败返回 0。
@@ -115,6 +177,7 @@ class LongTermMemory:
 
         from core.utils import new_memory_id
 
+        existing_ids = {e.id for e in self._entries}
         loaded = 0
         for row in results:
             pk = row.get("id")
@@ -122,8 +185,11 @@ class LongTermMemory:
             entry_id = row.get("entry_id", "")
             if not entry_id or not isinstance(entry_id, str):
                 entry_id = new_memory_id()
+            eid = MemoryId(entry_id)
+            if eid in existing_ids:
+                continue  # 已加载——不重复（连续 connect 不倍增）
             entry = MemoryEntry(
-                id=MemoryId(entry_id),
+                id=eid,
                 text=row.get("text", ""),
                 embedding=[],  # 不加载向量 — 太大，搜索走 Milvus
                 memory_type=row.get("memory_type", "Note"),
@@ -132,6 +198,7 @@ class LongTermMemory:
                 _milvus_pk=pk,
             )
             self._entries.append(entry)
+            existing_ids.add(eid)
             loaded += 1
 
         # 启动时驱逐超出上限的条目
@@ -191,9 +258,12 @@ class LongTermMemory:
                             **meta,
                         }],
                     )
-                    if pk_list:
-                        entry._milvus_pk = pk_list[0]
+                    if pk_list and pk_list[0] is not None:
+                        entry._milvus_pk = int(pk_list[0])
                         logger.debug("LongTermMemory insert: entry_id=%s, pk=%s", entry.id, pk_list[0])
+                    else:
+                        # B5/P1-12：无 durable PK 不能视为成功——标记脏，健康后同步
+                        self._dirty_ids.add(entry.id)
                 except Exception as e:
                     logger.warning("Milvus insert failed: %s, falling back to in-memory", e)
                     self._dirty_ids.add(entry.id)
@@ -228,9 +298,19 @@ class LongTermMemory:
         # 同步清理 Milvus
         if self._repo is not None and evicted_pks:
             try:
-                await self._repo.delete(evicted_pks)
+                deleted = await self._repo.delete(evicted_pks)
+                if deleted < len(evicted_pks):
+                    # B5/P1-12：部分/全部未删（离线）→ 记 tombstone 待重连清理
+                    for e in evicted:
+                        if e._milvus_pk is not None:
+                            self._pending_deletes[e.id] = e._milvus_pk
+                    self._save_pending_deletes()
             except Exception:
-                logger.debug("Milvus delete failed for evicted entries", exc_info=True)
+                # B5/P1-12：驱逐删除失败 → tombstone
+                for e in evicted:
+                    if e._milvus_pk is not None:
+                        self._pending_deletes[e.id] = e._milvus_pk
+                self._save_pending_deletes()
 
         # 同步清理 dirty_ids
         if evicted_ids:
@@ -276,10 +356,14 @@ class LongTermMemory:
                 return
             if entry._milvus_pk is not None and self._repo is not None:
                 try:
-                    await self._repo.delete([entry._milvus_pk])
+                    deleted = await self._repo.delete([entry._milvus_pk])
+                    if deleted < 1:
+                        self._pending_deletes[entry_id] = entry._milvus_pk
+                        self._save_pending_deletes()
                 except Exception:
-                    logger.debug("Milvus delete failed for absorbed entry %s",
-                               entry_id, exc_info=True)
+                    # B5/P1-12：吸收条目删除失败 → tombstone 待重连清理
+                    self._pending_deletes[entry_id] = entry._milvus_pk
+                    self._save_pending_deletes()
             # 从 _entries 移除，释放内存
             self._entries = [e for e in self._entries if e.id != entry_id]
             self._dirty_ids.discard(entry_id)
@@ -312,10 +396,11 @@ class LongTermMemory:
                         **entry.metadata,
                     }],
                 )
-                if pk_list:
-                    entry._milvus_pk = pk_list[0]
-                self._dirty_ids.discard(eid)
-                synced += 1
+                if pk_list and pk_list[0] is not None:
+                    entry._milvus_pk = int(pk_list[0])
+                    self._dirty_ids.discard(eid)
+                    synced += 1
+                # B5/P1-12：空 PK（离线）→ 保留 dirty 待下次健康轮询重试，不计成功
             except Exception:
                 logger.debug("Sync entry %s to Milvus failed", eid, exc_info=True)
         if synced:
@@ -404,9 +489,15 @@ class LongTermMemory:
                     if self._repo is not None and e._milvus_pk is not None:
                         logger.info("LongTermMemory delete: entry_id=%s, milvus_pk=%s", entry_id, e._milvus_pk)
                         try:
-                            await self._repo.delete([e._milvus_pk])
+                            deleted = await self._repo.delete([e._milvus_pk])
+                            if deleted < 1:
+                                # B5/P1-12：repo 离线/无行删除 → 记持久 tombstone 待重连清理
+                                self._pending_deletes[entry_id] = e._milvus_pk
+                                self._save_pending_deletes()
                         except Exception:
-                            logger.debug("Milvus delete failed for %s", entry_id, exc_info=True)
+                            # B5/P1-12：删除失败 → tombstone，防旧行重启复活
+                            self._pending_deletes[entry_id] = e._milvus_pk
+                            self._save_pending_deletes()
                     return True
             return False
 

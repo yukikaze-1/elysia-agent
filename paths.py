@@ -15,6 +15,7 @@ Usage:
 import os
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 def _detect_project_root() -> Path:
@@ -59,8 +60,9 @@ class ProjectPath(str, Enum):
     SESSION_PENDING = "data/session_{session_id}.json"
     SESSION_PENDING_CHECK = "data/session_pending.jsonl"
     SCHEDULER_CHECKPOINT = "data/scheduler_checkpoint.json"
+    MEMORY_PENDING_DELETES = "data/memory_pending_deletes.json"
 
-    def resolve(self, **kwargs) -> Path:
+    def resolve(self, **kwargs: Any) -> Path:
         """返回绝对路径。
 
         Args:
