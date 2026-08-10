@@ -62,7 +62,8 @@ class LongTermMemory:
     def __init__(self, max_entries: int = 10000, max_age_days: int = 90,
                  embed_timeout: float = 10.0,
                  enable_eviction: bool = True,
-                 repo: "MemoryRepository | None" = None):
+                 repo: "MemoryRepository | None" = None,
+                 pending_syncs_file: str | Path | None = None):
         """初始化长期记忆。
 
         Args:
@@ -71,6 +72,8 @@ class LongTermMemory:
             embed_timeout: 嵌入后端加载超时（秒）。
             enable_eviction: 是否启用数量上限驱逐。
             repo: MemoryRepository 实例，用于 Milvus 操作。如果为 None，在 connect() 时自动创建。
+            pending_syncs_file: 未同步条目 journal 路径（测试注入），默认
+                ProjectPath.MEMORY_PENDING_SYNCS。
         """
         self._entries: list[MemoryEntry] = []
         self._repo: "MemoryRepository | None" = repo
@@ -85,6 +88,10 @@ class LongTermMemory:
         # 清理旧行，防止删除意图丢失、旧数据复活。
         self._pending_deletes: dict[MemoryId, int] = {}
         self._load_pending_deletes()
+        # review 复核 #6：未同步条目的持久 journal——Milvus 离线 insert 的记忆此前
+        # 仅在进程内 _dirty_ids，进程退出即丢失；本 journal 重启/重连后恢复补写。
+        self._pending_syncs_file_path = pending_syncs_file
+        self._load_pending_syncs()
 
     async def connect(self) -> bool:
         """连接 Milvus（快速）。嵌入推迟到首次使用时加载。
@@ -143,6 +150,75 @@ class LongTermMemory:
         except Exception:
             logger.warning("写入 memory pending-deletes journal 失败", exc_info=True)
 
+    # ---- 未同步条目 journal（review 复核 #6）----
+
+    def _pending_syncs_file(self) -> str:
+        """pending syncs journal 路径。"""
+        return str(self._pending_syncs_file_path or ProjectPath.MEMORY_PENDING_SYNCS.resolve())
+
+    def _load_pending_syncs(self) -> None:
+        """启动时从 journal 加载未同步条目（进程退出/崩溃前 Milvus 写入失败的记忆）。
+
+        与 `_pending_deletes` 对称：损坏/缺失忽略，重启后恢复补写不丢离线记忆。
+        """
+        try:
+            path = self._pending_syncs_file()
+            if not Path(path).is_file():
+                return
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            existing_ids = {e.id for e in self._entries}
+            for eid, doc in (data or {}).items():
+                if eid in existing_ids:
+                    continue
+                entry = MemoryEntry(
+                    id=MemoryId(eid),
+                    text=doc.get("text", ""),
+                    embedding=list(doc.get("embedding") or []),
+                    memory_type=doc.get("memory_type", "Note"),
+                    poignancy=int(doc.get("poignancy", 5)),
+                    timestamp=float(doc.get("timestamp", 0.0)),
+                    metadata=dict(doc.get("metadata") or {}),
+                )
+                self._entries.append(entry)
+                existing_ids.add(eid)
+                self._dirty_ids.add(entry.id)
+        except Exception:
+            logger.warning("读取 memory pending-syncs journal 失败", exc_info=True)
+
+    def _save_pending_syncs(self) -> None:
+        """持久化未同步条目（原子写；空集合删除 journal）。
+
+        只序列化仍存在且带 embedding 的脏条目——同步成功的条目落盘后从 journal 移除，
+        防止重启后重复补写。
+        """
+        try:
+            path = self._pending_syncs_file()
+            entries: dict[str, dict[str, object]] = {}
+            for eid in self._dirty_ids:
+                entry = self._get_by_id(eid)
+                if entry is None or not entry.embedding:
+                    continue
+                entries[str(eid)] = {
+                    "text": entry.text,
+                    "embedding": entry.embedding,
+                    "memory_type": entry.memory_type.value,
+                    "poignancy": entry.poignancy,
+                    "timestamp": entry.timestamp,
+                    "metadata": entry.metadata,
+                }
+            if not entries:
+                if Path(path).is_file():
+                    os.remove(path)
+                return
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(entries, f)
+            os.replace(tmp, path)
+        except Exception:
+            logger.warning("写入 memory pending-syncs journal 失败", exc_info=True)
+
     async def _apply_pending_deletes(self) -> None:
         """重连/重启后清理离线删除的 Milvus 旧行（尽力而为，失败保留待下次）。"""
         if self._repo is None or not self._pending_deletes:
@@ -187,6 +263,15 @@ class LongTermMemory:
                 entry_id = new_memory_id()
             eid = MemoryId(entry_id)
             if eid in existing_ids:
+                # review 复核 #6：journal 已含该条目（此前未同步）但 Milvus 端已有行
+                # （同步完成与 journal 清除之间崩溃）→ 补 pk 并从 dirty 移除，避免重复补写。
+                for existing in self._entries:
+                    if existing.id == eid:
+                        if existing._milvus_pk is None:
+                            existing._milvus_pk = pk
+                            self._dirty_ids.discard(eid)
+                            self._save_pending_syncs()
+                        break
                 continue  # 已加载——不重复（连续 connect 不倍增）
             entry = MemoryEntry(
                 id=eid,
@@ -269,6 +354,9 @@ class LongTermMemory:
                     self._dirty_ids.add(entry.id)
             elif self._repo is None:
                 self._dirty_ids.add(entry.id)
+            if entry.id in self._dirty_ids:
+                # review 复核 #6：离线/无 PK → 持久 journal，防进程退出丢失待同步记忆
+                self._save_pending_syncs()
 
             self._entries.append(entry)
             if self._enable_eviction:
@@ -315,6 +403,7 @@ class LongTermMemory:
         # 同步清理 dirty_ids
         if evicted_ids:
             self._dirty_ids -= evicted_ids
+            self._save_pending_syncs()  # review 复核 #6：journal 同步移除被驱逐的待同步条目
 
         if removed:
             logger.info("Long-term memory: 驱逐 %d 条超限条目 (剩余 %d)",
@@ -367,6 +456,7 @@ class LongTermMemory:
             # 从 _entries 移除，释放内存
             self._entries = [e for e in self._entries if e.id != entry_id]
             self._dirty_ids.discard(entry_id)
+            self._save_pending_syncs()  # review 复核 #6：journal 移除已吸收的待同步条目
 
     async def sync_dirty_entries(self) -> int:
         """尝试将脏条目同步到 Milvus。
@@ -377,35 +467,40 @@ class LongTermMemory:
         Returns:
             成功同步的条目数。
         """
-        if self._repo is None or not self._dirty_ids:
-            return 0
-        synced = 0
-        for eid in list(self._dirty_ids):
-            entry = self._get_by_id(eid)
-            if entry is None or not entry.embedding:
-                continue
-            try:
-                pk_list = await self._repo.insert(
-                    vectors=[entry.embedding],
-                    metadata=[{
-                        "entry_id": entry.id,
-                        "text": entry.text,
-                        "memory_type": entry.memory_type.value,
-                        "poignancy": entry.poignancy,
-                        "timestamp": entry.timestamp,
-                        **entry.metadata,
-                    }],
-                )
-                if pk_list and pk_list[0] is not None:
-                    entry._milvus_pk = int(pk_list[0])
-                    self._dirty_ids.discard(eid)
-                    synced += 1
-                # B5/P1-12：空 PK（离线）→ 保留 dirty 待下次健康轮询重试，不计成功
-            except Exception:
-                logger.debug("Sync entry %s to Milvus failed", eid, exc_info=True)
-        if synced:
-            logger.info("Synced %d dirty entries to Milvus", synced)
-        return synced
+        async with self._write_lock:
+            if self._repo is None or not self._dirty_ids:
+                return 0
+            synced = 0
+            for eid in list(self._dirty_ids):
+                entry = self._get_by_id(eid)
+                # review 复核 #6：取得 _write_lock 防并发幽灵写——mark_absorbed/delete
+                # 不能与补写竞态（删除后仍插回一条，重启后记忆复活）。eid 已吸收也跳过。
+                if entry is None or not entry.embedding or eid in self._absorbed_ids:
+                    continue
+                try:
+                    pk_list = await self._repo.insert(
+                        vectors=[entry.embedding],
+                        metadata=[{
+                            "entry_id": entry.id,
+                            "text": entry.text,
+                            "memory_type": entry.memory_type.value,
+                            "poignancy": entry.poignancy,
+                            "timestamp": entry.timestamp,
+                            **entry.metadata,
+                        }],
+                    )
+                    if pk_list and pk_list[0] is not None:
+                        entry._milvus_pk = int(pk_list[0])
+                        self._dirty_ids.discard(eid)
+                        synced += 1
+                    # B5/P1-12：空 PK（离线）→ 保留 dirty 待下次健康轮询重试，不计成功
+                except Exception:
+                    logger.debug("Sync entry %s to Milvus failed", eid, exc_info=True)
+            if synced:
+                # review 复核 #6：同步成功的条目从 journal 移除（防重启重复补写）
+                self._save_pending_syncs()
+                logger.info("Synced %d dirty entries to Milvus", synced)
+            return synced
 
     # ---- Delete ----
 
@@ -468,6 +563,8 @@ class LongTermMemory:
                             except Exception:
                                 logger.debug("Embedding/insert failed for update %s", entry_id, exc_info=True)
                                 self._dirty_ids.add(entry_id)
+                    if entry_id in self._dirty_ids:
+                        self._save_pending_syncs()  # review 复核 #6：journal 同步未补写的更新
                     return True
             return False
 
@@ -486,6 +583,7 @@ class LongTermMemory:
                     self._entries.pop(i)
                     self._absorbed_ids.discard(entry_id)
                     self._dirty_ids.discard(entry_id)
+                    self._save_pending_syncs()  # review 复核 #6：journal 移除已删的待同步条目
                     if self._repo is not None and e._milvus_pk is not None:
                         logger.info("LongTermMemory delete: entry_id=%s, milvus_pk=%s", entry_id, e._milvus_pk)
                         try:
@@ -513,6 +611,7 @@ class LongTermMemory:
             self._entries.clear()
             self._absorbed_ids.clear()
             self._dirty_ids.clear()
+            self._save_pending_syncs()  # review 复核 #6：清空 journal（空集合删除文件）
 
             if self._repo is not None:
                 # 已有 repo → 直接操作

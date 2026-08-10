@@ -8,6 +8,17 @@ from core.schema.memory import MemoryType
 from core.schema.types import MemoryId
 
 
+@pytest.fixture(autouse=True)
+def _isolate_pending_syncs(tmp_path, monkeypatch):
+    """review 复核 #6：pending-syncs journal 隔离到 tmp 目录——离线 insert 每次都会
+    写 journal，若不隔离会污染真实 data/ 目录并跨测试串扰（_load_pending_syncs 读到
+    陈旧条目）。pending-deletes 仅删除失败才写、频率低，沿用真实路径。"""
+    monkeypatch.setattr(
+        LongTermMemory, "_pending_syncs_file",
+        lambda self: str(tmp_path / "memory_pending_syncs.json"),
+    )
+
+
 @pytest.mark.service
 class TestLongTermMemoryConnectLogLevel:
     """connect() 失败时必须使用 logger.warning。"""
