@@ -459,3 +459,41 @@ class TestMessageRepositoryBatch3:
         assert messages == []
         assert has_more is False
         assert next_cursor is None
+
+
+class TestQuerySearchLiteral:
+    """D3/P1-16：搜索字面化——raw regex 注入不再造成 500/ReDoS/广泛误匹配。"""
+
+    @staticmethod
+    def _repo(docs):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake)
+        _seed(fake, docs)
+        return repo
+
+    def test_dot_is_literal_not_wildcard(self):
+        """query='.' 只命中含字面句点的消息（修复前正则 '.' 匹配全部）。"""
+        repo = self._repo([
+            _archive_doc("user", "你好，世界", "m0", "2026-08-01T00:00:00+00:00"),
+            _archive_doc("user", "版本 1.2 发布", "m1", "2026-08-01T00:01:00+00:00"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search(query="."))
+        assert [m.message_id for m in messages] == ["m1"]  # 只含句点那条
+
+    def test_open_bracket_is_literal_no_regex_error(self):
+        """query='[' 不再触发未闭合字符集 500。"""
+        repo = self._repo([
+            _archive_doc("user", "标签 [重要]", "m0", "2026-08-01T00:00:00+00:00"),
+            _archive_doc("user", "普通消息", "m1", "2026-08-01T00:01:00+00:00"),
+        ])
+        messages, *_ = asyncio.run(repo.query_search(query="["))
+        assert [m.message_id for m in messages] == ["m0"]
+
+    def test_overlong_query_rejected(self):
+        """query 超 200 字符 → 返回空（repo 层防御）。"""
+        repo = self._repo([
+            _archive_doc("user", "x", "m0", "2026-08-01T00:00:00+00:00"),
+        ])
+        messages, has_more, _ = asyncio.run(repo.query_search(query="a" * 201))
+        assert messages == [] and has_more is False

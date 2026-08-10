@@ -106,7 +106,7 @@ A1/A2
 - [x] C5 checkpoint 与 proactive event
 - [x] D1 文件 containment/symlink/资源上限
 - [x] D2 SSRF 与 Web response 上限
-- [ ] D3 搜索、WS/REST 输入上限和失败反馈
+- [x] D3 搜索、WS/REST 输入上限和失败反馈
 - [ ] D4 日志脱敏
 - [ ] D5 上传活动内容与配置 secret
 - [ ] D6a 非回环 fail-closed 鉴权
@@ -1332,6 +1332,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：无
 - 契约或 Electron 影响：无 wire 变化；web_fetch 对超限/被拒 URL 返回稳定错误文案
 - 剩余风险/计划偏差：DNS rebinding（连接 IP 钉扎）未实现——每跳 validate_endpoint + 跨源剥头已挡常见 redirect/私网第二跳，rebinding 需 transport 级 IP 钉扎（httpx 不支持，留文档）；usable 测试回显内部响应片段未收敛；压缩炸弹解压后字节上限未单独处理（流式原始字节上限已挡总量）
+
+### D3 — 搜索字面化、WS/REST 输入上限与真实失败反馈
+
+- 状态：完成
+- Commit：`<见 D3 提交>`
+- 变更文件：`core/storage/message_repo.py`、`core/input/session_routes.py`、`core/input/api_routes.py`、`core/storage/tests/test_message_repo.py`
+- 新增失败测试：`TestQuerySearchLiteral`（`.` 字面不误匹配全部、`[` 不再未闭合字符集 500、超 200 字符返回空）
+- 目标测试：`pytest core/input/tests/test_session_routes.py core/input/tests/test_server.py core/storage/tests/test_message_repo.py` → 170 passed
+- 批次门禁：`ruff check` → 通过；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无（搜索语义从 raw regex 改为字面，属行为修正）
+- 契约或 Electron 影响：`/api/chat` 队列满 → 429（新错误码，Electron 需感知）；搜索 query 超 200 → 400 CONTRACT_VALIDATION；before/after 窗口钳制到 0..100
+- 剩余风险/计划偏差：WS contract 层 content/ID/attachments 业务长度上限（P2-02 前半）未做——附件批量查询（bounded batch 替代逐帧串行查询）未做；搜索 Mongo maxTimeMS 未设（DocumentDB 抽象无该参数，留文档）
 
 ## 14. 需要停止并请求决策的情况
 

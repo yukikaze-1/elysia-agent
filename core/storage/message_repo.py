@@ -2,6 +2,7 @@
 
 import base64
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -389,8 +390,12 @@ class MessageRepository(Repository):
         elem_text: dict = {}   # 关键词只命中 text part 的 content
         elem_type: dict = {}   # category 命中对应 part 的 type
         if query:
+            # D3/P1-16：字面搜索——re.escape 防 raw regex（`.`/`[`/灾难模式注入 Mongo
+            # $regex 导致 500/ReDoS）；长度上限在 handler 层已校验，repo 层防御性再查。
+            if len(query) > 200:
+                return [], False, None
             elem_text = {"type": "text",
-                         "content": {"$regex": query, "$options": "i"}}
+                         "content": {"$regex": re.escape(query), "$options": "i"}}
         if category == "link":
             elem_type = {"type": "text",
                          "content": {"$regex": r"(https?://|www\.)", "$options": "i"}}

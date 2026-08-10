@@ -1106,7 +1106,13 @@ def register_api_routes(app: web.Application) -> None:
         if not content and not text:
             return web.json_response(rest_contract.ApiFail(error="缺少 content 或 text").wire_dict(), status=400)
 
-        await agent.process_message(text=text, user_name=user_name, content=content)
+        # D3/P2-02：检查 process_message 返回值——队列满不得固定返回成功
+        accepted = await agent.process_message(
+            text=text, user_name=user_name, content=content)
+        if not accepted:
+            return web.json_response(
+                rest_contract.ApiFail(error="Agent 忙，消息队列已满").wire_dict(),
+                status=429)
         return web.json_response(rest_contract.ApiOk().wire_dict())
 
     app.router.add_post("/api/chat", chat_api_handler)

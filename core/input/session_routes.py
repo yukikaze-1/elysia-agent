@@ -82,11 +82,15 @@ def _parse_limit(request: web.Request, default: int = 20, cap: int = _MAX_LIMIT)
 
 
 def _parse_int_param(request: web.Request, name: str, default: int) -> int:
-    """解析整数查询参数（before/after 窗口等）。非法值回退 default。"""
+    """解析整数查询参数（before/after 窗口等）。非法值回退 default。
+
+    D3/P2-02：钳制到 [0, 100]——负数/任意大数不得进入 Mongo limit。
+    """
     try:
-        return int(request.query.get(name, str(default)))
+        value = int(request.query.get(name, str(default)))
     except ValueError:
-        return default
+        value = default
+    return max(0, min(value, 100))
 
 
 def _encode_resource_cursor(doc_id: str, offset: int) -> str:
@@ -640,6 +644,10 @@ async def search_messages_handler(request: web.Request) -> web.Response:
     """GET /api/search/messages — 组合过滤 + keyset 分页搜索。"""
     agent = request.app["agent"]
     query = request.query.get("query", "").strip()
+    # D3/P1-16：query 长度上限（防超长进入 Mongo $regex / 无界 fan-out）
+    if len(query) > 200:
+        return _error_response("CONTRACT_VALIDATION",
+                               "搜索 query 过长（上限 200 字符）", 400)
     conversation_id = request.query.get("conversationId", "").strip() or None
     date_from = request.query.get("date_from", "").strip() or None
     date_to = request.query.get("date_to", "").strip() or None
