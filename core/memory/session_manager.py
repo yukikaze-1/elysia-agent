@@ -478,6 +478,11 @@ class SessionManager:
             self._deleting.add(sid)
 
         try:
+            # B3/P1-02：删除前 drain 该会话在途归档 + 关闭归档入口——迟到 append
+            # 不再进入，杜绝「先删记录、后写孤儿消息」。失败时 reopen_archive 回滚。
+            session = self._sessions.get(sid)
+            if session is not None:
+                await session.close_archive()
             if before_delete is not None:
                 await before_delete(sid)
             deleted_messages = 0
@@ -487,6 +492,8 @@ class SessionManager:
         except Exception:
             async with self._lifecycle_lock:
                 self._deleting.discard(sid)
+            if session is not None:
+                session.reopen_archive()
             raise
 
         async with self._lifecycle_lock:
@@ -511,6 +518,15 @@ class SessionManager:
         for sid in list(self._sessions):
             if sid in self._loaded:
                 await self._sessions[sid].save()
+
+    async def drain_all_archives(self, *, timeout: float = 5.0) -> None:
+        """关闭全部会话归档入口并 drain 在途归档任务（B3/P1-02 shutdown 用）。
+
+        必须在 message_repo.close() 之前调用，否则在途归档会在 repo 关闭后
+        静默丢失记录（P1-02：shutdown 丢消息）。
+        """
+        for session in list(self._sessions.values()):
+            await session.close_archive(timeout=timeout)
 
     async def connect_db(self) -> bool:
         """建立 repo 连接。"""

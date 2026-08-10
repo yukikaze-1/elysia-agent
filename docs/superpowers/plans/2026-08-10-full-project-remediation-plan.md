@@ -95,7 +95,7 @@ A1/A2
 - [x] A2 PR CI 与宿主凭据隔离
 - [x] B1 统一存储不可用语义与真实健康检查
 - [x] B2 Session durable save/load/pending 恢复
-- [ ] B3 归档任务所有权与 durable 删除
+- [x] B3 归档任务所有权与 durable 删除
 - [ ] B4 accepted ACK 前建立附件引用
 - [ ] B5 Consolidator/LTM 离线一致性
 - [ ] B6 Session 查询、TTL 迁移与 reflector
@@ -1200,6 +1200,18 @@ Claude Code 完成任务后在此追加，不要删除旧记录：
 - 数据迁移/回滚：pending JSON 格式不变；Mongo durable 成功后删除 pending（原本 `_start_persistence` 手动删，现收敛到 save()）
 - 契约或 Electron 影响：无 wire 变化
 - 剩余风险：运行中「failed-load 会话收到新消息后部分覆盖 Mongo 旧上下文」的 partial-clobber 未完全闭合（空覆盖已挡；partial 需 B6 读前合并）；非活动 pending 的启动扫描已加，运行中新建 pending 的即时 import 待恢复协调器（已由 B1 的 session 恢复 hook 覆盖 load_active）
+
+### B3 — 归档任务所有权与 durable 删除
+
+- 状态：完成
+- Commit：`<见 B3 提交>`
+- 变更文件：`core/memory/session.py`、`core/memory/session_manager.py`、`core/storage/session_repo.py`、`core/storage/message_repo.py`、`core/agent/_lifecycle_persistence.py`、`core/input/session_routes.py`、相关测试
+- 新增失败测试：`TestArchiveOwnership`（归档 task 登记/清理、close 后不再新增）；`TestDeleteDurable`（慢 append 在途→删除先 drain 再清记录、离线删除抛错不假成功、删除失败重开归档）；session_repo/message_repo 离线删除/保存/加载 raise 语义更新
+- 目标测试：`core/memory/ core/storage/ core/input/tests/test_session_routes.py core/input/tests/test_server.py` → 488 passed；session/storage 专项 115 passed
+- 批次门禁：`ruff check` → All checks passed；`pyright` → 0 errors（1 个既有 warning）
+- 数据迁移/回滚：无新集合/索引；删除语义离线 → 503 retryable（不再假成功）
+- 契约或 Electron 影响：DELETE /api/sessions/{id} 离线/附件释放失败 → 503 STORAGE_UNAVAILABLE retryable（新增稳定错误码，Electron 需感知）
+- 剩余风险：durable deletion job/outbox（附件释放→删消息→删会话跨步幂等重试）未实现——当前为「任一存储操作失败即整体失败 + 503 retryable」，客户端重试即可收敛；多步部分成功（如消息已删、session 未删）需靠幂等重试收敛，无独立恢复 job
 
 ## 14. 需要停止并请求决策的情况
 

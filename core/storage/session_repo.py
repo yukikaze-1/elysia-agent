@@ -235,10 +235,15 @@ class SessionRepository(Repository):
             session_id: 会话 ID。
 
         Returns:
-            删除的会话数。若数据库不可用返回 0。
+            删除的会话数（0 = 不存在，幂等）。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（B3/P1-03——离线删除不得
+                静默返回 0 被 caller 当成功，否则重启后会话复活）。
         """
         if self._db is None:
-            return 0
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），session 未删除")
         result = await self._db.delete_many(COLLECTION, {"session_id": session_id})
         logger.info("SessionRepository delete: session_id=%s, deleted=%d", session_id, result)
         return result

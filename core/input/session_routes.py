@@ -521,6 +521,9 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
     async def _release_attachments(_: SessionId) -> None:
         try:
             await release_session_attachments(agent, SessionId(sid))
+        except StorageUnavailableError:
+            # B3/P1-03：附件引用未释放（存储不可用）→ 不允许假成功，返回 503 retryable
+            raise
         except Exception as e:
             logger.warning("sessions_delete 附件释放失败 sid=%s: %s", sid, e)
 
@@ -531,6 +534,11 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
         return _error_response(
             "AGENT_BUSY", "会话有已接收/在途消息或活动语音会话，无法删除",
             409, retryable=True)
+    except StorageUnavailableError:
+        # B3/P1-03：存储不可用 → 删除未持久化确认，返回 503 不假成功
+        return _error_response(
+            "STORAGE_UNAVAILABLE", "存储不可用，删除未确认，请重试",
+            503, retryable=True)
     return web.json_response({"ok": True, "deleted": deleted})
 
 

@@ -8,6 +8,7 @@ import asyncio
 import json
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from core.memory.session import SessionMemory
 from core.memory.session_manager import (
@@ -200,6 +201,85 @@ class TestEnsureLoadedConcurrency:
         s2 = await m.ensure_loaded(SessionId("conv_y"))
         assert SessionId("conv_y") in m._loaded  # noqa: SLF001 — 重试成功
         assert s1 is s2
+
+
+class TestDeleteDurable:
+    """B3/P1-02+P1-03：删除前 drain 归档、离线删除不假成功、失败重开归档。"""
+
+    @pytest.mark.asyncio
+    async def test_delete_drains_archive_before_records(self):
+        """慢 append 在途 → delete 先 drain 归档再清记录（无孤儿消息）。"""
+        class SlowMsgRepo:
+            def __init__(self):
+                self.append_entered = asyncio.Event()
+                self.release_append = asyncio.Event()
+                self.deleted = asyncio.Event()
+
+            async def append(self, sid, msg):
+                self.append_entered.set()
+                await self.release_append.wait()
+
+            async def delete_by_session(self, sid):
+                self.deleted.set()
+                return 1
+
+        msg_repo = SlowMsgRepo()
+        repo = FakeSessionRepo()
+        m = SessionManager(repo, msg_repo)
+        await repo.create("conv_z", "t")
+        session = await m.ensure_loaded("conv_z")
+        session.add_message(UserMessage(message_id=MessageId("m1"),
+                                        content=[TextPart(content="hi")]))
+        await asyncio.wait_for(msg_repo.append_entered.wait(), 1.0)
+
+        delete_task = asyncio.create_task(m.delete("conv_z"))
+        await asyncio.sleep(0.05)
+        assert not msg_repo.deleted.is_set()  # append 未完成前不得清记录
+
+        msg_repo.release_append.set()
+        await asyncio.wait_for(delete_task, 1.0)
+        assert msg_repo.deleted.is_set()
+        assert "conv_z" in repo.deleted
+
+    @pytest.mark.asyncio
+    async def test_delete_offline_raises_not_false_success(self):
+        """存储不可用（repo._db=None）→ delete 抛 StorageUnavailableError，不假成功。"""
+        from core.storage.base import StorageUnavailableError
+        from core.storage.session_repo import SessionRepository
+
+        repo = SessionRepository(db=None)
+        m = SessionManager(repo, FakeMsgRepo())
+        summary = await m.create(title="x")
+        sid = summary.session_id
+
+        with pytest.raises(StorageUnavailableError):
+            await m.delete(sid)
+
+        # tombstone 回滚：会话仍在缓存，可再删
+        assert SessionId(sid) not in m._deleting  # noqa: SLF001
+        assert SessionId(sid) in m._sessions  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_delete_failure_reopens_archive(self):
+        """delete 中途失败 → 归档重新打开，后续消息可继续归档。"""
+        class FailDeleteRepo(FakeSessionRepo):
+            async def delete(self, sid):
+                raise RuntimeError("simulated delete failure")
+
+        msg_repo = MagicMock()
+        msg_repo.delete_by_session = AsyncMock(return_value=0)
+        repo = FailDeleteRepo()
+        m = SessionManager(repo, msg_repo)
+        await repo.create("conv_w", "t")
+        session = await m.ensure_loaded("conv_w")
+
+        with pytest.raises(RuntimeError):
+            await m.delete("conv_w")
+
+        # 归档已重开：再次 add_message 会创建归档任务
+        session.add_message(UserMessage(message_id=MessageId("m1"),
+                                        content=[TextPart(content="hi")]))
+        assert len(session._archive_tasks) == 1  # noqa: SLF001
 
 
 class TestRecoverPendingSessions:

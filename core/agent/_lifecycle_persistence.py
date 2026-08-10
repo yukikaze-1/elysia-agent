@@ -315,6 +315,15 @@ class _LifecyclePersistence:
         except Exception:
             logger.error("Session save failed on shutdown", exc_info=True)
 
+        # B3/P1-02：关闭归档入口并 drain 全部在途归档任务，必须在 message_repo.close()
+        # 之前——否则在途 append 会在 repo 关闭后静默丢失（shutdown 丢消息）。
+        try:
+            await asyncio.wait_for(self._session_manager.drain_all_archives(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Session archive drain timed out")
+        except Exception:
+            logger.error("Session archive drain failed on shutdown", exc_info=True)
+
         # 批次 4：Desktop 桥保存（no-op 预留——repo 即时 upsert、无内存脏集可 flush）
         desktop_bridge = getattr(self, "_desktop_bridge", None)
         if desktop_bridge is not None:

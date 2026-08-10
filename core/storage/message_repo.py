@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from bson import ObjectId
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
-from core.storage.base import Repository
+from core.storage.base import Repository, StorageUnavailableError
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.types import MessageId, SessionId
 from core.schema.message import Message, MessageRole
@@ -478,10 +478,15 @@ class MessageRepository(Repository):
             session_id: 会话 ID。
 
         Returns:
-            删除的消息数。若数据库不可用返回 0。
+            删除的消息数（0 = 无记录，幂等）。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（B3/P1-03——离线删除不得
+                静默返回 0 被 caller 当成功，否则删除后归档记录复活）。
         """
         if self._db is None:
-            return 0
+            raise StorageUnavailableError(
+                "MessageRepository 未连接（MongoDB 不可用），消息未删除")
         result = await self._db.delete_many(COLLECTION, {"session_id": session_id})
         logger.info("MessageRepository delete_by_session: session_id=%s, deleted=%d", session_id, result)
         return result

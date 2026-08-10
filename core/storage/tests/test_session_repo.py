@@ -45,10 +45,12 @@ class TestSessionRepository:
 
     def test_save_returns_none_when_db_none(self):
         import asyncio
+        from core.storage.base import StorageUnavailableError
         repo = SessionRepository(db=None)
         cs = CharacterState(session_id=SessionId("sid"))
-        result = asyncio.run(repo.save(SessionId("sid"), [], cs))
-        assert result is None
+        # B2/P1-01：未连接不得静默 return 当成功——抛 typed unavailable
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.save(SessionId("sid"), [], cs))
 
     def test_returns_empty_list_when_db_none(self):
         import asyncio
@@ -58,15 +60,19 @@ class TestSessionRepository:
 
     def test_load_returns_none_when_db_none(self):
         import asyncio
+        from core.storage.base import StorageUnavailableError
         repo = SessionRepository(db=None)
-        result = asyncio.run(repo.load(SessionId("sid")))
-        assert result is None
+        # B2/P1-01：存储不可用抛 typed unavailable（区分 not found），caller 走 JSONL
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.load(SessionId("sid")))
 
     def test_delete_returns_zero_when_db_none(self):
         import asyncio
+        from core.storage.base import StorageUnavailableError
         repo = SessionRepository(db=None)
-        result = asyncio.run(repo.delete(SessionId("sid")))
-        assert result == 0
+        # B3/P1-03：离线删除不得静默 0 当成功（重启会复活）
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.delete(SessionId("sid")))
 
     # ---- 批次 3：title / create / rename ----
 

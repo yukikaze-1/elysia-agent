@@ -107,6 +107,10 @@ class SessionMemory:
         # ensure_loaded 据此决定是否标记 loaded（存储不可用 → 不标记，允许重试；
         # not found → 合法新会话，标记 loaded 以便 save_all 持久化）。
         self._storage_unavailable = False
+        # B3/P1-02：按会话登记的归档 task 集合 + 关闭标志——删除/shutdown 前可
+        # drain，关闭后 add_message 不再创建新归档任务（防删除后迟到 append 复活）。
+        self._archive_tasks: set[asyncio.Task] = set()
+        self._archive_closed = False
 
     # ---- public properties ----
 
@@ -127,15 +131,48 @@ class SessionMemory:
     def add_message(self, msg: Message) -> None:
         """存储一条 Pydantic Message 对象，同时 fire-and-forget 归档到永久存储。
 
+        B3/P1-02：归档 task 登记入 ``_archive_tasks`` 供删除/shutdown drain；
+        ``_archive_closed`` 时不再创建新归档任务（删除后迟到 append 不复活记录）。
+
         Args:
             msg: 要存储的 Message 对象（UserMessage / AssistantMessage / ToolResultMessage）。
         """
         self._messages.append(msg)
-        if self._msg_repo is not None:
+        if self._msg_repo is not None and not self._archive_closed:
             task = asyncio.ensure_future(
                 _archive_with_limit(self._msg_repo, self._session_id, msg)
             )
-            task.add_done_callback(_archive_done)
+            self._archive_tasks.add(task)
+            task.add_done_callback(self._on_archive_done)
+
+    def _on_archive_done(self, task: asyncio.Task) -> None:
+        """归档任务完成回调：移出登记集合并上报失败（复用模块级 _archive_done）。"""
+        self._archive_tasks.discard(task)
+        _archive_done(task)
+
+    async def close_archive(self, *, timeout: float = 5.0) -> None:
+        """关闭归档入口并 drain 在途归档任务（B3/P1-02 删除/shutdown 用）。
+
+        关闭后 add_message 不再创建新归档任务；等待在途任务完成（超时后取消）。
+        若删除中途失败，调用方应调 ``reopen_archive()`` 恢复。
+
+        Args:
+            timeout: 等待在途归档任务完成的总超时秒数。
+        """
+        self._archive_closed = True
+        tasks = list(self._archive_tasks)
+        self._archive_tasks.clear()
+        if not tasks:
+            return
+        done, pending = await asyncio.wait(tasks, timeout=timeout)
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.wait(pending)
+
+    def reopen_archive(self) -> None:
+        """重新打开归档入口（删除失败回滚时调用，B3）。"""
+        self._archive_closed = False
 
     def recent_messages(self, n: int | None = None) -> list[Message]:
         """返回最近 n 条消息（Pydantic 对象）。

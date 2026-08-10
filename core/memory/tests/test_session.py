@@ -1,4 +1,5 @@
 """SessionMemory 测试 — connect_db / health_check / save / load。"""
+import asyncio
 import logging
 import json
 import os
@@ -252,6 +253,43 @@ class TestSessionDurablePersistence:
         result = await sm.load()
         assert result is False
         assert sm._storage_unavailable is False  # noqa: SLF001
+
+
+class TestArchiveOwnership:
+    """B3/P1-02：归档任务按会话登记、可 drain、关闭后不再新增。"""
+
+    @staticmethod
+    def _msg(mid: str):
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+        return UserMessage(message_id=MessageId(mid), content=[TextPart(content="hi")])
+
+    @pytest.mark.asyncio
+    async def test_add_message_tracks_and_cleans_archive_task(self):
+        """add_message 创建的归档 task 登记入 _archive_tasks，完成后移除。"""
+        msg_repo = MagicMock()
+        msg_repo.append = AsyncMock()
+        sm = SessionMemory(session_id=SessionId("s1"), msg_repo=msg_repo)
+        sm.add_message(self._msg("m1"))
+        assert len(sm._archive_tasks) == 1  # noqa: SLF001 — 在途
+        await asyncio.sleep(0.05)  # 让 task 完成并触发 done callback
+        assert len(sm._archive_tasks) == 0  # noqa: SLF001 — 完成移除
+        msg_repo.append.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_archive_drains_and_blocks_new(self):
+        """close_archive 等待在途任务；关闭后 add_message 不再创建归档任务。"""
+        msg_repo = MagicMock()
+        msg_repo.append = AsyncMock()
+        sm = SessionMemory(session_id=SessionId("s1"), msg_repo=msg_repo)
+        sm.add_message(self._msg("m1"))
+        await sm.close_archive(timeout=1.0)
+
+        sm.add_message(self._msg("m2"))
+        await asyncio.sleep(0.05)
+
+        assert len(sm._archive_tasks) == 0  # noqa: SLF001
+        assert msg_repo.append.call_count == 1  # 关闭后第二条未归档
 
 
 @pytest.mark.unit
