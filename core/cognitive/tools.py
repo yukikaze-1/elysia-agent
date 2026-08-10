@@ -65,7 +65,9 @@ class CognitiveTools:
             func_name = tc.function.name
             t_tool = time.perf_counter()
             args = tc.function.parsed
-            logger.info("工具开始: %s(%s)", func_name, {k: str(v)[:60] for k, v in args.items()})
+            # D4/P1-17：日志脱敏——只记 key+类型/长度，敏感字段 redacted（不记正文/密钥）
+            from Module.tool.safety import _safe_arg_summary
+            logger.info("工具开始: %s(%s)", func_name, _safe_arg_summary(args))
             try:
                 if self._tool_adapter is None:
                     raise RuntimeError("ToolAdapter 未初始化")

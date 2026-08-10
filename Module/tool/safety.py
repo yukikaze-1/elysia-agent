@@ -108,24 +108,40 @@ def _format_validation_error(exc: ValidationError) -> str:
     return "; ".join(messages)[:200]
 
 
-def _format_args(raw_params: dict, max_len: int = 60) -> str:
-    """格式化工具参数用于日志，截断长值。
+# D4/P1-17：日志脱敏 deny-by-default 敏感字段（值绝不入日志）
+_REDACTED_KEYS = frozenset(
+    k.lower()
+    for k in ("token", "key", "password", "secret", "authorization", "cookie",
+              "content", "prompt", "path", "base_url", "url", "query", "api_key")
+)
+
+
+def _safe_arg_summary(raw_params: dict, max_len: int = 60) -> str:
+    """工具参数的安全日志摘要（D4/P1-17）。
+
+    默认只记录 key + 值类型/长度，不记录原值；敏感字段（token/key/password/
+    secret/authorization/content/prompt/path/base_url/url 等）恒为 ``<redacted>``。
+    防止日志携带 API token、聊天正文与完整路径。
 
     Args:
         raw_params: 原始参数字典。
-        max_len: 每个参数值的最大展示长度。
+        max_len: 非敏感值的最大展示长度。
 
     Returns:
-        格式化后的参数字符串（如 "key1=val1, key2=val2"）。
+        安全摘要字符串（如 "query=<str:5>, api_key=<redacted>"）。
     """
     if not raw_params:
         return ""
     parts = []
     for k, v in raw_params.items():
-        s = str(v)
-        if len(s) > max_len:
-            s = s[:max_len] + "…"
-        parts.append(f"{k}={s}")
+        if k.lower() in _REDACTED_KEYS:
+            parts.append(f"{k}=<redacted>")
+            continue
+        if isinstance(v, str):
+            s = v if len(v) <= max_len else v[:max_len] + "…"
+            parts.append(f"{k}={s!r}")
+        else:
+            parts.append(f"{k}=<{type(v).__name__}>")
     return ", ".join(parts)
 
 
@@ -383,7 +399,7 @@ class SafetyPipeline:
         start = asyncio.get_event_loop().time()
         self._stats["total"] += 1
 
-        logger.info("工具开始: %s(%s)", name, _format_args(raw_params))
+        logger.info("工具开始: %s(%s)", name, _safe_arg_summary(raw_params))
 
         # 统一日志 + 返回
         def _finish(result: Any):

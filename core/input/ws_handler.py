@@ -350,9 +350,14 @@ async def handle_ws(
                         requestId=_current_request_id(),
                     ).wire_dict())
                 except ValidationError as e:
-                    logger.warning("WS 消息内容校验失败: %s", e)
+                    # D4/P1-17：日志与 ACK 都不含 invalid input——只取 loc/type/code
+                    err_summary = "; ".join(
+                        f"{'.'.join(str(x) for x in err['loc'])}:{err['type']}"
+                        for err in e.errors(include_input=False)
+                    )
+                    logger.warning("WS 消息内容校验失败: %s", err_summary)
                     await ws.send_json(ErrorMessage(
-                        message=f"Invalid message content: {e}",
+                        message=f"Invalid message content: {err_summary}",
                         code="CONTRACT_VALIDATION",
                         requestId=_current_request_id(),
                     ).wire_dict())

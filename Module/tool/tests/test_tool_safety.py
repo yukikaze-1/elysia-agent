@@ -484,3 +484,46 @@ class TestContainmentHardening:
                                               session_id="default", is_write=False)
         # resolved 会跟随 symlink 到 outside/secret.txt——但 raw 链含 symlink → 拒绝
         assert _validate_path(resolved, profile, raw=target) is not None
+
+
+class TestLogRedaction:
+    """D4/P1-17：日志脱敏——敏感字段值不落日志。"""
+
+    def test_sensitive_keys_redacted(self):
+        from Module.tool.safety import _safe_arg_summary
+        summary = _safe_arg_summary({
+            "note": "今天天气",
+            "api_key": "sk-secret-12345",
+            "content": "私聊正文",
+            "path": "/home/user/secret.txt",
+        })
+        assert "sk-secret-12345" not in summary
+        assert "私聊正文" not in summary
+        assert "/home/user/secret.txt" not in summary
+        assert "api_key=<redacted>" in summary
+        assert "content=<redacted>" in summary
+        assert "path=<redacted>" in summary
+        # 非敏感 key 保留值（简短字符串）
+        assert "note='今天天气'" in summary
+
+    def test_non_sensitive_long_value_truncated(self):
+        from Module.tool.safety import _safe_arg_summary
+        summary = _safe_arg_summary({"note": "a" * 100}, max_len=10)
+        assert "…" in summary
+        assert len(summary) < 50
+
+    def test_validation_error_format_no_input(self, caplog):
+        """safety 的 validation 错误格式化不含 invalid input。"""
+        import logging
+        from pydantic import BaseModel, Field
+
+        class M(BaseModel):
+            content: str = Field(max_length=3)
+
+        try:
+            M(content="超长的非法输入值XYZ")
+        except Exception as e:
+            from Module.tool.safety import _format_validation_error
+            text = _format_validation_error(e)
+        assert "超长的非法输入值XYZ" not in text
+        assert "content" in text
