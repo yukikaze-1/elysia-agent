@@ -64,7 +64,7 @@
 | `make test-quick` | **3051 passed, 2 skipped, 119 deselected**（300s）|
 | `make test-normal`（CI 同款）| **3131 passed, 0 failed** |
 | `ruff`（`make lint`）| 通过（TID252/ANN）|
-| `pyright`（Elysia env）| **0 error**，1 warning（`core/monitoring/__init__.py` IdleMonitor，F4 处理）|
+| `pyright`（Elysia env，含 scripts）| **0 error，0 warning**（monitoring IdleMonitor 已修，F4）|
 | `python app.py --check` | 13/13 |
 | contract / golden frames 漂移 | 通过 |
 
@@ -86,11 +86,13 @@
 
 #### C. 工程化 / 文档（F 批次，正式 release candidate 前置）
 
-- **F1** 真正全量离线 CI（`test-all` 名不副实）
-- **F2** 依赖锁 + 安全扫描（requirements 无 lock/hash；CI 复用宿主 conda env）
-- **F3** backend-only setup/start（现强制装 v1 前端）
-- **F4** scripts 静态门禁 + 高复杂度入口拆分（scripts 17 ANN；monitoring `__all__`）
-- **F5** 文档/测试统计漂移 + Electron 交接（活跃文档 3186 vs 实际 3290+；错误码 40/41）
+> **2026-08-11 状态：F1-F3 完成、F4 门禁扩展完成（复杂度拆分 defer）、F5 完成。** 详见 plan 执行记录。
+
+- ~~**F1**~~ ✅ 真正全量离线 CI：external marker 取代 `--ignore`，WorkflowEngine unit/service 入合并门禁（test-quick 3324 / test-normal 3426）；`test-all` 真全仓非 external；`make test-external` + CI external job（workflow_dispatch 受信）；pr-gate 去 ignore + ruff 含 scripts + coroutine warnings-as-errors
+- ~~**F2**~~ ✅ 依赖锁 + 安全扫描（拍板统一 conda）：`environment.yml` 单源 + `environment.lock.yml` 精确锁（115 pip 包）+ `make lock-env`/`make audit`（pip-audit + bandit，bandit 7062→0 High）；CI 锁漂移校验；uv 迁移记 todo.md 未来项
+- ~~**F3**~~ ✅ backend-only setup/start：默认无 Node 可安装/启动；`--with-frontend` 显式构建 v1 UI（npm ci）；preflight 失败默认非零退出 + `--skip-preflight` 降级；shell smoke 11 断言
+- **F4** 🟡 门禁扩展完成（scripts 纳入 Ruff/Pyright + monitoring 0 warning + coroutine warnings-as-errors）；`register_api_routes`/`handle_json_message`/`handle_ws` 复杂度拆分 **defer**（937 行闭包重构，plan 渐进允许，联调前避免一次性大改）
+- ~~**F5**~~ ✅ 文档/交接：`print_test_stats.py` 统计自动生成（3503）+ 错误码单源（41 码一致）+ contract 发版记录 + Electron 变更清单 + security/storage 运维说明同步
 
 #### D. 部分完成项（不影响对应 review 项主结论）
 
