@@ -2,10 +2,10 @@
 
 使用内存版 FakeDocumentDBBackend，不触碰真实 Mongo。覆盖：
 - db=None（Mongo 离线）→ 所有操作 fail-closed raise StorageUnavailableError
-- claim 新键 → 返回 None（新 claim）
-- claim 已存在键 → 返回既有记录（并发/重放，保留首写 message_id/digest）
+- claim 新键 → ClaimResult.acquired=True（获得所有权）
+- claim 已存在键 → ClaimResult.acquired=False + 既有记录（并发/重放，保留首写 message_id/digest）
 - 不同 conversation_id 同 client_request_id → 独立 claim
-- complete → status=completed
+- complete → status=accepted
 - release → 删除记录
 - connect 建唯一索引（conversation_id+client_request_id）+ TTL 索引（expires_at）
 
@@ -13,14 +13,15 @@ Run: python -m pytest core/storage/tests/test_idempotency_repo.py -q
 """
 
 import asyncio
+import time
 from datetime import datetime, timezone
 
 import pytest
 
 from core.storage.idempotency_repo import (
     IdempotencyRepository,
-    STATUS_COMPLETED,
-    STATUS_IN_PROGRESS,
+    STATUS_ACCEPTED,
+    STATUS_CLAIMED,
     StorageUnavailableError,
 )
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
@@ -44,7 +45,8 @@ class TestFailClosed:
         repo = IdempotencyRepository(db=None)
         with pytest.raises(StorageUnavailableError):
             _run(repo.claim("default", "crid", content_digest="abc", message_id="m1",
-                            status=STATUS_IN_PROGRESS, expires_at=_expires()))
+                            status=STATUS_CLAIMED, claimed_at=time.time(),
+                            expires_at=_expires()))
 
     def test_get_offline_raises(self):
         repo = IdempotencyRepository(db=None)
@@ -63,53 +65,62 @@ class TestFailClosed:
 
 
 class TestClaim:
-    def test_claim_new_returns_none(self):
+    def test_claim_new_acquires(self):
+        """新 claim → acquired=True（所有权归本调用方）。"""
         repo = IdempotencyRepository(db=FakeDocumentDBBackend())
         r = _run(repo.claim("default", "crid", content_digest="abc", message_id="m1",
-                            status=STATUS_IN_PROGRESS, expires_at=_expires()))
-        assert r is None  # 新 claim
+                            status=STATUS_CLAIMED, claimed_at=time.time(),
+                            expires_at=_expires()))
+        assert r.acquired is True  # 新 claim 获得所有权
+        assert r.entry["message_id"] == "m1"
         doc = _run(repo.get("default", "crid"))
         assert doc is not None
         assert doc["message_id"] == "m1"
         assert doc["content_digest"] == "abc"
-        assert doc["status"] == STATUS_IN_PROGRESS
+        assert doc["status"] == STATUS_CLAIMED
         assert doc["conversation_id"] == "default"
         assert doc["client_request_id"] == "crid"
+        assert doc["claimed_at"] > 0  # 墙钟 unix 秒（TTL/接管判 stale 依据）
         assert doc["expires_at"]  # BSON Date TTL 字段
 
-    def test_claim_existing_returns_existing(self):
-        """同键二次 claim（并发/重放）→ 返回既有记录，不覆盖首写。"""
+    def test_claim_existing_loses(self):
+        """同键二次 claim（并发/重放）→ acquired=False + 既有记录，不覆盖首写。"""
         repo = IdempotencyRepository(db=FakeDocumentDBBackend())
         _run(repo.claim("default", "crid", content_digest="abc", message_id="m1",
-                        status=STATUS_IN_PROGRESS, expires_at=_expires()))
+                        status=STATUS_CLAIMED, claimed_at=time.time(),
+                        expires_at=_expires()))
         existing = _run(repo.claim("default", "crid", content_digest="DIFFERENT",
-                                   message_id="m2", status=STATUS_IN_PROGRESS,
-                                   expires_at=_expires()))
-        assert existing is not None
-        assert existing["message_id"] == "m1"
-        assert existing["content_digest"] == "abc"
+                                   message_id="m2", status=STATUS_CLAIMED,
+                                   claimed_at=time.time(), expires_at=_expires()))
+        assert existing.acquired is False  # 并发 loser：不进入业务处理
+        assert existing.entry["message_id"] == "m1"
+        assert existing.entry["content_digest"] == "abc"
 
     def test_claim_scoped_by_conversation(self):
         """不同会话同 client_request_id → 独立新 claim（唯一约束按会话维度）。"""
         repo = IdempotencyRepository(db=FakeDocumentDBBackend())
         _run(repo.claim("conv_a", "crid", content_digest="abc", message_id="m1",
-                        status=STATUS_IN_PROGRESS, expires_at=_expires()))
+                        status=STATUS_CLAIMED, claimed_at=time.time(),
+                        expires_at=_expires()))
         r = _run(repo.claim("conv_b", "crid", content_digest="abc", message_id="m2",
-                            status=STATUS_IN_PROGRESS, expires_at=_expires()))
-        assert r is None
+                            status=STATUS_CLAIMED, claimed_at=time.time(),
+                            expires_at=_expires()))
+        assert r.acquired is True
         assert _run(repo.get("conv_b", "crid"))["message_id"] == "m2"
 
     def test_complete_updates_status(self):
         repo = IdempotencyRepository(db=FakeDocumentDBBackend())
         _run(repo.claim("default", "crid", content_digest="abc", message_id="m1",
-                        status=STATUS_IN_PROGRESS, expires_at=_expires()))
+                        status=STATUS_CLAIMED, claimed_at=time.time(),
+                        expires_at=_expires()))
         _run(repo.complete("default", "crid"))
-        assert _run(repo.get("default", "crid"))["status"] == STATUS_COMPLETED
+        assert _run(repo.get("default", "crid"))["status"] == STATUS_ACCEPTED
 
     def test_release_deletes_record(self):
         repo = IdempotencyRepository(db=FakeDocumentDBBackend())
         _run(repo.claim("default", "crid", content_digest="abc", message_id="m1",
-                        status=STATUS_IN_PROGRESS, expires_at=_expires()))
+                        status=STATUS_CLAIMED, claimed_at=time.time(),
+                        expires_at=_expires()))
         _run(repo.release("default", "crid"))
         assert _run(repo.get("default", "crid")) is None
 

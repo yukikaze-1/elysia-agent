@@ -29,6 +29,10 @@ if TYPE_CHECKING:
 # 默认保留窗口：1 小时（进程内 TTL 与 Mongo TTL 索引同值）
 _DEFAULT_TTL_SECONDS = 3600.0
 
+# CLAIMED 新鲜窗口（unix 秒）：过期 CLAIMED 才允许接管（Task 1 单源；Task 2 扩展）。
+# 全局单源——idempotency_repo._is_stale 惰性 import 本常量，禁止在 repo 层重定义。
+GRACE_SECONDS = 30.0
+
 
 @dataclass
 class IdempotencyEntry:

@@ -120,11 +120,22 @@ class Repository(ABC):
         """使后端状态失效（P1-05）：下次健康检查/操作触发真正重连。"""
         self._db = None
 
+    @property
+    def is_connected(self) -> bool:
+        """当前是否已持有后端连接（``_db`` 非空）。
+
+        注意：不代表真实可用——Motor client 断网后 ``_db`` 仍非 None（假阳性）。
+        健康判断用 ``health_check()`` 真实 ping；本属性供 durable 初值判定等
+        轻量场景（D5-b：configure 初值 ``repo is None or not repo.is_connected``）。
+        """
+        return self._db is not None
+
     async def _call(
         self,
         coro_factory: Callable[[], Awaitable[_T]],
         *,
         reason: str = "存储操作失败",
+        non_fatal: Callable[[BaseException], bool] | None = None,
     ) -> _T:
         """执行后端操作，连接异常 → StorageUnavailableError + 状态失效（review 复核 #2）。
 
@@ -138,18 +149,24 @@ class Repository(ABC):
             coro_factory: 返回 awaitable 的零参 callable（惰性求值，避免异常发生在
                 await 之前被误判）。
             reason: 日志/错误描述（标记状态失效的原因）。
+            non_fatal: 业务冲突谓词（如 DuplicateKeyError）。命中时**裸抛原始异常**——
+                不 `_mark_unavailable()`、不包装 StorageUnavailableError（并发同键
+                claim 的 winner 分支依赖原始 driver 异常类名判定，见 D6/D6-d）。
 
         Returns:
             后端操作返回值。
 
         Raises:
-            StorageUnavailableError: 后端操作抛异常（连接失败等）。
+            StorageUnavailableError: 后端操作抛异常（连接失败等）；non_fatal 命中除外。
         """
         try:
             return await coro_factory()
         except StorageUnavailableError:
             raise
         except Exception as e:
+            if non_fatal is not None and non_fatal(e):
+                # 业务冲突（非存储故障）：不判死、不包装——裸抛原始异常，由调用方分支
+                raise
             logger.warning("%s: %s", reason, e)
             if not self._injected_db:
                 self._mark_unavailable(reason)
