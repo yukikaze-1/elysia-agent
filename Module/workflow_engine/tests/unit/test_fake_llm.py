@@ -21,8 +21,6 @@ from Module.workflow_engine.tests.helpers.fake_llm import (
 )
 from Module.workflow_engine.workflow_engine import WorkflowEngine
 
-pytestmark = pytest.mark.unit
-
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -72,16 +70,16 @@ async def test_with_deadline_times_out():
 async def test_counting_llm_forwards_messages():
     class Real:
         def __init__(self):
-            self.calls = []
+            self.calls = []          # (messages, kwargs) 记录——断言 messages 与 kwargs 均透传
             self.chat = self          # 属性自引用（非方法）——委托链 real.chat.completions.create 走属性
             self.completions = self
         async def create(self, *, messages, **kwargs):
-            self.calls.append(messages); return "ok"
+            self.calls.append((messages, kwargs)); return "ok"
     real = Real()
     cl = CountingLLM(real)
-    await cl.create(messages=[{"role": "user", "content": "x"}], model="m")
+    await cl.create(messages=[{"role": "user", "content": "x"}], model="m", temperature=0.5)
     assert cl.count == 1
-    assert real.calls == [[{"role": "user", "content": "x"}]]   # messages 被透传
+    assert real.calls == [([{"role": "user", "content": "x"}], {"model": "m", "temperature": 0.5})]   # messages + kwargs 均透传
 
 
 @pytest.mark.service

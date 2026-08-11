@@ -109,5 +109,5 @@ def pytest_collection_modifyitems(config, items):
         return
     skip = pytest.mark.skipif(True, reason="需要 RUN_EXTERNAL_TESTS=1 显式 opt-in（真实 LLM/DB E2E）")
     for item in items:
-        if "external" in item.keywords:
+        if item.get_closest_marker("external") is not None:   # 精确判 marker（keyword 是超集，防误 skip）
             item.add_marker(skip)
