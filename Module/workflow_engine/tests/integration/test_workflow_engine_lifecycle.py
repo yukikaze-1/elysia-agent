@@ -37,7 +37,7 @@ from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
 from Module.workflow_engine.tests.helpers import build_test_workflow_engine, get_tools_from_manager
 
-pytestmark = [pytest.mark.slow, pytest.mark.external]
+pytestmark = [pytest.mark.slow, pytest.mark.integration, pytest.mark.external]
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 测试
