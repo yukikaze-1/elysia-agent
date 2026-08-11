@@ -1199,6 +1199,19 @@ class TestExecuteInflight:
         await task
 
 
+@pytest.mark.service
+class TestShutdownDeferredTeardown:
+    @pytest.mark.asyncio
+    async def test_shutdown_waits_deferred_teardowns(self):
+        tm = ToolManager()
+        old = MagicMock(); old.teardown = AsyncMock()
+        t = asyncio.create_task(old.teardown())
+        tm._teardown_tasks["x:teardown:1"] = t
+        await tm.shutdown()
+        assert old.teardown.await_count == 1
+        assert tm._teardown_tasks == {}
+
+
 # ============================================================
 # ToolManager —— set_hitl_broadcast（设置 HITL 广播）
 # ============================================================

@@ -138,20 +138,30 @@ class ToolManager:
     async def shutdown(self) -> None:
         """优雅关闭管理器。
 
-        取消所有 in-flight 工具执行任务，依次调用所有插件的 teardown()。
+        持 _reload_lock 与 reload 互斥（防 double-teardown / 半替换状态）；
+        取消所有 in-flight 工具执行任务，依次调用所有插件的 teardown()，
+        最后收尾延迟 teardown 任务（reload 排空超时登记，不被 cancel_all 取消）。
         """
-        await self.cancel_all()
-        teardowns = [
-            p.teardown()
-            for p in self._plugins.values()
-        ]
-        results = await asyncio.gather(*teardowns, return_exceptions=True)
-        for name, result in zip(self._plugins.keys(), results):
-            if isinstance(result, Exception):
-                logger.warning(
-                    "工具 '%s' teardown() 异常: %s", name, result,
+        async with self._reload_lock:
+            await self.cancel_all()
+            teardowns = [
+                p.teardown()
+                for p in self._plugins.values()
+            ]
+            results = await asyncio.gather(*teardowns, return_exceptions=True)
+            for name, result in zip(self._plugins.keys(), results):
+                if isinstance(result, Exception):
+                    logger.warning(
+                        "工具 '%s' teardown() 异常: %s", name, result,
+                    )
+            self._plugins.clear()
+            # 收尾延迟 teardown 任务（reload 排空超时登记）——不被 cancel_all
+            # 取消，此处显式等待，防事件循环关闭时旧实例资源清理中断
+            if self._teardown_tasks:
+                await asyncio.gather(
+                    *self._teardown_tasks.values(), return_exceptions=True,
                 )
-        self._plugins.clear()
+                self._teardown_tasks.clear()
         logger.info("ToolManager 已关闭")
 
     # ---- Execution ----
