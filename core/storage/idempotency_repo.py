@@ -53,7 +53,7 @@ STATUS_REJECTED = "rejected"
 
 
 def _grace_seconds() -> float:
-    """CLAMED 新鲜窗口（unix 秒），单源：``core.input.idempotency.GRACE_SECONDS``。
+    """CLAIMED 新鲜窗口（unix 秒），单源：``core.input.idempotency.GRACE_SECONDS``。
 
     函数内延迟 import 绕开循环依赖：core.input 包 __init__ → server → agent →
     idempotency_repo（agent.agent:97 顶层 import 本模块）。调用时模块图已完整加载，
@@ -223,15 +223,36 @@ class IdempotencyRepository(Repository):
             # 永不接管）
             status_in_doc = "claimed" if rec.get("status") == "in_progress" else rec.get("status")
             if status_in_doc == STATUS_CLAIMED and _is_stale(rec.get("claimed_at", 0)):
-                await self._call(
+                # 条件接管：原子性来自条件 update_one 的返回 modified_count，而非 find
+                # 快照——并发双读同一 stale CLAIMED 文档时只有先写者赢，后写者因
+                # claimed_at 已被刷新而 conditional filter 失配（modified_count=0）。
+                # $or 的 missing-claimed_at 分支覆盖 pre-migration 文档（无 claimed_at
+                # 字段 = 视为 stale）；当前写入恒带 claimed_at，新鲜值天然不匹配 $lt，
+                # 防双接管（review Important#1）。
+                cutoff = time.time() - _grace_seconds()
+                win = await self._call(
                     lambda: db.update_one(
-                        COLLECTION, filter_expr,
+                        COLLECTION,
+                        {
+                            "conversation_id": conversation_id,
+                            "client_request_id": client_request_id,
+                            "status": {"$in": [STATUS_CLAIMED, "in_progress"]},
+                            "$or": [{"claimed_at": {"$lt": cutoff}},
+                                    {"claimed_at": {"$exists": False}}],
+                        },
                         {"$set": {"claimed_at": claimed_at, "expires_at": expires_at}},
                     ),
                     reason="IdempotencyRepository.claim 接管更新失败",
                 )
-                rec = {**rec, "claimed_at": claimed_at, "expires_at": expires_at}
-                return ClaimResult(entry=rec, acquired=True)
+                if win:  # modified_count > 0 = 本次取得接管权
+                    rec = {**rec, "claimed_at": claimed_at, "expires_at": expires_at}
+                    return ClaimResult(entry=rec, acquired=True)
+                # 竞态输家：重新读取，返回 acquired=False（读到 winner 更新后的新鲜 CLAIMED）
+                existing = await self._call(
+                    lambda: db.find(COLLECTION, filter_expr, limit=1),
+                    reason="IdempotencyRepository.claim 接管竞态读回失败",
+                )
+                return ClaimResult(entry=existing[0], acquired=False)
             return ClaimResult(entry=rec, acquired=False)
         doc = {
             "conversation_id": conversation_id,
@@ -290,9 +311,8 @@ class IdempotencyRepository(Repository):
             payload: 附加 ACK 负载字段（合并进 ``$set``）。
         """
         db = self._require_db()
-        set_expr: dict = {"status": status}
-        if payload:
-            set_expr.update(payload)
+        set_expr: dict = dict(payload) if payload else {}
+        set_expr["status"] = status  # 显式 status 恒优先（最后写入覆盖 payload 同名键）
         await self._call(
             lambda: db.update_one(
                 COLLECTION,

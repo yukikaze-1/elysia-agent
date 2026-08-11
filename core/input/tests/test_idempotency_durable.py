@@ -11,6 +11,7 @@
 Run: python -m pytest core/input/tests/test_idempotency_durable.py -v --asyncio-mode=auto
 """
 
+import asyncio
 import time
 from datetime import datetime, timezone
 
@@ -249,6 +250,29 @@ class _RecordingUpdateFake(FakeDocumentDBBackend):
         return await super().update_one(collection, filter_expr, update, upsert=upsert)
 
 
+class _RacingTakeoverFake(FakeDocumentDBBackend):
+    """stale 接管竞态 fake：update_one 加 barrier，强制两个 claim 都先读到 stale 快照
+    （find 不设障——此时尚无人 apply），再同时进入条件 update_one——只有先写者
+    modified_count>0，后写者因 claimed_at 已刷新而失配。用于并发接管回归测试。"""
+
+    def __init__(self, stale_doc: dict) -> None:
+        super().__init__()
+        self.collections[COLLECTION] = [dict(stale_doc)]
+        self._update_barrier = asyncio.Event()
+        self._update_count = 0
+
+    async def update_one(self, collection: str, filter_expr: dict,
+                         update: dict, upsert: bool = False) -> int:
+        self._update_count += 1
+        if self._update_count == 1:
+            # update_one 汇合点：等第二个 claim 也到达再 apply（此时文档仍为 stale，
+            # 两方都持有 stale 快照——真正的竞态窗口）
+            await self._update_barrier.wait()
+        elif self._update_count == 2:
+            self._update_barrier.set()
+        return await super().update_one(collection, filter_expr, update, upsert=upsert)
+
+
 def _expires() -> datetime:
     """TTL 字段值（BSON Date，aware UTC）。"""
     return datetime.now(timezone.utc)
@@ -305,6 +329,8 @@ class TestRepoClaimContract:
         }
         fake = _DuplicateOnceFake(winner=winner)
         repo = IdempotencyRepository(db=fake)
+        repo._injected_db = False  # noqa: SLF001  # 强制走非注入路径——若 non_fatal 短路缺失，
+        # _call 会 _mark_unavailable 把 _db 置 None，以下断言即失败（钉死生产不判死保证）
         result = await repo.claim("c1", "r1", content_digest="d1", message_id="m1",
                                   status=STATUS_CLAIMED, claimed_at=time.time(),
                                   expires_at=_expires())
@@ -385,6 +411,40 @@ class TestRepoClaimContract:
         assert fake.updates == []  # 不接管 → 无 update_one
 
     @pytest.mark.asyncio
+    async def test_concurrent_stale_takeover_single_winner(self):
+        """并发接管竞态：两 claim 同读同一 stale CLAIMED → 恒恰一个 acquired=True。
+
+        条件接管 update_one（filter 含 stale 状态）保证只有先写者 modified_count>0；
+        后写者因 claimed_at 已刷新而失配，重新读回 winner 得 acquired=False——不得
+        双双进入业务处理（D6c 失败模式回归）。
+        """
+        stale = time.time() - 60.0
+        stale_doc = {
+            "conversation_id": "c1",
+            "client_request_id": "r1",
+            "content_digest": "old",
+            "message_id": "old-msg",
+            "status": STATUS_CLAIMED,
+            "claimed_at": stale,
+            "expires_at": None,
+        }
+        fake = _RacingTakeoverFake(stale_doc=stale_doc)
+        repo = IdempotencyRepository(db=fake)
+        r1, r2 = await asyncio.gather(
+            repo.claim("c1", "r1", content_digest="new1", message_id="new1-msg",
+                       status=STATUS_CLAIMED, claimed_at=time.time(),
+                       expires_at=_expires()),
+            repo.claim("c1", "r1", content_digest="new2", message_id="new2-msg",
+                       status=STATUS_CLAIMED, claimed_at=time.time(),
+                       expires_at=_expires()),
+        )
+        acquired = [r.acquired for r in (r1, r2)]
+        assert sum(acquired) == 1, f"须恰一个接管者，got acquired={acquired}"
+        loser = r1 if r1.acquired is False else r2
+        assert loser.acquired is False
+        assert loser.entry["claimed_at"] > stale  # 输家读回的是 winner 更新后的新鲜记录
+
+    @pytest.mark.asyncio
     async def test_complete_reject_persist_payload(self):
         """complete() 存 received_at/client_message_id/conversation_id_wire；reject() 存 error。"""
         fake = _RecordingUpdateFake()
@@ -401,6 +461,14 @@ class TestRepoClaimContract:
         assert set1["received_at"] == "2026-08-11T00:00:00Z"
         assert set1["client_message_id"] == "cm1"
         assert set1["conversation_id_wire"] == "wire-1"
+
+        # payload 不得覆盖显式 status（显式 status 最后写入恒优先）
+        fake.updates.clear()
+        await repo.complete("c1", "r1", payload={"status": STATUS_REJECTED, "received_at": "x"})
+        assert fake.updates
+        set1b = fake.updates[0][1]["$set"]
+        assert set1b["status"] == STATUS_ACCEPTED  # 显式 status 恒优先
+        assert set1b["received_at"] == "x"  # 其余负载字段正常落库
 
         fake.updates.clear()
         await repo.reject("c1", "r1",
