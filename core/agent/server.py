@@ -435,6 +435,7 @@ class AgentServer:
                     logger.info("STT not available — text-only mode", exc_info=False)
 
             app = create_app(cast(Any, self), serve_static=True,
+                            serve_chat=self._config.server.serve_chat,
                             wake_word_enabled=wake_word_enabled,
                             task_system=self._task_system,
                             auth_token=self._config.server.auth_token,
@@ -454,14 +455,28 @@ class AgentServer:
                 getattr(self, '_milvus_ok', False),
             )
             tts_model = self._config.tts.model
-            server_info = "\n".join([
-                f"  ---",
-                f"  WebSocket: ws://{host}:{port}/ws  |  前端: http://{host}:{port}/",
-                f"  STT: {self._stt_banner_status()}",
-                f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
-                f"  退出: Ctrl+C 或浏览器关闭服务按钮",
-                f"{'='*50}",
-            ])
+            serve_chat = self._config.server.serve_chat   # banner 局部——与 create_app 传参同源
+            if serve_chat:
+                frontend_line = f"  前端: http://{host}:{port}/"
+                server_info = "\n".join([
+                    f"  ---",
+                    f"  WebSocket: ws://{host}:{port}/ws  |  {frontend_line}",
+                    f"  STT: {self._stt_banner_status()}",
+                    f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
+                    f"  退出: Ctrl+C 或浏览器关闭服务按钮",
+                    f"{'='*50}",
+                ])
+            else:
+                # 聊天 UI 已停用：banner 补一行提示，避免 / 死链误导（SERVE_CHAT=1 可恢复）
+                server_info = "\n".join([
+                    f"  ---",
+                    f"  WebSocket: ws://{host}:{port}/ws  |  "
+                    f"聊天 UI 已停用（serve_chat=False），/debug 仪表盘可用；SERVE_CHAT=1 可恢复",
+                    f"  STT: {self._stt_banner_status()}",
+                    f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
+                    f"  退出: Ctrl+C 或浏览器关闭服务按钮",
+                    f"{'='*50}",
+                ])
             logger.info(server_info)
             print(f"\n{'='*50}")
             print(f"  服务已启动 → http://{host}:{port}")

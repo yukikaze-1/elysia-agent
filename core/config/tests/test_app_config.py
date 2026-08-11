@@ -70,3 +70,19 @@ class TestServerConfigBatch1:
         f = next(f for f in dataclasses.fields(ServerConfig) if f.name == "attachment_sig_secret")
         assert f.metadata["_config_env"] == "ATTACHMENT_SIG_SECRET"
         assert f.metadata["_config_secret"] is True
+
+
+class TestServerConfigServeChat:
+    """serve_chat 开关（停用 v1 聊天 / 保留 /debug）：默认关 + env 绑定。"""
+
+    def test_serve_chat_default_false(self):
+        """serve_chat 默认关（ban v1 聊天）。"""
+        from core.config.app_config import ServerConfig
+        assert ServerConfig().serve_chat is False
+
+    def test_serve_chat_env_binding(self):
+        """serve_chat 绑定 env SERVE_CHAT。"""
+        import dataclasses
+        from core.config.app_config import ServerConfig
+        f = next(f for f in dataclasses.fields(ServerConfig) if f.name == "serve_chat")
+        assert f.metadata["_config_env"] == "SERVE_CHAT"

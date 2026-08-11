@@ -39,6 +39,9 @@ class ServerConfig:
     # 产品访问 token（批次 1）：护 /ws + 业务 /api/* + /uploads/*；与 SERVER_AUTH_TOKEN
     # （admin/debug）权限域分离。secret=True 防止写入 YAML/git。
     access_token: str = ConfigField(default="", env="AGENT_ACCESS_TOKEN", secret=True)
+    # 停用 v1 浏览器聊天（2026-08-11）：serve_chat 默认关 → / 404；/debug 仪表盘
+    # 独立保留（拆耦合）。SERVE_CHAT=1 可逆恢复浏览器聊天。
+    serve_chat: bool = ConfigField(default=False, env="SERVE_CHAT")
     max_ws_connections: int = ConfigField(default=64)
     # D6b：公开入口限流（类别 → rpm，0 关闭；单进程语义，不假装全局限流）。
     # 覆盖 plan Task D6b：连接/消息（generation）/provider test/upload/search/工具。
