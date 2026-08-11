@@ -1,4 +1,5 @@
 """共享 pytest fixtures — 所有 Module/ 子模块测试自动继承。"""
+import os
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -95,3 +96,18 @@ def documentdb_backend():
         b._client = MagicMock()  # type: ignore[attr-defined]
         b._db = {}  # type: ignore[attr-defined]
         return b
+
+
+# ============================================================
+# External 测试门禁（F1/E4）
+# ============================================================
+
+def pytest_collection_modifyitems(config, items):
+    """外部测试门禁：未显式 RUN_EXTERNAL_TESTS=1 → external 测试整体 skip。
+    用 item.add_marker(skipif)——裸 pytest.skip() 在 collection 阶段会中断收集。"""
+    if os.getenv("RUN_EXTERNAL_TESTS") == "1":
+        return
+    skip = pytest.mark.skipif(True, reason="需要 RUN_EXTERNAL_TESTS=1 显式 opt-in（真实 LLM/DB E2E）")
+    for item in items:
+        if "external" in item.keywords:
+            item.add_marker(skip)
