@@ -186,12 +186,12 @@ def test_error_message_client_request_id_and_retry_after_ms():
     assert d["retryAfterMs"] == 1000
 
 
-# ── 6 负面 golden 帧经判别校验 + IN_PROGRESS retryAfterMs ──────────────────
+# ── 7 负面 golden 帧经判别校验 + IN_PROGRESS retryAfterMs ──────────────────
 
 
 @pytest.mark.unit
 def test_rejected_golden_frames_validate_and_in_progress_retry():
-    """6 负面 golden 帧均通过 UserAckMessage 判别校验；IN_PROGRESS retryAfterMs==30000。"""
+    """7 负面 golden 帧均通过 UserAckMessage 判别校验；IN_PROGRESS retryAfterMs==30000。"""
     traces = _ROOT / "docs" / "archive" / "frontend-handoff-v2" / "traces"
     content = (traces / "ws-v2-rejected.jsonl").read_text(encoding="utf-8")
     frames = [json.loads(line) for line in content.splitlines() if line.strip()]

@@ -4,7 +4,7 @@
 无网络：构造 `ServerMessage` 契约模型 → `wire_dict()` → 标准 JSONL（每个非空行
 都是 JSON 对象）写
 `docs/archive/frontend-handoff-v2/traces/ws-v2-{handshake,session,chat,cancel,fail,tool,voice,rejected}.jsonl`
-（前 7 个 accepted 场景 + `rejected` 含 6 个负面 rejected ACK 帧）。
+（前 7 个 accepted 场景 + `rejected` 含 7 个负面 rejected ACK 帧）。
 
 帧序列为固定测试数据（确定性——漂移门禁要求字节稳定，不取 datetime.now），
 由 frontend_contract 契约源生成，**非事实源**：真实捕获已停用

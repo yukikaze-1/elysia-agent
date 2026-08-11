@@ -84,8 +84,13 @@ def assert_secure_bind(host: str, access_token: str, auth_token: str = "") -> No
 def warn_if_unsecured(host: str, access_token: str, auth_token: str = "") -> None:
     """非回环绑定 + 未配置认证 token → 显著告警；仅配置一侧 → 提示同时配置。
 
-    满足 PRD「绑定非回环地址且未启用认证时应拒绝启动或输出显著阻塞告警」的
-    "或"分支——不拒绝启动（config 默认 host=0.0.0.0，拒绝会破坏本地开发）。
+    本函数只告警、不拒绝启动——拒绝分支由 `assert_secure_bind` 承担（fail-closed）：
+    默认配置 host=127.0.0.1 走回环放行，非回环绑定在无 AGENT_ACCESS_TOKEN 且未显式
+    设 ALLOW_INSECURE_REMOTE=1 时启动即被拒；SERVER_AUTH_TOKEN 单独配置**不**放行
+    远程绑定（管理面 token 不护业务端点，review 复核 #1）。故本函数满足 PRD「绑定
+    非回环地址且未启用认证时应拒绝启动或输出显著阻塞告警」的"或"分支——仅对未被
+    `assert_secure_bind` 拒绝（loopback / AGENT_ACCESS_TOKEN / ALLOW_INSECURE_REMOTE=1
+    任一放行）的非回环绑定输出显著告警，仅配置一侧 → 提示同时配置。
 
     Args:
         host: 服务绑定地址。
