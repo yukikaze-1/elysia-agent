@@ -61,14 +61,16 @@
 
 | 门禁 | 结果 |
 |---|---|
-| `make test-quick` | **3051 passed, 2 skipped, 119 deselected**（300s）|
-| `make test-normal`（CI 同款）| **3131 passed, 0 failed** |
+| `make test-quick` | **3388 passed, 2 skipped, 177 deselected**（E 批次后）|
+| `make test-normal`（CI 同款）| **3490 passed, 0 failed**（E 批次后）|
 | `ruff`（`make lint`）| 通过（TID252/ANN）|
-| `pyright`（Elysia env，含 scripts）| **0 error，0 warning**（monitoring IdleMonitor 已修，F4）|
+| `pyright`（Elysia env，含 scripts）| **0 error，0 warning** |
 | `python app.py --check` | 13/13 |
 | contract / golden frames 漂移 | 通过 |
 
 ### 2.5 剩余未做项
+
+> **2026-08-11 更新：E 批次（E1-E4）全部完成**。详见 spec/plan（`docs/superpowers/specs|plans/2026-08-11-*`）与执行记录。
 
 #### A. 需要产品决策 / 外部依赖（`todo.md` A 组，不宜擅自拍板）
 
@@ -76,13 +78,13 @@
 |---|---|---|
 | ~~D6c 跨重启持久化幂等~~ ✅ | **2026-08-11 完成**：claim Mongo 持久化（唯一约束 + TTL）；产品模式离线 fail-closed、dev 内存降级 + `idempotency_durable` 暴露 | 已拍板：产品 fail-closed + dev 降级 |
 | ~~D6b 公开入口实际限流~~ ✅ | **2026-08-11 完成**：单进程 token-bucket，REST 429 / WS RATE_LIMITED，内存有界 | 已拍板：单进程（per-process 语义文档化）|
-| **E2 Workflow submit 有界排队** | `submit()` 先等 semaphore，PAUSED 任务占 slot 时第二次 submit 无限等待 | 计划推荐「立即返回 + 后台 QUEUED」 |
+| ~~E2 Workflow submit 有界排队~~ ✅ | **2026-08-11 完成**：submit 预创建 QUEUED 状态 + 入队即返；`_drain_queue` 后台 worker（`max_queue_size` 默认 5）；PAUSED 释放 slot；resume 槽满入队 + `resume_pending` 幂等；stop/cancel 终态化 QUEUED/PAUSED | 已拍板：方案 A（立即返回 + 后台有界 QUEUED）|
 
 #### B. Workflow 独立子系统（工作量大，非 P1）
 
-- **E3** cancel/pause 终态单调性（M19/M20：resume→pause 销毁 task/mailbox；planning 后 cancel 被改回 RUNNING）
-- **E4** 测试确定性：全量 pytest 的 2 个失败均为真实 `DEEPSEEK_API_KEY` 外部 E2E 首事件超时
-- **E1** 工具热重载原子回滚（reload 后读旧 class、失败无回滚）
+- ~~**E3**~~ ✅ cancel/pause 终态单调性：cancel 同步置 CANCELLED（权威终态）+ owned.cancel 打断 in-flight；LLM 强中断 + 工具 shield（副作用不打断）+ 孤儿工具挂共享 `AgentInfra.orphan_tools`；终态不可逆（planning/_init_exec/finalize 写点）；terminal event 唯一（`_terminal_pushed` 守卫）；`_poll_mailboxes` 消费 CANCELLED；M19 resume→pause 不销毁
+- ~~**E4**~~ ✅ 测试确定性：fake-LLM 基建（FakeLLM/with_deadline/CountingLLM）+ `RUN_EXTERNAL_TESTS=1` 门禁（`Module/conftest.py` skip hook）+ integration marker 补齐 + coroutine warning 清零；外部 E2E 仅显式 opt-in 运行
+- ~~**E1**~~ ✅ 工具热重载原子回滚：锁外构造/setup 新实例 → 持锁身份复核 + 原子替换四 dict → 锁外排空旧 in-flight + teardown；setup 失败保留旧实例；`_teardown_tasks` 独立登记（不被 cancel_all 取消）；reload 返回 `(bool, str)` + server 解包
 
 #### C. 工程化 / 文档（F 批次，正式 release candidate 前置）
 
@@ -107,8 +109,8 @@
 |---|---|---|
 | 本机 / 测试数据 / 受控联调 | **可用** | 数据备份；不要当作重启可靠性证明 |
 | 内部多人试用 / 真实会话附件 | **可用（推荐先故障注入复验）** | P1 已清 |
-| 非回环 / 远程生产 | **有条件（2026-08-11 后）** | D6b 限流 + D6c 幂等已落地；F 批次 + Workflow E 项仍缺 |
-| 正式发布 | **不通过** | F1-F5 + E 项清完 |
+| 非回环 / 远程生产 | **有条件（2026-08-11 后）** | D6b 限流 + D6c 幂等已落地；F 批次 + Workflow E 项已清 |
+| 正式发布 | **有条件（2026-08-11 后）** | 后端产品化门禁 D6b/D6c + F1-F5 + E1-E4 已清；剩余 WS Bearer token 前端接线 + 前端阶段 3+ 联调 |
 
 ---
 
@@ -221,16 +223,16 @@
 |---|---|---|
 | D6c 幂等 | Mongo 离线时 fail-closed 还是保留内存降级（降级需在 server_info 暴露非 durable 窗口）| ✅ **2026-08-11 拍板 + 完成**：产品 fail-closed + dev 内存降级 |
 | D6b 限流 | 单进程内限流 vs 多实例共享 backend（计划禁止「假装全局限流」）| ✅ **2026-08-11 拍板 + 完成**：单进程 token-bucket，per-process 语义文档化 |
-| E2 submit | 计划推荐「立即返回 + 后台有界 QUEUED」；若改选快速 `BUSY/QUEUE_FULL` 须先改公开契约与计划记录 | ⬜ 待拍板 |
+| E2 submit | 计划推荐「立即返回 + 后台有界 QUEUED」；若改选快速 `BUSY/QUEUE_FULL` 须先改公开契约与计划记录 | ✅ **2026-08-11 拍板 + 完成**：方案 A（立即返回 + 后台有界 QUEUED，resume 槽满入队 + `resume_pending` 幂等）|
 
 ### 5.2 建议的推进顺序
 
 **并行轨**：
-- 后端：D6b/D6c **已完成（2026-08-11）** → 剩余 F 批次工程化（F1 CI 矩阵 + F2 依赖锁，不依赖拍板）→ E 批次（Workflow 子系统，工作量大，含 E2 待拍板）。
+- 后端：D6b/D6c + F1-F5 + **E1-E4 全部完成（2026-08-11）**——后端产品化门禁 + Workflow 子系统 + 工具热重载 + 测试确定性已落地。
 - 前端：阶段 2 块 A 收尾（review + 进度文档 doc16 同步）→ 进入阶段 2「核心聊天纵向闭环」，用真实后端做首次联调。
 - 联调衔接：做 WS query-param token 支持（一个提交）以解除远程联调阻塞。
 
-**里程碑**：两端「真实后端联调打通阶段 2 主链路」→ 前端阶段 3/4 → 后端 F 批次 + 门禁 → 两端同时收敛到发布候选。
+**里程碑**：两端「真实后端联调打通阶段 2 主链路」→ 前端阶段 3/4 → 两端同时收敛到发布候选。
 
 ---
 
