@@ -166,8 +166,17 @@ safety = SafetyProfile(network_allowed=True, max_concurrency=3)
 ## 热重载
 
 ```python
-await tm.reload_plugin("web_search")  # 修改插件代码后无需重启服务
+ok, reason = await tm.reload_plugin("web_search")  # 修改插件代码后无需重启服务
 ```
+
+返回 `(bool, str)`——成功/失败 + 原因。语义（E1/P2-06）：
+
+- **锁外构造/setup**：`importlib.reload` 新模块后从新 module 重新 discover class（不读旧
+  注册表缓存），共用 `_load_safety_config`（config.yaml → SafetyProfile），构造 + `setup()` 新实例。
+- **持锁原子替换**：`_reload_lock` 仅覆盖四注册表 dict 的 swap 微秒窗口（身份复核防并发覆盖）。
+- **锁外排空**：替换后等旧实例 in-flight（`_inflight` 实例快照）排空再 teardown；超时 10s
+  转后台延迟 teardown（`_teardown_tasks` 独立登记，不被 `cancel_all` 取消，`shutdown` 显式收尾）。
+- **失败回滚**：新 setup 抛/模块无匹配类/身份被并发覆盖 → 保留旧实例，注册表零改动，返回失败原因。
 
 约束：插件必须模块级无状态（所有状态依托于 `PluginContext` 或 `self`）。
 

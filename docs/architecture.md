@@ -633,6 +633,15 @@ tool_adapter = ToolAdapter(ALL_PLUGINS, ...); await tool_adapter.start()
 # GATE_REJECTED: 调度前被 gate 拦截，与 UNKNOWN_TOOL（执行层发现）分工明确
 ```
 
+**热重载语义（E1，P2-06）**：`reload_plugin` 返回 `(bool, str)`——成功/失败 + 原因。
+流程：锁外 `importlib.reload` 新模块 + 重新 `_discover_class`（不再读旧 `_plugin_classes`）+
+共用 `_load_safety_config`（config.yaml → SafetyProfile）+ 构造/setup 新实例 → 持
+`_reload_lock` 身份复核 + 原子替换四注册表 dict（微秒窗口）→ 锁外排空旧实例 in-flight
+（`_inflight` 按实例快照，超时 10s 转后台延迟 teardown，`_teardown_tasks` 独立登记、不被
+`cancel_all` 取消、shutdown 显式 gather 收尾）。新 setup 失败/身份被并发覆盖 → 回滚保留
+旧实例，注册表零改动。锁仅覆盖 swap——排空期其他工具与新调用不受阻塞，调用只见完整旧版
+或完整新版（无混合状态）。
+
 详见 `Module/tool/README.md`。
 
 已注册工具（16 个）：
@@ -718,7 +727,7 @@ aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂�
 | GET\|POST | `/shutdown` | 关闭服务 |
 | POST | `/restart` | 重启服务 |
 | GET | `/tools` | 工具插件列表 |
-| POST | `/tools/reload` | 热重载工具插件 |
+| POST | `/tools/reload` | 热重载工具插件（返回 `{ok, name, error?}`——成功/失败 + 原因，E1） |
 
 **api_routes.py（14）：**
 
