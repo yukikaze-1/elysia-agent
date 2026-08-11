@@ -288,8 +288,27 @@ export interface ServerInfoMessage {
   build_sha?: string
 }
 
-/** 用户消息确认（v2）：接受后跟 generation.*，rejected 带 error 不生成。 */
-export interface UserAckMessage {
+/** rejected ACK 错误负载（取代任意 dict；details 可携带 idempotency_durable，D3）。
+
+与 GenerationFailedMessage/ErrorMessage 的错误信封同位置字段（code/message/
+retryable/details）+ 顶层 retryAfterMs（与 ErrorMessage 同位置，§2.1）。 */
+export interface AckError {
+  /** 稳定错误码（CONTRACT_VALIDATION/SESSION_NOT_FOUND/QUEUE_FULL/STORAGE_UNAVAILABLE/RATE_LIMITED/IN_PROGRESS/INTERNAL 等） */
+  code: string
+  /** 公开说明 */
+  message: string
+  /** 是否可重试 */
+  retryable: boolean
+  /** 公开安全详情（STORAGE_UNAVAILABLE 时携带 idempotency_durable），可缺省 */
+  details?: Record<string, unknown>
+  /** 建议重试退避毫秒（retryable 时），可缺省 */
+  retryAfterMs?: number
+}
+
+/** 用户消息接受确认（v2）：accepted → 后续 generation.* 事件；无 error。
+
+extra=forbid：accepted 带 error 键即非法组合（判别联合不变量，机器契约拒绝）。 */
+export interface AcceptedUserAckMessage {
   type: 'user_message.ack'
   /** 正式用户消息 ID（预分配，落库一致） */
   messageId: string
@@ -297,14 +316,34 @@ export interface UserAckMessage {
   clientRequestId: string
   /** 客户端本地消息 ID，可缺省 */
   clientMessageId?: string
-  /** 会话 ID，批次 2 恒 null，可缺省 */
+  /** 会话 ID，可缺省 */
   conversationId?: string
   /** 接收时间（UTC ISO） */
   receivedAt: string
-  /** accepted 进入生成；rejected 带 error */
-  status: AckStatus
-  /** rejected 时的 {code,message,retryable}，可缺省 */
-  error?: Record<string, unknown>
+  /** 判别键：accepted 恒字面量 */
+  status: 'accepted'
+}
+
+/** 用户消息拒绝确认（v2）：messageId 恒 ""（D2：短期保留空白串兼容前端批次 A）；error 必填。
+
+clientRequestId 不做 min_length——「缺少 clientRequestId」的契约拒绝需要回显空串
+（否则构造失败被吞，客户端拿不到任何响应）。 */
+export interface RejectedUserAckMessage {
+  type: 'user_message.ack'
+  /** 正式用户消息 ID——rejected 恒空串（D2） */
+  messageId: ''
+  /** 原客户端请求 ID（缺失时回显空串） */
+  clientRequestId: string
+  /** 客户端本地消息 ID，可缺省 */
+  clientMessageId?: string
+  /** 会话 ID，可缺省 */
+  conversationId?: string
+  /** 接收时间（UTC ISO） */
+  receivedAt: string
+  /** 判别键：rejected 恒字面量 */
+  status: 'rejected'
+  /** 拒绝原因（必填） */
+  error: AckError
 }
 
 /** 生成开始（v2）。messageId = assistant 父消息 ID（generation 开始预分配）。 */
@@ -572,7 +611,10 @@ export interface SetTtsVoiceResultMessage {
 /** 错误消息。
 
 requestId（批次 7，P7-12）：关联 WS 侧请求 ID（来源 UserInputData.request_id，
-有则带、无则 None 缺省省略）——客户端可凭此关联日志/幂等排查。 */
+有则带、无则 None 缺省省略）——客户端可凭此关联日志/幂等排查。
+clientRequestId（批次 B，BE-P1-03）：关联客户端请求 ID——命令类消息限流时提取
+回显，前端可凭此 settle 对应 promise。
+retryAfterMs（批次 B）：顶层建议重试退避毫秒（RATE_LIMITED 时），可缺省。 */
 export interface ErrorMessage {
   type: 'error'
   /** 错误描述 */
@@ -581,8 +623,12 @@ export interface ErrorMessage {
   code?: string
   /** 关联请求 ID（WS 侧 request_id），可缺省 */
   requestId?: string
+  /** 关联客户端请求 ID（命令类限流提取回显），可缺省 */
+  clientRequestId?: string
   /** 是否可重试，可缺省 */
   retryable?: boolean
+  /** 建议重试退避毫秒（RATE_LIMITED 时），可缺省 */
+  retryAfterMs?: number
   /** 公开安全详情，可缺省 */
   details?: Record<string, unknown>
 }
@@ -743,6 +789,8 @@ export interface SwitchModelMessage {
   service: string
   /** 目标模型标识 */
   model: string
+  /** 客户端请求 ID（限流关联回显），可缺省 */
+  clientRequestId?: string
 }
 
 /** 客户端请求设置服务开关（stt/tts 后端模式）。 */
@@ -752,6 +800,8 @@ export interface SetServiceMessage {
   service: 'stt' | 'tts'
   /** 是否启用 */
   enabled: boolean
+  /** 客户端请求 ID（限流关联回显），可缺省 */
+  clientRequestId?: string
 }
 
 /** 客户端设置 TTS 声音（v2，恒作用于活动会话，BE-051）。
@@ -762,6 +812,8 @@ export interface SetTtsVoiceMessage {
   type: 'set_tts_voice'
   /** 目标声音 ID（须在活动会话激活 TTS 后端 list_voices 结果内） */
   voice: string
+  /** 客户端请求 ID（限流关联回显），可缺省 */
+  clientRequestId?: string
 }
 
 /** 客户端提交工具审批结果。 */
@@ -771,6 +823,8 @@ export interface ToolApprovalMessage {
   request_id: string
   /** 是否批准 */
   approved: boolean
+  /** 客户端请求 ID（限流关联回显），可缺省 */
+  clientRequestId?: string
 }
 
 /** 客户端切换唤醒词开关。 */
@@ -778,6 +832,8 @@ export interface WakeToggleMessage {
   type: 'wake_toggle'
   /** 是否启用 */
   enabled: boolean
+  /** 客户端请求 ID（限流关联回显），可缺省 */
+  clientRequestId?: string
 }
 
 /** 客户端激活/切换会话（v2）：服务端切 active 并重发新活动会话回放。
@@ -787,6 +843,8 @@ export interface ActivateSessionMessage {
   type: 'activate_session'
   /** 目标会话 ID（必填） */
   conversationId: string
+  /** 客户端请求 ID（限流关联回显），可缺省 */
+  clientRequestId?: string
 }
 
 /** 客户端输入音频描述（9C-1）：固定格式，仅支持 pcm_s16le/16000Hz/单声道。
@@ -2177,10 +2235,6 @@ export interface TaskData {
   edges: string[][]
 }
 
-export type AckStatus =
-  | 'accepted'
-  | 'rejected'
-
 export type AudioFormat =
   | 'wav'
   | 'mp3'
@@ -2266,7 +2320,8 @@ export type ServerMessage =
   | ServiceModeResultMessage
   | SetTtsVoiceResultMessage
   | ErrorMessage
-  | UserAckMessage
+  | AcceptedUserAckMessage
+  | RejectedUserAckMessage
   | GenerationStartedMessage
   | GenerationSegmentStartedMessage
   | GenerationDeltaMessage

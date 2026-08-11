@@ -33,9 +33,12 @@ from core.input.voice_sessions import VoiceSessionError, VoiceSessionManager
 from core.storage.idempotency_repo import STATUS_ACCEPTED, STATUS_REJECTED
 from core.utils import get_request_id
 from frontend_contract import (
+    AcceptedUserAckMessage,
+    AckError,
     CommandMessage,
     ErrorMessage,
     ExpressionMessage,
+    RejectedUserAckMessage,
     SessionMessage,
     SessionMessageItem,
     ServiceModeResultMessage,
@@ -43,11 +46,10 @@ from frontend_contract import (
     SwitchModelResultMessage,
     TokenStats,
     TranscriptionMessage,
-    UserAckMessage,
     WakeMessage,
 )
 from frontend_contract.ws_message import (
-    AckStatus, AudioInputDescriptor, ClientMessage, V2TextMessage,
+    AudioInputDescriptor, ClientMessage, V2TextMessage,
 )
 from frontend_contract.version import TRANSPORT_VERSION
 from core.input.tts_profile import _active_tts_profile
@@ -530,22 +532,33 @@ async def _voice_stt_gate(agent: "Agent",
 async def _send_ack(ws: "web.WebSocketResponse | None", message_id: str,
                     client_request_id: str,
                     client_message_id: str | None, conversation_id: str | None,
-                    status: str, error: dict | None = None, *,
+                    status: str, error: "dict | AckError | None" = None, *,
                     received_at: str | None = None) -> None:
     """发送 v2 用户消息确认（ws 可空——缺发送连接时静默跳过）。
 
+    Task 6：按 status 构造判别联合成员——accepted → AcceptedUserAckMessage（无 error）；
+    rejected → RejectedUserAckMessage（error 经 ``AckError.model_validate`` 归一，兼容
+    dict 与 AckError 两种入参，Task 7 传 AckError；rejected 恒 messageId=""）。
     received_at 缺省用 now_iso()；重放路径必须传持久化原值（rejected/accepted 重放
-    逐字一致，spec §1.1）。error 参数保持 ``dict | None``（Task 6 改判别构造时
-    pydantic 自动 coerce dict→AckError，本任务不依赖 Task 6 模型）。
+    逐字一致，spec §1.1）。
     """
     if ws is None:
         return
     try:
-        await ws.send_json(UserAckMessage(
-            messageId=message_id, clientRequestId=client_request_id,
-            clientMessageId=client_message_id, conversationId=conversation_id,
-            receivedAt=received_at or now_iso(), status=AckStatus(status), error=error,
-        ).wire_dict())
+        ack_ts = received_at or now_iso()
+        if status == "accepted":
+            ack: AcceptedUserAckMessage | RejectedUserAckMessage = AcceptedUserAckMessage(
+                messageId=message_id, clientRequestId=client_request_id,
+                clientMessageId=client_message_id, conversationId=conversation_id,
+                receivedAt=ack_ts, status="accepted")
+        else:
+            ack = RejectedUserAckMessage(
+                messageId="", clientRequestId=client_request_id,
+                clientMessageId=client_message_id, conversationId=conversation_id,
+                receivedAt=ack_ts, status="rejected",
+                error=AckError.model_validate(error) if error is not None
+                else AckError(code="INTERNAL", message="未知错误", retryable=False))
+        await ws.send_json(ack.wire_dict())
     except Exception:
         logger.debug("发送 user_message.ack 失败", exc_info=True)
 

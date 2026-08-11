@@ -19,12 +19,29 @@ from frontend_contract.version import PROTOCOL_VERSION, TRANSPORT_VERSION
 OUTPUT = Path(__file__).parent / "contract.schema.json"
 
 
+def _is_collectible(annotation: Any) -> bool:
+    """成员判定递归化：BaseModel 子类 **或** Annotated 判别联合（Task 6 嵌套判别联合）。
+
+    旧实现 `all(issubclass(c, BaseModel) ...)` 遇嵌套 Annotated 成员（如
+    `ServerMessage` 内的 `UserAckMessage = Annotated[Union[...]]`）抛
+    `TypeError: issubclass() arg 1 must be a class`（_AnnotatedAlias 非 type）。
+    递归判定后，pydantic `TypeAdapter.json_schema()` 原生产出嵌套 oneOf（已确认
+    pydantic 2.13 正确处理嵌套判别联合）。
+    """
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return True
+    if get_origin(annotation) is Annotated:
+        inner = get_args(annotation)[0]
+        return get_origin(inner) is Union and all(_is_collectible(c) for c in get_args(inner))
+    return False
+
+
 def build_models():
-    """收集 (名称, 可校验对象)：BaseModel 子类 + Annotated 判别联合（Q1）。
+    """收集 (名称, 可校验对象)：BaseModel 子类 + Annotated 判别联合（Q1 + Task 6 嵌套）。
 
     `ServerMessage` 是 `Annotated[Union[...], Field(discriminator)]`，**不是 type 实例**，
     `issubclass(obj, BaseModel)` 会跳过——须按 `get_origin(obj) is Annotated` 单独收集
-    （复用 `__main__._collect` 的展开思路；成员类型校验 `get_args(obj)[0].__args__`）。
+    （复用 `__main__._collect` 的展开思路；成员类型校验走递归 `_is_collectible`）。
     """
     for mod in (ws_message, rest, debug):
         for name, obj in vars(mod).items():
@@ -33,7 +50,7 @@ def build_models():
         for name, obj in vars(mod).items():
             if get_origin(obj) is Annotated:
                 union = get_args(obj)[0]
-                if get_origin(union) is Union and all(issubclass(c, BaseModel) for c in get_args(union)):
+                if get_origin(union) is Union and all(_is_collectible(c) for c in get_args(union)):
                     yield name, obj
 
 

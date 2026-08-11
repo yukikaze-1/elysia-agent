@@ -1,5 +1,128 @@
 {
   "models": {
+    "AcceptedUserAckMessage": {
+      "additionalProperties": false,
+      "description": "用户消息接受确认（v2）：accepted → 后续 generation.* 事件；无 error。\n\nextra=forbid：accepted 带 error 键即非法组合（判别联合不变量，机器契约拒绝）。",
+      "properties": {
+        "clientMessageId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "客户端本地消息 ID，可缺省",
+          "title": "Clientmessageid"
+        },
+        "clientRequestId": {
+          "description": "原客户端请求 ID",
+          "minLength": 1,
+          "title": "Clientrequestid",
+          "type": "string"
+        },
+        "conversationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "会话 ID，可缺省",
+          "title": "Conversationid"
+        },
+        "messageId": {
+          "description": "正式用户消息 ID（预分配，落库一致）",
+          "minLength": 1,
+          "title": "Messageid",
+          "type": "string"
+        },
+        "receivedAt": {
+          "description": "接收时间（UTC ISO）",
+          "title": "Receivedat",
+          "type": "string"
+        },
+        "status": {
+          "const": "accepted",
+          "description": "判别键：accepted 恒字面量",
+          "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "const": "user_message.ack",
+          "default": "user_message.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "messageId",
+        "clientRequestId",
+        "receivedAt",
+        "status"
+      ],
+      "title": "AcceptedUserAckMessage",
+      "type": "object"
+    },
+    "AckError": {
+      "description": "rejected ACK 错误负载（取代任意 dict；details 可携带 idempotency_durable，D3）。\n\n与 GenerationFailedMessage/ErrorMessage 的错误信封同位置字段（code/message/\nretryable/details）+ 顶层 retryAfterMs（与 ErrorMessage 同位置，§2.1）。",
+      "properties": {
+        "code": {
+          "description": "稳定错误码（CONTRACT_VALIDATION/SESSION_NOT_FOUND/QUEUE_FULL/STORAGE_UNAVAILABLE/RATE_LIMITED/IN_PROGRESS/INTERNAL 等）",
+          "title": "Code",
+          "type": "string"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "公开安全详情（STORAGE_UNAVAILABLE 时携带 idempotency_durable），可缺省",
+          "title": "Details"
+        },
+        "message": {
+          "description": "公开说明",
+          "title": "Message",
+          "type": "string"
+        },
+        "retryAfterMs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "建议重试退避毫秒（retryable 时），可缺省",
+          "title": "Retryafterms"
+        },
+        "retryable": {
+          "description": "是否可重试",
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "title": "AckError",
+      "type": "object"
+    },
     "ActionMessage": {
       "description": "角色动作事件（工具执行中/完成等）。",
       "properties": {
@@ -49,6 +172,19 @@
     "ActivateSessionMessage": {
       "description": "客户端激活/切换会话（v2）：服务端切 active 并重发新活动会话回放。\n\n未知 conversationId → 不回放，发 ErrorMessage{code: SESSION_NOT_FOUND}（批次 1 错误信封）。",
       "properties": {
+        "clientRequestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "客户端请求 ID（限流关联回显），可缺省",
+          "title": "Clientrequestid"
+        },
         "conversationId": {
           "description": "目标会话 ID（必填）",
           "title": "Conversationid",
@@ -1343,6 +1479,19 @@
         "ActivateSessionMessage": {
           "description": "客户端激活/切换会话（v2）：服务端切 active 并重发新活动会话回放。\n\n未知 conversationId → 不回放，发 ErrorMessage{code: SESSION_NOT_FOUND}（批次 1 错误信封）。",
           "properties": {
+            "clientRequestId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端请求 ID（限流关联回显），可缺省",
+              "title": "Clientrequestid"
+            },
             "conversationId": {
               "description": "目标会话 ID（必填）",
               "title": "Conversationid",
@@ -1537,6 +1686,19 @@
         "SetServiceMessage": {
           "description": "客户端请求设置服务开关（stt/tts 后端模式）。",
           "properties": {
+            "clientRequestId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端请求 ID（限流关联回显），可缺省",
+              "title": "Clientrequestid"
+            },
             "enabled": {
               "description": "是否启用",
               "title": "Enabled",
@@ -1568,6 +1730,19 @@
         "SetTtsVoiceMessage": {
           "description": "客户端设置 TTS 声音（v2，恒作用于活动会话，BE-051）。\n\n服务端经活动会话激活 TTS 后端 `list_voices()` 校验 voice 存在后写入 service_state.tts_voice；\n未知 voice/后端不可用 → set_tts_voice_result {ok: False, error}（不改 state）。",
           "properties": {
+            "clientRequestId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端请求 ID（限流关联回显），可缺省",
+              "title": "Clientrequestid"
+            },
             "type": {
               "const": "set_tts_voice",
               "default": "set_tts_voice",
@@ -1589,6 +1764,19 @@
         "SwitchModelMessage": {
           "description": "客户端请求切换模型。",
           "properties": {
+            "clientRequestId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端请求 ID（限流关联回显），可缺省",
+              "title": "Clientrequestid"
+            },
             "model": {
               "description": "目标模型标识",
               "title": "Model",
@@ -1620,6 +1808,19 @@
               "description": "是否批准",
               "title": "Approved",
               "type": "boolean"
+            },
+            "clientRequestId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端请求 ID（限流关联回显），可缺省",
+              "title": "Clientrequestid"
             },
             "request_id": {
               "description": "审批请求 ID",
@@ -2138,6 +2339,19 @@
         "WakeToggleMessage": {
           "description": "客户端切换唤醒词开关。",
           "properties": {
+            "clientRequestId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端请求 ID（限流关联回显），可缺省",
+              "title": "Clientrequestid"
+            },
             "enabled": {
               "description": "是否启用",
               "title": "Enabled",
@@ -4660,8 +4874,21 @@
       "type": "object"
     },
     "ErrorMessage": {
-      "description": "错误消息。\n\nrequestId（批次 7，P7-12）：关联 WS 侧请求 ID（来源 UserInputData.request_id，\n有则带、无则 None 缺省省略）——客户端可凭此关联日志/幂等排查。",
+      "description": "错误消息。\n\nrequestId（批次 7，P7-12）：关联 WS 侧请求 ID（来源 UserInputData.request_id，\n有则带、无则 None 缺省省略）——客户端可凭此关联日志/幂等排查。\nclientRequestId（批次 B，BE-P1-03）：关联客户端请求 ID——命令类消息限流时提取\n回显，前端可凭此 settle 对应 promise。\nretryAfterMs（批次 B）：顶层建议重试退避毫秒（RATE_LIMITED 时），可缺省。",
       "properties": {
+        "clientRequestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "关联客户端请求 ID（命令类限流提取回显），可缺省",
+          "title": "Clientrequestid"
+        },
         "code": {
           "anyOf": [
             {
@@ -4706,6 +4933,19 @@
           "default": null,
           "description": "关联请求 ID（WS 侧 request_id），可缺省",
           "title": "Requestid"
+        },
+        "retryAfterMs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "建议重试退避毫秒（RATE_LIMITED 时），可缺省",
+          "title": "Retryafterms"
         },
         "retryable": {
           "anyOf": [
@@ -7929,6 +8169,135 @@
       "title": "ProvidersResponse",
       "type": "object"
     },
+    "RejectedUserAckMessage": {
+      "$defs": {
+        "AckError": {
+          "description": "rejected ACK 错误负载（取代任意 dict；details 可携带 idempotency_durable，D3）。\n\n与 GenerationFailedMessage/ErrorMessage 的错误信封同位置字段（code/message/\nretryable/details）+ 顶层 retryAfterMs（与 ErrorMessage 同位置，§2.1）。",
+          "properties": {
+            "code": {
+              "description": "稳定错误码（CONTRACT_VALIDATION/SESSION_NOT_FOUND/QUEUE_FULL/STORAGE_UNAVAILABLE/RATE_LIMITED/IN_PROGRESS/INTERNAL 等）",
+              "title": "Code",
+              "type": "string"
+            },
+            "details": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "公开安全详情（STORAGE_UNAVAILABLE 时携带 idempotency_durable），可缺省",
+              "title": "Details"
+            },
+            "message": {
+              "description": "公开说明",
+              "title": "Message",
+              "type": "string"
+            },
+            "retryAfterMs": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "建议重试退避毫秒（retryable 时），可缺省",
+              "title": "Retryafterms"
+            },
+            "retryable": {
+              "description": "是否可重试",
+              "title": "Retryable",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "retryable"
+          ],
+          "title": "AckError",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "用户消息拒绝确认（v2）：messageId 恒 \"\"（D2：短期保留空白串兼容前端批次 A）；error 必填。\n\nclientRequestId 不做 min_length——「缺少 clientRequestId」的契约拒绝需要回显空串\n（否则构造失败被吞，客户端拿不到任何响应）。",
+      "properties": {
+        "clientMessageId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "客户端本地消息 ID，可缺省",
+          "title": "Clientmessageid"
+        },
+        "clientRequestId": {
+          "description": "原客户端请求 ID（缺失时回显空串）",
+          "title": "Clientrequestid",
+          "type": "string"
+        },
+        "conversationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "会话 ID，可缺省",
+          "title": "Conversationid"
+        },
+        "error": {
+          "$ref": "#/$defs/AckError",
+          "description": "拒绝原因（必填）"
+        },
+        "messageId": {
+          "const": "",
+          "default": "",
+          "description": "正式用户消息 ID——rejected 恒空串（D2）",
+          "title": "Messageid",
+          "type": "string"
+        },
+        "receivedAt": {
+          "description": "接收时间（UTC ISO）",
+          "title": "Receivedat",
+          "type": "string"
+        },
+        "status": {
+          "const": "rejected",
+          "description": "判别键：rejected 恒字面量",
+          "title": "Status",
+          "type": "string"
+        },
+        "type": {
+          "const": "user_message.ack",
+          "default": "user_message.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "clientRequestId",
+        "receivedAt",
+        "status",
+        "error"
+      ],
+      "title": "RejectedUserAckMessage",
+      "type": "object"
+    },
     "ResourceItem": {
       "description": "会话资源索引项（按需扫描提取，url 即下载引用/缩略图）。",
       "properties": {
@@ -8636,14 +9005,128 @@
     },
     "ServerMessage": {
       "$defs": {
-        "AckStatus": {
-          "description": "用户消息确认状态（user_message.ack）。",
-          "enum": [
-            "accepted",
-            "rejected"
+        "AcceptedUserAckMessage": {
+          "additionalProperties": false,
+          "description": "用户消息接受确认（v2）：accepted → 后续 generation.* 事件；无 error。\n\nextra=forbid：accepted 带 error 键即非法组合（判别联合不变量，机器契约拒绝）。",
+          "properties": {
+            "clientMessageId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端本地消息 ID，可缺省",
+              "title": "Clientmessageid"
+            },
+            "clientRequestId": {
+              "description": "原客户端请求 ID",
+              "minLength": 1,
+              "title": "Clientrequestid",
+              "type": "string"
+            },
+            "conversationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID，可缺省",
+              "title": "Conversationid"
+            },
+            "messageId": {
+              "description": "正式用户消息 ID（预分配，落库一致）",
+              "minLength": 1,
+              "title": "Messageid",
+              "type": "string"
+            },
+            "receivedAt": {
+              "description": "接收时间（UTC ISO）",
+              "title": "Receivedat",
+              "type": "string"
+            },
+            "status": {
+              "const": "accepted",
+              "description": "判别键：accepted 恒字面量",
+              "title": "Status",
+              "type": "string"
+            },
+            "type": {
+              "const": "user_message.ack",
+              "default": "user_message.ack",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "messageId",
+            "clientRequestId",
+            "receivedAt",
+            "status"
           ],
-          "title": "AckStatus",
-          "type": "string"
+          "title": "AcceptedUserAckMessage",
+          "type": "object"
+        },
+        "AckError": {
+          "description": "rejected ACK 错误负载（取代任意 dict；details 可携带 idempotency_durable，D3）。\n\n与 GenerationFailedMessage/ErrorMessage 的错误信封同位置字段（code/message/\nretryable/details）+ 顶层 retryAfterMs（与 ErrorMessage 同位置，§2.1）。",
+          "properties": {
+            "code": {
+              "description": "稳定错误码（CONTRACT_VALIDATION/SESSION_NOT_FOUND/QUEUE_FULL/STORAGE_UNAVAILABLE/RATE_LIMITED/IN_PROGRESS/INTERNAL 等）",
+              "title": "Code",
+              "type": "string"
+            },
+            "details": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "公开安全详情（STORAGE_UNAVAILABLE 时携带 idempotency_durable），可缺省",
+              "title": "Details"
+            },
+            "message": {
+              "description": "公开说明",
+              "title": "Message",
+              "type": "string"
+            },
+            "retryAfterMs": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "建议重试退避毫秒（retryable 时），可缺省",
+              "title": "Retryafterms"
+            },
+            "retryable": {
+              "description": "是否可重试",
+              "title": "Retryable",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "retryable"
+          ],
+          "title": "AckError",
+          "type": "object"
         },
         "ActionMessage": {
           "description": "角色动作事件（工具执行中/完成等）。",
@@ -9110,8 +9593,21 @@
           "type": "object"
         },
         "ErrorMessage": {
-          "description": "错误消息。\n\nrequestId（批次 7，P7-12）：关联 WS 侧请求 ID（来源 UserInputData.request_id，\n有则带、无则 None 缺省省略）——客户端可凭此关联日志/幂等排查。",
+          "description": "错误消息。\n\nrequestId（批次 7，P7-12）：关联 WS 侧请求 ID（来源 UserInputData.request_id，\n有则带、无则 None 缺省省略）——客户端可凭此关联日志/幂等排查。\nclientRequestId（批次 B，BE-P1-03）：关联客户端请求 ID——命令类消息限流时提取\n回显，前端可凭此 settle 对应 promise。\nretryAfterMs（批次 B）：顶层建议重试退避毫秒（RATE_LIMITED 时），可缺省。",
           "properties": {
+            "clientRequestId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "关联客户端请求 ID（命令类限流提取回显），可缺省",
+              "title": "Clientrequestid"
+            },
             "code": {
               "anyOf": [
                 {
@@ -9156,6 +9652,19 @@
               "default": null,
               "description": "关联请求 ID（WS 侧 request_id），可缺省",
               "title": "Requestid"
+            },
+            "retryAfterMs": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "建议重试退避毫秒（RATE_LIMITED 时），可缺省",
+              "title": "Retryafterms"
             },
             "retryable": {
               "anyOf": [
@@ -9873,6 +10382,79 @@
             }
           },
           "title": "MessageMessage",
+          "type": "object"
+        },
+        "RejectedUserAckMessage": {
+          "additionalProperties": false,
+          "description": "用户消息拒绝确认（v2）：messageId 恒 \"\"（D2：短期保留空白串兼容前端批次 A）；error 必填。\n\nclientRequestId 不做 min_length——「缺少 clientRequestId」的契约拒绝需要回显空串\n（否则构造失败被吞，客户端拿不到任何响应）。",
+          "properties": {
+            "clientMessageId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端本地消息 ID，可缺省",
+              "title": "Clientmessageid"
+            },
+            "clientRequestId": {
+              "description": "原客户端请求 ID（缺失时回显空串）",
+              "title": "Clientrequestid",
+              "type": "string"
+            },
+            "conversationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID，可缺省",
+              "title": "Conversationid"
+            },
+            "error": {
+              "$ref": "#/$defs/AckError",
+              "description": "拒绝原因（必填）"
+            },
+            "messageId": {
+              "const": "",
+              "default": "",
+              "description": "正式用户消息 ID——rejected 恒空串（D2）",
+              "title": "Messageid",
+              "type": "string"
+            },
+            "receivedAt": {
+              "description": "接收时间（UTC ISO）",
+              "title": "Receivedat",
+              "type": "string"
+            },
+            "status": {
+              "const": "rejected",
+              "description": "判别键：rejected 恒字面量",
+              "title": "Status",
+              "type": "string"
+            },
+            "type": {
+              "const": "user_message.ack",
+              "default": "user_message.ack",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "clientRequestId",
+            "receivedAt",
+            "status",
+            "error"
+          ],
+          "title": "RejectedUserAckMessage",
           "type": "object"
         },
         "SegmentKind": {
@@ -11031,84 +11613,6 @@
           "title": "TypingMessage",
           "type": "object"
         },
-        "UserAckMessage": {
-          "description": "用户消息确认（v2）：接受后跟 generation.*，rejected 带 error 不生成。",
-          "properties": {
-            "clientMessageId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "客户端本地消息 ID，可缺省",
-              "title": "Clientmessageid"
-            },
-            "clientRequestId": {
-              "description": "原客户端请求 ID",
-              "title": "Clientrequestid",
-              "type": "string"
-            },
-            "conversationId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "会话 ID，批次 2 恒 null，可缺省",
-              "title": "Conversationid"
-            },
-            "error": {
-              "anyOf": [
-                {
-                  "additionalProperties": true,
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "rejected 时的 {code,message,retryable}，可缺省",
-              "title": "Error"
-            },
-            "messageId": {
-              "description": "正式用户消息 ID（预分配，落库一致）",
-              "title": "Messageid",
-              "type": "string"
-            },
-            "receivedAt": {
-              "description": "接收时间（UTC ISO）",
-              "title": "Receivedat",
-              "type": "string"
-            },
-            "status": {
-              "$ref": "#/$defs/AckStatus",
-              "description": "accepted 进入生成；rejected 带 error"
-            },
-            "type": {
-              "const": "user_message.ack",
-              "default": "user_message.ack",
-              "title": "Type",
-              "type": "string"
-            }
-          },
-          "required": [
-            "messageId",
-            "clientRequestId",
-            "receivedAt",
-            "status"
-          ],
-          "title": "UserAckMessage",
-          "type": "object"
-        },
         "VideoPart": {
           "description": "视频内容块（wire 镜像 core/schema/part.py VideoPart）。",
           "properties": {
@@ -11444,7 +11948,23 @@
           "tool.request": "#/$defs/ToolRequestMessage",
           "transcription": "#/$defs/TranscriptionMessage",
           "typing": "#/$defs/TypingMessage",
-          "user_message.ack": "#/$defs/UserAckMessage",
+          "user_message.ack": {
+            "discriminator": {
+              "mapping": {
+                "accepted": "#/$defs/AcceptedUserAckMessage",
+                "rejected": "#/$defs/RejectedUserAckMessage"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/AcceptedUserAckMessage"
+              },
+              {
+                "$ref": "#/$defs/RejectedUserAckMessage"
+              }
+            ]
+          },
           "voice.transcript": "#/$defs/VoiceTranscriptMessage",
           "voice_session.ack": "#/$defs/VoiceSessionAckMessage",
           "voice_session.ended": "#/$defs/VoiceSessionEndedMessage",
@@ -11514,7 +12034,21 @@
           "$ref": "#/$defs/ErrorMessage"
         },
         {
-          "$ref": "#/$defs/UserAckMessage"
+          "discriminator": {
+            "mapping": {
+              "accepted": "#/$defs/AcceptedUserAckMessage",
+              "rejected": "#/$defs/RejectedUserAckMessage"
+            },
+            "propertyName": "status"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AcceptedUserAckMessage"
+            },
+            {
+              "$ref": "#/$defs/RejectedUserAckMessage"
+            }
+          ]
         },
         {
           "$ref": "#/$defs/GenerationStartedMessage"
@@ -14146,6 +14680,19 @@
     "SetServiceMessage": {
       "description": "客户端请求设置服务开关（stt/tts 后端模式）。",
       "properties": {
+        "clientRequestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "客户端请求 ID（限流关联回显），可缺省",
+          "title": "Clientrequestid"
+        },
         "enabled": {
           "description": "是否启用",
           "title": "Enabled",
@@ -14177,6 +14724,19 @@
     "SetTtsVoiceMessage": {
       "description": "客户端设置 TTS 声音（v2，恒作用于活动会话，BE-051）。\n\n服务端经活动会话激活 TTS 后端 `list_voices()` 校验 voice 存在后写入 service_state.tts_voice；\n未知 voice/后端不可用 → set_tts_voice_result {ok: False, error}（不改 state）。",
       "properties": {
+        "clientRequestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "客户端请求 ID（限流关联回显），可缺省",
+          "title": "Clientrequestid"
+        },
         "type": {
           "const": "set_tts_voice",
           "default": "set_tts_voice",
@@ -14355,6 +14915,19 @@
     "SwitchModelMessage": {
       "description": "客户端请求切换模型。",
       "properties": {
+        "clientRequestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "客户端请求 ID（限流关联回显），可缺省",
+          "title": "Clientrequestid"
+        },
         "model": {
           "description": "目标模型标识",
           "title": "Model",
@@ -15751,6 +16324,19 @@
           "title": "Approved",
           "type": "boolean"
         },
+        "clientRequestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "客户端请求 ID（限流关联回显），可缺省",
+          "title": "Clientrequestid"
+        },
         "request_id": {
           "description": "审批请求 ID",
           "title": "Request Id",
@@ -16829,92 +17415,218 @@
     },
     "UserAckMessage": {
       "$defs": {
-        "AckStatus": {
-          "description": "用户消息确认状态（user_message.ack）。",
-          "enum": [
-            "accepted",
-            "rejected"
-          ],
-          "title": "AckStatus",
-          "type": "string"
-        }
-      },
-      "description": "用户消息确认（v2）：接受后跟 generation.*，rejected 带 error 不生成。",
-      "properties": {
-        "clientMessageId": {
-          "anyOf": [
-            {
+        "AcceptedUserAckMessage": {
+          "additionalProperties": false,
+          "description": "用户消息接受确认（v2）：accepted → 后续 generation.* 事件；无 error。\n\nextra=forbid：accepted 带 error 键即非法组合（判别联合不变量，机器契约拒绝）。",
+          "properties": {
+            "clientMessageId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端本地消息 ID，可缺省",
+              "title": "Clientmessageid"
+            },
+            "clientRequestId": {
+              "description": "原客户端请求 ID",
+              "minLength": 1,
+              "title": "Clientrequestid",
               "type": "string"
             },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "客户端本地消息 ID，可缺省",
-          "title": "Clientmessageid"
-        },
-        "clientRequestId": {
-          "description": "原客户端请求 ID",
-          "title": "Clientrequestid",
-          "type": "string"
-        },
-        "conversationId": {
-          "anyOf": [
-            {
+            "conversationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID，可缺省",
+              "title": "Conversationid"
+            },
+            "messageId": {
+              "description": "正式用户消息 ID（预分配，落库一致）",
+              "minLength": 1,
+              "title": "Messageid",
               "type": "string"
             },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "会话 ID，批次 2 恒 null，可缺省",
-          "title": "Conversationid"
-        },
-        "error": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
+            "receivedAt": {
+              "description": "接收时间（UTC ISO）",
+              "title": "Receivedat",
+              "type": "string"
             },
-            {
-              "type": "null"
+            "status": {
+              "const": "accepted",
+              "description": "判别键：accepted 恒字面量",
+              "title": "Status",
+              "type": "string"
+            },
+            "type": {
+              "const": "user_message.ack",
+              "default": "user_message.ack",
+              "title": "Type",
+              "type": "string"
             }
+          },
+          "required": [
+            "messageId",
+            "clientRequestId",
+            "receivedAt",
+            "status"
           ],
-          "default": null,
-          "description": "rejected 时的 {code,message,retryable}，可缺省",
-          "title": "Error"
+          "title": "AcceptedUserAckMessage",
+          "type": "object"
         },
-        "messageId": {
-          "description": "正式用户消息 ID（预分配，落库一致）",
-          "title": "Messageid",
-          "type": "string"
+        "AckError": {
+          "description": "rejected ACK 错误负载（取代任意 dict；details 可携带 idempotency_durable，D3）。\n\n与 GenerationFailedMessage/ErrorMessage 的错误信封同位置字段（code/message/\nretryable/details）+ 顶层 retryAfterMs（与 ErrorMessage 同位置，§2.1）。",
+          "properties": {
+            "code": {
+              "description": "稳定错误码（CONTRACT_VALIDATION/SESSION_NOT_FOUND/QUEUE_FULL/STORAGE_UNAVAILABLE/RATE_LIMITED/IN_PROGRESS/INTERNAL 等）",
+              "title": "Code",
+              "type": "string"
+            },
+            "details": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "公开安全详情（STORAGE_UNAVAILABLE 时携带 idempotency_durable），可缺省",
+              "title": "Details"
+            },
+            "message": {
+              "description": "公开说明",
+              "title": "Message",
+              "type": "string"
+            },
+            "retryAfterMs": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "建议重试退避毫秒（retryable 时），可缺省",
+              "title": "Retryafterms"
+            },
+            "retryable": {
+              "description": "是否可重试",
+              "title": "Retryable",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "retryable"
+          ],
+          "title": "AckError",
+          "type": "object"
         },
-        "receivedAt": {
-          "description": "接收时间（UTC ISO）",
-          "title": "Receivedat",
-          "type": "string"
-        },
-        "status": {
-          "$ref": "#/$defs/AckStatus",
-          "description": "accepted 进入生成；rejected 带 error"
-        },
-        "type": {
-          "const": "user_message.ack",
-          "default": "user_message.ack",
-          "title": "Type",
-          "type": "string"
+        "RejectedUserAckMessage": {
+          "additionalProperties": false,
+          "description": "用户消息拒绝确认（v2）：messageId 恒 \"\"（D2：短期保留空白串兼容前端批次 A）；error 必填。\n\nclientRequestId 不做 min_length——「缺少 clientRequestId」的契约拒绝需要回显空串\n（否则构造失败被吞，客户端拿不到任何响应）。",
+          "properties": {
+            "clientMessageId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "客户端本地消息 ID，可缺省",
+              "title": "Clientmessageid"
+            },
+            "clientRequestId": {
+              "description": "原客户端请求 ID（缺失时回显空串）",
+              "title": "Clientrequestid",
+              "type": "string"
+            },
+            "conversationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID，可缺省",
+              "title": "Conversationid"
+            },
+            "error": {
+              "$ref": "#/$defs/AckError",
+              "description": "拒绝原因（必填）"
+            },
+            "messageId": {
+              "const": "",
+              "default": "",
+              "description": "正式用户消息 ID——rejected 恒空串（D2）",
+              "title": "Messageid",
+              "type": "string"
+            },
+            "receivedAt": {
+              "description": "接收时间（UTC ISO）",
+              "title": "Receivedat",
+              "type": "string"
+            },
+            "status": {
+              "const": "rejected",
+              "description": "判别键：rejected 恒字面量",
+              "title": "Status",
+              "type": "string"
+            },
+            "type": {
+              "const": "user_message.ack",
+              "default": "user_message.ack",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "clientRequestId",
+            "receivedAt",
+            "status",
+            "error"
+          ],
+          "title": "RejectedUserAckMessage",
+          "type": "object"
         }
       },
-      "required": [
-        "messageId",
-        "clientRequestId",
-        "receivedAt",
-        "status"
-      ],
-      "title": "UserAckMessage",
-      "type": "object"
+      "discriminator": {
+        "mapping": {
+          "accepted": "#/$defs/AcceptedUserAckMessage",
+          "rejected": "#/$defs/RejectedUserAckMessage"
+        },
+        "propertyName": "status"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AcceptedUserAckMessage"
+        },
+        {
+          "$ref": "#/$defs/RejectedUserAckMessage"
+        }
+      ]
     },
     "V2TextMessage": {
       "$defs": {
@@ -17652,6 +18364,19 @@
     "WakeToggleMessage": {
       "description": "客户端切换唤醒词开关。",
       "properties": {
+        "clientRequestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "客户端请求 ID（限流关联回显），可缺省",
+          "title": "Clientrequestid"
+        },
         "enabled": {
           "description": "是否启用",
           "title": "Enabled",
@@ -17672,6 +18397,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "30ece81962a4a669",
+  "schemaHash": "7a5348a4767a9fc6",
   "transportVersion": "2"
 }

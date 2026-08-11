@@ -10,7 +10,7 @@
 from enum import Enum, StrEnum
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import Field
+from pydantic import ConfigDict, Discriminator, Field
 
 from frontend_contract.base import ContractModel, TsNull
 from frontend_contract.rest import ConversationUsage, FinishReason
@@ -62,13 +62,6 @@ class VoiceEndReason(StrEnum):
     CANCELLED = "cancelled"
     TIMEOUT = "timeout"
     STT_DISABLED = "stt_disabled"
-
-
-class AckStatus(StrEnum):
-    """用户消息确认状态（user_message.ack）。"""
-
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
 
 # ───────────────────────────── 支持类型 ─────────────────────────────
 
@@ -307,17 +300,63 @@ class ServerInfoMessage(ContractModel):
 # 分段通道 / 分段类型 / 完成原因 / ACK 状态——语义见 batch2 spec §3.2（kind 仅 text/markdown 实现，其余预留）
 
 
-class UserAckMessage(ContractModel):
-    """用户消息确认（v2）：接受后跟 generation.*，rejected 带 error 不生成。"""
+class AckError(ContractModel):
+    """rejected ACK 错误负载（取代任意 dict；details 可携带 idempotency_durable，D3）。
+
+    与 GenerationFailedMessage/ErrorMessage 的错误信封同位置字段（code/message/
+    retryable/details）+ 顶层 retryAfterMs（与 ErrorMessage 同位置，§2.1）。
+    """
+
+    code: str = Field(description="稳定错误码（CONTRACT_VALIDATION/SESSION_NOT_FOUND/QUEUE_FULL/STORAGE_UNAVAILABLE/RATE_LIMITED/IN_PROGRESS/INTERNAL 等）")
+    message: str = Field(description="公开说明")
+    retryable: bool = Field(description="是否可重试")
+    details: Optional[dict[str, Any]] = Field(
+        default=None, description="公开安全详情（STORAGE_UNAVAILABLE 时携带 idempotency_durable），可缺省")
+    retryAfterMs: Optional[int] = Field(
+        default=None, description="建议重试退避毫秒（retryable 时），可缺省")
+
+
+class AcceptedUserAckMessage(ContractModel):
+    """用户消息接受确认（v2）：accepted → 后续 generation.* 事件；无 error。
+
+    extra=forbid：accepted 带 error 键即非法组合（判别联合不变量，机器契约拒绝）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["user_message.ack"] = "user_message.ack"
-    messageId: str = Field(description="正式用户消息 ID（预分配，落库一致）")
-    clientRequestId: str = Field(description="原客户端请求 ID")
+    messageId: str = Field(min_length=1, description="正式用户消息 ID（预分配，落库一致）")
+    clientRequestId: str = Field(min_length=1, description="原客户端请求 ID")
     clientMessageId: Optional[str] = Field(default=None, description="客户端本地消息 ID，可缺省")
-    conversationId: Optional[str] = Field(default=None, description="会话 ID，批次 2 恒 null，可缺省")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
     receivedAt: str = Field(description="接收时间（UTC ISO）")
-    status: AckStatus = Field(description="accepted 进入生成；rejected 带 error")
-    error: Optional[dict[str, Any]] = Field(default=None, description="rejected 时的 {code,message,retryable}，可缺省")
+    status: Literal["accepted"] = Field(description="判别键：accepted 恒字面量")
+
+
+class RejectedUserAckMessage(ContractModel):
+    """用户消息拒绝确认（v2）：messageId 恒 ""（D2：短期保留空白串兼容前端批次 A）；error 必填。
+
+    clientRequestId 不做 min_length——「缺少 clientRequestId」的契约拒绝需要回显空串
+    （否则构造失败被吞，客户端拿不到任何响应）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["user_message.ack"] = "user_message.ack"
+    messageId: Literal[""] = Field(default="", description="正式用户消息 ID——rejected 恒空串（D2）")
+    clientRequestId: str = Field(description="原客户端请求 ID（缺失时回显空串）")
+    clientMessageId: Optional[str] = Field(default=None, description="客户端本地消息 ID，可缺省")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
+    receivedAt: str = Field(description="接收时间（UTC ISO）")
+    status: Literal["rejected"] = Field(description="判别键：rejected 恒字面量")
+    error: AckError = Field(description="拒绝原因（必填）")
+
+
+# 模块级命名判别联合（Python 侧类型用；ServerMessage 的 ack 分支引用它，生成器递归展开）
+UserAckMessage = Annotated[
+    Union[AcceptedUserAckMessage, RejectedUserAckMessage],
+    Discriminator("status"),
+]
 
 
 class GenerationStartedMessage(ContractModel):
@@ -534,13 +573,20 @@ class ErrorMessage(ContractModel):
 
     requestId（批次 7，P7-12）：关联 WS 侧请求 ID（来源 UserInputData.request_id，
     有则带、无则 None 缺省省略）——客户端可凭此关联日志/幂等排查。
+    clientRequestId（批次 B，BE-P1-03）：关联客户端请求 ID——命令类消息限流时提取
+    回显，前端可凭此 settle 对应 promise。
+    retryAfterMs（批次 B）：顶层建议重试退避毫秒（RATE_LIMITED 时），可缺省。
     """
 
     type: Literal["error"] = "error"
     message: str = Field(description="错误描述")
     code: Optional[str] = Field(default=None, description="错误码（如 SESSION_NOT_FOUND），可缺省")
     requestId: Optional[str] = Field(default=None, description="关联请求 ID（WS 侧 request_id），可缺省")
+    clientRequestId: Optional[str] = Field(
+        default=None, description="关联客户端请求 ID（命令类限流提取回显），可缺省")
     retryable: Optional[bool] = Field(default=None, description="是否可重试，可缺省")
+    retryAfterMs: Optional[int] = Field(
+        default=None, description="建议重试退避毫秒（RATE_LIMITED 时），可缺省")
     details: Optional[dict[str, Any]] = Field(default=None, description="公开安全详情，可缺省")
 
 
@@ -681,6 +727,8 @@ class SwitchModelMessage(ContractModel):
     type: Literal["switch_model"] = "switch_model"
     service: str = Field(description="服务名（llm/stt/tts）")
     model: str = Field(description="目标模型标识")
+    clientRequestId: Optional[str] = Field(
+        default=None, description="客户端请求 ID（限流关联回显），可缺省")
 
 
 class SetServiceMessage(ContractModel):
@@ -689,6 +737,8 @@ class SetServiceMessage(ContractModel):
     type: Literal["set_service"] = "set_service"
     service: Literal[ServiceName.STT, ServiceName.TTS] = Field(description="服务名（仅 stt/tts，不含 llm）")
     enabled: bool = Field(description="是否启用")
+    clientRequestId: Optional[str] = Field(
+        default=None, description="客户端请求 ID（限流关联回显），可缺省")
 
 
 class SetTtsVoiceMessage(ContractModel):
@@ -700,6 +750,8 @@ class SetTtsVoiceMessage(ContractModel):
 
     type: Literal["set_tts_voice"] = "set_tts_voice"
     voice: str = Field(description="目标声音 ID（须在活动会话激活 TTS 后端 list_voices 结果内）")
+    clientRequestId: Optional[str] = Field(
+        default=None, description="客户端请求 ID（限流关联回显），可缺省")
 
 
 class ToolApprovalMessage(ContractModel):
@@ -708,6 +760,8 @@ class ToolApprovalMessage(ContractModel):
     type: Literal["tool_approval"] = "tool_approval"
     request_id: str = Field(description="审批请求 ID")
     approved: bool = Field(description="是否批准")
+    clientRequestId: Optional[str] = Field(
+        default=None, description="客户端请求 ID（限流关联回显），可缺省")
 
 
 class WakeToggleMessage(ContractModel):
@@ -715,6 +769,8 @@ class WakeToggleMessage(ContractModel):
 
     type: Literal["wake_toggle"] = "wake_toggle"
     enabled: bool = Field(description="是否启用")
+    clientRequestId: Optional[str] = Field(
+        default=None, description="客户端请求 ID（限流关联回显），可缺省")
 
 
 class ActivateSessionMessage(ContractModel):
@@ -725,6 +781,8 @@ class ActivateSessionMessage(ContractModel):
 
     type: Literal["activate_session"] = "activate_session"
     conversationId: str = Field(description="目标会话 ID（必填）")
+    clientRequestId: Optional[str] = Field(
+        default=None, description="客户端请求 ID（限流关联回显），可缺省")
 
 
 # ─────────────────── 批次 6 三种语音（BE-060/061/062） ───────────────────

@@ -38,10 +38,12 @@ from frontend_contract import (
     TokenTurnStats,
     TokenUsageMessage,
     TypingMessage,
-    UserAckMessage,
+    AcceptedUserAckMessage,
+    RejectedUserAckMessage,
+    AckError,
 )
 from frontend_contract.rest import FinishReason
-from frontend_contract.ws_message import AckStatus, AudioFormat, MessageChannel, SegmentKind
+from frontend_contract.ws_message import AudioFormat, MessageChannel, SegmentKind
 
 
 class WebSocketChannel(OutputChannel):
@@ -219,13 +221,21 @@ class WebSocketChannel(OutputChannel):
                                   client_message_id: str | None = None,
                                   conversation_id: str | None = None,
                                   received_at: str, status: str,
-                                  error: dict | None = None) -> None:
-        """发送 v2 用户消息确认。"""
-        await self._send_json(UserAckMessage(
-            messageId=message_id, clientRequestId=client_request_id,
-            clientMessageId=client_message_id, conversationId=conversation_id,
-            receivedAt=received_at, status=AckStatus(status), error=error,
-        ).wire_dict())
+                                  error: dict | AckError | None = None) -> None:
+        """发送 v2 用户消息确认（Task 6：按 status 构造判别联合成员）。"""
+        if status == "accepted":
+            ack: AcceptedUserAckMessage | RejectedUserAckMessage = AcceptedUserAckMessage(
+                messageId=message_id, clientRequestId=client_request_id,
+                clientMessageId=client_message_id, conversationId=conversation_id,
+                receivedAt=received_at, status="accepted")
+        else:
+            ack = RejectedUserAckMessage(
+                messageId="", clientRequestId=client_request_id,
+                clientMessageId=client_message_id, conversationId=conversation_id,
+                receivedAt=received_at, status="rejected",
+                error=AckError.model_validate(error) if error is not None
+                else AckError(code="INTERNAL", message="未知错误", retryable=False))
+        await self._send_json(ack.wire_dict())
 
     async def on_generation_started(self, *, generation_id: str, message_id: str,
                                     conversation_id: str | None = None,

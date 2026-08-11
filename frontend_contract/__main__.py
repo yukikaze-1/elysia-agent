@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Annotated, Union, get_args, get_origin
+from typing import Annotated, Any, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -29,6 +29,24 @@ _OUTPUTS: dict[str, Path] = {
     "schema": gen_schema.OUTPUT,
     "raw_ts": Path(__file__).resolve().parent / "contract.raw.ts",
 }
+
+
+def _expand_union_members(inner: Any) -> list[type[BaseModel]]:
+    """递归展开判别联合成员：剥 Annotated、展平 Union、具体 BaseModel 收进列表（Task 6）。
+
+    嵌套 Annotated 判别联合（如 ServerMessage 内的 `UserAckMessage`）展开为具体成员
+    （AcceptedUserAckMessage/RejectedUserAckMessage）——否则 gen_ts 对 `_AnnotatedAlias`
+    发射 `m.__name__ == "Annotated"`（不存在的 TS 类型）。TS 判别联合天然支持重叠
+    type 分支，前端按 status 再分（gen_ts 无需额外改动，扁平化后即具体 BaseModel）。
+    """
+    if get_origin(inner) is Annotated:
+        return _expand_union_members(get_args(inner)[0])
+    if get_origin(inner) is Union:
+        result: list[type[BaseModel]] = []
+        for m in get_args(inner):
+            result += _expand_union_members(m)
+        return result
+    return [inner]
 
 
 def _collect() -> tuple[list[type[BaseModel]], dict[str, list[type[BaseModel]]]]:
@@ -55,12 +73,12 @@ def _collect() -> tuple[list[type[BaseModel]], dict[str, list[type[BaseModel]]]]
         # F2（review）：ClientMessage 也注册——旧实现只注册 ServerMessage，ClientMessage
         # 判别联合不发射到 TS 产物（9B-2 入站消息契约缺位，contract.raw.ts 缺 union）。
         # 展开方式对齐 gen_schema.build_models（get_origin/get_args，参考 gen_schema）。
+        # Task 6：成员递归展开嵌套 Annotated 联合（_expand_union_members）。
         for alias in ("ServerMessage", "ClientMessage"):
             union_alias = getattr(module, alias, None)
             if union_alias is not None and get_origin(union_alias) is Annotated:
                 inner = get_args(union_alias)[0]
-                members = list(get_args(inner)) if get_origin(inner) is Union else [inner]
-                discriminated[alias] = members
+                discriminated[alias] = _expand_union_members(inner)
     return models, discriminated
 
 

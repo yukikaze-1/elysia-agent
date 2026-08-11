@@ -34,6 +34,7 @@
 | `ws-v2-fail.jsonl` | 契约源 golden | v2 Provider 故障（started→GENERATION_PROVIDER_UNAVAILABLE→idle） | 12 |
 | `ws-v2-tool.jsonl` | 契约源 golden | 桌面工具（tool.request→tool_approval→tool_calls 完成） | 4 |
 | `ws-v2-voice.jsonl` | 契约源 golden | 实时语音（started→partial→turn→ack→audio→ended） | 7 |
+| `ws-v2-rejected.jsonl` | 契约源 golden | 6 负面 rejected ACK（CONTRACT_VALIDATION/SESSION_NOT_FOUND/QUEUE_FULL/STORAGE_UNAVAILABLE/RATE_LIMITED/IN_PROGRESS，Task 6） | 6 |
 | `ws-chat.jsonl` | 历史真实 | v1 完整聊天 | 16 |
 | `ws-cancel.jsonl` | 历史真实 | v1 取消 | 15 |
 | `ws-tool-approval.jsonl` | 历史真实 | v1 工具审批 | 24 |
@@ -44,7 +45,7 @@
 ## 再生成 / 漂移检测
 
 ```bash
-python scripts/gen_contract_frames.py          # 重写 7 个 golden frames
+python scripts/gen_contract_frames.py          # 重写 8 个 golden frames
 python scripts/gen_contract_frames.py --check  # 漂移检测（CI，make check-types）
 ```
 

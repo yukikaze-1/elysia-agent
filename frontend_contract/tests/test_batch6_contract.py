@@ -1,5 +1,5 @@
 """批次 6 契约测试——三种语音 + TTS 播放控制消息。"""
-from typing import get_args
+from typing import Annotated, get_args
 
 import pytest
 from frontend_contract import (
@@ -17,7 +17,25 @@ pytestmark = pytest.mark.unit
 
 
 def _union_members():
-    return {c.__name__ for c in get_args(get_args(ServerMessage)[0])}  # Union[Annotated[Union[...]]]
+    """ServerMessage 判别联合成员名——递归展开嵌套 Annotated（Task 6 UserAckMessage 别名）。
+
+    ServerMessage = Annotated[Union[...], ...]；get_args(ServerMessage) → (Union, FieldInfo)；
+    嵌套成员（UserAckMessage = Annotated[Union[Accepted, Rejected], ...]）递归剥皮后
+    返回具体 BaseModel 名（否则含 "Annotated" 字面量）。
+    """
+    from typing import Union, get_origin
+
+    def _expand(inner):
+        if get_origin(inner) is Annotated:
+            return _expand(get_args(inner)[0])
+        if get_origin(inner) is Union:
+            result = []
+            for m in get_args(inner):
+                result += _expand(m)
+            return result
+        return [inner]
+
+    return {c.__name__ for c in _expand(get_args(ServerMessage)[0])}
 
 
 def test_server_message_union_members():

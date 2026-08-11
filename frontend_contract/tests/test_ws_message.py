@@ -4,6 +4,7 @@ pydantic 2.11 剥 Annotated（field.annotation 只剩内层类型、marker 移�
 故 ts_null 定性一律走 field_is_ts_null(field) 而非 is_ts_null(field.annotation)。
 """
 import pytest
+from typing import Literal
 
 from frontend_contract import ws_message as w
 from frontend_contract.base import field_is_ts_null
@@ -14,13 +15,21 @@ from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 @pytest.mark.unit
 def test_server_message_members():
-    """ServerMessage 判别联合：38 具名成员（27 既有 + 11 批次 6 语音/播放；UnknownMessage 由发射器追加）。"""
-    from typing import get_args
-    # ServerMessage = Annotated[Union[成员], Field(discriminator="type")]
-    # get_args(Annotated) 返回 (Union[...], FieldInfo) —— 必须先剥 Annotated 再剥 Union
-    members = get_args(get_args(w.ServerMessage)[0])
-    assert len(members) == 38  # 39 = 38 具名 + UnknownMessage（发射器追加）
-    assert all(m.__name__ != "UnknownMessage" for m in members)
+    """ServerMessage 判别联合：39 具名成员（38 既有 - UserAckMessage + Accepted/Rejected；UnknownMessage 由发射器追加）。
+
+    Task 6：UserAckMessage 拆为 Accepted/Rejected status 判别联合——成员须经递归展开
+    （复用 __main__._collect 扁平化）后数具体 BaseModel，断言含 Accepted/Rejected、
+    无 Annotated 字面量。
+    """
+    from frontend_contract import __main__ as main_mod
+    models, discriminated = main_mod._collect()
+    members = discriminated["ServerMessage"]
+    names = {m.__name__ for m in members}
+    assert len(members) == 39  # 39 具名 + UnknownMessage（发射器追加）
+    assert "UnknownMessage" not in names
+    assert "AcceptedUserAckMessage" in names
+    assert "RejectedUserAckMessage" in names
+    assert "Annotated" not in names
     assert all(getattr(m, "model_fields", None) is not None for m in members)  # 均为 BaseModel
 
 
@@ -87,8 +96,8 @@ def test_server_info_message_wire():
 
 @pytest.mark.unit
 def test_user_ack_message_wire():
-    """user_message.ack：messageId/clientRequestId/status；None 缺省省略。"""
-    msg = w.UserAckMessage(
+    """user_message.ack：accepted 判别成员 messageId/clientRequestId/status；None 缺省省略。"""
+    msg = w.AcceptedUserAckMessage(
         messageId="msg_u1", clientRequestId="req_1", clientMessageId="cm_1",
         conversationId=None, receivedAt="2026-08-04T00:00:00+00:00", status="accepted",
     )
@@ -291,7 +300,7 @@ def test_heartbeat_ack_removed_from_union():
     from frontend_contract.tests.test_batch6_contract import _union_members
     members = _union_members()
     assert "HeartbeatAckMessage" not in members
-    assert len(members) == 38
+    assert len(members) == 39
 
 
 @pytest.mark.unit
@@ -328,9 +337,10 @@ class TestWsEnums:
         assert w.ServiceName.STT == "stt"
         assert w.VoiceEndReason.TIMEOUT == "timeout"
 
-    def test_user_ack_status_annotation_is_enum(self):
-        """UserAckMessage.status 必须是 AckStatus 类型（防回落 Literal）。"""
-        assert w.UserAckMessage.model_fields["status"].annotation is w.AckStatus
+    def test_user_ack_status_annotation_is_literal(self):
+        """Accepted/Rejected 判别成员 status 必须 Literal（判别键要求，防回落 StrEnum）。"""
+        assert w.AcceptedUserAckMessage.model_fields["status"].annotation == Literal["accepted"]
+        assert w.RejectedUserAckMessage.model_fields["status"].annotation == Literal["rejected"]
 
     def test_gen_ts_emits_named_aliases(self):
         out = generate_ts([w.GenerationSegmentStartedMessage, w.GenerationCompletedMessage])

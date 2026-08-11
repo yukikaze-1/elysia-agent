@@ -75,9 +75,9 @@ def _chat() -> list[str]:
     缺省会话解析为活动会话（default），ACK 填实际 ID、generation.* 六类事件携带
     非空实际 conversationId（runtime 语义对齐，供跨仓 replay）。
     """
-    ack = wm.UserAckMessage(messageId="msg_frame_ack1", clientRequestId="req_frame_chat1",
-                            conversationId="default", receivedAt=_TS,
-                            status=wm.AckStatus.ACCEPTED)
+    ack = wm.AcceptedUserAckMessage(messageId="msg_frame_ack1", clientRequestId="req_frame_chat1",
+                                    conversationId="default", receivedAt=_TS,
+                                    status="accepted")
     thinking = wm.StateMessage(state="thinking")
     typing_on = wm.TypingMessage(typing=True)
     started = wm.GenerationStartedMessage(generationId="gen_frame_1",
@@ -131,10 +131,10 @@ def _cancel() -> list[str]:
     清理再发 typing=false、state interrupted、state idle。未完成 segment 不伪造
     segment.completed，前端以 generation.failed 结束父回复并保留已收增量。
     """
-    ack = wm.UserAckMessage(messageId="msg_frame_cancel_ack",
-                            clientRequestId="req_frame_cancel1",
-                            conversationId="default", receivedAt=_TS,
-                            status=wm.AckStatus.ACCEPTED)
+    ack = wm.AcceptedUserAckMessage(messageId="msg_frame_cancel_ack",
+                                    clientRequestId="req_frame_cancel1",
+                                    conversationId="default", receivedAt=_TS,
+                                    status="accepted")
     thinking = wm.StateMessage(state="thinking")
     typing_on = wm.TypingMessage(typing=True)
     started = wm.GenerationStartedMessage(
@@ -167,10 +167,10 @@ def _fail() -> list[str]:
     Provider 在首个 token 前失败，因此没有 segment 帧；generation.failed 是唯一父终态，
     retryable=true。异常收尾与统一 interrupt 清理会各发一次 typing=false。
     """
-    ack = wm.UserAckMessage(messageId="msg_frame_fail_ack",
-                            clientRequestId="req_frame_fail1",
-                            conversationId="default", receivedAt=_TS,
-                            status=wm.AckStatus.ACCEPTED)
+    ack = wm.AcceptedUserAckMessage(messageId="msg_frame_fail_ack",
+                                    clientRequestId="req_frame_fail1",
+                                    conversationId="default", receivedAt=_TS,
+                                    status="accepted")
     thinking = wm.StateMessage(state="thinking")
     typing_on = wm.TypingMessage(typing=True)
     started = wm.GenerationStartedMessage(
@@ -196,9 +196,9 @@ def _session() -> list[str]:
     expression = wm.ExpressionMessage(expression="开心", intensity=0.65)
     session_conv = wm.SessionMessage(conversationId="conv_frame_1", messages=[],
                                      token_stats=wm.TokenStats(total=0, byModel={}))
-    ack = wm.UserAckMessage(messageId="msg_frame_ack2", clientRequestId="req_frame_session1",
-                            conversationId="conv_frame_1", receivedAt=_TS,
-                            status=wm.AckStatus.ACCEPTED)
+    ack = wm.AcceptedUserAckMessage(messageId="msg_frame_ack2", clientRequestId="req_frame_session1",
+                                    conversationId="conv_frame_1", receivedAt=_TS,
+                                    status="accepted")
     started = wm.GenerationStartedMessage(generationId="gen_frame_2",
                                           messageId="msg_frame_ast2",
                                           conversationId="conv_frame_1")
@@ -266,6 +266,51 @@ def _voice() -> list[str]:
     return _f(started, partial, turn, ack, audio_start, audio_end, ended)
 
 
+def _rejected_acks() -> list[wm.RejectedUserAckMessage]:
+    """6 个负面 rejected ACK 帧（Task 6，BE-P1-04：handler 产生的每一种 rejected ACK 都有 golden 基线）。
+
+    均 rejected + messageId:"" + AckError；IN_PROGRESS 带 retryAfterMs=30000——
+    与 `core.input.idempotency._IN_PROGRESS_RETRY_AFTER_MS`（= GRACE_SECONDS*1000）同值
+    （帧脚本保持零 core 依赖，测试断言与常量一致防漂移）。STORAGE_UNAVAILABLE 带
+    details.idempotency_durable（D3）。
+    """
+    return [
+        wm.RejectedUserAckMessage(
+            clientRequestId="req_frame_rej_contract", conversationId="default",
+            receivedAt=_TS, status="rejected",
+            error=wm.AckError(code="CONTRACT_VALIDATION",
+                              message="消息校验失败", retryable=False)),
+        wm.RejectedUserAckMessage(
+            clientRequestId="req_frame_rej_session", conversationId="default",
+            receivedAt=_TS, status="rejected",
+            error=wm.AckError(code="SESSION_NOT_FOUND",
+                              message="会话不存在: default", retryable=False)),
+        wm.RejectedUserAckMessage(
+            clientRequestId="req_frame_rej_queue", conversationId="default",
+            receivedAt=_TS, status="rejected",
+            error=wm.AckError(code="QUEUE_FULL",
+                              message="Agent 忙，消息队列已满", retryable=True)),
+        wm.RejectedUserAckMessage(
+            clientRequestId="req_frame_rej_storage", conversationId="default",
+            receivedAt=_TS, status="rejected",
+            error=wm.AckError(code="STORAGE_UNAVAILABLE",
+                              message="幂等存储不可用（MongoDB 离线）", retryable=True,
+                              details={"idempotency_durable": False})),
+        wm.RejectedUserAckMessage(
+            clientRequestId="req_frame_rej_rate", conversationId="default",
+            receivedAt=_TS, status="rejected",
+            error=wm.AckError(code="RATE_LIMITED",
+                              message="请求过于频繁，请稍后重试", retryable=True,
+                              retryAfterMs=1000)),
+        wm.RejectedUserAckMessage(
+            clientRequestId="req_frame_rej_inprogress", conversationId="default",
+            receivedAt=_TS, status="rejected",
+            error=wm.AckError(code="IN_PROGRESS",
+                              message="请求处理中，请稍后重试", retryable=True,
+                              retryAfterMs=30000)),
+    ]
+
+
 # 文件名 → 标准 JSONL 完整内容（模块级求值——确定性；元数据放 traces/README）
 _ARTIFACTS = {
     "ws-v2-handshake.jsonl": "\n".join(_handshake()) + "\n",
@@ -275,6 +320,7 @@ _ARTIFACTS = {
     "ws-v2-fail.jsonl": "\n".join(_fail()) + "\n",
     "ws-v2-tool.jsonl": "\n".join(_tool()) + "\n",
     "ws-v2-voice.jsonl": "\n".join(_voice()) + "\n",
+    "ws-v2-rejected.jsonl": "\n".join(_f(*_rejected_acks())) + "\n",
 }
 
 
