@@ -95,8 +95,9 @@ async def cancel(
     cleanup_task: Callable[[WorkflowId], None],
     cleanup_storage: Callable[[WorkflowId, SubAgent], Awaitable[None]],
     task_id: WorkflowId,
+    task_futures: dict[WorkflowId, asyncio.Task],
 ) -> bool:
-    """软取消任务。幂等。
+    """强取消任务。幂等。
 
     PAUSED 分支在内部完成 cleanup_task() + cleanup_storage()，
     **不 release semaphore**——E2 §5 起 PAUSED 暂停时已释放执行槽，
@@ -105,10 +106,16 @@ async def cancel(
 
     QUEUED 分支（E2）同样不 release——排队任务从未 acquire 槽位。
 
+    RUNNING/PLANNING 分支（E3 §3.2 强取消）——**同步置权威终态 CANCELLED**：
+        - 取消信号 = 任务状态，不依赖 orchestrator 回写 status（任何阶段 cancel 后恒 CANCELLED）
+        - owned.cancel() 打断 in-flight LLM/planner future（await 边界抛 CancelledError）
+        - exec_state.cancel_requested 作为循环顶部快速路径（仅首次 RUNNING 有效）
+        - 该分支不推 mailbox 事件——CancelledError 传播链统一由 _run_and_cleanup 推（§3.4）
+
     二次确认由 CognitiveLoop 在上层处理。
 
     幂等——所有路径返回 True：
-    - RUNNING → 设置 exec_state.cancel_requested → Orchestrator 检测 → CANCELLED
+    - RUNNING / PLANNING → 同步置 CANCELLED + owned.cancel() + 快速路径标志
     - PAUSED  → 直接标记 CANCELLED，已有 checkpoint
     - QUEUED  → 直接标记 CANCELLED，未消耗槽位
     - 已终态   → True（无需操作）
@@ -121,13 +128,11 @@ async def cancel(
         cleanup_task: 清理任务注册表回调。
         cleanup_storage: 清理存储（checkpoint + artifact）回调。
         task_id: 要取消的任务 ID。
+        task_futures: 活跃任务的 asyncio.Task 映射（E3 强取消——owned.cancel()）。
 
     Returns:
         True: 取消信号已发送（幂等，已终态/已清理也返回 True）。
     """
-    # TODO: v1 只设标志，无超时反馈。
-    #   若 Orchestrator 因异常永远不到达下一个循环迭代，
-    #   cancel 信号可能永远不被处理。后续考虑 await + 超时机制。
     sub_agent = tasks.get(task_id)
     if sub_agent is None:
         return True  # 已清理 = 已取消
@@ -177,19 +182,21 @@ async def cancel(
             )
         return True
 
-    # ── 分支 2: RUNNING / PLANNING → 设取消标志 ──
-    if sub_agent._orchestrator is None:
-        ts.status = WorkflowStatus.CANCELLED
-        ts.updated_at = now_iso()
+    # ── 分支 2: RUNNING / PLANNING → 强取消（E3 §3.2）──
+    # 单同步块（无 await）：① 同步置权威终态 → ② exec_state 快速路径 → ③ owned.cancel()。
+    if ts.is_terminal():
+        return True                            # 已终态 = 已取消（幂等）
+    if ts.status == WorkflowStatus.COMPLETED:  # 与 finalize 竞争：终态写入已原子发生则不再覆盖
         return True
-    exec_state = sub_agent._orchestrator._exec_state
-    if exec_state is None:
-        # 尚未进入 Orchestrator（规划/校验阶段）
-        ts.status = WorkflowStatus.CANCELLED
-        ts.updated_at = now_iso()
-        return True
-
-    exec_state.cancel_requested = True
+    ts.status = WorkflowStatus.CANCELLED       # ① 同步置权威终态（PLANNING/RUNNING 恒可达）
+    ts.updated_at = now_iso()
+    if sub_agent._orchestrator is not None:
+        exec_state = sub_agent._orchestrator._exec_state
+        if exec_state is not None:             # ② 保留 None 守卫（planning 阶段 _exec_state 未建）
+            exec_state.cancel_requested = True  #    循环顶部快速路径
+    owned = task_futures.get(task_id)          # ③ owned.cancel() 打断 in-flight await（强取消）
+    if owned is not None and not owned.done():
+        owned.cancel()
     return True
 
 

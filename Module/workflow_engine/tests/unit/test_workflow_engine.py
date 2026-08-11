@@ -747,7 +747,11 @@ async def test_cancel_terminal_task_returns_true():
 
 @pytest.mark.asyncio
 async def test_cancel_running_sets_cancel_requested():
-    """RUNNING 任务 → 设 exec_state.cancel_requested=True，不立即改 status。"""
+    """RUNNING 任务 → 设 exec_state.cancel_requested=True + 同步置 CANCELLED（E3 强取消）。
+
+    E3 起 cancel() 同步置权威终态——status 立即 CANCELLED（不再依赖 orchestrator 回写），
+    owned.cancel() 负责打断 in-flight await。
+    """
     ts = await _build_task_system()
 
     tid = WorkflowId("t1")
@@ -758,8 +762,8 @@ async def test_cancel_running_sets_cancel_requested():
 
     assert await ts.cancel(tid) is True
     assert exec_state.cancel_requested is True
-    # RUNNING → 状态不变（由 Orchestrator 改为 CANCELLED）
-    assert task_state.status == WorkflowStatus.RUNNING
+    # RUNNING → 同步置 CANCELLED（权威终态，E3 §3.2）
+    assert task_state.status == WorkflowStatus.CANCELLED
 
 
 @pytest.mark.asyncio
@@ -822,6 +826,35 @@ async def test_cancel_task_state_none_returns_true():
     ts._tasks[tid] = sub_agent
 
     assert await ts.cancel(tid) is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E3: 强取消——cancel() 同步置终态 + owned.cancel() 打断 in-flight
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestCancelStrong:
+    @pytest.mark.asyncio
+    async def test_cancel_sets_terminal_and_cancels_owned(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        sa = MagicMock()
+        ts = MagicMock()
+        ts.status = WorkflowStatus.PLANNING          # 未终态
+        ts.is_terminal.return_value = False
+        sa._task_state = ts
+        sa._orchestrator = None                       # PLANNING，orchestrator 未入 run
+        tid = WorkflowId("t1")
+        engine._tasks[tid] = sa
+        engine._mailboxes[tid] = WorkflowMailbox(tid)
+        owned = asyncio.create_task(asyncio.sleep(10))   # in-flight
+        engine._task_futures[tid] = owned
+        ok = await engine.cancel(tid)
+        assert ok is True
+        assert ts.status == WorkflowStatus.CANCELLED      # 同步置终态（不等 orchestrator 回写）
+        await asyncio.sleep(0)                            # 让出事件循环——CancelledError 下一迭代才投递
+        assert owned.cancelled() is True                  # owned.cancel() 已打断 in-flight
+        await engine.stop()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

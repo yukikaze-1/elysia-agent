@@ -612,10 +612,11 @@ class WorkflowEngine:
                 )
 
     async def cancel(self, task_id: WorkflowId) -> bool:
-        """软取消任务——委托给 lifecycle.cancel()。
+        """强取消任务——委托给 lifecycle.cancel()。
 
-        PAUSED 分支的 semaphore 释放 + 清理已由 lifecycle.cancel() 内部完成。
-        调用方不得再次释放。
+        E3 起 RUNNING/PLANNING 分支同步置 CANCELLED + owned.cancel() 打断
+        in-flight await（LLM/planner 立即中断）。PAUSED 分支的 semaphore 释放 +
+        清理已由 lifecycle.cancel() 内部完成。调用方不得再次释放。
 
         Args:
             task_id: 要取消的任务 ID。
@@ -626,6 +627,7 @@ class WorkflowEngine:
         return await lifecycle.cancel(
             self._tasks, self._mailboxes, self._semaphore,
             self._cleanup_task, self._cleanup_storage, task_id,
+            self._task_futures,
         )
 
     def submit_approval(
