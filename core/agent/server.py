@@ -457,13 +457,13 @@ class AgentServer:
             tts_model = self._config.tts.model
             serve_chat = self._config.server.serve_chat   # banner 局部——与 create_app 传参同源
             if serve_chat:
-                frontend_line = f"  前端: http://{host}:{port}/"
+                frontend_line = f"前端: http://{host}:{port}/"   # 无前导空格——对齐由 `|  ` 提供
                 server_info = "\n".join([
                     f"  ---",
                     f"  WebSocket: ws://{host}:{port}/ws  |  {frontend_line}",
                     f"  STT: {self._stt_banner_status()}",
                     f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
-                    f"  退出: Ctrl+C 或浏览器关闭服务按钮",
+                    f"  退出: Ctrl+C",
                     f"{'='*50}",
                 ])
             else:
@@ -474,7 +474,7 @@ class AgentServer:
                     f"聊天 UI 已停用（serve_chat=False），/debug 仪表盘可用；SERVE_CHAT=1 可恢复",
                     f"  STT: {self._stt_banner_status()}",
                     f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
-                    f"  退出: Ctrl+C 或浏览器关闭服务按钮",
+                    f"  退出: Ctrl+C",   # 关闭服务按钮在 v1 聊天页（/ 404），不提示
                     f"{'='*50}",
                 ])
             logger.info(server_info)
