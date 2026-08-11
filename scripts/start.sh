@@ -69,15 +69,15 @@ echo "→ 构建前端..."
 if $WITH_FRONTEND; then
     if command -v npm &> /dev/null; then
         cd frontend && npm ci --silent 2>&1 && npm run build --silent 2>&1 && cd ..
-        echo "  ✓ 前端构建完成"
+        echo "  ✓ 前端构建完成（聊天界面默认停用，SERVE_CHAT=1 恢复；/debug 仪表盘可用）"
     else
         echo "  ✗ --with-frontend 需要 npm——请先安装 Node.js/npm，或去掉该 flag 用 backend-only"
         exit 1
     fi
 elif [[ -f "static/index.html" ]]; then
-    echo "  ✓ 跳过前端构建（static/ 已存在）"
+    echo "  ✓ 跳过前端构建（static/ 已存在，聊天界面默认停用，SERVE_CHAT=1 恢复；/debug 可用）"
 else
-    echo "  ⚠ 跳过前端构建（backend-only，无 static/）——访问 / 将无 v1 UI，仅 WS/REST 可用"
+    echo "  ⚠ 跳过前端构建（backend-only，无 static/）——/ 与 /debug 均无 UI，仅 WS/REST/API 可用"
 fi
 
 # ── 3. 快速预检（F3：失败默认非零退出；--skip-preflight 显式降级）───

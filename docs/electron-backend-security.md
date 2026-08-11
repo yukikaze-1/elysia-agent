@@ -30,6 +30,8 @@
 - **唯一免 Bearer 的业务路径**：`/api/attachments/{attachment_id}`（**非 /sign**）——附件**签名下载**。短时 HMAC 签名（`?sig=&exp=`）即授权，属**短期下载授权、非账号凭据**（签名 URL 24h 过期、仅能下载该附件，见 §3.5）；`/api/attachments/{attachment_id}/sign`（签发端点）**保持 Bearer**。
 - 未带凭据 → 401 `AUTH_REQUIRED`；凭据错误 → 401 `AUTH_INVALID`；均返回统一错误信封。**批次 8c（F2）**：admin/debug 端点（/shutdown、/restart、/tools、/tools/reload、/debug/api/*）认证失败与业务错误同样走统一信封（`error` = message 兼容别名），不再裸 `{"error":...}`。
 
+**v1 网页聊天（2026-08-11）**：默认停用（`serve_chat=False`，env `SERVE_CHAT=1` 恢复），`/` 404。Debug 仪表盘：**HTML 页（`/debug`）匿名可加载**，`/debug/api/*` 与 SSE 经 `SERVER_AUTH_TOKEN` 鉴权（页面匿名、数据鉴权）。Electron 走 `Authorization` header 鉴权不受影响。
+
 ### 1.3 凭据载体
 
 - 凭据放 `Authorization` Header（REST）或 WS 握手 Header（`Authorization: Bearer`）——**绝不放 URL 查询参数**；

@@ -57,14 +57,14 @@ docker compose --profile dev up -d
 
 ```bash
 bash scripts/start.sh          # backend-only 默认（无 Node 也能启动；预检失败即拒绝启动）
-bash scripts/start.sh --with-frontend   # 显式构建 v1 UI（需 npm）
+bash scripts/start.sh --with-frontend   # 显式构建 v1 UI（需 npm）；访问 / 需 SERVE_CHAT=1
 bash scripts/start.sh --skip-preflight  # 显式跳过预检（降级，慎用）
 ```
 
 自动完成：conda 激活 → 数据库检查 → 快速预检 → 启动服务（WebSocket 服务器）。
 预检（`app.py --check`）失败默认非零退出——配置/依赖有问题时不再静默继续（`--skip-preflight` 显式降级）。
 
-打开浏览器访问 **`http://localhost:8765`**，在聊天界面与 AI 对话。日志输出到 `log/` 目录（主日志 `app.log`，全量 `app-debug.log`。详见 `log/README.md`）。停止：`Ctrl+C`。
+打开浏览器访问 **`http://localhost:8765`** —— v1 网页聊天默认停用（`/` 404），Debug 仪表盘 `/debug` 可用（需已构建前端，`static/debug.html` 存在）；`SERVE_CHAT=1`（env）可恢复浏览器聊天。日志输出到 `log/` 目录（主日志 `app.log`，全量 `app-debug.log`。详见 `log/README.md`）。停止：`Ctrl+C`。
 
 Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板，详见 [`static/debug.md`](static/debug.md)。
 
@@ -125,6 +125,8 @@ npm run build                   # 生产构建：输出到 ../static/
 ```
 
 构建后刷新浏览器即可看到变更。前端技术栈：Vue 3 + Vite + Pinia + TypeScript + vis-network。
+
+> **v1 聊天默认停用**：构建后访问 `/` 需 `SERVE_CHAT=1`（env）恢复（默认 `serve_chat=False` 时 `/` 404）。Debug 仪表盘 `/debug` 与聊天共享 `/static/assets/*`，同样需构建产出 `static/debug.html` 才可用——backend-only（未构建前端）时 `/debug` 亦 404。
 
 ### 故障排查
 
