@@ -6,6 +6,8 @@ Run: python -m pytest core/input/tests/test_server.py -v --asyncio-mode=auto
 import asyncio
 import json
 import os
+import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -71,6 +73,18 @@ def _make_app():
     agent.output = MagicMock()
     agent.bus = MagicMock()
     return create_app(agent, serve_static=False)
+
+
+def _make_static_app(static_dir: Path, serve_chat: bool, files: tuple[str, ...]):
+    """serve_static=True 的 app——_STATIC_DIR 指向 tmp 目录（含指定文件）。"""
+    from core.input.server import create_app
+    for name in files:
+        (static_dir / name).write_text(f"<html>{name}</html>", encoding="utf-8")
+    agent = MagicMock()
+    agent.output = MagicMock()
+    agent.bus = MagicMock()
+    with patch("core.input.server._STATIC_DIR", static_dir):
+        return create_app(agent, serve_static=True, serve_chat=serve_chat)
 
 
 def _find_routes_by_name(app, name_fragment: str):
@@ -1307,3 +1321,48 @@ class TestAdminDebugEnvelope:
         data = await resp.json()
         assert data.get("code") == "CONTRACT_VALIDATION"
         assert data.get("error") == data.get("message")  # 兼容别名
+
+
+# ============================================================
+# serve_chat 开关 + 拆 debug 耦合（停用 v1 聊天 / 保留 /debug）
+# ============================================================
+
+@pytest.mark.service
+class TestServeChat:
+    @pytest.mark.asyncio
+    async def test_serve_chat_false_root_404_debug_200(self, aiohttp_client, tmp_path):
+        """serve_chat=False（默认）：/ 404、/debug 200。"""
+        app = _make_static_app(tmp_path, serve_chat=False, files=("index.html", "debug.html"))
+        client = await aiohttp_client(app)
+        assert (await client.get("/")).status == 404
+        assert (await client.get("/debug")).status == 200
+
+    @pytest.mark.asyncio
+    async def test_serve_chat_true_root_200_debug_200(self, aiohttp_client, tmp_path):
+        """serve_chat=True：/ 200、/debug 200。"""
+        app = _make_static_app(tmp_path, serve_chat=True, files=("index.html", "debug.html"))
+        client = await aiohttp_client(app)
+        assert (await client.get("/")).status == 200
+        assert (await client.get("/debug")).status == 200
+
+    @pytest.mark.asyncio
+    async def test_debug_served_without_index(self, aiohttp_client, tmp_path):
+        """只有 debug.html（无 index.html）+ serve_chat=False：/debug 仍 200（拆耦合回归）。"""
+        app = _make_static_app(tmp_path, serve_chat=False, files=("debug.html",))
+        client = await aiohttp_client(app)
+        assert (await client.get("/debug")).status == 200
+
+    @pytest.mark.asyncio
+    async def test_serve_chat_true_no_index_root_404(self, aiohttp_client, tmp_path):
+        """serve_chat=True 但无 index.html：/ 404（无聊天页自然 404）。"""
+        app = _make_static_app(tmp_path, serve_chat=True, files=("debug.html",))
+        client = await aiohttp_client(app)
+        assert (await client.get("/")).status == 404
+
+    @pytest.mark.asyncio
+    async def test_serve_chat_false_no_files_both_404(self, aiohttp_client, tmp_path):
+        """serve_chat=False 且 static 空目录：/ 404、/debug 404（无文件不误挂）。"""
+        app = _make_static_app(tmp_path, serve_chat=False, files=())
+        client = await aiohttp_client(app)
+        assert (await client.get("/")).status == 404
+        assert (await client.get("/debug")).status == 404

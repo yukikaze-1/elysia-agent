@@ -341,6 +341,7 @@ async def ready_handler(request: web.Request) -> web.Response:
 def create_app(
     agent: "Agent",
     serve_static: bool = True,
+    serve_chat: bool = False,
     wake_word_enabled: bool = False,
     task_system: "WorkflowEngine | None" = None,
     auth_token: str = "",
@@ -358,7 +359,10 @@ def create_app(
 
     Args:
         agent: Agent 实例（需具备 _output、_bus、process_message()）。
-        serve_static: 是否在 / 提供 static/index.html。
+        serve_static: 是否在 /static/ 挂载静态目录。
+        serve_chat: 是否注册 / 聊天路由（默认关——v1 网页聊天停用，/ 404；
+            SERVE_CHAT=1 可恢复）。/debug 独立于本开关（拆耦合，仅受 debug.html
+            存在性约束）。
         wake_word_enabled: 是否对音频输入启用唤醒词检测。
         task_system: WorkflowEngine 实例，供 debug 路由使用（可选）。
         auth_token: 非空时，/shutdown、/restart、/tools/reload 与 /debug/api/*
@@ -498,35 +502,36 @@ def create_app(
     if _LIVE2D_DIR.is_dir():
         app.router.add_static("/live2d/", _LIVE2D_DIR, show_index=False)
 
-    # 在 / 提供 index.html
-    index_path = _STATIC_DIR / "index.html"
-    if index_path.is_file():
-        async def index_handler(_request: web.Request) -> web.FileResponse:
-            """提供主聊天应用 HTML 页面。
+    # Debug 页面——独立于聊天，index.html 存在与否不影响（拆耦合）
+    debug_path = _STATIC_DIR / "debug.html"
+    if debug_path.is_file():
+        async def debug_handler(_request: web.Request) -> web.FileResponse:
+            """提供 Debug 仪表盘 HTML 页面。
 
             Args:
                 _request: aiohttp Request（未使用）。
 
             Returns:
-                web.FileResponse: index.html 文件响应。
+                web.FileResponse: debug.html 文件响应。
             """
-            return web.FileResponse(index_path)
-        app.router.add_get("/", index_handler)
+            return web.FileResponse(debug_path)
+        app.router.add_get("/debug", debug_handler)
 
-        # Debug 页面
-        debug_path = _STATIC_DIR / "debug.html"
-        if debug_path.is_file():
-            async def debug_handler(_request: web.Request) -> web.FileResponse:
-                """提供 Debug 仪表盘 HTML 页面。
+    # 聊天页面——serve_chat 关闭则不注册（/ 404）
+    if serve_chat:
+        index_path = _STATIC_DIR / "index.html"
+        if index_path.is_file():
+            async def index_handler(_request: web.Request) -> web.FileResponse:
+                """提供主聊天应用 HTML 页面。
 
                 Args:
                     _request: aiohttp Request（未使用）。
 
                 Returns:
-                    web.FileResponse: debug.html 文件响应。
+                    web.FileResponse: index.html 文件响应。
                 """
-                return web.FileResponse(debug_path)
-            app.router.add_get("/debug", debug_handler)
+                return web.FileResponse(index_path)
+            app.router.add_get("/", index_handler)
 
     # 健康检查端点 —— Docker/Kubernetes liveness(/health) + readiness(/ready)
     app.router.add_get("/health", health_handler)
