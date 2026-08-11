@@ -1097,6 +1097,15 @@ class TestLoadSafetyConfig:
         assert instance.safety.max_concurrency == 7
 
 
+@pytest.mark.service
+class TestReloadInfrastructure:
+    def test_init_has_reload_infrastructure(self):
+        tm = ToolManager()
+        assert isinstance(tm._reload_lock, asyncio.Lock)
+        assert tm._inflight == {}
+        assert tm._teardown_tasks == {}
+
+
 # ============================================================
 # ToolManager —— set_hitl_broadcast（设置 HITL 广播）
 # ============================================================

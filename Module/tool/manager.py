@@ -61,6 +61,12 @@ class ToolManager:
         self._executing: set[str] = set()
         self._tasks: dict[str, asyncio.Task] = {}
         self._semaphores: dict[str, asyncio.Semaphore] = {}
+        # reload 并发控制（E1/P2-06）：_reload_lock 仅覆盖原子替换微秒窗口；
+        # _inflight 记录进行中 execute/execute_stream 任务（reload 排空快照）；
+        # _teardown_tasks 独立登记延迟 teardown（不被 cancel_all 取消）。
+        self._reload_lock: asyncio.Lock = asyncio.Lock()
+        self._inflight: dict[str, set[asyncio.Task]] = {}
+        self._teardown_tasks: dict[str, asyncio.Task] = {}
         # desktop 运行时可用性（bridge.is_available() 同步用，BE-040）——
         # 影响 plugin_list/registry_metadata 中 desktop 工具的 available
         self._desktop_available: bool = False
