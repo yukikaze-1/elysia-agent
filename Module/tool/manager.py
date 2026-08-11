@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import inspect
 import logging
+import types
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -497,69 +498,107 @@ class ToolManager:
             }
         return summary
 
-    async def reload_plugin(self, name: str) -> bool:
-        """热重载单个插件。
+    async def reload_plugin(self, name: str) -> tuple[bool, str]:
+        """热重载单个插件——原子替换注册表 + 失败回滚（E1/P2-06）。
 
-        不中断正在执行的任务。先 teardown 旧实例，importlib.reload 模块，再 setup 新实例。
+        流程：锁外构造/setup 新实例 → 持锁身份复核 + 原子替换四个注册表 dict →
+        锁外排空旧实例 in-flight 后 teardown。新 setup 失败保留旧实例。
 
         Args:
             name: 要重载的工具名称。
 
         Returns:
-            True 如果重载成功。
+            tuple[bool, str]: (是否成功, 失败原因/成功时空串)。
         """
         old = self._plugins.get(name)
         module_path = self._plugin_modules.get(name)
         if old is None or module_path is None:
-            return False
+            return False, f"工具 '{name}' 不存在或无法定位模块"
 
+        # 1. 隔离构造 + 共用 config + setup（锁外——慢 I/O 不阻塞其他工具）
+        try:
+            module = importlib.import_module(module_path)
+            module = importlib.reload(module)
+
+            # 2. 从新 module 重新 discover class（不读旧 _plugin_classes）
+            new_cls = self._discover_class(module, name)
+            if new_cls is None:
+                return False, f"模块 '{module_path}' 中未找到名为 '{name}' 的插件类"
+
+            new_instance = new_cls()
+            self._load_safety_config(new_instance, new_cls)
+            if self._plugin_context is None:
+                return False, "PluginContext 未初始化，请先调用 load_all()"
+            await new_instance.setup(self._plugin_context)
+        except Exception as e:
+            logger.error("工具 '%s' 热重载失败: %s", name, e)
+            return False, f"热重载失败: {e}"
+
+        # 3. 持锁做身份复核 + 原子替换（微秒窗口；setup 期间并发 reload/shutdown
+        #    可能已改动注册表——复核 _plugins.get(name) is old，不等则不覆盖他人结果）
+        superseded = False
+        async with self._reload_lock:
+            if self._plugins.get(name) is not old:
+                superseded = True
+            else:
+                new_sem = None
+                if new_instance.safety and new_instance.safety.max_concurrency > 0:
+                    new_sem = asyncio.Semaphore(new_instance.safety.max_concurrency)
+                old_tasks = set(self._inflight.get(name, ()))   # 快照：排空目标 = 替换前已在执行的任务
+                self._plugins[name] = new_instance
+                self._plugin_classes[name] = new_cls
+                self._plugin_modules[name] = module_path
+                if new_sem is not None:
+                    self._semaphores[name] = new_sem
+                else:
+                    self._semaphores.pop(name, None)
+
+        if superseded:
+            # 弃用新实例——锁外 teardown（慢 I/O 不进微秒锁窗口）+ try/except（异常不逸出端点）
+            try:
+                await new_instance.teardown()
+            except Exception as e:
+                logger.warning("工具 '%s' 并发覆盖后新实例 teardown 异常: %s", name, e)
+            return False, f"工具 '{name}' 在 reload 期间被并发修改"
+
+        # 4. 排空旧实例 in-flight + teardown（锁已释放——新调用立即走新实例，不受阻塞）
+        #    注：Task 3 内联最小版（等旧任务排空后 teardown；超时跳过），Task 4 替换为 _drain_and_teardown。
+        if old_tasks:
+            _done, pending = await asyncio.wait(old_tasks, timeout=10.0)
+            if pending:
+                logger.warning(
+                    "工具 '%s' 热重载：%d 个 in-flight 未在 10s 内排空，跳过 teardown",
+                    name, len(pending),
+                )
+                return True, ""
         try:
             await old.teardown()
         except Exception as e:
             logger.warning("旧插件 '%s' teardown() 异常: %s", name, e)
+        logger.info("工具 '%s' 已热重载", name)
+        return True, ""
 
-        self._plugins.pop(name, None)
-        self._semaphores.pop(name, None)
+    @staticmethod
+    def _discover_class(module: types.ModuleType, name: str) -> type[ToolPlugin] | None:
+        """从模块中扫描名为 name 的 ToolPlugin 子类（不读旧 _plugin_classes）。
 
-        try:
-            module = importlib.import_module(module_path)
-            module = importlib.reload(module)
-            cls = self._plugin_classes.get(name)
-            if cls is None:
-                for attr in dir(module):
-                    obj = getattr(module, attr)
-                    if (
-                        isinstance(obj, type)
-                        and issubclass(obj, ToolPlugin)
-                        and obj is not ToolPlugin
-                        and getattr(obj, "name", "") == name
-                    ):
-                        cls = obj
-                        break
-            if cls is None:
-                logger.error("无法在模块 '%s' 中找到插件类", module_path)
-                return False
+        Args:
+            module: importlib.reload 后的新模块。
+            name: 插件名称。
 
-            new_instance = cls()
-            if self._plugin_context is None:
-                raise RuntimeError(
-                    f"无法加载工具 '{name}': PluginContext 尚未初始化，请先调用 load_all()"
-                )
-            await new_instance.setup(self._plugin_context)
-            self._plugins[name] = new_instance
-            self._plugin_classes[name] = cls
-            self._plugin_modules[name] = module_path
-
-            if new_instance.safety and new_instance.safety.max_concurrency > 0:
-                self._semaphores[name] = asyncio.Semaphore(
-                    new_instance.safety.max_concurrency,
-                )
-
-            logger.info("工具 '%s' 已热重载", name)
-            return True
-        except Exception as e:
-            logger.error("工具 '%s' 热重载失败: %s", name, e)
-            return False
+        Returns:
+            匹配的插件类；未找到返回 None。
+        """
+        for attr in dir(module):
+            obj = getattr(module, attr)
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, ToolPlugin)
+                and obj is not ToolPlugin
+                and getattr(obj, "name", "") == name
+            ):
+                return obj
+        return None
 
     # ---- Prompt Generation ----
 

@@ -1065,7 +1065,8 @@ class TestReloadPlugin:
     @pytest.mark.asyncio
     async def test_reload_nonexistent_returns_false(self):
         tm = ToolManager()
-        assert await tm.reload_plugin("nonexistent") is False
+        ok, reason = await tm.reload_plugin("nonexistent")
+        assert ok is False
 
     @pytest.mark.asyncio
     async def test_reload_existing_plugin(self):
@@ -1074,9 +1075,34 @@ class TestReloadPlugin:
         await tm.load_all([SimplePlugin], ctx)
         assert "simple" in tm._plugins
 
-        result = await tm.reload_plugin("simple")
-        assert result is True
+        ok, reason = await tm.reload_plugin("simple")
+        assert ok is True
         assert "simple" in tm._plugins
+
+    @pytest.mark.asyncio
+    async def test_reload_returns_tuple_and_replaces(self, plugin_dir, write_simple):
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        # 换 v2 实现
+        write_simple(plugin_dir, suffix="v2")
+        ok, reason = await tm.reload_plugin("simple")
+        assert ok is True and reason == ""
+        result = await tm.execute("simple", ctx=ToolContext())
+        assert result.content == "exec-v2"      # 新 class 行为生效
+
+    @pytest.mark.asyncio
+    async def test_reload_setup_failure_keeps_old(self, plugin_dir, write_simple):
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        write_simple(plugin_dir, suffix="v2", setup_raises=True)   # 新 setup 抛
+        ok, reason = await tm.reload_plugin("simple")
+        assert ok is False and "热重载失败" in reason
+        result = await tm.execute("simple", ctx=ToolContext())
+        assert result.content == "exec-v1"      # 旧实例仍可用
 
 
 # ============================================================
