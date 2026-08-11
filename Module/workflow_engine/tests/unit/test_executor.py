@@ -13,7 +13,10 @@ from openai.types.chat.chat_completion_message_tool_call import (
 )
 
 from Module.workflow_engine.core.executor import Executor, _check_cancelled
+from Module.workflow_engine.tests.helpers.fake_llm import FakeLLM
 from Module.workflow_contract import (
+    AgentInfra,
+    ConstraintConfig,
     NodeId,
     SessionId,
     WorkflowId,
@@ -24,6 +27,7 @@ from Module.workflow_engine.schema import (
     Artifact,
     ArtifactId,
     DAGNode,
+    ExecutionMode,
     NodeErrorCode,
     NodeResult,
     OutputContract,
@@ -191,13 +195,27 @@ def sample_tools():
     ]
 
 
+@pytest.fixture
+def running_state():
+    """E3：RUNNING 任务级状态——Executor.execute 的取消检查边界 token。
+
+    现有测试（快乐路径）均传此状态——_check_cancelled 不抛。
+    """
+    return WorkflowState(
+        task_id=WorkflowId("task_1"),
+        status=WorkflowStatus.RUNNING,
+        tools=[],
+        session_id=SessionId("s1"),
+    )
+
+
 # ── 测试用例 ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_execute_success(executor, sample_node, sample_tools, mock_tool_registry):
+async def test_execute_success(executor, sample_node, sample_tools, mock_tool_registry, running_state):
     """工具匹配成功 + 执行成功 → NodeResult 包含 artifact_refs。"""
-    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools, SessionId("s1"), running_state)
 
     assert isinstance(result, NodeResult)
     assert result.node_id == NodeId("node_1")
@@ -214,7 +232,7 @@ async def test_execute_success(executor, sample_node, sample_tools, mock_tool_re
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_match_failure(executor, sample_node, sample_tools, mock_llm_client):
+async def test_execute_tool_match_failure(executor, sample_node, sample_tools, mock_llm_client, running_state):
     """LLM 返回空 tool_calls 且空 content → NodeErrorCode.TOOL_NOT_FOUND。"""
     async def _no_tool_calls(**kwargs):
         return ChatCompletion(
@@ -235,14 +253,14 @@ async def test_execute_tool_match_failure(executor, sample_node, sample_tools, m
 
     mock_llm_client.chat.completions.create = AsyncMock(side_effect=_no_tool_calls)
 
-    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools, SessionId("s1"), running_state)
 
     assert result.error == NodeErrorCode.TOOL_NOT_FOUND
     assert len(result.artifact_refs) == 0
 
 
 @pytest.mark.asyncio
-async def test_execute_llm_direct_text(executor, sample_node, sample_tools, mock_llm_client):
+async def test_execute_llm_direct_text(executor, sample_node, sample_tools, mock_llm_client, running_state):
     """LLM 不调工具直接返回文本 → 文本作为有效产物（汇总/分析类节点）。"""
     async def _direct_text(**kwargs):
         return ChatCompletion(
@@ -263,14 +281,14 @@ async def test_execute_llm_direct_text(executor, sample_node, sample_tools, mock
 
     mock_llm_client.chat.completions.create = AsyncMock(side_effect=_direct_text)
 
-    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools, SessionId("s1"), running_state)
 
     assert result.error is None, f"LLM 直出文本不应为错误，实际: {result.error}"
     assert len(result.artifact_refs) == 1
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_error(executor, sample_node, sample_tools, mock_tool_registry):
+async def test_execute_tool_error(executor, sample_node, sample_tools, mock_tool_registry, running_state):
     """工具执行失败 → NodeErrorCode 正确映射。"""
     mock_tool_registry.execute = AsyncMock(return_value=ToolResult.fail(
         name="web_search",
@@ -279,14 +297,14 @@ async def test_execute_tool_error(executor, sample_node, sample_tools, mock_tool
         error_type=ErrorType.UNAVAILABLE,
     ))
 
-    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools, SessionId("s1"), running_state)
 
     assert result.error == NodeErrorCode.TOOL_ERROR
     assert result.duration_ms >= 0
 
 
 @pytest.mark.asyncio
-async def test_upstream_inputs_flow(executor, mock_artifact_store, sample_tools):
+async def test_upstream_inputs_flow(executor, mock_artifact_store, sample_tools, running_state):
     """上游产物通过 input_bindings 正确解析。"""
     upstream_artifact = Artifact(
         artifact_id=ArtifactId("upstream_1"),
@@ -306,25 +324,25 @@ async def test_upstream_inputs_flow(executor, mock_artifact_store, sample_tools)
         output_as=ArtifactId("artifact_email"),
     )
 
-    result = await executor.execute(node, WorkflowId("task_1"), sample_tools)
+    result = await executor.execute(node, WorkflowId("task_1"), sample_tools, SessionId("s1"), running_state)
 
     assert result.error is None
     mock_artifact_store.get.assert_any_call(ArtifactId("upstream_1"))
 
 
 @pytest.mark.asyncio
-async def test_execute_exception_isolation(executor, sample_node, sample_tools, mock_tool_registry):
+async def test_execute_exception_isolation(executor, sample_node, sample_tools, mock_tool_registry, running_state):
     """Executor 内部异常不抛出——捕获并返回 NodeErrorCode.TOOL_ERROR。"""
     mock_tool_registry.execute = AsyncMock(side_effect=RuntimeError("工具执行崩溃"))
 
-    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools, SessionId("s1"), running_state)
 
     assert result.error == NodeErrorCode.TOOL_ERROR
     assert result.duration_ms >= 0
 
 
 @pytest.mark.asyncio
-async def test_node_without_output_as(executor, sample_tools):
+async def test_node_without_output_as(executor, sample_tools, running_state):
     """节点没有 output_as → 不存储产物，但执行照常。"""
     node = DAGNode(
         node_id=NodeId("node_no_output"),
@@ -335,7 +353,7 @@ async def test_node_without_output_as(executor, sample_tools):
         output_as=None,
     )
 
-    result = await executor.execute(node, WorkflowId("task_1"), sample_tools)
+    result = await executor.execute(node, WorkflowId("task_1"), sample_tools, SessionId("s1"), running_state)
 
     assert result.error is None
     assert len(result.artifact_refs) == 0
@@ -345,9 +363,9 @@ async def test_node_without_output_as(executor, sample_tools):
 
 
 @pytest.mark.asyncio
-async def test_token_ledger_record_called(executor, sample_node, sample_tools):
+async def test_token_ledger_record_called(executor, sample_node, sample_tools, running_state):
     """LLM 调用后 token_ledger.record() 被调用，参数正确。"""
-    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools)
+    result = await executor.execute(sample_node, WorkflowId("task_1"), sample_tools, SessionId("s1"), running_state)
 
     assert result.error is None
     # 验证 record 被调用
@@ -362,7 +380,7 @@ async def test_token_ledger_record_called(executor, sample_node, sample_tools):
 
 
 @pytest.mark.asyncio
-async def test_token_ledger_none_skips_record(mock_infra, mock_artifact_store, mock_hitl, sample_node, sample_tools):
+async def test_token_ledger_none_skips_record(mock_infra, mock_artifact_store, mock_hitl, sample_node, sample_tools, running_state):
     """token_ledger 为 None 时不调用 record（不传 ledger 的向后兼容路径）。"""
     executor_no_ledger = Executor(
         infra=mock_infra,
@@ -370,7 +388,7 @@ async def test_token_ledger_none_skips_record(mock_infra, mock_artifact_store, m
         hitl_notifier=mock_hitl,
         token_ledger=None,
     )
-    result = await executor_no_ledger.execute(sample_node, WorkflowId("task_1"), sample_tools)
+    result = await executor_no_ledger.execute(sample_node, WorkflowId("task_1"), sample_tools, SessionId("s1"), running_state)
 
     assert result.error is None
     assert len(result.artifact_refs) == 1
@@ -417,7 +435,7 @@ def test_error_mapping_none_error_type():
 
 
 @pytest.mark.asyncio
-async def test_execute_llm_direct_mode(executor, sample_tools):
+async def test_execute_llm_direct_mode(executor, sample_tools, running_state):
     """execution_mode=llm_direct 时跳过 tool matching，直接调 LLM。"""
     from Module.workflow_engine.schema import ExecutionMode
 
@@ -429,7 +447,7 @@ async def test_execute_llm_direct_mode(executor, sample_tools):
         input_bindings=[ArtifactId("output:search")],
         output_as=ArtifactId("output:summarize"),
     )
-    result = await executor.execute(node, WorkflowId("t1"), sample_tools)
+    result = await executor.execute(node, WorkflowId("t1"), sample_tools, SessionId("s1"), running_state)
     assert result.error is None
     # llm_direct 路径不应调用 tool_registry
     executor._infra.tool_registry.execute.assert_not_called()
@@ -457,3 +475,58 @@ class TestCheckCancelled:
             session_id=SessionId("s1"),
         )
         _check_cancelled(ts)   # 不抛
+
+
+# ── Executor 取消语义（E3 Task 3）───────────────────────────────────────────
+
+
+class TestExecutorCancellation:
+    @pytest.mark.asyncio
+    async def test_tool_not_called_when_cancelled_before(self):
+        # fake LLM 返回 tool 匹配；工具调用前把 ts.status 置 CANCELLED
+        fake = FakeLLM()                              # E4 helpers
+        infra = AgentInfra(llm=fake, milvus=None, http=None,
+                           tool_registry=MagicMock(), constraints=ConstraintConfig())
+        executor = Executor(infra=infra, artifact_store=MagicMock(), hitl_notifier=MagicMock())
+        ts = WorkflowState(task_id=WorkflowId("t1"), status=WorkflowStatus.RUNNING,
+                           tools=[], session_id=SessionId("s1"))
+        node = DAGNode(node_id=NodeId("n1"), description="do something",
+                       input_bindings=[], output_as=ArtifactId("a1"), execution_mode=ExecutionMode.TOOL_CALL)
+        tool = Tool(name="get_time", description="获取当前时间")
+
+        def handler(msgs):
+            ts.status = WorkflowStatus.CANCELLED       # 工具调用前取消（在 LLM 匹配返回后、②检查点前）
+            return {"type": "tool", "name": "get_time", "arguments": {}}
+        fake.handler = handler
+        with pytest.raises(asyncio.CancelledError):
+            await executor.execute(node, WorkflowId("t1"), [tool], SessionId("s1"), ts)
+        infra.tool_registry.execute.assert_not_called()   # 工具未调（②检查点拦截）
+
+    @pytest.mark.asyncio
+    async def test_tool_shielded_completes_on_cancel(self):
+        # 工具调用中取消外层任务 → shield 让工具完成、CancelledError 上抛
+        fake = FakeLLM()
+        fake.handler = lambda msgs: {"type": "tool", "name": "get_time", "arguments": {}}
+        infra = AgentInfra(llm=fake, milvus=None, http=None,
+                           tool_registry=MagicMock(), constraints=ConstraintConfig())
+        gate = asyncio.Event()
+
+        async def slow_tool(tool_name, **kw):        # _call_tool 以位置参数 tool_name + kwargs 调 execute
+            await gate.wait()
+            return "done"
+        infra.tool_registry.execute = AsyncMock(side_effect=slow_tool)   # AsyncMock——await_count 断言需要
+        executor = Executor(infra=infra, artifact_store=MagicMock(), hitl_notifier=MagicMock())
+        ts = WorkflowState(task_id=WorkflowId("t1"), status=WorkflowStatus.RUNNING,
+                           tools=[], session_id=SessionId("s1"))
+        node = DAGNode(node_id=NodeId("n1"), description="do",
+                       input_bindings=[], output_as=ArtifactId("a1"), execution_mode=ExecutionMode.TOOL_CALL)
+        tool = Tool(name="get_time", description="获取当前时间")
+        outer = asyncio.create_task(executor.execute(node, WorkflowId("t1"), [tool], SessionId("s1"), ts))
+        await asyncio.sleep(0.05)                       # 工具已开始（shield 内）
+        ts.status = WorkflowStatus.CANCELLED
+        outer.cancel()                                  # 取消外层任务
+        with pytest.raises(asyncio.CancelledError):
+            await outer
+        gate.set()                                      # 放行——工具完成（shield），结果弃用
+        await asyncio.sleep(0.05)
+        assert infra.tool_registry.execute.await_count == 1

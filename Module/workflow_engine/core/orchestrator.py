@@ -166,7 +166,7 @@ class Orchestrator:
                 exec_state.current_phase = ExecutionPhase.EXECUTING
                 results = await self._execute_nodes(
                     ready_nodes, exec_state, task_id, task_state.tools,
-                    task_state.session_id,
+                    task_state.session_id, task_state,
                 )
 
                 # 4. 评估 + 分发 → 根据 action 返回或继续
@@ -447,7 +447,8 @@ class Orchestrator:
         exec_state: ExecutionState,
         task_id: WorkflowId,
         tools: list[Tool],
-        session_id: SessionId = SessionId(""),
+        session_id: SessionId,
+        ts: WorkflowState,
     ) -> list[NodeResult]:
         """执行一批就绪节点，生成 DBT 并调工具调用。
 
@@ -457,12 +458,13 @@ class Orchestrator:
             task_id: 任务 ID。
             tools: 可用工具列表，传递给 Executor。
             session_id: 会话 ID，用于工具调用的上下文。
+            ts: 任务级状态（E3——透传给 Executor 做取消检查）。
 
         Returns:
             节点执行结果列表（NodeResult）。
         """
         return await execution.execute_nodes(
-            self._executor, exec_state, nodes, task_id, tools, session_id,
+            self._executor, exec_state, nodes, task_id, tools, session_id, ts,
         )
 
     async def _evaluate_node(

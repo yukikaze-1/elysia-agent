@@ -111,9 +111,16 @@ class Executor:
         node: DAGNode,
         task_id: WorkflowId,
         tools: list[Tool],
-        session_id: SessionId = SessionId(""),
+        session_id: SessionId,
+        ts: "WorkflowState",
     ) -> NodeResult:
         """执行单个 DAGNode——LLM 匹配工具（或直出文本）→ 调用/存储结果。
+
+        E3 §3.3 取消语义：
+            - 四个 `_check_cancelled(ts)` 边界检查点（①执行前 / ②LLM 返回后 / ③工具返回后 / ④存储前）
+            - LLM 匹配/直出文本**不 shield**——owned.cancel() 直接打断 in-flight await（强取消）
+            - 工具调用 **asyncio.shield 保护**——已开始工具完成（副作用不打断）、结果弃用、
+              不再开始下一个调用；孤儿工具登记到 `self._infra.orphan_tools`（跨任务共享容器，stop() 采集）
 
         流程：
             1. 解析上游输入：input_bindings → ArtifactStore.get()
@@ -127,6 +134,8 @@ class Executor:
             node:   待执行的 DAG 节点（含 description、input_bindings、output_as）
             task_id:所属任务 ID
             tools:  本次任务可用的工具列表（从 DelegationContext 透传）
+            session_id: 会话 ID（工具调用上下文）
+            ts:     任务级状态（E3——取消检查边界 token，await 边界一查即中）
 
         Returns:
             NodeResult（artifact_refs + error + attempt + duration_ms）
@@ -135,6 +144,8 @@ class Executor:
         start = time.monotonic()
 
         try:
+            _check_cancelled(ts)                                # ① 执行前（任务已取消 → 不启动）
+
             # 1. 解析上游输入（input_bindings → ArtifactStore）
             upstream_data = await self._resolve_inputs(node, task_id)
 
@@ -142,6 +153,7 @@ class Executor:
             if node.execution_mode == ExecutionMode.LLM_DIRECT:
                 # Planner 显式标注的纯 LLM 任务——跳过工具匹配，直接调 LLM
                 content = await self._call_llm_direct(node, upstream_data)
+                _check_cancelled(ts)                            # 直出路径检查点（不 shield，②④ 适用）
                 tool_result = ToolResult.ok(
                     name="llm_direct",
                     content=content,
@@ -156,8 +168,11 @@ class Executor:
                 # 或 LLM 自行判断不需要工具 → __llm_direct__
                 tool_name, params = await self._match_tool(node, tools, upstream_data)
 
+                _check_cancelled(ts)                            # ② LLM 返回后、工具调用前
+
                 if tool_name == _DIRECT_TEXT_SENTINEL:
                     content = params["content"]
+                    _check_cancelled(ts)
                     tool_result = ToolResult.ok(
                         name="llm_direct",
                         content=content,
@@ -168,7 +183,22 @@ class Executor:
                         node.node_id, len(content),
                     )
                 else:
-                    tool_result = await self._call_tool(tool_name, params, task_id, node.node_id, session_id)
+                    # 工具调用（shield——在途副作用不打断，结果弃用、不再开始下一个调用）
+                    tool_task = asyncio.create_task(
+                        self._call_tool(tool_name, params, task_id, node.node_id, session_id)
+                    )
+                    self._infra.orphan_tools.add(tool_task)     # 登记孤儿工具（跨任务共享容器，stop() 采集）
+                    tool_task.add_done_callback(self._infra.orphan_tools.discard)  # 收引用 + 防泄漏
+                    tool_task.add_done_callback(
+                        lambda t: t.exception() if not t.cancelled() else None  # 收「Task exception was never retrieved」
+                    )
+                    try:
+                        tool_result = await asyncio.shield(tool_task)
+                    except asyncio.CancelledError:
+                        _check_cancelled(ts)                    # ③ 工具返回后被取消 → 走 CANCELLED
+                        raise                                   # 否则正常抛（非取消语义的 CancelledError）
+
+            _check_cancelled(ts)                                # ④ 存储前（取消后结果不落 artifact）
 
             # 4. 存储结果（ToolResult → Artifact → ArtifactStore）
             artifact = await self._store_result(node, task_id, tool_result)

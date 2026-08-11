@@ -8,6 +8,7 @@ AgentInfra 是 core 向 workflow_engine 提供运行资源
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -25,9 +26,12 @@ if TYPE_CHECKING:
 class AgentInfra:
     """跨任务共享的底层资源容器。
 
-    创建成本高、不含任务状态、协程安全。
+    创建成本高、协程安全。
     WorkflowEngine 构造时注入，整个生命周期内共享。
-    各个 Sub-Agent / Worker Agent 只读引用，不做修改。
+    大部分字段为只读引用；**唯一例外是 `orphan_tools`**——它由 executor
+    多协程 add/discard 改写（登记/回收被 shield 保护的孤儿工具任务），
+    `WorkflowEngine.stop()` 从其中采集未完成任务等待/取消。core 侧构造
+    AgentInfra 但不使用该字段（engine 内部运行时用途，非契约语义）。
 
     字段：
         llm:            LLM 客户端（AsyncOpenAI），跨所有 Agent 共享
@@ -37,6 +41,10 @@ class AgentInfra:
         constraints:    全局约束配置（天花板）。这是 WorkflowEngine 全生命周期的
                         全局约束，DelegationPreparer 产出的 WorkflowConstraints
                         与其取 min 后生效。
+        orphan_tools:   engine 内部运行时容器（E3）——被 asyncio.shield 保护的
+                        在途工具任务集合。executor 创建工具任务时登记、done 回调
+                        回收；stop() 采集未完成任务等待 3s 后 cancel。跨任务存活
+                        （任务清理后 stop() 仍能从共享 infra 枚举孤儿工具）。
     """
 
     llm: AsyncOpenAI
@@ -44,6 +52,7 @@ class AgentInfra:
     http: httpx.AsyncClient | None  # v1 预留，工具通过 ToolContext 接收 HTTP 客户端
     tool_registry: object  # ToolRegistry，避免循环导入
     constraints: ConstraintConfig
+    orphan_tools: set["asyncio.Task"] = field(default_factory=set)  # engine 内部运行时（executor 登记、stop 采集）
     llm_model: str = field(
         default_factory=lambda: os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro")
     )  # LLM 模型名，Planner/Executor/Evaluator 共用（env: TASK_SYSTEM_MODEL）

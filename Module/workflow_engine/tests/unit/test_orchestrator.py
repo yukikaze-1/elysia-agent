@@ -56,7 +56,7 @@ def mock_executor():
     """Mock Executor——根据节点 node_id 返回成功结果。"""
     ex = MagicMock()
 
-    async def _exec(node, task_id, tools, session_id=""):
+    async def _exec(node, task_id, tools, session_id="", ts=None):
         return NodeResult(
             node_id=node.node_id,
             artifact_refs=[],
@@ -516,7 +516,7 @@ async def test_run_executor_error_retry(orchestrator, mock_mailbox, mock_executo
 
     exec_count = 0
 
-    async def _flaky_exec(node, tid, tools, session_id=""):
+    async def _flaky_exec(node, tid, tools, session_id="", ts=None):
         nonlocal exec_count
         exec_count += 1
         if exec_count == 1:

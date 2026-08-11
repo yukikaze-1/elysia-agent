@@ -45,7 +45,8 @@ async def execute_nodes(
     nodes: list[DAGNode],
     task_id: WorkflowId,
     tools: list[Tool],
-    session_id: SessionId
+    session_id: SessionId,
+    ts: WorkflowState,
 ) -> list[NodeResult]:
     """执行就绪节点——v1 逐个调用 Executor.execute()。
 
@@ -61,6 +62,7 @@ async def execute_nodes(
         task_id: 任务 ID。
         tools: 可用工具列表。
         session_id: 会话 ID。
+        ts: 任务级状态（E3——透传给 Executor 做取消检查）。
 
     Returns:
         list[NodeResult]: 所有节点的执行结果列表。
@@ -73,7 +75,7 @@ async def execute_nodes(
         ns.started_at = now_iso()
 
         logger.info("Orchestrator: 执行 node=%s attempt=%d", node.node_id, ns.attempt)
-        result = await executor.execute(node, task_id, tools, session_id)
+        result = await executor.execute(node, task_id, tools, session_id, ts)
         # Executor 返回的 attempt=0，用 Orchestrator 追踪的实际 attempt 覆盖
         result.attempt = ns.attempt
         results.append(result)

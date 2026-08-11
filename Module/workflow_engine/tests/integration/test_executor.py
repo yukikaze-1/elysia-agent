@@ -14,7 +14,9 @@ from Module.workflow_contract import AgentInfra
 from Module.workflow_contract import (
     ConstraintConfig,
     NodeId,
+    SessionId,
     WorkflowId,
+    WorkflowStatus,
 )
 from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
@@ -23,12 +25,23 @@ from Module.workflow_engine.schema import (
     ExecutionMode,
     NodeErrorCode,
     OutputContract,
+    WorkflowState,
 )
 from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext
 from core.tools.time.plugin import TimePlugin
 
 pytestmark = [pytest.mark.integration, pytest.mark.external]
+
+
+def _running_state(task_id: WorkflowId) -> WorkflowState:
+    """E3：RUNNING 任务级状态——Executor.execute 的取消检查边界 token。"""
+    return WorkflowState(
+        task_id=task_id,
+        status=WorkflowStatus.RUNNING,
+        tools=[],
+        session_id=SessionId("s1"),
+    )
 
 
 async def _build_integration_executor():
@@ -90,7 +103,7 @@ async def test_integration_execute_time_tool():
         Tool(name="get_time", description="获取当前日期和时间，支持指定时区和格式"),
     ]
 
-    result = await executor.execute(node, WorkflowId("task_int_1"), tools)
+    result = await executor.execute(node, WorkflowId("task_int_1"), tools, SessionId("s1"), _running_state(WorkflowId("task_int_1")))
 
     assert result.error is None, f"执行失败: {result.error}"
     assert result.duration_ms > 0
@@ -129,7 +142,7 @@ async def test_integration_no_matching_tool():
         Tool(name="get_time", description="获取当前日期和时间，支持指定时区和格式"),
     ]
 
-    result = await executor.execute(node, WorkflowId("task_int_2"), tools)
+    result = await executor.execute(node, WorkflowId("task_int_2"), tools, SessionId("s1"), _running_state(WorkflowId("task_int_2")))
 
     # tool_choice="auto" 时 LLM 可能：
     # 1. 返回 tool_call → 正确拒绝 → error
@@ -172,7 +185,7 @@ async def test_integration_execute_llm_direct_mode():
         Tool(name="get_time", description="获取当前日期和时间"),
     ]
 
-    result = await executor.execute(node, WorkflowId("task_llm_direct"), tools)
+    result = await executor.execute(node, WorkflowId("task_llm_direct"), tools, SessionId("s1"), _running_state(WorkflowId("task_llm_direct")))
 
     assert result.error is None, f"llm_direct 不应失败: {result.error}"
     assert result.duration_ms > 0
@@ -225,7 +238,7 @@ async def test_integration_execute_llm_direct_sentinel():
         Tool(name="get_time", description="获取当前日期和时间，支持指定时区和格式"),
     ]
 
-    result = await executor.execute(node, WorkflowId("task_sentinel"), tools)
+    result = await executor.execute(node, WorkflowId("task_sentinel"), tools, SessionId("s1"), _running_state(WorkflowId("task_sentinel")))
 
     assert result.error is None, \
         f"哨兵路径应成功（LLM 直出文本），实际 error={result.error}"
