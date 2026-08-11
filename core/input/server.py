@@ -624,12 +624,12 @@ def create_app(
             return web.json_response(
                 {"ok": False, "error": "缺少插件名称"}, status=400,
             )
-        ok = await agent.tool_adapter._manager.reload_plugin(name)  # noqa: SLF001
+        ok, reason = await agent.tool_adapter._manager.reload_plugin(name)  # noqa: SLF001
         if ok:
             return web.json_response({"ok": True, "name": name})
         else:
             return web.json_response(
-                {"ok": False, "name": name, "error": f"插件 '{name}' 重载失败"},
+                {"ok": False, "name": name, "error": reason},
             )
     app.router.add_post("/tools/reload", tool_reload_handler)
 

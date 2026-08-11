@@ -941,7 +941,7 @@ class TestToolEndpoints:
             {"name": "web_search", "description": "搜索网页", "capabilities": ["network"], "safety": {}, "active": True},
             {"name": "read_file", "description": "读取文件", "capabilities": ["filesystem_read"], "safety": {}, "active": True},
         ]
-        agent.tool_adapter._manager.reload_plugin = AsyncMock(return_value=True)
+        agent.tool_adapter._manager.reload_plugin = AsyncMock(return_value=(True, ""))
         return create_app(agent, serve_static=False)
 
     @pytest.mark.asyncio
@@ -981,12 +981,13 @@ class TestToolEndpoints:
 
     @pytest.mark.asyncio
     async def test_reload_plugin_failure(self, app, aiohttp_client):
-        app["agent"].tool_adapter._manager.reload_plugin = AsyncMock(return_value=False)
+        app["agent"].tool_adapter._manager.reload_plugin = AsyncMock(return_value=(False, "some reason"))
         client = await aiohttp_client(app)
         resp = await client.post("/tools/reload", json={"name": "unknown"})
         assert resp.status == 200
         data = await resp.json()
         assert data["ok"] is False
+        assert "some reason" in data["error"]
 
 
 # ============================================================
