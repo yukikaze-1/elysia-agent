@@ -1204,6 +1204,8 @@ Agent/
 
 > **后台任务子系统三区（workflow_engine 分离后）**：`core/`（应用层）──import──▶ `Module/workflow_contract`（跨边契约层）◀──import── `Module/workflow_engine`（引擎，干净叶子）。跨边类型（`DelegationContext` / `AgentInfra` / `HITLNotifier` 等）唯一来源在契约层，两边各自单向 import、互不感知对方内部实现。`DelegationPreparer` / `EventBusHITLNotifier` / `UserProfile` 已归位 core 侧（`cognitive/delegation.py`、`hitl.py`、`cognitive/user_profile.py`）。
 
+> **WorkflowEngine 取消/暂停终态单调性（E3，2026-08-11）**：**取消信号 = 任务状态**（`WorkflowState.status == CANCELLED`，不引入独立 cancelled 字段，避免 checkpoint 序列化问题）。`cancel()` 同步置 `status=CANCELLED`（权威终态，任何阶段恒可达）→ `owned.cancel()` 打断 in-flight LLM/planner future；executor 在四个 await 边界做 `_check_cancelled` 检查点，LLM 强中断、**工具调用 asyncio.shield 保护**（已开始工具完成、副作用不打断、结果弃用，孤儿工具登记到 `AgentInfra.orphan_tools` 共享容器、stop() 等 3s 后超时 cancel）；终态不可逆（planning/_init_exec 写 RUNNING 前检查终态）；CancelledError 传播链统一收尾（except 分支不 release、finally 唯一释放点，slot 释放前置防二次取消泄漏）；terminal event 只推一次（`WorkflowMailbox._terminal_pushed` 守卫）。
+
 ---
 
 ## 13. 并发任务全景

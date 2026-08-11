@@ -82,7 +82,7 @@
 
 | 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） |
 |--------|----------|----------------|----------------|
-| 中 | **Workflow cancel/pause 终态单调性（E3，P2-08 + M19/M20）** | `planning.py` 返回后无条件写 RUNNING，cancel 期间可把终态逆转；resume 后再次 pause 会销毁 task/mailbox（M19） | 每 workflow 建 cancellation token/owned task；每个外部 await 后检查；CANCELLED/FAILED/COMPLETED 终态不可逆；terminal event 只推一次；M19：resume→pause 不销毁 task/mailbox |
+| ~~中~~ ✅ | **Workflow cancel/pause 终态单调性（E3，P2-08 + M19/M20）** | **2026-08-11 完成（已拍板：强取消——取消信号 = 任务状态，`WorkflowState` 不引入独立 cancelled 字段）** | cancel() 同步置 status=CANCELLED（权威终态）+ owned.cancel() 打断 in-flight LLM/planner；executor 四 `_check_cancelled` 检查点 + 工具 asyncio.shield（已开始工具完成、副作用不打断、结果弃用）+ `AgentInfra.orphan_tools` 共享孤儿容器 + stop() 采集（等 3s 超时 cancel）；planning/_init_exec 写 RUNNING 前终态检查（终态不可逆）；CancelledError 传播链统一收尾（except 不 release、finally 唯一释放点）；terminal event 只推一次（`_terminal_pushed` 守卫）；M19 resume→pause 不销毁 task/mailbox | commit 本批次（E3）：`bb69485`（_check_cancelled+终态守卫）→ `febad1a`（强取消）→ `e137e6b`（executor 签名穿透+shield）→ `4991a85`（终态不可逆）→ `0839bdf`（CANCELLED 分支+唯一 release）→ `4fbffc7`（M19+stop 孤儿采集）→ `5aa7368`（fake-LLM 确定性套件） |
 | ~~中~~ ✅ | **Workflow 测试确定性与外部 E2E 分层（E4，P2-11 部分）** | **2026-08-11 完成（已拍板：`RUN_EXTERNAL_TESTS=1` 显式门禁 + fake-LLM 确定性基建）** | 新增 `external` marker（真实 LLM 必须同时标 `integration+external`）；cancel/pause/mailbox 首事件用 fake LLM 确定性测试；`make test-workflow-engine` 覆盖核心 unit/service；`make test-external` 单独跑；修 `coroutine was never awaited` warning | commit 本批次（E4）：`tests/helpers/fake_llm.py`（FakeLLM 对齐 `chat.completions.create` 访问面 tool_calls/content/usage + gate/calls/prompts）+ `with_deadline` 挂死防线 + `CountingLLM` 成本计数；`Module/conftest.py` external skip hook（未设 `RUN_EXTERNAL_TESTS=1` 全部 skip）；`make test-external` 显式带 env；两真实 E2E 文件补 `integration` marker；mailbox 首事件 QUEUED 确定性测试 |
 | 中 | **工具热重载原子回滚（E1，P2-06）** | `importlib.reload()` 后读旧 `_plugin_classes[name]`（即使模块暴露 New class 仍是 Old class）；新 setup 失败后工具永久消失 | reload 后从新 module 重新 discover class；共用统一 config 流程；先构造/setup 新实例、成功后原子替换、等旧实例 in-flight 排空；setup 失败保留旧工具 |
 
@@ -146,10 +146,10 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| **中** | **M19 resume 后再次 pause 被销毁** | [workflow_engine.py:384-393](Module/workflow_engine/workflow_engine.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞 |
-| **中** | **M20 cancel 在规划阶段不推终态事件** | [lifecycle.py:157-167](Module/workflow_engine/lifecycle.py#L157) + [planning.py:143-145](Module/workflow_engine/core/sub_agent/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复 |
+| ~~**中**~~ ✅ | ~~**M19 resume 后再次 pause 被销毁**~~ | ~~[workflow_engine.py:384-393](Module/workflow_engine/workflow_engine.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞~~ |
+| ~~**中**~~ ✅ | ~~**M20 cancel 在规划阶段不推终态事件**~~ | ~~[lifecycle.py:157-167](Module/workflow_engine/lifecycle.py#L157) + [planning.py:143-145](Module/workflow_engine/core/sub_agent/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复~~ |
 
-> M19/M20 随 WorkflowEngine 接入。
+> M19/M20 **已随 E3 完成**（2026-08-11）：M19 由 E2 PAUSED early-return 修复、E3 Task 6 确定性验证（resume→pause 循环）；M20 由 E3 强取消修复——cancel() 同步置 CANCELLED + CancelledError 传播链推唯一 CANCELLED 终态事件（不再缺终态事件）。
 
 ## 功能改进
 
