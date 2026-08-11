@@ -1,30 +1,43 @@
-"""v2 幂等存储 — clientRequestId → 用户消息记录（进程内 dict + TTL，批次 2；D6c 持久化）。
+"""v2 幂等存储 — clientRequestId → 用户消息记录（内存权威 overlay + Mongo 写穿 + 恢复 reconcile）。
 
-语义（spec §4.2 + plan Task D6c）：
-- 相同 clientRequestId + 相同内容摘要 → 重发原 ACK（同 messageId），不重复生成；
-- 相同 clientRequestId + 不同内容摘要 → rejected + CONTRACT_VALIDATION；
-- D6c：claim 持久化到 Mongo（conversation_id + client_request_id 唯一约束 +
-  expires_at BSON Date TTL）——ACK 丢失 + 后端重启后重试不重复生成。
-- **产品/dev 模式**（决策 2026-08-11）：非回环（产品）绑定 + Mongo 离线 →
-  lookup/store fail-closed raise（调用方映射 503 STORAGE_UNAVAILABLE）；回环
-  dev + Mongo 离线 → 内存降级，`durable=False` 经 server_info.features.
-  idempotency_durable 暴露非 durable 窗口。
-- release（消息被拒/异常后删除）与 complete（标记已完成）为 best-effort——
-  失败不阻塞已决定的 ACK（条目保留仍可重放，仅丢状态更新/允许重试）。
+语义（spec §1.1/§1.3 + plan Task 2，决策 D5/D5-b/D6）：
+- 幂等记录三态：claimed / accepted / rejected（legacy "in_progress"/"completed" 在
+  `IdempotencyEntry.from_doc` 防御映射）。
+- **内存权威 overlay**：`lookup`/`store` 恒先查内存（TTL 有效即命中）；Mongo 可用时
+  store 写穿 claim（acquired 语义来自 repo）；Mongo 报错：产品模式透传（fail-closed，
+  调用方映射 503）、dev 模式内存降级（进程内任意 Mongo 切换不去重）。
+- `store()` 返回 `StoreResult{entry, acquired}`：acquired=True = 取得所有权（进入业务
+  处理）；False = 既有记录（重放/并发 loser/降级去重，恒不进入业务处理）。
+- `recover()`（Mongo 恢复 reconcile）：对每条内存 entry——Mongo 无 → 插入（claim），
+  Mongo 已有 → 内存刷新为 Mongo 状态（Mongo 优先、读时一致）；成功后 durable 翻回。
+- `complete()/reject()`：写内存（status + 完整 ACK 负载）+ best-effort repo 写穿
+  （失败仅记日志，不抛——条目保留仍可重放）。
+- `durable`（D5-b）：`repo is not None and not _in_memory_fallback`；`configure()`
+  初值 `_in_memory_fallback = repo is None or not repo.is_connected`，运行时由操作
+  结果驱动（Mongo 静默断网经首次失败翻 True）。
+- release（消息被拒/异常后删除）与 complete 为 best-effort——失败不阻塞已决定的 ACK。
 """
 
 from __future__ import annotations
 
+import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from core.schema.types import MessageId
 from core.storage.base import StorageUnavailableError
+from core.storage.idempotency_repo import (
+    STATUS_ACCEPTED,
+    STATUS_CLAIMED,
+    STATUS_REJECTED,
+)
 
 if TYPE_CHECKING:
     from core.storage.idempotency_repo import IdempotencyRepository
+
+logger = logging.getLogger(__name__)
 
 # 默认保留窗口：1 小时（进程内 TTL 与 Mongo TTL 索引同值）
 _DEFAULT_TTL_SECONDS = 3600.0
@@ -36,34 +49,74 @@ GRACE_SECONDS = 30.0
 
 @dataclass
 class IdempotencyEntry:
-    """一次幂等请求的记录。"""
+    """一次幂等请求的记录（三态 + 完整 ACK 重放负载）。
+
+    claimed_at/expires_at 用墙钟（time.time()，unix 秒）——跨重启可比、与 Mongo 时间
+    字段同基（Global Constraints：勿用 time.monotonic() 与墙钟相减）。
+    """
 
     user_message_id: MessageId   # 预分配用户消息 ID（ACK 与落库一致）
     content_digest: str       # 内容摘要（SHA-256 hex）
-    created_at: float         # 创建时间（unix 秒；内存 TTL 依据）
-    status: str = "in_progress"   # in_progress / completed（D6c）
-    conversation_id: str = ""     # 目标会话（D6c，唯一约束维度）
-    expires_at: float | None = None  # 内存 TTL 兜底（Mongo 侧用 BSON Date）
+    created_at: float         # 创建时间（monotonic，兼容既有构造点；内存 TTL 以 claimed_at 为准）
+    status: str = STATUS_CLAIMED  # 三态：claimed / accepted / rejected
+    conversation_id: str = ""     # 目标会话（唯一约束维度）
+    expires_at: float | None = None  # 内存 TTL 兜底（墙钟 unix 秒；Mongo 侧用 BSON Date）
+    claimed_at: float | None = None  # claim 时刻（墙钟 unix 秒；stale/TTL 判定依据）
+    received_at: str | None = None   # ACK 重放负载：接收时刻（重放逐字一致）
+    client_message_id: str | None = None   # ACK 重放负载：客户端消息 ID
+    conversation_id_wire: str | None = None  # ACK 重放负载：wire 会话 ID
+    error: dict | None = None  # rejected 的 error 负载（code/message/retryable/...）
 
     @classmethod
     def from_doc(cls, doc: dict) -> "IdempotencyEntry":
-        """从 Mongo 文档构造（lookup 恢复；created_at 无意义——TTL 由 Mongo 管）。"""
+        """从 Mongo 文档构造（lookup/recover 恢复；created_at 无意义——TTL 由 claimed_at 管）。
+
+        防御映射 legacy 状态：in_progress→claimed、completed→accepted；读取完整 ACK
+        重放负载字段（received_at/client_message_id/conversation_id_wire/error）。
+        """
+        raw_status = doc.get("status", STATUS_CLAIMED)
+        if raw_status == "in_progress":
+            status = STATUS_CLAIMED
+        elif raw_status == "completed":
+            status = STATUS_ACCEPTED
+        else:
+            status = raw_status
         return cls(
             user_message_id=MessageId(doc.get("message_id", "")),
             content_digest=doc.get("content_digest", ""),
             created_at=time.monotonic(),
-            status=doc.get("status", "in_progress"),
+            status=status,
             conversation_id=doc.get("conversation_id", ""),
+            expires_at=_doc_expires(doc.get("expires_at")),
+            claimed_at=doc.get("claimed_at"),
+            received_at=doc.get("received_at"),
+            client_message_id=doc.get("client_message_id"),
+            conversation_id_wire=doc.get("conversation_id_wire"),
+            error=doc.get("error"),
         )
 
 
+@dataclass
+class StoreResult:
+    """store 层 claim 所有权结果（D5；与 repo 层 ClaimResult 语义一致、分层独立）。
+
+    entry: 实际生效的记录（新 claim / 并发 winner / dev 降级既有条目）。
+    acquired: True = 本次取得所有权（调用方进入业务处理）；False = 既有记录
+              （重放/并发 loser/降级去重，恒不进入业务处理）。
+    """
+
+    entry: IdempotencyEntry
+    acquired: bool
+
+
 class IdempotencyStore:
-    """clientRequestId 幂等表门面：Mongo 持久化（durable）或进程内 dict（降级）。
+    """clientRequestId 幂等表门面：内存权威 overlay + Mongo 写穿（durable）或纯内存。
 
     后端选择：
-    - ``configure(repo, product_mode)`` 后 repo 非 None → 优先 Mongo（durable）。
-    - Mongo 操作抛 StorageUnavailableError：产品模式 → 透传（调用方 503）；
-      dev 模式 → 本次落内存降级，``durable=False``（Mongo 恢复后自动回 durable）。
+    - ``configure(repo, product_mode)`` 后 repo 非 None → 优先 Mongo（durable）；
+      初值由 ``repo.is_connected`` 决定（D5-b，修复「repo 对象非空即 durable」误报）。
+    - Mongo 操作抛 StorageUnavailableError：产品模式 → 透传（调用方 503）；dev 模式 →
+      本次落内存降级，``durable=False``（Mongo 恢复后经 ``recover()`` 回 durable）。
     - repo 为 None（未配置）→ 纯内存（测试/无 Mongo 场景），durable=False。
     """
 
@@ -78,10 +131,15 @@ class IdempotencyStore:
 
     def configure(self, repo: "IdempotencyRepository | None", *,
                   product_mode: bool) -> None:
-        """配置持久化后端与产品/dev 模式（create_app 调用，不触碰内存表）。"""
+        """配置持久化后端与产品/dev 模式（create_app 调用，不触碰内存表）。
+
+        durable 初值（D5-b）：repo 为 None 或未连接（``is_connected=False``）→ 内存
+        降级窗口。运行时由操作结果驱动（既有 ``_in_memory_fallback`` 机制，Mongo
+        静默断网经首次失败翻 True）。
+        """
         self._repo = repo
         self._product_mode = product_mode
-        self._in_memory_fallback = repo is None
+        self._in_memory_fallback = repo is None or not repo.is_connected
 
     @property
     def durable(self) -> bool:
@@ -92,7 +150,14 @@ class IdempotencyStore:
 
     async def lookup(self, conversation_id: str, client_request_id: str
                      ) -> IdempotencyEntry | None:
-        """按 (conversation_id, client_request_id) 查询；过期条目视为未命中。"""
+        """按 (conversation_id, client_request_id) 查询；内存优先（TTL 有效即命中）。
+
+        内存权威 overlay（D5）：恒查内存（命中即返回）→ miss 才查 Mongo（跨重启镜像）；
+        Mongo 报错：产品模式透传（fail-closed）/ dev 视为 miss。过期条目视为未命中。
+        """
+        mem = self._memory_lookup(conversation_id, client_request_id)
+        if mem is not None:
+            return mem
         if self._repo is not None:
             try:
                 doc = await self._repo.get(conversation_id, client_request_id)
@@ -100,45 +165,86 @@ class IdempotencyStore:
                 if self._product_mode:
                     raise  # fail-closed：调用方映射 503
                 self._in_memory_fallback = True
-            else:
-                self._in_memory_fallback = False
-                if doc is not None:
-                    return IdempotencyEntry.from_doc(doc)
                 return None
-        return self._memory_lookup(conversation_id, client_request_id)
+            self._in_memory_fallback = False
+            if doc is not None:
+                entry = IdempotencyEntry.from_doc(doc)
+                self._entries[(conversation_id, client_request_id)] = entry
+                return entry
+        return None
 
     async def store(self, conversation_id: str, client_request_id: str,
-                    entry: IdempotencyEntry) -> IdempotencyEntry:
-        """记录 claim。返回实际生效的 entry（并发同键时可能是既有记录）。
+                    entry: IdempotencyEntry) -> StoreResult:
+        """记录 claim，返回 ``StoreResult{entry, acquired}``。
 
-        并发同键双写：Mongo 唯一索引保证单记录，后写者经 ``claim`` 返回既有记录，
-        调用方用返回的 message_id 重放 ACK（不重复 generation）。
+        内存权威 overlay（D5）：
+        - repo 非空 → 恒 ``repo.claim``：acquired=True 写内存返回 ``(entry, True)``；
+          acquired=False 把 winner 也写内存返回 ``(winner, False)``（内存镜像完整）；
+        - repo 报错 → 产品模式透传（fail-closed）；dev 模式内存降级（内存已有 →
+          ``(mem, False)``，否则插入 → ``(entry, True)``）；
+        - repo 为 None（纯内存）→ 保留内存优先去重：同键二次返回既有 ``(entry, False)``，
+          不生成新 message_id（防 dev/无 Mongo 双生成）。
         """
         if self._repo is not None:
             try:
-                existing = await self._repo.claim(
+                result = await self._repo.claim(
                     conversation_id, client_request_id,
                     content_digest=entry.content_digest,
                     message_id=entry.user_message_id,
                     status=entry.status,
+                    claimed_at=entry.claimed_at if entry.claimed_at is not None else time.time(),
                     expires_at=_mongo_expiry(self._ttl),
                 )
             except StorageUnavailableError:
                 if self._product_mode:
                     raise  # fail-closed：调用方映射 503
                 self._in_memory_fallback = True
-            else:
-                self._in_memory_fallback = False
-                if existing is not None:
-                    return IdempotencyEntry.from_doc(existing)
-                return entry
-        # 内存路径（无 repo / dev 降级）
-        key = (conversation_id, client_request_id)
+                # dev 内存降级：内存优先去重
+                prev = self._memory_lookup(conversation_id, client_request_id)
+                if prev is not None:
+                    return StoreResult(entry=prev, acquired=False)
+                self._apply_timestamps(entry)
+                self._entries[(conversation_id, client_request_id)] = entry
+                return StoreResult(entry=entry, acquired=True)
+            self._in_memory_fallback = False
+            # acquired=True（新插入/接管）与 False（并发 loser/重放）都写内存
+            winner = IdempotencyEntry.from_doc(result.entry)
+            self._entries[(conversation_id, client_request_id)] = winner
+            return StoreResult(entry=winner, acquired=result.acquired)
+        # 纯内存路径（repo=None）：保留内存优先去重（同键二次返回既有 entry）
         prev = self._memory_lookup(conversation_id, client_request_id)
         if prev is not None:
-            return prev
-        self._entries[key] = entry
-        return entry
+            return StoreResult(entry=prev, acquired=False)
+        self._apply_timestamps(entry)
+        self._entries[(conversation_id, client_request_id)] = entry
+        return StoreResult(entry=entry, acquired=True)
+
+    async def recover(self) -> None:
+        """Mongo 恢复 reconcile（D5）：对每条内存 entry 与 Mongo 对齐。
+
+        内存权威 overlay：Mongo 无对应文档 → 插入（claim）；Mongo 已有 → 内存刷新为
+        Mongo 状态（Mongo 优先、读时一致——此后 lookup 内存命中即对齐后状态）。
+        结束后 ``_in_memory_fallback = False``（durable 翻回；Task 5 断言依赖）。
+        repo 为 None（纯内存）→ no-op。
+        """
+        if self._repo is None:
+            return  # 纯内存路径无可 reconcile
+        for (conversation_id, client_request_id), entry in list(self._entries.items()):
+            doc = await self._repo.get(conversation_id, client_request_id)
+            if doc is None:
+                # Mongo 无 → 插入（claim），内存已权威，仅补落库
+                await self._repo.claim(
+                    conversation_id, client_request_id,
+                    content_digest=entry.content_digest,
+                    message_id=entry.user_message_id,
+                    status=entry.status,
+                    claimed_at=entry.claimed_at if entry.claimed_at is not None else time.time(),
+                    expires_at=_mongo_expiry(self._ttl),
+                )
+            else:
+                # Mongo 已有 → 内存刷新为 Mongo 状态（Mongo 优先）
+                self._entries[(conversation_id, client_request_id)] = IdempotencyEntry.from_doc(doc)
+        self._in_memory_fallback = False
 
     async def delete(self, conversation_id: str, client_request_id: str) -> None:
         """释放 claim（消息被拒/异常后删除，允许重试重新进入）。
@@ -156,21 +262,69 @@ class IdempotencyStore:
                 self._in_memory_fallback = True
         self._entries.pop((conversation_id, client_request_id), None)
 
-    async def complete(self, conversation_id: str, client_request_id: str) -> None:
-        """标记 claim 已完成（accepted ACK 后调用）。
+    async def complete(self, conversation_id: str, client_request_id: str, *,
+                       received_at: str, client_message_id: str | None,
+                       conversation_id_wire: str | None) -> None:
+        """标记 claim 已完成（accepted ACK 前调用），持久化完整 ACK 重放负载。
 
-        best-effort：失败仅丢状态更新（条目保留，重试仍重放原 ACK），不抛。
+        写内存（status=accepted + received_at/client_message_id/conversation_id_wire）
+        + best-effort repo 写穿（失败仅记日志，不抛——条目保留仍可重放）。
         """
+        key = (conversation_id, client_request_id)
+        entry = self._entries.get(key)
+        if entry is not None:
+            entry.status = STATUS_ACCEPTED
+            entry.received_at = received_at
+            entry.client_message_id = client_message_id
+            entry.conversation_id_wire = conversation_id_wire
         if self._repo is not None:
             try:
-                await self._repo.complete(conversation_id, client_request_id)
+                await self._repo.complete(
+                    conversation_id, client_request_id,
+                    payload={"received_at": received_at,
+                             "client_message_id": client_message_id,
+                             "conversation_id_wire": conversation_id_wire},
+                )
                 self._in_memory_fallback = False
             except StorageUnavailableError:
                 # 消息已 ACK：仅丢状态字段，不抛；repo 不可用 → 非 durable 窗口
+                logger.warning("IdempotencyStore.complete 写穿失败（key=%s/%s）",
+                               conversation_id, client_request_id)
                 self._in_memory_fallback = True
-        entry = self._entries.get((conversation_id, client_request_id))
+
+    async def reject(self, conversation_id: str, client_request_id: str, *,
+                     code: str, message: str, retryable: bool,
+                     received_at: str, client_message_id: str | None,
+                     conversation_id_wire: str | None,
+                     details: dict | None = None,
+                     retry_after_ms: int | None = None) -> None:
+        """拒绝并持久化 error 负载（rejected ACK 前调用）。
+
+        写内存（status=rejected + 完整负载 + error）+ best-effort repo 写穿（失败仅记
+        日志，不抛）。error 负载含 code/message/retryable + 可选 details/retryAfterMs
+        （重放逐字一致）。
+        """
+        error: dict = {"code": code, "message": message, "retryable": retryable}
+        if details is not None:
+            error["details"] = details
+        if retry_after_ms is not None:
+            error["retryAfterMs"] = retry_after_ms
+        key = (conversation_id, client_request_id)
+        entry = self._entries.get(key)
         if entry is not None:
-            entry.status = "completed"
+            entry.status = STATUS_REJECTED
+            entry.error = error
+            entry.received_at = received_at
+            entry.client_message_id = client_message_id
+            entry.conversation_id_wire = conversation_id_wire
+        if self._repo is not None:
+            try:
+                await self._repo.reject(conversation_id, client_request_id, error=error)
+                self._in_memory_fallback = False
+            except StorageUnavailableError:
+                logger.warning("IdempotencyStore.reject 写穿失败（key=%s/%s）",
+                               conversation_id, client_request_id)
+                self._in_memory_fallback = True
 
     # ---- 内部 ----
 
@@ -180,10 +334,28 @@ class IdempotencyStore:
         entry = self._entries.get(key)
         if entry is None:
             return None
-        if time.monotonic() - entry.created_at > self._ttl:
+        if self._is_stale(entry):
             self._entries.pop(key, None)
             return None
         return entry
+
+    def _is_stale(self, entry: IdempotencyEntry) -> bool:
+        """内存 TTL 判定：墙钟（time.time()）基于 claimed_at（Global Constraints）。
+
+        勿用 time.monotonic()——单调钟与墙钟相减为巨大负数，TTL 判定永不触发。
+        """
+        claimed_at = entry.claimed_at
+        if claimed_at is None:
+            return False  # legacy/未知：视为有效（随 Mongo TTL 或下次 store 覆盖）
+        return time.time() - claimed_at > self._ttl
+
+    def _apply_timestamps(self, entry: IdempotencyEntry) -> None:
+        """内存条目补墙钟时间戳（claimed_at 缺省取当前；expires_at 缺省 = now + TTL）。"""
+        now = time.time()
+        if entry.claimed_at is None:
+            entry.claimed_at = now
+        if entry.expires_at is None:
+            entry.expires_at = now + self._ttl
 
     def reset(self) -> None:
         """清空内存表并恢复未配置态（测试隔离）。"""
@@ -196,6 +368,15 @@ class IdempotencyStore:
 def _mongo_expiry(ttl_seconds: float) -> datetime:
     """Mongo expires_at 字段：aware UTC datetime（BSON Date，TTL 索引到期删除）。"""
     return datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+
+
+def _doc_expires(value: object) -> float | None:
+    """Mongo 文档 expires_at（BSON Date）→ 内存墙钟 unix 秒；缺失/未知 → None。"""
+    if isinstance(value, datetime):
+        return value.timestamp()
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 # 模块级单例（进程内；测试用 reset_store 隔离）

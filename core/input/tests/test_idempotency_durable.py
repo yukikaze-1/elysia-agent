@@ -17,10 +17,17 @@ from datetime import datetime, timezone
 
 import pytest
 
-from core.input.idempotency import configure_store, get_store, reset_store
+from core.input.idempotency import (
+    IdempotencyEntry,
+    StoreResult,
+    configure_store,
+    get_store,
+    reset_store,
+)
 from core.input.rate_limiter import RateLimiter
 from core.storage.idempotency_repo import (
     COLLECTION,
+    ClaimResult,
     IdempotencyRepository,
     STATUS_ACCEPTED,
     STATUS_CLAIMED,
@@ -486,3 +493,211 @@ class TestRepoClaimContract:
         await repo.close()
         assert repo.is_connected is False
         assert IdempotencyRepository(db=None).is_connected is False
+
+
+# ---------------------------------------------------------------------------
+# Task 2：store 层内存权威 overlay（StoreResult / 内存优先 / recover reconcile /
+# 完整 ACK 负载 / durable 初值）。marker=service。
+# ---------------------------------------------------------------------------
+
+class _FlipRepo:
+    """可用性可翻转的幂等 repo fake（Task 2 store 层用例）。
+
+    available=True → 委托真实 IdempotencyRepository（内存 FakeDocumentDBBackend）；
+    False → 所有操作 raise StorageUnavailableError（模拟 Mongo 断连）。翻转可用性
+    可复现 up→down→up / 离线启动→恢复 等 Mongo 状态切换。
+    """
+
+    def __init__(self, available: bool = True) -> None:
+        self.available = available
+        self._backend = FakeDocumentDBBackend()
+        self._impl = IdempotencyRepository(db=self._backend)
+
+    @property
+    def is_connected(self) -> bool:
+        return self.available
+
+    async def health_check(self) -> bool:
+        return self.available
+
+    async def claim(self, conversation_id: str, client_request_id: str, *,
+                    content_digest: str, message_id: str, status: str,
+                    claimed_at: float | None = None,
+                    expires_at: object) -> ClaimResult:
+        if not self.available:
+            raise StorageUnavailableError("Mongo down")
+        return await self._impl.claim(
+            conversation_id, client_request_id,
+            content_digest=content_digest, message_id=message_id, status=status,
+            claimed_at=claimed_at, expires_at=expires_at)
+
+    async def get(self, conversation_id: str, client_request_id: str) -> dict | None:
+        if not self.available:
+            raise StorageUnavailableError("Mongo down")
+        return await self._impl.get(conversation_id, client_request_id)
+
+    async def complete(self, conversation_id: str, client_request_id: str, *,
+                       status: str = STATUS_ACCEPTED,
+                       payload: dict | None = None) -> None:
+        if not self.available:
+            raise StorageUnavailableError("Mongo down")
+        await self._impl.complete(conversation_id, client_request_id,
+                                  status=status, payload=payload)
+
+    async def reject(self, conversation_id: str, client_request_id: str, *,
+                     error: dict) -> None:
+        if not self.available:
+            raise StorageUnavailableError("Mongo down")
+        await self._impl.reject(conversation_id, client_request_id, error=error)
+
+    async def release(self, conversation_id: str, client_request_id: str) -> None:
+        if not self.available:
+            raise StorageUnavailableError("Mongo down")
+        await self._impl.release(conversation_id, client_request_id)
+
+
+class TestStoreOverlay:
+    """内存权威 overlay（D5）：内存优先 / 写穿 / 降级去重 / recover reconcile。"""
+
+    pytestmark = pytest.mark.service
+
+    @pytest.mark.asyncio
+    async def test_lookup_memory_first_even_when_mongo_ok(self, fresh_store):
+        """内存有 entry 时 Mongo 在线也命中内存（不覆盖内存事实）。"""
+        repo = _FlipRepo()
+        configure_store(repo, product_mode=True)
+        store = get_store()
+        await store.store("default", "crid", _entry("msg_1", "abc"))
+        # Mongo 状态被外部改写为 accepted——内存事实（claimed）不应被覆盖
+        await repo.complete("default", "crid", payload={"received_at": "x"})
+        entry = await store.lookup("default", "crid")
+        assert entry is not None
+        assert entry.user_message_id == "msg_1"
+        assert entry.status == STATUS_CLAIMED  # 内存权威（未被 Mongo 覆盖）
+
+    @pytest.mark.asyncio
+    async def test_store_returns_store_result_and_writes_shadow(self, fresh_store):
+        """store 成功写穿 Mongo 也写内存；返回 StoreResult；durable=True。"""
+        repo = _FlipRepo()
+        configure_store(repo, product_mode=True)
+        store = get_store()
+        result = await store.store("default", "crid", _entry("msg_1", "abc"))
+        assert isinstance(result, StoreResult)
+        assert result.acquired is True
+        assert result.entry.user_message_id == "msg_1"
+        assert store.durable is True
+        # 写穿 Mongo + 内存镜像双写
+        assert (await repo.get("default", "crid"))["message_id"] == "msg_1"
+        assert store._entries[("default", "crid")].user_message_id == "msg_1"  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_failover_up_down_up_no_dedup_loss(self, fresh_store):
+        """up→down→up：同 clientRequestId 重试恒同一 entry（process 不重复）。"""
+        repo = _FlipRepo()
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        r1 = await store.store("default", "crid", _entry("msg_1", "abc"))
+        assert r1.acquired is True
+        repo.available = False  # Mongo down（dev 内存降级）
+        r2 = await store.store("default", "crid", _entry("msg_2", "abc"))
+        assert r2.acquired is False
+        repo.available = True   # Mongo up（写穿 claim → 既有记录 winner）
+        r3 = await store.store("default", "crid", _entry("msg_3", "abc"))
+        assert r3.acquired is False
+        # 恒同一 entry：message_id 不漂移（process 不重复生成）
+        assert r1.entry.user_message_id == "msg_1"
+        assert r2.entry.user_message_id == "msg_1"
+        assert r3.entry.user_message_id == "msg_1"
+
+    @pytest.mark.asyncio
+    async def test_recover_reconciles_memory_to_mongo_and_durable(self, fresh_store):
+        """recover()：Mongo 已有→内存刷新为其状态；Mongo 无→插入内存 claim；
+        结束后 _in_memory_fallback=False → durable=True。"""
+        repo = _FlipRepo()
+        # Mongo 已有 crid_mongo（另一进程已 claim + complete → accepted）
+        await repo.claim("default", "crid_mongo", content_digest="mongo-d",
+                         message_id="msg_mongo", status=STATUS_ACCEPTED,
+                         claimed_at=time.time(), expires_at=_expires())
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        # dev 降级窗口：两条内存 entry（Mongo 不可写）
+        repo.available = False
+        await store.store("default", "crid_dev", _entry("msg_dev", "d1"))
+        await store.store("default", "crid_mongo", _entry("msg_mem", "d2"))
+        assert store.durable is False
+        # Mongo 恢复 → recover reconcile
+        repo.available = True
+        await store.recover()
+        # Mongo 已有 → 内存刷新为 Mongo 状态（Mongo 优先、读时一致）
+        mem_mongo = store._entries[("default", "crid_mongo")]  # noqa: SLF001
+        assert mem_mongo.user_message_id == "msg_mongo"
+        assert mem_mongo.status == STATUS_ACCEPTED
+        # Mongo 无 → 插入内存 claim（内存权威补落库）
+        assert store._entries[("default", "crid_dev")].user_message_id == "msg_dev"  # noqa: SLF001
+        assert (await repo.get("default", "crid_dev"))["message_id"] == "msg_dev"
+        # 结束后 durable 翻回
+        assert store._in_memory_fallback is False  # noqa: SLF001
+        assert store.durable is True
+
+    @pytest.mark.asyncio
+    async def test_durable_false_before_connect(self, fresh_store):
+        """repo 未连接（is_connected=False）→ configure 后 durable=False（初值不误报）。"""
+        repo = _FlipRepo(available=False)  # 未连接
+        configure_store(repo, product_mode=False)
+        assert get_store().durable is False
+        # 纯内存（repo=None）同样 durable=False
+        reset_store()
+        assert get_store().durable is False
+
+    @pytest.mark.asyncio
+    async def test_complete_reject_persist_full_ack_payload(self, fresh_store):
+        """complete/reject 持久化 received_at+client_message_id+conversation_id_wire
+        (+error)；重放可逐字重建。"""
+        repo = _FlipRepo()
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        await store.store("default", "crid", _entry("msg_1", "abc"))
+
+        await store.complete(
+            "default", "crid",
+            received_at="2026-08-11T00:00:00Z",
+            client_message_id="cm1", conversation_id_wire="wire-1")
+        mem = store._entries[("default", "crid")]  # noqa: SLF001
+        assert mem.status == STATUS_ACCEPTED
+        assert mem.received_at == "2026-08-11T00:00:00Z"
+        assert mem.client_message_id == "cm1"
+        assert mem.conversation_id_wire == "wire-1"
+        doc = await repo.get("default", "crid")
+        assert doc["status"] == STATUS_ACCEPTED
+        assert doc["received_at"] == "2026-08-11T00:00:00Z"
+        assert doc["client_message_id"] == "cm1"
+        assert doc["conversation_id_wire"] == "wire-1"
+
+        await store.reject(
+            "default", "crid",
+            code="CONTRACT_VALIDATION", message="digest mismatch", retryable=False,
+            received_at="2026-08-11T00:00:00Z",
+            client_message_id="cm1", conversation_id_wire="wire-1",
+            details={"k": "v"}, retry_after_ms=5000)
+        mem2 = store._entries[("default", "crid")]  # noqa: SLF001
+        assert mem2.status == STATUS_REJECTED
+        assert mem2.error == {
+            "code": "CONTRACT_VALIDATION", "message": "digest mismatch",
+            "retryable": False, "details": {"k": "v"}, "retryAfterMs": 5000}
+        assert mem2.received_at == "2026-08-11T00:00:00Z"
+        doc2 = await repo.get("default", "crid")
+        assert doc2["status"] == STATUS_REJECTED
+        assert doc2["error"]["code"] == "CONTRACT_VALIDATION"
+        assert doc2["error"]["retryAfterMs"] == 5000
+
+    @pytest.mark.asyncio
+    async def test_pure_memory_path_keeps_memory_first_dedup(self, fresh_store):
+        """repo=None：store 同键二次返回既有 entry（acquired=False），不生成新 message_id。"""
+        store = get_store()  # 未配置 → repo=None 纯内存
+        r1 = await store.store("default", "crid", _entry("msg_1", "abc"))
+        r2 = await store.store("default", "crid", _entry("msg_2", "abc"))
+        assert r1.acquired is True
+        assert r1.entry.user_message_id == "msg_1"
+        assert r2.acquired is False
+        assert r2.entry.user_message_id == "msg_1"  # 既有 entry（去重，不新生成）
+        assert (await store.lookup("default", "crid")).user_message_id == "msg_1"
