@@ -104,6 +104,21 @@ class TestGenerationRepository:
         repo = GenerationRepository(db=FakeDocumentDBBackend())
         assert asyncio.run(repo.find_by_message(MessageId("nope"))) is None
 
+    def test_find_by_user_message_most_recent(self):
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        _upsert(repo, generation_id="g1", user_message_id="msg_u1",
+                created_at="2026-08-04T10:00:00+00:00")
+        _upsert(repo, generation_id="g2", user_message_id="msg_u1",
+                created_at="2026-08-04T11:00:00+00:00")
+        _upsert(repo, generation_id="g3", user_message_id="msg_u2",
+                created_at="2026-08-04T12:00:00+00:00")
+        doc = asyncio.run(repo.find_by_user_message(MessageId("msg_u1")))
+        assert doc["generation_id"] == "g2"  # 最近一条按 user_message_id 反查
+
+    def test_find_by_user_message_missing_returns_none(self):
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        assert asyncio.run(repo.find_by_user_message(MessageId("nope"))) is None
+
     def test_find_by_session_status_filter(self):
         repo = GenerationRepository(db=FakeDocumentDBBackend())
         _upsert(repo, generation_id="g1", status="running")
@@ -181,6 +196,7 @@ class TestGenerationRepository:
         repo = GenerationRepository(db=None)
         assert asyncio.run(repo.find_one(GenerationId("g1"))) is None
         assert asyncio.run(repo.find_by_message(MessageId("m1"))) is None
+        assert asyncio.run(repo.find_by_user_message(MessageId("m2"))) is None
         docs, has_more, cursor = asyncio.run(repo.find_by_session(SessionId("s1")))
         assert (docs, has_more, cursor) == ([], False, None)
         assert asyncio.run(repo.mark_stale("running", "iso")) == 0

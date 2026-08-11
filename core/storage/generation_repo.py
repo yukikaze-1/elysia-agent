@@ -191,6 +191,26 @@ class GenerationRepository(Repository):
             sort=[("created_at", -1)], limit=1)
         return results[0] if results else None
 
+    async def find_by_user_message(self, user_message_id: MessageId) -> dict | None:
+        """按 user_message_id 反查最近一条 generation（幂等 commit 证据，Task 3/4）。
+
+        幂等恢复：恢复 stale CLAIMED 记录时查「该用户消息是否已生成过」——存在
+        generation 记录即视为已处理（commit 证据）。user_message_id 为触发生成的
+        用户消息 ID（register 建档时写入），按 created_at 降序取最新一条。
+
+        Args:
+            user_message_id: 触发生成的用户消息 ID。
+
+        Returns:
+            最近的 generation 文档，不存在或数据库不可用返回 None。
+        """
+        if self._db is None:
+            return None
+        results = await self._db.find(
+            COLLECTION, {"user_message_id": user_message_id},
+            sort=[("created_at", -1)], limit=1)
+        return results[0] if results else None
+
     async def find_by_session(self, session_id: SessionId, *, status: str | None = None,
                               cursor: str | None = None,
                               limit: int = 20) -> tuple[list[dict], bool, str | None]:

@@ -92,6 +92,33 @@ class TestGenerationRegistry:
         doc = asyncio.run(reg.find_by_message(MessageId("msg_a2")))
         assert doc["generation_id"] == "g2"
 
+    def test_find_by_user_message(self):
+        """注册后按 user_message_id 命中（幂等 commit 证据反查）。"""
+        reg = _registry()
+        asyncio.run(reg.register(
+            GenerationId("g1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u1"), message_id=MessageId("a1"), model="m"))
+        asyncio.run(reg.register(
+            GenerationId("g2"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u2"), message_id=MessageId("a2"), model="m"))
+        doc = asyncio.run(reg.find_by_user_message(MessageId("u2")))
+        assert doc["generation_id"] == "g2"
+
+    def test_find_by_user_message_missing_returns_none(self):
+        """未知 user_message_id → None（无证据）。"""
+        reg = _registry()
+        asyncio.run(reg.register(
+            GenerationId("g1"), session_id=SessionId("s1"),
+            user_message_id=MessageId("u1"), message_id=MessageId("a1"), model="m"))
+        assert asyncio.run(reg.find_by_user_message(MessageId("nope"))) is None
+
+    def test_find_by_user_message_db_error_returns_none(self):
+        """repo 抛异常 → registry 返回 None（Mongo 离线 = 无证据，不阻塞调用方）。"""
+        repo = GenerationRepository(db=MagicMock())
+        repo._db.find = AsyncMock(side_effect=RuntimeError("mongo down"))
+        reg = GenerationRegistry(repo=repo)
+        assert asyncio.run(reg.find_by_user_message(MessageId("u1"))) is None
+
     def test_mark_stale_interrupted(self):
         repo = GenerationRepository(db=FakeDocumentDBBackend())
         reg = GenerationRegistry(repo=repo)
@@ -150,3 +177,7 @@ class TestSignatureTypes:
         assert hints2["message_id"] is MessageId
         hints3 = get_type_hints(GenerationRepository.find_one)
         assert hints3["generation_id"] is GenerationId
+
+    def test_find_by_user_message_signature(self):
+        hints = get_type_hints(GenerationRegistry.find_by_user_message)
+        assert hints["user_message_id"] is MessageId
