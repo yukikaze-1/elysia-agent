@@ -11,6 +11,7 @@ from Module.workflow_contract import (
     WorkflowEventType,
     WorkflowStatus,
 )
+from Module.workflow_engine.core.executor import _check_cancelled
 from Module.workflow_engine.schema import (
     WorkflowState,
     ValidationAction,
@@ -118,6 +119,8 @@ async def plan_and_validate(
                 task_constraints=context.task_constraints,
             )
             if validation.valid:
+                # E3 §4 终态不可逆——写 RUNNING 前检查终态（cancel 已同步置 CANCELLED → 终止）
+                _check_cancelled(task_state)
                 task_state.plan = graph.to_plan(plan)
                 task_state.status = WorkflowStatus.RUNNING
                 task_state.updated_at = now_iso()
@@ -142,6 +145,8 @@ async def plan_and_validate(
         return None
 
     # 3. 存入 WorkflowState（graph 由 validate 返回，无需重复构造）
+    # E3 §4 终态不可逆——写 RUNNING 前检查终态（cancel 已同步置 CANCELLED → 终止，不覆写）
+    _check_cancelled(task_state)
     task_state.plan = graph.to_plan(plan)
     task_state.status = WorkflowStatus.RUNNING
     task_state.updated_at = now_iso()

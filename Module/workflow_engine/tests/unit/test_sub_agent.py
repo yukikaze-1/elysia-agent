@@ -13,6 +13,7 @@ SubAgent.__init__ 签名为 (infra, hitl_notifier) —— 组件在 run() 内创
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -939,3 +940,35 @@ async def test_resume_from_pause_no_checkpoint_raises():
 
     # 验证状态切到了 FAILED
     assert task_state.status == WorkflowStatus.FAILED
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E3 Task 4: 终态不可逆——planning 写 RUNNING 前 _check_cancelled 拦截
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestTerminalMonotonic:
+    @pytest.mark.asyncio
+    async def test_planning_guard_blocks_when_cancelled(self):
+        """真正驱动 planning 的 RUNNING 写点：planner.plan 执行期间 cancel 落地
+        （ts.status=CANCELLED），plan_and_validate 到写 RUNNING 处 _check_cancelled
+        抛 CancelledError、status 不被覆写。"""
+        from Module.workflow_engine.core.sub_agent.planning import plan_and_validate
+        ts = WorkflowState(task_id=WorkflowId("t1"), status=WorkflowStatus.PENDING,
+                           tools=[], session_id=SessionId("s1"))
+        planner = MagicMock()
+
+        async def fake_plan(*a, **kw):
+            ts.status = WorkflowStatus.CANCELLED      # 规划期间 cancel 落地
+            return MagicMock()                         # 返回 mock plan（validator 放行）
+        planner.plan = fake_plan
+        validator = MagicMock()
+        # validate 返回 (ValidationResult, PlanGraph)——ValidationResult 须有 .valid 属性
+        validator.validate = MagicMock(return_value=(MagicMock(valid=True), MagicMock()))
+        with pytest.raises(asyncio.CancelledError):
+            await plan_and_validate(
+                planner, validator, MagicMock(), ts, WorkflowMailbox(WorkflowId("t1")),
+                ConstraintConfig(),
+                push_mailbox_fn=AsyncMock(), abort_error_code_fn=lambda: "ABORT",
+            )
+        assert ts.status == WorkflowStatus.CANCELLED   # 未被覆写为 RUNNING

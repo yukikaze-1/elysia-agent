@@ -234,6 +234,11 @@ class Orchestrator:
             exec_state = self._init_exec_state(graph)
         exec_state.waiting_for_approval = False
         if task_state.status == WorkflowStatus.RESUMING:
+            # E3 §4 终态不可逆——resume 加载 checkpoint 期间 cancel 已置 CANCELLED
+            # → 不写 RUNNING（防御性守卫：cancel() 会把 RESUMING 同步覆写为 CANCELLED，
+            #   经公开 API 该分支命中时 status 恒为 RESUMING，但保留此检查防未来路径引入）。
+            if task_state.is_terminal():
+                raise asyncio.CancelledError()
             task_state.status = WorkflowStatus.RUNNING
             task_state.updated_at = now_iso()
         return exec_state
