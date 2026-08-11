@@ -88,8 +88,6 @@ from frontend_contract.rest import (  # noqa: F401
 from frontend_contract.ws_message import (  # noqa: F401
     ActionMessage,
     ActivateSessionMessage,
-    AcceptedUserAckMessage,
-    AckError,
     AttachmentRef,
     AudioEndMessage,
     AudioMessage,

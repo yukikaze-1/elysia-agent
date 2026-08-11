@@ -3,7 +3,8 @@
 
 无网络：构造 `ServerMessage` 契约模型 → `wire_dict()` → 标准 JSONL（每个非空行
 都是 JSON 对象）写
-`docs/archive/frontend-handoff-v2/traces/ws-v2-{handshake,session,chat,cancel,fail,tool,voice}.jsonl`。
+`docs/archive/frontend-handoff-v2/traces/ws-v2-{handshake,session,chat,cancel,fail,tool,voice,rejected}.jsonl`
+（前 7 个 accepted 场景 + `rejected` 含 6 个负面 rejected ACK 帧）。
 
 帧序列为固定测试数据（确定性——漂移门禁要求字节稳定，不取 datetime.now），
 由 frontend_contract 契约源生成，**非事实源**：真实捕获已停用
@@ -11,7 +12,7 @@
 真实 wire 形状/事件序列以 `frontend_contract/` 契约 + `docs/electron-backend-protocol-v2.md` 为准。
 
 模式：
-  python scripts/gen_contract_frames.py         # 写 7 个 frames 到 traces 归档
+  python scripts/gen_contract_frames.py         # 写 8 个 frames 到 traces 归档
   python scripts/gen_contract_frames.py --check # 生成到 tempfile 后 git diff 比对（漂移返回 1）
 """
 import json
@@ -267,7 +268,7 @@ def _voice() -> list[str]:
 
 
 def _rejected_acks() -> list[wm.RejectedUserAckMessage]:
-    """6 个负面 rejected ACK 帧（Task 6，BE-P1-04：handler 产生的每一种 rejected ACK 都有 golden 基线）。
+    """7 个负面 rejected ACK 帧（Task 6，BE-P1-04：handler 产生的每一种 rejected ACK 都有 golden 基线）。
 
     均 rejected + messageId:"" + AckError；IN_PROGRESS 带 retryAfterMs=30000——
     与 `core.input.idempotency._IN_PROGRESS_RETRY_AFTER_MS`（= GRACE_SECONDS*1000）同值
@@ -285,6 +286,12 @@ def _rejected_acks() -> list[wm.RejectedUserAckMessage]:
             receivedAt=_TS, status="rejected",
             error=wm.AckError(code="SESSION_NOT_FOUND",
                               message="会话不存在: default", retryable=False)),
+        wm.RejectedUserAckMessage(
+            clientRequestId="req_frame_rej_attachment", conversationId="default",
+            receivedAt=_TS, status="rejected",
+            error=wm.AckError(code="ATTACHMENT_NOT_FOUND",
+                              message="附件不存在或已删除: att_frame_missing",
+                              retryable=False)),
         wm.RejectedUserAckMessage(
             clientRequestId="req_frame_rej_queue", conversationId="default",
             receivedAt=_TS, status="rejected",

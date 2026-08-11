@@ -195,10 +195,10 @@ def test_rejected_golden_frames_validate_and_in_progress_retry():
     traces = _ROOT / "docs" / "archive" / "frontend-handoff-v2" / "traces"
     content = (traces / "ws-v2-rejected.jsonl").read_text(encoding="utf-8")
     frames = [json.loads(line) for line in content.splitlines() if line.strip()]
-    assert len(frames) == 6
+    assert len(frames) == 7
     codes = {f["error"]["code"] for f in frames}
-    assert codes == {"CONTRACT_VALIDATION", "SESSION_NOT_FOUND", "QUEUE_FULL",
-                     "STORAGE_UNAVAILABLE", "RATE_LIMITED", "IN_PROGRESS"}
+    assert codes == {"CONTRACT_VALIDATION", "SESSION_NOT_FOUND", "ATTACHMENT_NOT_FOUND",
+                     "QUEUE_FULL", "STORAGE_UNAVAILABLE", "RATE_LIMITED", "IN_PROGRESS"}
     in_progress = None
     for f in frames:
         m = _ack_adapter().validate_python(f)
