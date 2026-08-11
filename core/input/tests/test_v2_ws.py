@@ -564,7 +564,7 @@ class TestQueueFullAck:
         assert ack2[0]["receivedAt"] == ack[0]["receivedAt"], "receivedAt 用持久化原值"
 
     @pytest.mark.asyncio
-    async def test_plain_text_exception_rejected_and_entry_deleted(self, fresh_idempotency):
+    async def test_plain_text_exception_rejected_and_entry_rejected(self, fresh_idempotency):
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.input.idempotency import get_store
@@ -599,7 +599,7 @@ class TestQueueFullAck:
         assert len(sent) == 1
 
     @pytest.mark.asyncio
-    async def test_media_exception_rejected_and_entry_deleted(self, fresh_idempotency):
+    async def test_media_exception_rejected_and_entry_rejected(self, fresh_idempotency):
         """#12：附件消息 process_message 抛异常 → rejected INTERNAL + reject 持久化。"""
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
@@ -1225,6 +1225,214 @@ class TestV2IdempotencyStateMachine:
         assert rejected[0]["error"]["code"] == "CONTRACT_VALIDATION"
         assert not rejected[0].get("messageId"), "异摘要拒绝不串 winner 的 messageId"
         assert agent.process_calls == 1, "异内容拒绝不触发 process"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_same_key_text_loser_in_progress(self, fresh_idempotency):
+        """真实并发（两 text 同时 claim）：winner accepted + loser rejected IN_PROGRESS，
+        process 恒 1——覆盖 ``if not result.acquired:`` loser 分支（BE-P0-01 回归）。
+
+        fake store 的 lookup 恒 miss、首个 store 为 winner（acquired=True），第二个
+        store 返回 winner 的新鲜 CLAIMED（acquired=False）；winner 在 process 中被 gate
+        阻塞，确保 loser claim 时 entry 仍为 CLAIMED（不是 ACCEPTED 重放）。
+        """
+        import core.input.ws_handler as _m
+        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+
+        class _RacingTextStore(IdempotencyStore):
+            """lookup 恒 miss；首个 store 为 winner（新鲜 CLAIMED，acquired=True），
+            后续 store 为 loser（acquired=False，返回 winner entry）。"""
+
+            def __init__(self):
+                super().__init__()
+                self._winner: IdempotencyEntry | None = None
+                self._claimed = asyncio.Event()
+
+            async def lookup(self, conversation_id, client_request_id):
+                return None  # 两请求 lookup 时 winner 尚未落表（真实并发窗口）
+
+            async def store(self, conversation_id, client_request_id, entry):
+                if self._winner is None:
+                    entry.claimed_at = time.time()  # 新鲜 CLAIMED（IN_PROGRESS 判定）
+                    self._winner = entry
+                    self._claimed.set()
+                    return StoreResult(entry=entry, acquired=True)
+                await self._claimed.wait()
+                return StoreResult(entry=self._winner, acquired=False)
+
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        gate = asyncio.Event()
+        claimed = asyncio.Event()
+
+        async def _gated_process(**kwargs):
+            agent.process_calls += 1
+            claimed.set()
+            await gate.wait()
+            return True
+
+        agent.process_message = _gated_process
+        racing_store = _RacingTextStore()  # 单实例——get_store() 恒返回同一 fake store
+        original = _m.get_store
+        _m.get_store = lambda: racing_store
+        try:
+            async def send():
+                await handle_json_message(_text_msg("r_con"), agent, None, ws, voice_mgr=None)
+
+            a_task = asyncio.create_task(send())
+            await claimed.wait()  # winner 已 claim 并在 process 中阻塞
+            b_task = asyncio.create_task(send())
+            await asyncio.wait_for(b_task, timeout=5)  # loser 完成：IN_PROGRESS 拒绝
+            gate.set()  # 放行 winner
+            await a_task
+        finally:
+            _m.get_store = original
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        statuses = sorted(a["status"] for a in acks)
+        assert statuses == ["accepted", "rejected"], f"实际 {acks}"
+        rejected = next(a for a in acks if a["status"] == "rejected")
+        assert rejected["error"]["code"] == "IN_PROGRESS"
+        assert rejected["error"]["retryable"] is True
+        assert not rejected.get("messageId"), "loser 不串 winner 的 messageId"
+        accepted = next(a for a in acks if a["status"] == "accepted")
+        assert accepted["messageId"]
+        assert agent.process_calls == 1, "并发同键恒恰一次 process"
+
+    @pytest.mark.asyncio
+    async def test_text_store_loser_takeover_reclaim_processes(self, fresh_idempotency):
+        """text store loser = stale CLAIMED + 无证据 → TAKEOVER → 二次 claim 接管
+        （acquired=True）→ 进入业务流（process 一次，accepted）。"""
+        import core.input.ws_handler as _m
+        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+
+        class _TextTakeoverStore(IdempotencyStore):
+            """lookup 恒 miss；store 1 → stale CLAIMED loser；store 2 → 接管 acquired=True。"""
+
+            def __init__(self, stale: IdempotencyEntry):
+                super().__init__()
+                self.stale = stale
+                self.store_calls = 0
+
+            async def lookup(self, conversation_id, client_request_id):
+                return None
+
+            async def store(self, conversation_id, client_request_id, entry):
+                self.store_calls += 1
+                if self.store_calls == 1:
+                    return StoreResult(entry=self.stale, acquired=False)
+                return StoreResult(entry=self.stale, acquired=True)
+
+        import hashlib as _hl
+        stale = IdempotencyEntry(
+            user_message_id="msg_loser_tk", content_digest=_hl.sha256("你好".encode()).hexdigest(),
+            created_at=time.monotonic(), conversation_id="default",
+            claimed_at=time.time() - 60.0)  # 过期 CLAIMED
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws, gen_registry=_FakeGenRegistry(doc=None))  # 无证据
+        takeover_store = _TextTakeoverStore(stale)  # 单实例——get_store() 恒返回同一 fake
+        original = _m.get_store
+        _m.get_store = lambda: takeover_store
+        try:
+            await handle_json_message(_text_msg("r_tk"), agent, None, ws, voice_mgr=None)
+        finally:
+            _m.get_store = original
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "accepted", f"实际 {ws.sent}"
+        assert acks[-1]["messageId"] == "msg_loser_tk", "接管沿用原 messageId"
+        assert agent.process_calls == 1, "接管后进入业务流（process 一次）"
+
+    @pytest.mark.asyncio
+    async def test_text_store_loser_reclaim_fails_in_progress_fallback(self, fresh_idempotency):
+        """text store loser = stale CLAIMED + 无证据 → TAKEOVER → 二次 claim 仍
+        acquired=False（纯内存不可接管/竞态输家）→ 兜底 IN_PROGRESS（不静默无 ACK）。"""
+        import core.input.ws_handler as _m
+        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+
+        class _AlwaysLoserStore(IdempotencyStore):
+            """lookup 恒 miss；store 恒返回 stale CLAIMED loser（acquired=False）。"""
+
+            def __init__(self, stale: IdempotencyEntry):
+                super().__init__()
+                self.stale = stale
+
+            async def lookup(self, conversation_id, client_request_id):
+                return None
+
+            async def store(self, conversation_id, client_request_id, entry):
+                return StoreResult(entry=self.stale, acquired=False)
+
+        import hashlib as _hl
+        stale = IdempotencyEntry(
+            user_message_id="msg_loser_fb", content_digest=_hl.sha256("你好".encode()).hexdigest(),
+            created_at=time.monotonic(), conversation_id="default",
+            claimed_at=time.time() - 60.0)  # 过期 CLAIMED
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws, gen_registry=_FakeGenRegistry(doc=None))  # 无证据
+        always_loser = _AlwaysLoserStore(stale)  # 单实例——get_store() 恒返回同一 fake
+        original = _m.get_store
+        _m.get_store = lambda: always_loser
+        try:
+            await handle_json_message(_text_msg("r_fb"), agent, None, ws, voice_mgr=None)
+        finally:
+            _m.get_store = original
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+        assert acks[-1]["error"]["code"] == "IN_PROGRESS", "接管失败兜底 IN_PROGRESS"
+        assert acks[-1]["error"]["retryable"] is True
+        assert agent.process_calls == 0, "接管失败不进入业务处理"
+
+    @pytest.mark.asyncio
+    async def test_text_takeover_reclaim_storage_unavailable(self, fresh_idempotency):
+        """TAKEOVER 二次 claim 期间 Mongo 断连（StorageUnavailableError）→ 幂等感知
+        rejected STORAGE_UNAVAILABLE（D3 durable）+ 不进入业务处理（接管未取得所有权）。"""
+        import core.input.ws_handler as _m
+        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult, get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.storage.attachment_repo import StorageUnavailableError
+
+        class _ReclaimFailStore(IdempotencyStore):
+            """lookup 恒 miss；store 1 → stale CLAIMED loser；store 2 → raise。"""
+
+            def __init__(self, stale: IdempotencyEntry):
+                super().__init__()
+                self.stale = stale
+                self.store_calls = 0
+
+            async def lookup(self, conversation_id, client_request_id):
+                return None
+
+            async def store(self, conversation_id, client_request_id, entry):
+                self.store_calls += 1
+                if self.store_calls == 1:
+                    return StoreResult(entry=self.stale, acquired=False)
+                raise StorageUnavailableError("Mongo down")
+
+        import hashlib as _hl
+        stale = IdempotencyEntry(
+            user_message_id="msg_loser_su", content_digest=_hl.sha256("你好".encode()).hexdigest(),
+            created_at=time.monotonic(), conversation_id="default",
+            claimed_at=time.time() - 60.0)  # 过期 CLAIMED
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws, gen_registry=_FakeGenRegistry(doc=None))  # 无证据
+        reclaim_fail = _ReclaimFailStore(stale)  # 单实例——get_store() 恒返回同一 fake
+        original = _m.get_store
+        _m.get_store = lambda: reclaim_fail
+        try:
+            await handle_json_message(_text_msg("r_su"), agent, None, ws, voice_mgr=None)
+        finally:
+            _m.get_store = original
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+        assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
+        assert acks[-1]["error"]["retryable"] is True
+        assert acks[-1]["error"]["details"]["idempotency_durable"] is get_store().durable
+        assert agent.process_calls == 0, "接管 claim 失败不进入业务处理"
 
     @pytest.mark.asyncio
     async def test_claimed_fresh_rejects_in_progress(self, fresh_idempotency):

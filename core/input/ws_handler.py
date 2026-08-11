@@ -922,12 +922,21 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
         if action != "TAKEOVER":
             return True
         # TAKEOVER：再次 claim 接管（并发窗口内输家读到 stale CLAIMED → 重新取得所有权）
-        result = await store.store(
-            ack_conversation_id, client_request_id,
-            IdempotencyEntry(user_message_id=result.entry.user_message_id,
-                             content_digest=digest,
-                             created_at=time.monotonic(),
-                             conversation_id=ack_conversation_id))
+        try:
+            result = await store.store(
+                ack_conversation_id, client_request_id,
+                IdempotencyEntry(user_message_id=result.entry.user_message_id,
+                                 content_digest=digest,
+                                 created_at=time.monotonic(),
+                                 conversation_id=ack_conversation_id))
+        except StorageUnavailableError:
+            # 接管期间 Mongo 断连（产品模式 fail-closed）→ 幂等感知 rejected ACK
+            # （与首次 store 一致的错误处理；claim 未建立，拒绝可安全重试）
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            ack_conversation_id, "rejected",
+                            error=_idempotency_unavailable_error(),
+                            received_at=received_at)
+            return True
         if not result.acquired:
             # 防御：接管竞态输家（另一并发方刚接管）→ 发对应 ACK 后返回；纯内存不可接管
             # （内存优先去重恒 acquired=False）→ 兜底 IN_PROGRESS（retryable，不静默无 ACK）
@@ -1157,11 +1166,20 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
             return
         # TAKEOVER：保持既有 reserve_work（不重复 reserve），二次 claim 接管 stale
         # CLAIMED；不得重入顶部（防双重 reserve）
-        result = await store.store(
-            ack_conv, client_request_id,
-            IdempotencyEntry(user_message_id=result.entry.user_message_id,
-                             content_digest=digest,
-                             created_at=time.monotonic(), conversation_id=ack_conv))
+        try:
+            result = await store.store(
+                ack_conv, client_request_id,
+                IdempotencyEntry(user_message_id=result.entry.user_message_id,
+                                 content_digest=digest,
+                                 created_at=time.monotonic(), conversation_id=ack_conv))
+        except StorageUnavailableError:
+            # 接管期间 Mongo 断连（产品模式 fail-closed）→ 幂等感知 rejected ACK；
+            # 必须先 release_work（防会话 busy 计数泄漏），与首次 store 错误处理一致
+            agent.session_manager.release_work(reserved_id)
+            await _send_ack(ws, "", client_request_id, client_message_id, ack_conv,
+                            "rejected", error=_idempotency_unavailable_error(),
+                            received_at=received_at)
+            return
         if not result.acquired:
             # 防御：接管竞态输家（另一并发方刚接管）→ 发对应 ACK + 释放 work；纯内存不可
             # 接管 → 兜底 IN_PROGRESS（retryable，不静默无 ACK）

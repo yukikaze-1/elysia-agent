@@ -1005,6 +1005,58 @@ class TestVoiceCommitOrder:
         assert len(agent.bus_posts) == 1, "续跑后正常入队"
 
     @pytest.mark.asyncio
+    async def test_takeover_reclaim_storage_unavailable_releases_work(self, fresh_store):
+        """TAKEOVER 二次 claim 抛 StorageUnavailableError → release_work + rejected
+        STORAGE_UNAVAILABLE（不泄漏会话 busy 计数、不消费录音）。"""
+        import core.input.ws_handler as _m
+        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult, get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.storage.attachment_repo import StorageUnavailableError
+
+        class _ReclaimFailStore(IdempotencyStore):
+            """lookup 恒 miss；store 1 → stale CLAIMED loser；store 2 → raise。"""
+
+            def __init__(self, stale: IdempotencyEntry):
+                super().__init__()
+                self.stale = stale
+                self.store_calls = 0
+
+            async def lookup(self, conversation_id, client_request_id):
+                return None
+
+            async def store(self, conversation_id, client_request_id, entry):
+                self.store_calls += 1
+                if self.store_calls == 1:
+                    return StoreResult(entry=self.stale, acquired=False)
+                raise StorageUnavailableError("Mongo down")
+
+        stale = IdempotencyEntry(
+            user_message_id="msg_voice_su", content_digest=_voice_digest(),
+            created_at=time.monotonic(), conversation_id="default",
+            claimed_at=time.time() - 60.0)  # 过期 CLAIMED
+        reclaim_fail = _ReclaimFailStore(stale)  # 单实例——get_store() 恒返回同一 fake
+        original = _m.get_store
+        _m.get_store = lambda: reclaim_fail
+        try:
+            ws = FakeWs()
+            mgr = _CountingSessionMgr()
+            agent = _VoiceFakeAgent(ws, session_manager=mgr,
+                                    gen_registry=_FakeGenRegistry(doc=None))  # 无证据
+            vmg = _FakeVoiceMgr()
+            await handle_json_message(_voice_commit_msg("vc_su"), agent, None, ws, voice_mgr=vmg)
+        finally:
+            _m.get_store = original
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+        assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
+        assert acks[-1]["error"]["retryable"] is True
+        assert acks[-1]["error"]["details"]["idempotency_durable"] is get_store().durable
+        assert mgr.reserve_calls == 1, "claim 前已 reserve"
+        assert mgr.release_calls == 1, "接管 claim 失败必须 release_work（不泄漏 busy 计数）"
+        assert vmg.commit_calls == [], "接管 claim 失败不消费录音"
+
+    @pytest.mark.asyncio
     async def test_voice_accepted_completes_before_ack(self, fresh_store):
         """voice 正常路径：complete 在 accepted ACK 前（complete-before-ack 不变量）。"""
         from core.input.idempotency import get_store
