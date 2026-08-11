@@ -1115,6 +1115,37 @@ class TestRunCleanupExtracted:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# E3 Task 5: CancelledError 分支——推 CANCELLED 事件 + finally 唯一 release
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestRunCleanupCancelled:
+    @pytest.mark.asyncio
+    async def test_cancelled_pushes_cancelled_event_and_releases_once(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        sa = MagicMock()
+        sa._task_state = MagicMock(); sa._task_state.status = WorkflowStatus.CANCELLED
+        sa.run = AsyncMock(side_effect=asyncio.CancelledError)
+        sa._checkpoint_mgr = MagicMock(); sa._checkpoint_mgr.delete = AsyncMock()   # 避免 finally cleanup 日志噪音
+        sa._artifact_store = MagicMock(); sa._artifact_store.delete_by_task = AsyncMock()
+        tid = WorkflowId("t1")
+        engine._tasks[tid] = sa
+        engine._contexts[tid] = DelegationContext(intent="t", session_id=SessionId("s1"))  # E2 引入，须设置
+        mailbox = engine._mailboxes[tid] = WorkflowMailbox(tid)   # 先捕获引用——finally 的 _cleanup_task 会 pop
+        await engine._semaphore.acquire()
+        engine._active.add(tid)
+        with pytest.raises(asyncio.CancelledError):
+            await engine._run_and_cleanup(sa, tid)
+        assert engine._semaphore.locked() is False      # 恰好释放一次（无 ValueError）
+        assert mailbox.count() == 1                      # 唯一 CANCELLED 事件（用捕获的引用）
+        e = mailbox.get_nowait()
+        assert e is not None and e.type == WorkflowEventType.CANCELLED   # 语义：取消 → CANCELLED（非 FAILED）
+        assert tid not in engine._tasks
+        await engine.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # E2: 有界队列 drain loop + 后台 worker
 # ═══════════════════════════════════════════════════════════════════════════
 

@@ -380,29 +380,40 @@ class WorkflowEngine:
         取参用 .get() 且移入 try——派发后、运行前被 cancel/stop 终态化清理时
         （_cleanup_task 弹出 _contexts/_mailboxes）缺失索引抛 KeyError 会跳过 finally
         导致槽位永久泄漏；此处缺失时早退，由 finally 兜底释放槽位。
+
+        E3 §3.4 CancelledError 传播链统一收尾：
+            - except CancelledError 分支**不 release**（只置状态 + 推 CANCELLED + raise），
+              finally 是唯一释放点——否则构成双重释放（BoundedSemaphore 越界抛 ValueError）。
+            - 收到 CancelledError 时推 CANCELLED 事件（不再推 FAILED「任务被取消」）。
+            - slot 释放前置：release 是同步操作，放在可能再抛 CancelledError 的 await
+              （_cleanup_storage）之前——即使清理中被二次取消，slot 已释放、无泄漏。
         """
+        # mailbox 提前绑定——两个 except 分支 + finally 都要用（防 UnboundLocalError）
+        mailbox = self._mailboxes.get(task_id)
         try:
             context = self._contexts.get(task_id)
-            mailbox = self._mailboxes.get(task_id)
             if context is None or mailbox is None:
                 # 派发后、运行前已被 cancel/stop 清理——不再执行，finally 兜底释放槽位
                 return
             await sub_agent.run(context, mailbox)
         except asyncio.CancelledError:
-            if mailbox is not None:
-                # stop() 触发的取消——推送 FAILED 后重新抛出，让 cancel 正确传播
+            ts = sub_agent._task_state
+            if ts is not None:
+                ts.status = WorkflowStatus.CANCELLED      # 幂等——cancel() 已同步置权威终态（§3.2）
+                ts.updated_at = now_iso()
+            if mailbox:
+                # 唯一终态事件（§3.5 守卫防多路径重复推）
                 push_mailbox_event(
-                    mailbox, WorkflowEventType.FAILED, {
+                    mailbox, WorkflowEventType.CANCELLED, {
                         "task_id": str(task_id),
-                        "error": "任务被取消",
-                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                        "reason": "任务被取消",
                     },
                     caller="WorkflowEngine",
                 )
-            raise
+            raise                                        # 传播给 finally 统一收尾（except 绝不 release）
         except Exception:
             logger.exception("WorkflowEngine: task_id=%s 执行异常", task_id)
-            if mailbox is not None:
+            if mailbox:
                 # 补推送 FAILED 事件——SubAgent 在 run() 前期阶段
                 # （Planner/Validator）抛异常时可能来不及推送，
                 # WorkflowEngine 在此兜底，确保 mailbox 消费者不会永久阻塞
@@ -560,6 +571,9 @@ class WorkflowEngine:
         和 _run_and_cleanup 对称——resume 后的终态
         （COMPLETED/FAILED/CANCELLED）由此 finally 块负责清理。
         从 resume() 闭包提取为方法（E2），供 _drain_queue 后台派发。
+
+        E3 §3.4：except CancelledError 分支不 release（finally 唯一释放点），
+        推 CANCELLED 事件（不再推 FAILED「任务被取消」）。
         """
         if sub_agent._task_state is not None:
             sub_agent._task_state.resume_pending = False   # 统一清理点：已开始执行，清除排队标记
@@ -570,16 +584,20 @@ class WorkflowEngine:
                 return
             await sub_agent.resume_from_pause()
         except asyncio.CancelledError:
-            if mailbox is not None:
+            ts = sub_agent._task_state
+            if ts is not None:
+                ts.status = WorkflowStatus.CANCELLED      # 幂等——cancel() 已同步置权威终态（§3.2）
+                ts.updated_at = now_iso()
+            if mailbox:
+                # 唯一终态事件（§3.5 守卫防多路径重复推）
                 push_mailbox_event(
-                    mailbox, WorkflowEventType.FAILED, {
+                    mailbox, WorkflowEventType.CANCELLED, {
                         "task_id": str(task_id),
-                        "error": "任务被取消",
-                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                        "reason": "任务被取消",
                     },
                     caller="WorkflowEngine",
                 )
-            raise
+            raise                                        # 传播给 finally 统一收尾（except 绝不 release）
         except Exception:
             logger.exception("WorkflowEngine: task_id=%s resume 异常", task_id)
             if mailbox is not None:
