@@ -458,7 +458,9 @@ async def sessions_detail_handler(request: web.Request) -> web.Response:
     total = await agent.message_repo.count_by_session(SessionId(sid))
     summary = await _session_summary(agent, sid, total)
     if summary is None:
-        # has_session 通过但 list_all 未命中（Mongo 离线等极端场景）→ 兜底空摘要
+        # has_session 通过但 list_all 未命中（Mongo 离线等极端场景）→ 兜底空摘要。
+        # BE-P1-05 clean-start：default 恒有本地摘要（updatedAt=now）——本兜底对
+        # default 不再触发，updatedAt 非空可解析（详见 SessionManager._merged_summaries）。
         summary = rest_contract.SessionSummary(
             conversationId=sid, messageCount=total, updatedAt="",
             active=(str(sid) == str(agent.active_session_id)))

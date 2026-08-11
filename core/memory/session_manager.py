@@ -138,6 +138,17 @@ class SessionManager:
             repo=repo,
             msg_repo=msg_repo,
         )
+        # clean-start 会话发现（BE-P1-05）：default 恒有合法本地摘要
+        # （updated_at=now、title="", message_count=0）——空 Mongo 时 REST 列表/详情
+        # 仍可见 default；合并时 max(updated_at) 保证新鲜本地摘要胜出陈旧 Mongo 文档
+        # （见 _merged_summaries）。repo 此时未连接，落库交给 ensure_default_persisted
+        # （由生命周期健康循环的 session 恢复边界触发）。
+        self._local_summaries[DEFAULT_SESSION] = SessionSummary(
+            session_id=DEFAULT_SESSION,
+            message_count=0,
+            updated_at=now_iso(),
+            title="",
+        )
 
     # ---- 活动指针 ----
 
@@ -417,6 +428,9 @@ class SessionManager:
                 merged[sid] = self._copy_summary(local)
                 continue
             current.message_count = max(current.message_count, local.message_count)
+            # BE-P1-05 合并优先级：default 本地摘要 updated_at=now 恒新鲜——max(updated_at)
+            # 保证 clean-start 本地 default 胜出陈旧 Mongo default 文档（旧时间戳不得
+            # 遮蔽活跃会话）；Mongo 侧更新的 default 文档（含消息上下文）则正常胜出。
             current.updated_at = max(current.updated_at, local.updated_at)
             if sid in self._local_title_overrides or not current.title:
                 current.title = local.title
@@ -661,6 +675,22 @@ class SessionManager:
     async def health_check(self) -> bool:
         """repo 健康检查（断开时尝试重连）。"""
         return await self._repo.health_check()
+
+    async def ensure_default_persisted(self) -> None:
+        """确保 default 会话文档存在（clean-start best-effort，失败仅记日志）。
+
+        BE-P1-05：repo 在 __init__ 时未连接，此处由生命周期健康循环的 session
+        恢复边界（``_recover_dependency("session")``）在 repo 可用后调用。经
+        ``repo.ensure_exists``（$setOnInsert）落库——已有文档（messages/标题）
+        恒不被覆盖，重启不清空 LLM 上下文窗口。
+        """
+        try:
+            inserted = await self._repo.ensure_exists(DEFAULT_SESSION)
+            if inserted:
+                logger.debug("default 会话文档已新建（clean-start）")
+        except Exception:
+            # 失败仅记日志，不阻塞启动/恢复（本地摘要已保证 REST 可见性）
+            logger.warning("default 会话 ensure_exists 失败（仅记日志，不阻塞）", exc_info=True)
 
     async def load_active(self) -> None:
         """加载当前活动会话（启动时调用）。"""

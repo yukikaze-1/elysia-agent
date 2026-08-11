@@ -646,8 +646,11 @@ async def test_offline_create_list_and_rename_are_read_after_write_consistent():
 
     items, has_more, cursor = await m.list()
     assert has_more is False and cursor is None
-    assert [(item.session_id, item.title) for item in items] == [
-        (summary.session_id, "离线标题")]
+    by_id = {item.session_id: item for item in items}
+    # clean-start（BE-P1-05）：default 恒有本地摘要，离线时同样可见
+    assert summary.session_id in by_id
+    assert SessionId("default") in by_id
+    assert by_id[summary.session_id].title == "离线标题"
 
     assert await m.rename(summary.session_id, "离线改名") is True
     detail = await m.get_summary(summary.session_id)
@@ -738,7 +741,8 @@ async def test_list_returns_items_has_more_cursor():
     assert has_more is True
     assert cursor is not None
     items2, has_more2, cursor2 = await m.list(limit=50, cursor=cursor)
-    assert len(items2) == 10
+    # 60 conv + default（clean-start 恒可见）= 61 → 第二页 11 条
+    assert len(items2) == 11
     assert has_more2 is False
     assert cursor2 is None
     ids1 = {s.session_id for s in items}
@@ -776,7 +780,7 @@ async def test_list_search_title_case_insensitive():
     items, _, _ = await m.list(search="needle")
     assert items == []  # 消息文本不参与搜索
     items, _, _ = await m.list(search="")
-    assert len(items) == 3
+    assert len(items) == 4  # 3 个创建会话 + default（clean-start 恒可见）
 
 
 @pytest.mark.asyncio
@@ -793,7 +797,8 @@ async def test_list_sort_updated_at_desc_then_session_id_asc():
     repo.sessions["conv_new"] = {"messages": [], "cs": None, "rs": None, "ss": None,
                                  "title": "new", "updated_at": "2026-08-04T00:00:01Z"}
     items, _, _ = await m.list()
-    assert [s.session_id for s in items] == ["conv_new", "conv_aa", "conv_zz"]
+    # default 本地摘要 updated_at=now（新鲜）→ 排序最前；其余同 2026-08-04 时间序
+    assert [s.session_id for s in items] == ["default", "conv_new", "conv_aa", "conv_zz"]
 
 
 # ───────────────────────── evict / save_all ─────────────────────────

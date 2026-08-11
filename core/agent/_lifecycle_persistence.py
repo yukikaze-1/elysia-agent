@@ -290,6 +290,10 @@ class _LifecyclePersistence:
                 await self._session_manager.load_active()
                 # review 复核 #5 D2：重试「删除已提交但 refs/归档未清」的待清理会话
                 await self._session_manager.retry_pending_cleanup()
+                # clean-start 会话发现（BE-P1-05）：repo 已连接，best-effort 确保
+                # default 文档存在（$setOnInsert——不覆盖既有会话上下文，重启不清空
+                # LLM 上下文窗口）。仅在恢复边界调用：__init__ 时 repo 未连接无法落库。
+                await self._session_manager.ensure_default_persisted()
                 logger.info("Session/Mongo 恢复，加载活动会话")
             elif name == "generation":
                 # generation 恢复：清理崩溃残留 running（5 分钟前）

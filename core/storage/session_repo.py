@@ -183,6 +183,55 @@ class SessionRepository(Repository):
             reason="SessionRepository.create 写入失败",
         )
 
+    async def ensure_exists(self, session_id: SessionId) -> bool:
+        """确保会话文档存在（$setOnInsert——绝不覆盖既有文档字段）。
+
+        clean-start 会话发现（BE-P1-05）：eager default 会话启动时 best-effort 落库。
+        与 create() 的 `$set`（会重置 messages 等字段）不同，`$setOnInsert` 只在新
+        插入时写入——已有文档（含 messages/标题）恒不被触碰，重启不清空 LLM 上下文
+        窗口。
+
+        为什么先 find 再 upsert：后端 update_one 只暴露 modified_count（D6-d 已核实
+        不暴露 upserted_id），且 `$setOnInsert` 命中已有文档时 modified_count=0，与
+        真正插入的 0 无法区分。先 find 使「是否新插入」的布尔语义在真实/内存后端
+        都成立。find→upsert 窗口内的并发插入由 $setOnInsert 兜底（不覆盖既有文档），
+        仅返回值可能轻微乐观（视作本次新插入）——best-effort 启动路径可接受。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            True 表示本次新插入（此前不存在）；False 表示已存在（未修改）。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（B2/P1-01——与 create/load 同语义）。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），无法确保会话存在")
+        db = self._db
+        existing = await self._call(
+            lambda: db.find(COLLECTION, {"session_id": session_id}, limit=1),
+            reason="SessionRepository.ensure_exists 查询失败",
+        )
+        if existing:
+            return False
+        await self._call(
+            lambda: db.update_one(
+                COLLECTION,
+                {"session_id": session_id},
+                {"$setOnInsert": {
+                    "session_id": session_id,
+                    "title": "",
+                    "messages": [],
+                    "updated_at": now_iso(),
+                }},
+                upsert=True,
+            ),
+            reason="SessionRepository.ensure_exists 写入失败",
+        )
+        return True
+
     async def rename(self, session_id: SessionId, title: str) -> bool:
         """重命名会话。
 

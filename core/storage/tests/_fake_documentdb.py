@@ -1,7 +1,7 @@
 """内存版 DocumentDBBackend —— storage 仓库测试用假后端。
 
 模拟 MongoDB 语义的 subset（$lt/$gt/$elemMatch/$regex/$or、sort、skip、limit、
-$set + upsert），_id 用 bson.ObjectId 生成、find 返回时转 str（对齐真实后端契约）。
+$set/$setOnInsert + upsert），_id 用 bson.ObjectId 生成、find 返回时转 str（对齐真实后端契约）。
 仅用于单测，不涉及真实数据库。
 """
 
@@ -142,6 +142,8 @@ class FakeDocumentDBBackend(DocumentDBBackend):
             doc = matched[0]
             if "$set" in update:
                 doc.update(update["$set"])
+            # $setOnInsert 仅在插入时生效——命中已有文档时不修改任何字段
+            # （ensure_exists 靠此保证不覆盖既有 messages/title）
             if "$inc" in update:
                 for key, value in update["$inc"].items():
                     doc[key] = (doc.get(key) or 0) + value
@@ -158,6 +160,7 @@ class FakeDocumentDBBackend(DocumentDBBackend):
             return 1
         if upsert:
             doc = dict(update.get("$set", {}))
+            doc.update(update.get("$setOnInsert", {}))
             # upsert 时把过滤条件里的等值字段并入新文档（对齐 Mongo 语义）
             for k, v in filter_expr.items():
                 if k not in doc and not isinstance(v, dict):

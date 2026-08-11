@@ -17,6 +17,7 @@
 """
 
 import base64
+from datetime import datetime
 
 import pytest
 
@@ -66,11 +67,17 @@ class _FakeStatus:
 
 
 class _FakeAgent:
-    """REST 路由消费的假 agent：真实 SessionManager + 内存 repo + 可控 pending/approvals。"""
+    """REST 路由消费的假 agent：真实 SessionManager + 内存 repo + 可控 pending/approvals。
 
-    def __init__(self) -> None:
-        self._backend = FakeDocumentDBBackend()
-        self.session_repo = SessionRepository(db=self._backend)
+    Args:
+        backend: 共享 FakeDocumentDBBackend（恢复/重启场景复用同一内存库）。
+        offline: True 时 session_repo 以 db=None 构造（模拟 Mongo 离线启动）。
+    """
+
+    def __init__(self, backend: FakeDocumentDBBackend | None = None,
+                 offline: bool = False) -> None:
+        self._backend = backend or FakeDocumentDBBackend()
+        self.session_repo = SessionRepository(db=None if offline else self._backend)
         self.message_repo = MessageRepository(db=self._backend)
         self.gen_repo = GenerationRepository(db=self._backend)
         self.gen_registry = GenerationRegistry(repo=self.gen_repo)
@@ -91,6 +98,10 @@ class _FakeAgent:
 
     async def switch_session(self, sid) -> None:
         await self.session_manager.switch(sid)
+
+    async def resolve_session(self, conversation_id: str | None, protocol_version: int):
+        """对齐 Agent.resolve_session——WS 建连回放 SessionMessage.conversationId 同源。"""
+        return await self.session_manager.resolve(conversation_id, protocol_version)
 
 
 def _make_app(agent, access_token: str = ""):
@@ -156,14 +167,146 @@ def _msg_id_from_page(data: dict, index: int) -> str:
 class TestSessionsCRUD:
     @pytest.mark.asyncio
     async def test_list_empty(self, aiohttp_client):
+        """clean-start 会话发现（BE-P1-05）：空 Mongo + 空 local 时 default 恒可见且 active。
+
+        原语义（`sessions == []`）已被推翻——eager default 恒有合法本地摘要。
+        """
         app = _make_app(_FakeAgent())
         client = await aiohttp_client(app)
         resp = await client.get("/api/sessions")
         assert resp.status == 200
         data = await resp.json()
-        assert data["sessions"] == []
+        assert len(data["sessions"]) == 1
+        d = data["sessions"][0]
+        assert d["conversationId"] == "default"
+        assert d["active"] is True
+        assert d["messageCount"] == 0
+        assert d["updatedAt"]
         assert data["has_more"] is False
         assert "cursor" not in data  # 无更多时不带 cursor
+
+    @pytest.mark.asyncio
+    async def test_clean_start_default_detail_updated_at_parseable(self, aiohttp_client):
+        """clean-start：GET /api/sessions/default detail updatedAt 非空且可解析。"""
+        app = _make_app(_FakeAgent())
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/sessions/default")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["session"]["conversationId"] == "default"
+        assert data["session"]["active"] is True
+        assert data["session"]["messageCount"] == 0
+        assert data["session"]["updatedAt"]
+        datetime.fromisoformat(data["session"]["updatedAt"])  # 非空且可解析
+        assert data["active"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_exactly_one_active_when_nonempty(self, aiohttp_client):
+        """不变量：列表会话非空时恒恰一个 active（active 由 _active_id 单点派生）。"""
+        agent = _FakeAgent()
+        for i in range(3):
+            await _create_session(agent, f"conv_test_one{i}", f"会话{i}")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/api/sessions")
+        data = await resp.json()
+        assert data["sessions"], "会话列表非空"
+        actives = [s for s in data["sessions"] if s["active"]]
+        assert len(actives) == 1
+        assert actives[0]["conversationId"] == "default"
+
+        # 切 active 后仍恒恰一个（default 让位）
+        await agent.switch_session("conv_test_one1")
+        resp2 = await client.get("/api/sessions")
+        data2 = await resp2.json()
+        actives2 = [s for s in data2["sessions"] if s["active"]]
+        assert len(actives2) == 1
+        assert actives2[0]["conversationId"] == "conv_test_one1"
+
+    @pytest.mark.asyncio
+    async def test_default_consistency_offline_recovered_restart(self, aiohttp_client):
+        """Mongo 离线/恢复/重启后，list / detail / WS 首帧 conversationId 恒一致指向 default。
+
+        WS 首帧 conversationId = _send_session_replay 的 SessionMessage.conversationId，
+        其值 = agent.resolve_session(None, protocol_version).session_id（活动会话）——
+        与 REST active、agent.active_session_id 同源（均派生自 _active_id 单点）。
+        """
+        # 1) 离线启动（session_repo db=None）：default 仍可见 + active，detail 非空
+        offline = _FakeAgent(offline=True)
+        app = _make_app(offline)
+        client = await aiohttp_client(app)
+        await self._assert_default_consistent(offline, client)
+
+        # 2) Mongo 恢复（模拟 _recover_dependency("session")）：ensure_default_persisted 落库
+        backend = FakeDocumentDBBackend()
+        recovered = _FakeAgent(backend=backend)
+        await recovered.session_manager.ensure_default_persisted()
+        docs = backend.collections.get("sessions", [])
+        assert any(d.get("session_id") == "default" for d in docs), "恢复后 default 文档应落库"
+        app2 = _make_app(recovered)
+        client2 = await aiohttp_client(app2)
+        await self._assert_default_consistent(recovered, client2)
+
+        # 3) 重启（同 backend，新进程视角）：default 仍可见 + active
+        restarted = _FakeAgent(backend=backend)
+        app3 = _make_app(restarted)
+        client3 = await aiohttp_client(app3)
+        await self._assert_default_consistent(restarted, client3)
+
+    async def _assert_default_consistent(self, agent, client) -> None:
+        """断言三条接口（REST list / REST detail / WS 首帧 conversationId）一致指向 default。"""
+        # WS 首帧 conversationId 源：建连回放 resolve 活动会话
+        ws_sid = str((await agent.resolve_session(None, 2)).session_id)
+        assert ws_sid == "default"
+        assert str(agent.active_session_id) == "default"
+
+        resp = await client.get("/api/sessions")
+        assert resp.status == 200
+        data = await resp.json()
+        defaults = [s for s in data["sessions"] if s["conversationId"] == "default"]
+        assert len(defaults) == 1
+        assert defaults[0]["active"] is True
+        assert defaults[0]["updatedAt"]
+
+        resp2 = await client.get("/api/sessions/default")
+        assert resp2.status == 200
+        detail = await resp2.json()
+        assert detail["session"]["conversationId"] == "default"
+        assert detail["session"]["active"] is True
+        assert detail["session"]["updatedAt"]
+        datetime.fromisoformat(detail["session"]["updatedAt"])
+
+    @pytest.mark.asyncio
+    async def test_ensure_exists_does_not_clobber_messages(self):
+        """ensure_exists 用 $setOnInsert——不覆盖既有 default 文档的 messages（LLM 上下文窗口）。"""
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        # 预置 default 文档（含 messages + 显式 title——模拟重启前已持久化的会话上下文）
+        await repo.create("default", title="旧标题")
+        await backend.update_one(
+            "sessions", {"session_id": "default"},
+            {"$set": {"messages": [{"role": "user",
+                                    "content": [{"type": "text", "content": "既有上下文"}]}]}})
+        inserted = await repo.ensure_exists("default")
+        assert inserted is False  # 已存在 → 未新插入
+        docs = backend.collections["sessions"]
+        doc = next(d for d in docs if d["session_id"] == "default")
+        assert len(doc["messages"]) == 1  # messages 未被清空
+        assert doc["messages"][0]["content"][0]["content"] == "既有上下文"
+        assert doc["title"] == "旧标题"  # title 也未被重置
+
+    @pytest.mark.asyncio
+    async def test_ensure_exists_inserts_when_missing(self):
+        """default 文档不存在时 ensure_exists 插入空会话并返回 True。"""
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        inserted = await repo.ensure_exists("default")
+        assert inserted is True
+        docs = backend.collections["sessions"]
+        doc = next(d for d in docs if d["session_id"] == "default")
+        assert doc["messages"] == []
+        assert doc["title"] == ""
 
     @pytest.mark.asyncio
     async def test_create_returns_summary(self, aiohttp_client):
@@ -233,10 +376,11 @@ class TestSessionsCRUD:
 
         resp2 = await client.get("/api/sessions", params={"limit": "2", "cursor": data["cursor"]})
         data2 = await resp2.json()
-        # 下一页与第一页不重叠
+        # 下一页与第一页不重叠（3 conv + default = 4 → 第二页 2 条，含 default）
         first_ids = {s["conversationId"] for s in data["sessions"]}
         second_ids = {s["conversationId"] for s in data2["sessions"]}
-        assert len(second_ids) == 1
+        assert len(second_ids) == 2
+        assert "default" in second_ids
         assert not (first_ids & second_ids)
 
     @pytest.mark.asyncio
@@ -530,10 +674,11 @@ class TestSessionsCRUD:
         assert resp.status == 200
         data = await resp.json()
         by_id = {s["conversationId"]: s for s in data["sessions"]}
-        assert len(by_id) == 5
+        assert len(by_id) == 6  # 5 个 conv_test + default（clean-start 恒可见）
         for i in range(5):
             assert by_id[f"conv_test_g{i}"]["messageCount"] == i + 1, \
                 f"conv_test_g{i} messageCount 应等于归档计数 {i + 1}"
+        assert by_id["default"]["messageCount"] == 0
 
     @pytest.mark.asyncio
     async def test_activate_switches_and_returns_id(self, aiohttp_client):
