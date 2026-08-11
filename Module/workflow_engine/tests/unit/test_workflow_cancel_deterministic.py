@@ -243,6 +243,28 @@ async def test_pause_then_cancel_ends_cancelled():
     await engine.stop()
 
 
+@pytest.mark.asyncio
+async def test_cancel_after_complete_is_idempotent():
+    """cancel∥complete 乱序：COMPLETED 已写入（finalize 先到）→ cancel() 见 is_terminal() 幂等返回 True，
+    status 不被覆盖为 CANCELLED——先到终态者胜，无「COMPLETED 事件 + CANCELLED status」分叉。"""
+    engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+    await engine.start()
+    tid = WorkflowId("t1")
+    ts = _running_state("t1")
+    ts.status = WorkflowStatus.COMPLETED              # finalize 已写 COMPLETED（§3.5 顺序不变量）
+    sa = MagicMock()
+    sa._task_state = ts
+    orch = MagicMock()
+    orch._exec_state = MagicMock()
+    sa._orchestrator = orch
+    engine._tasks[tid] = sa
+    engine._mailboxes[tid] = WorkflowMailbox(tid)
+
+    assert await engine.cancel(tid) is True           # is_terminal() 已 True → 幂等 bail
+    assert ts.status == WorkflowStatus.COMPLETED      # 终态不被覆写为 CANCELLED
+    await engine.stop()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # stop 活跃任务——CANCELLED 终态 + 唯一事件 + slot 无泄漏
 # ═══════════════════════════════════════════════════════════════════════════
