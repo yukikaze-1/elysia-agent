@@ -286,6 +286,28 @@ class WorkflowEngine:
                         len(cancelled_pending),
                     )
 
+        # E3 §3.3 采集孤儿工具——被 shield 保护的在途工具任务（容器挂共享 infra，
+        # 不随 _tasks 弹出；stop() 自触发取消所产生的新孤儿同样可达）。
+        # 等 3s 后超时 cancel——防止事件循环关闭强杀正在执行副作用的工具
+        # （「副作用不打断」在 loop-close 场景同样成立）。
+        orphans = [t for t in self._infra.orphan_tools if not t.done()]
+        if orphans:
+            _, orphan_pending = await asyncio.wait(orphans, timeout=3.0)
+            if orphan_pending:
+                logger.warning(
+                    "WorkflowEngine.stop: %d 个孤儿工具超时，强制取消",
+                    len(orphan_pending),
+                )
+                for task in orphan_pending:
+                    task.cancel()
+                # cancel 投递需下一事件循环迭代——二次等待让取消落地（镜像 _task_futures 的处理）
+                _, still_pending = await asyncio.wait(orphan_pending, timeout=1.0)
+                if still_pending:
+                    logger.error(
+                        "WorkflowEngine.stop: %d 个孤儿工具 cancel 后仍未完成",
+                        len(still_pending),
+                    )
+
         # 兜底清理——防止 finally 块因异常未执行（即使无 futures 也要跑）
         for task_id in list(self._tasks.keys()):
             self._cleanup_task(task_id)

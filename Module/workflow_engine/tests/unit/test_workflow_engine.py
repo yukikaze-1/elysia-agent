@@ -1399,6 +1399,67 @@ class TestDebugSnapshotBounded:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# E3 Task 6: M19 resume→pause 循环不销毁 + stop() 孤儿工具收尾
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestM19AndOrphans:
+    @pytest.mark.asyncio
+    async def test_resume_pause_resume_cycle(self):
+        """resume → pause → resume 多次循环，task/mailbox 不销毁、可消费事件（E2 已实现，验证）。
+
+        M19：resume 后再次 pause 不得销毁 task/mailbox——消费者必须持续可消费事件。
+        """
+        from Module.workflow_contract import AgentInfra
+
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        tid = WorkflowId("t1")
+        sa = MagicMock()
+        ts = MagicMock()
+        ts.status = WorkflowStatus.PAUSED
+        ts.is_terminal.return_value = False
+        ts.resume_pending = False
+        sa._task_state = ts
+
+        async def _pause_after_run():
+            ts.status = WorkflowStatus.PAUSED          # resume 执行后再次暂停
+        sa.resume_from_pause = AsyncMock(side_effect=_pause_after_run)
+
+        engine._tasks[tid] = sa
+        engine._mailboxes[tid] = WorkflowMailbox(tid)
+
+        for _ in range(2):                             # 循环两轮 resume→pause
+            result = await engine.resume(tid)
+            assert isinstance(result, WorkflowMailbox)
+            fut = engine._task_futures[tid]
+            await asyncio.wait_for(fut, timeout=3.0)
+            # resume→pause 后不销毁注册表
+            assert tid in engine._tasks
+            assert tid in engine._mailboxes
+            assert ts.status == WorkflowStatus.PAUSED
+
+        # 可消费事件（mailbox 仍存活）
+        assert engine._mailboxes[tid] is not None
+        await engine.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_awaits_orphan_tools(self):
+        """engine._infra.orphan_tools 含一个挂起工具任务 → stop() 等待/取消它（不挂起、不泄漏）。"""
+        from Module.workflow_contract import AgentInfra
+
+        infra = AgentInfra(llm=MagicMock(), milvus=None, http=None,
+                           tool_registry=MagicMock(), constraints=ConstraintConfig())
+        infra.orphan_tools = set()                    # 赋真 set（Task 3 字段；MagicMock 迭代会 TypeError）
+        engine = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=1)
+        await engine.start()
+        held = asyncio.create_task(asyncio.Event().wait())   # 挂起工具任务
+        infra.orphan_tools.add(held)
+        await engine.stop()                           # stop 采集 → 等 3s → 超时 cancel
+        assert held.cancelled() is True               # cancel 投递需下一事件循环迭代——stop() 内已二次等待
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # E2: service 级——完整 WorkflowEngine 非阻塞 submit（不阻塞聊天轮）
 # ═══════════════════════════════════════════════════════════════════════════
 
