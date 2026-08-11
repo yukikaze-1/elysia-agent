@@ -474,8 +474,11 @@ def create_app(
         # （防重连风暴/滥用；配合 max_ws_connections 并发硬上限，二者正交）。
         limiter = request.app.get("rate_limiter")
         if limiter is not None and not limiter.check("ws", rate_key_for_request(request)):
-            return _protocol_error_response(
+            resp = _protocol_error_response(
                 "RATE_LIMITED", "连接过于频繁，请稍后重试", 429, True)
+            # Task 7（BE-P1-03）：建连 429 带 Retry-After（与 REST 中间件一致，秒）。
+            resp.headers["Retry-After"] = "60"
+            return resp
         proto_header = request.headers.get("X-Protocol-Version", "")
         if resolve_protocol_version(proto_header) is None:
             logger.warning("不支持的协议版本拒绝: %r", proto_header)

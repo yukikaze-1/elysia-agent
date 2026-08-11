@@ -105,6 +105,20 @@ _WS_MESSAGE_RATE_CATEGORY: dict[str, str] = {
 }
 
 
+def _extract_client_request_id(data: dict) -> str | None:
+    """限流块在完整校验前提取 clientRequestId（严格长度/类型，不触发完整解析）。
+
+    Task 7（BE-P1-03）：``data.get("clientRequestId")`` 为 str 且 ``0 < len ≤ 128``
+    才返回，否则 None——缺失/非法（非 str/超长）时无合法关联键 → 调用方退化
+    generic ErrorMessage（前端对 text/voice.commit 恒发 clientRequestId，缺失即
+    畸形帧，文档化限制）。不做完整解析，仅严格长度/类型提取。
+    """
+    crid = data.get("clientRequestId")
+    if isinstance(crid, str) and 0 < len(crid) <= 128:
+        return crid
+    return None
+
+
 def _build_session_items(
     session_msgs: list[ClientMessageDict] | list[dict],
 ) -> list[SessionMessageItem]:
@@ -1263,20 +1277,43 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
         rate_key: 本连接限流 key（认证主体/IP，handle_ws 解析），None 不检查。
     """
     msg_type = data.get("type", "")
-    # D6b：WS 消息级限流——高成本类别超限 → error RATE_LIMITED（连接存活，可重试）。
+    # D6b：WS 消息级限流——高成本类别超限拒绝（连接存活，可重试）。
     # 置于判别联合校验前：畸形帧洪泛同样消耗 token（防解析滥用）。
+    # Task 7（BE-P1-03）：按消息类别分通道关联——text/voice.commit（合法
+    # clientRequestId）走 rejected ACK（RATE_LIMITED + retryAfterMs）直接 settle
+    # 前端对应 promise；其余命令 → generic ErrorMessage（+可选 clientRequestId +
+    # 顶层 retryAfterMs）；clientRequestId 缺失/非法 → 退化 generic ErrorMessage。
     if limiter is not None and rate_key is not None:
         category = _WS_MESSAGE_RATE_CATEGORY.get(msg_type)
         if category is not None and not limiter.check(category, rate_key):
             # ws 可能为 None（音频流回调直调）；无发送目标则静默丢弃（限流即拒绝）
             if ws is not None:
-                await ws.send_json(ErrorMessage(
-                    message="请求过于频繁，请稍后重试",
-                    code="RATE_LIMITED",
-                    requestId=_current_request_id(),
-                    retryable=True,
-                    details={"retryHint": "请稍后重试"},
-                ).wire_dict())
+                retry_after_ms = limiter.retry_after_ms(category, rate_key)
+                client_request_id = _extract_client_request_id(data)
+                if msg_type in ("text", "voice.commit") and client_request_id is not None:
+                    # 9abc R4：clientMessageId/conversationId 非 str → None，否则
+                    # UserAckMessage 的 Optional[str] 校验抛 → bare except 吞 ACK，
+                    # 前端 promise 不 settle（与校验失败 ACK 同收口）。
+                    raw_cmid = data.get("clientMessageId")
+                    raw_cid = data.get("conversationId")
+                    await _send_ack(
+                        ws, "", client_request_id,
+                        raw_cmid if isinstance(raw_cmid, str) else None,
+                        raw_cid if isinstance(raw_cid, str) else None,
+                        "rejected",
+                        error=AckError(code="RATE_LIMITED", retryable=True,
+                                       retryAfterMs=retry_after_ms,
+                                       message="请求过于频繁，请稍后重试"))
+                else:
+                    await ws.send_json(ErrorMessage(
+                        message="请求过于频繁，请稍后重试",
+                        code="RATE_LIMITED",
+                        requestId=_current_request_id(),
+                        clientRequestId=client_request_id,
+                        retryable=True,
+                        retryAfterMs=retry_after_ms,
+                        details={"retryHint": "请稍后重试"},
+                    ).wire_dict())
             return
     # 9B-2（Task 5）：v2 连接入站统一走 ClientMessage 判别联合校验——未知 type /
     # 错误枚举 / 错误字段类型 / 缺必填 → ErrorMessage CONTRACT_VALIDATION，连接存活。

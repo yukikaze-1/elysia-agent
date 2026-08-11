@@ -44,6 +44,17 @@ class TokenBucket:
             return True
         return False
 
+    def retry_after_ms(self) -> int:
+        """限流后的建议重试退避毫秒（下限 1000ms）。
+
+        Task 7（BE-P1-03）：按 ``(capacity - tokens)`` 需回填量估算（保守略长于
+        严格回填 1 token——耗尽后回满才再给一桶配额）；``max(1.0, ...)`` 防
+        capacity==tokens（满桶）时为 0；``max(1000, ...)`` 保证客户端退避下界
+        （避免瞬时自旋重试）。
+        """
+        return max(1000, int(max(1.0, self.capacity - self.tokens)
+                             / self.refill_per_sec * 1000))
+
 
 class RateLimiter:
     """按 (category, key) 的令牌桶集合。
@@ -92,6 +103,20 @@ class RateLimiter:
         for k in stale:
             del self._buckets[k]
         self._last_cleanup = now
+
+    def retry_after_ms(self, category: str, key: str) -> int:
+        """限流退避毫秒：桶存在返回桶估算；无桶或类别未限流 → 0（不限流/不拒）。
+
+        Task 7（BE-P1-03）：限流块构造 RATE_LIMITED 的 retryAfterMs 数据源——
+        刚被拒后桶已耗，返回 ≥1000 的数值退避；配额内或无桶时为 0（不携带退避）。
+        """
+        rpm = self._rules.get(category, 0)
+        if rpm <= 0:
+            return 0
+        bucket = self._buckets.get((category, key))
+        if bucket is None:
+            return 0
+        return bucket.retry_after_ms()
 
     def reset(self) -> None:
         """清空全部桶（测试隔离）。"""

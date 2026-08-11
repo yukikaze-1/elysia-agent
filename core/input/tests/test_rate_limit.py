@@ -49,6 +49,16 @@ class TestTokenBucket:
         assert b.try_consume(now + 100.0) is True
         assert b.try_consume(now + 100.0) is False
 
+    def test_retry_after_ms_drained_bucket_at_least_1000(self):
+        """满/空桶 retry_after_ms ≥ 1000 且有限（int）——客户端退避下界。"""
+        b = TokenBucket(capacity=1, refill_per_sec=1.0)
+        now = 1000.0
+        assert b.try_consume(now) is True   # 唯一 token 消耗 → 桶空（下次立即拒绝）
+        retry = b.retry_after_ms()
+        assert isinstance(retry, int)
+        assert retry >= 1000, f"满桶退避应 ≥1000ms，实际 {retry}"
+        assert retry < 10**9                # 有限值（非 inf/NaN）
+
 
 # ── 单元：RateLimiter ─────────────────────────────────────────────────────
 
@@ -67,6 +77,22 @@ class TestRateLimiter:
         assert limiter.check("messages", "k1") is True
         assert limiter.check("messages", "k1") is False
         assert limiter.check("messages", "k2") is True  # 另一 key 不受影响
+
+    def test_retry_after_ms_no_bucket_or_disabled_returns_zero(self):
+        """无桶（未消耗过）或未限流类别 → retry_after_ms() == 0。"""
+        limiter = RateLimiter({"messages": 1})
+        assert limiter.retry_after_ms("messages", "k") == 0     # 无桶 → 0
+        assert limiter.retry_after_ms("other", "k") == 0        # 未限流类别 → 0
+        assert limiter.retry_after_ms("messages", "k2") == 0    # 无桶 → 0
+
+    def test_retry_after_ms_drained_bucket_ge_1000(self):
+        """桶已耗（刚被拒）→ retry_after_ms ≥ 1000（与 TokenBucket 同源）。"""
+        limiter = RateLimiter({"messages": 1})
+        now = 1000.0
+        assert limiter.check("messages", "k", now=now) is True
+        assert limiter.check("messages", "k", now=now) is False  # 桶空
+        retry = limiter.retry_after_ms("messages", "k")
+        assert retry >= 1000, f"耗空桶退避应 ≥1000ms，实际 {retry}"
 
     def test_bounded_memory_refuses_new_key_at_capacity(self):
         # stale_after 用大值——本测试只验证容量上限，不涉及过期回收
@@ -188,9 +214,20 @@ class TestWsMessageRateLimit:
         assert errs, f"无 error 帧: {ws.sent}"
         return errs[-1]
 
+    @staticmethod
+    def _rate_limited_acks(ws) -> list[dict]:
+        return [a for s in ws.sent if s.get("type") == "user_message.ack"
+                for a in [s] if a.get("status") == "rejected"
+                and a.get("error", {}).get("code") == "RATE_LIMITED"]
+
+    @staticmethod
+    def _has_interrupt(agent) -> bool:
+        return any(getattr(p, "event_type", "") == "interrupt" for p in agent.bus_posts)
+
     @pytest.mark.asyncio
-    async def test_text_over_limit_emits_rate_limited_and_connection_alive(self):
-        """v2 text 超限 → error RATE_LIMITED + retry hint，连接存活。"""
+    async def test_text_over_limit_rejected_ack_with_original_request_id(self):
+        """v2 text 超限（合法 clientRequestId）→ rejected ACK RATE_LIMITED
+        （原 clientRequestId + retryAfterMs），promise 立即 settle；连接存活。"""
         from core.input.ws_handler import handle_json_message
 
         limiter = RateLimiter({"messages": 1})
@@ -200,21 +237,121 @@ class TestWsMessageRateLimit:
             {"type": "text", "content": "hi", "clientRequestId": "r1",
              "clientMessageId": "m1"},
             agent, None, ws, voice_mgr=mgr, limiter=limiter, rate_key="k")
-        # 第二条 text → 超限 → RATE_LIMITED（不再进 handler）
+        # 第二条 text → 超限 → rejected ACK（不再进 handler）
         await handle_json_message(
             {"type": "text", "content": "hi2", "clientRequestId": "r2",
              "clientMessageId": "m2"},
             agent, None, ws, voice_mgr=mgr, limiter=limiter, rate_key="k")
-        err = self._last_error(ws)
-        assert err["code"] == "RATE_LIMITED"
-        assert err["retryable"] is True
-        assert err.get("details", {}).get("retryHint")
+        rl = self._rate_limited_acks(ws)
+        assert rl, f"应收到 rejected RATE_LIMITED ACK: {ws.sent}"
+        assert rl[-1]["clientRequestId"] == "r2"          # 原 clientRequestId 回显
+        assert rl[-1]["error"]["retryable"] is True
+        assert rl[-1]["error"]["retryAfterMs"] >= 1000    # 数值退避
+        assert not any(s.get("type") == "error" and s.get("code") == "RATE_LIMITED"
+                       for s in ws.sent)                  # text 走 ACK 通道，非 ErrorMessage
         # 连接存活：后续 interrupt 仍被处理（bus.post 收到）
         await handle_json_message(
             {"type": "interrupt"}, agent, None, ws, voice_mgr=mgr,
             limiter=limiter, rate_key="k")
-        assert any(getattr(p, "event_type", "") == "interrupt"
-                   for p in agent.bus_posts), f"interrupt 未处理: {ws.sent}"
+        assert self._has_interrupt(agent), f"interrupt 未处理: {ws.sent}"
+
+    @pytest.mark.asyncio
+    async def test_voice_commit_over_limit_rejected_ack(self):
+        """voice.commit 超限（合法 clientRequestId）→ rejected ACK RATE_LIMITED。"""
+        from core.input.ws_handler import handle_json_message
+
+        limiter = RateLimiter({"messages": 1})
+        agent, ws, mgr = await self._make()
+        assert limiter.check("messages", "k") is True  # 消耗唯一 token
+        await handle_json_message(
+            {"type": "voice.commit", "recordingId": "rec_1", "text": "语音",
+             "clientRequestId": "vr1"},
+            agent, None, ws, voice_mgr=mgr, limiter=limiter, rate_key="k")
+        rl = self._rate_limited_acks(ws)
+        assert rl, f"voice.commit 应收到 rejected RATE_LIMITED ACK: {ws.sent}"
+        assert rl[-1]["clientRequestId"] == "vr1"
+        assert rl[-1]["error"]["retryable"] is True
+        assert rl[-1]["error"]["retryAfterMs"] >= 1000
+        assert not any(s.get("type") == "error" for s in ws.sent)
+
+    @pytest.mark.asyncio
+    async def test_switch_model_over_limit_error_with_request_id(self):
+        """其余命令（switch_model）超限 → generic error RATE_LIMITED + clientRequestId + 顶层 retryAfterMs。"""
+        from core.input.ws_handler import handle_json_message
+
+        limiter = RateLimiter({"provider_test": 1})
+        agent, ws, mgr = await self._make()
+        assert limiter.check("provider_test", "k") is True  # 消耗唯一 token
+        await handle_json_message(
+            {"type": "switch_model", "service": "llm", "model": "x",
+             "clientRequestId": "cm1"},
+            agent, None, ws, voice_mgr=mgr, limiter=limiter, rate_key="k")
+        err = self._last_error(ws)
+        assert err["code"] == "RATE_LIMITED"
+        assert err["retryable"] is True
+        assert err["clientRequestId"] == "cm1"       # 关联客户端请求 ID
+        assert err["retryAfterMs"] >= 1000            # 顶层退避
+        assert not any(s.get("type") == "user_message.ack" for s in ws.sent)
+
+    @pytest.mark.asyncio
+    async def test_text_over_limit_missing_request_id_generic_error(self):
+        """text 超限但 clientRequestId 缺失 → 退化 generic error RATE_LIMITED。"""
+        from core.input.ws_handler import handle_json_message
+
+        limiter = RateLimiter({"messages": 1})
+        agent, ws, mgr = await self._make()
+        assert limiter.check("messages", "k") is True  # 消耗唯一 token
+        await handle_json_message(
+            {"type": "text", "content": "hi"},
+            agent, None, ws, voice_mgr=mgr, limiter=limiter, rate_key="k")
+        err = self._last_error(ws)
+        assert err["code"] == "RATE_LIMITED"
+        assert err["retryable"] is True
+        assert err["retryAfterMs"] >= 1000
+        assert not any(s.get("type") == "user_message.ack" for s in ws.sent)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_crid", [
+        123,                                   # 非 str
+        "x" * 129,                             # 超长（>128）
+    ])
+    async def test_text_over_limit_invalid_request_id_generic_error(self, bad_crid):
+        """text 超限但 clientRequestId 非法（非 str/超长）→ 退化 generic error。"""
+        from core.input.ws_handler import handle_json_message
+
+        limiter = RateLimiter({"messages": 1})
+        agent, ws, mgr = await self._make()
+        assert limiter.check("messages", "k") is True  # 消耗唯一 token
+        await handle_json_message(
+            {"type": "text", "content": "hi", "clientRequestId": bad_crid},
+            agent, None, ws, voice_mgr=mgr, limiter=limiter, rate_key="k")
+        err = self._last_error(ws)
+        assert err["code"] == "RATE_LIMITED"
+        assert err.get("clientRequestId") is None     # 非法值不回显
+        assert not any(s.get("type") == "user_message.ack" for s in ws.sent)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_sends_only_limited_one_rejected(self):
+        """并发两条 text：配额内一条进 handler，超限一条 rejected RATE_LIMITED——只拒被限那条。"""
+        from core.input.ws_handler import handle_json_message
+
+        limiter = RateLimiter({"messages": 1})
+        agent, ws, mgr = await self._make()
+        await asyncio.gather(
+            handle_json_message(
+                {"type": "text", "content": "a", "clientRequestId": "ra"},
+                agent, None, ws, voice_mgr=mgr, limiter=limiter, rate_key="k"),
+            handle_json_message(
+                {"type": "text", "content": "b", "clientRequestId": "rb"},
+                agent, None, ws, voice_mgr=mgr, limiter=limiter, rate_key="k"),
+        )
+        rl = self._rate_limited_acks(ws)
+        assert len(rl) == 1, f"只拒被限那条: {ws.sent}"
+        # 配额内那条进入 handler（FakeAgent 无 process_message → INTERNAL rejected）
+        internal = [a for s in ws.sent if s.get("type") == "user_message.ack"
+                    for a in [s] if a.get("status") == "rejected"
+                    and a.get("error", {}).get("code") == "INTERNAL"]
+        assert len(internal) == 1
 
     @pytest.mark.asyncio
     async def test_within_limit_not_limited(self):
@@ -229,6 +366,7 @@ class TestWsMessageRateLimit:
             agent, None, ws, voice_mgr=mgr, limiter=limiter, rate_key="k")
         assert not any(s.get("type") == "error" and s.get("code") == "RATE_LIMITED"
                        for s in ws.sent)
+        assert not self._rate_limited_acks(ws)
 
 
 # ── 集成：WS 建连限流 ─────────────────────────────────────────────────────
@@ -249,10 +387,12 @@ class TestWsConnectionRateLimit:
             # 第 1 次建连成功（配额内）
             ws = await client.session.ws_connect(client.make_url("/ws"))
             await ws.close()
-            # 第 2 次建连 → 429
+            # 第 2 次建连 → 429 + Retry-After 头（与 REST 中间件一致）
             import aiohttp
             with pytest.raises(aiohttp.WSServerHandshakeError) as exc:
                 await client.session.ws_connect(client.make_url("/ws"))
             assert exc.value.status == 429
+            assert exc.value.headers.get("Retry-After"), \
+                f"建连 429 应带 Retry-After 头: {exc.value.headers}"
         finally:
             await agent.stop()

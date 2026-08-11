@@ -1627,3 +1627,92 @@ class TestV2IdempotencyStateMachine:
         assert acks[-1]["error"]["details"]["idempotency_durable"] is store.durable
         assert store.durable is False
 
+
+# ---------------------------------------------------------------------------
+# Task 7（BE-P1-03）：WS 限流关联——text 超限 → rejected ACK RATE_LIMITED（原
+# clientRequestId + retryAfterMs）经真实 WS 连接送达，promise 立即 settle；缺失
+# clientRequestId → 退化 generic error（marker=service）。
+# ---------------------------------------------------------------------------
+
+@pytest.mark.service
+class TestWsRateLimitCorrelation:
+    """Task 7：WS 消息限流与发送请求关联（真实 WS + create_app(rate_limits=...)）。"""
+
+    @pytest.mark.asyncio
+    async def test_v2_text_over_limit_rejected_ack_over_ws(
+            self, aiohttp_client, fresh_idempotency):
+        """第一条 text 配额内 accepted；第二条超限 → rejected RATE_LIMITED（原 clientRequestId）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False, rate_limits={"messages": 1})
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({"type": "text", "content": "第一条", "clientRequestId": "rl_1"})
+            ack1 = None
+            for _ in range(8):
+                m = await asyncio.wait_for(ws.receive(), timeout=5)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "user_message.ack":
+                        ack1 = d
+                        break
+            assert ack1 is not None and ack1["status"] == "accepted"
+            # 第二条 → 超限 → rejected ACK RATE_LIMITED（原 clientRequestId + retryAfterMs）
+            await ws.send_json({"type": "text", "content": "第二条", "clientRequestId": "rl_2"})
+            ack2 = None
+            for _ in range(8):
+                m = await asyncio.wait_for(ws.receive(), timeout=5)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "user_message.ack":
+                        ack2 = d
+                        break
+            assert ack2 is not None, "超限应收到 rejected ACK（立即 settle，不超时）"
+            assert ack2["status"] == "rejected"
+            assert ack2["clientRequestId"] == "rl_2"          # 原 clientRequestId 关联
+            assert ack2["error"]["code"] == "RATE_LIMITED"
+            assert ack2["error"]["retryable"] is True
+            assert ack2["error"]["retryAfterMs"] >= 1000
+            assert ack2.get("messageId") == ""
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v2_text_over_limit_missing_request_id_error_over_ws(
+            self, aiohttp_client, fresh_idempotency):
+        """text 超限但 clientRequestId 缺失 → generic error RATE_LIMITED（无 ACK）。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False, rate_limits={"messages": 1})
+        client = await aiohttp_client(app)
+        try:
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({"type": "text", "content": "第一条", "clientRequestId": "rl_1"})
+            # 消耗唯一 token（等 ACK 确认第一条已处理）
+            for _ in range(8):
+                m = await asyncio.wait_for(ws.receive(), timeout=5)
+                if m.type == WSMsgType.TEXT and json.loads(m.data).get("type") == "user_message.ack":
+                    break
+            # 第二条（无 clientRequestId）→ 超限 → generic error
+            await ws.send_json({"type": "text", "content": "第二条"})
+            err = None
+            for _ in range(8):
+                m = await asyncio.wait_for(ws.receive(), timeout=5)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "error" and d.get("code") == "RATE_LIMITED":
+                        err = d
+                        break
+            assert err is not None, f"应收到 generic error RATE_LIMITED: {err}"
+            assert err["retryable"] is True
+            assert err["retryAfterMs"] >= 1000
+            await ws.close()
+        finally:
+            await agent.stop()
+
