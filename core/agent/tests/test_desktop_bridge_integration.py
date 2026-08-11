@@ -278,6 +278,10 @@ class TestStopPersistenceHook:
         agent._message_repo.close = AsyncMock()
         agent._token_repo.close = AsyncMock()
         agent._version_repo.close = AsyncMock()
+        # Task 5：_stop_persistence 现会关闭幂等仓库——MagicMock 的 close 非 awaitable，
+        # 须显式提供 AsyncMock（否则 await MagicMock() 抛 TypeError）
+        agent.idempotency_repo = MagicMock()
+        agent.idempotency_repo.close = AsyncMock()
         bridge = MagicMock()
         bridge.save_all = AsyncMock()
         agent._desktop_bridge = bridge
@@ -285,6 +289,7 @@ class TestStopPersistenceHook:
         await _LifecyclePersistence._stop_persistence(agent)
 
         bridge.save_all.assert_awaited_once()
+        agent.idempotency_repo.close.assert_awaited_once()
 
 
 class TestSyncDesktopAvailable:

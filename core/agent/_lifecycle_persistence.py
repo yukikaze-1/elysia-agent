@@ -231,6 +231,7 @@ class _LifecyclePersistence:
                     "message": self._message_repo.health_check,
                     "token": self._token_repo.health_check,
                     "version": self._version_repo.health_check,
+                    "idempotency": self.idempotency_repo.health_check,
                 }
                 attachment = getattr(self, "_attachment_repo", None)
                 if attachment is not None:
@@ -297,6 +298,16 @@ class _LifecyclePersistence:
                     cutoff = (datetime.datetime.now(datetime.timezone.utc)
                               - datetime.timedelta(minutes=5)).isoformat()
                     await gen_registry.mark_stale_interrupted(cutoff)
+            elif name == "idempotency":
+                # 幂等恢复（D6c）：重连 repo → store.recover() reconcile（内存→Mongo
+                # 对齐，durable 翻回）。connect 失败返回 False——协调器保留 prev=False
+                # 下轮重试。get_store 惰性 import：core.agent → core.input 循环导入规避
+                # （先例：capabilities.py:79 函数内 import）。
+                if not await self.idempotency_repo.connect():
+                    return False
+                from core.input.idempotency import get_store
+                await get_store().recover()
+                logger.info("IdempotencyRepository 恢复，幂等表 reconcile 完成")
             # 其余 repo：health_check 内部已重连，无需额外补偿
             return True
         except Exception:
@@ -375,6 +386,16 @@ class _LifecyclePersistence:
             await asyncio.wait_for(self._version_repo.close(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Version repo close timed out")
+
+        # D6c：幂等 claim 仓库关闭（try/except 包裹——close 异常不阻断关停；重启后
+        # 经 connect 可重连）
+        logger.debug("Closing idempotency repo...")
+        try:
+            await asyncio.wait_for(self.idempotency_repo.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Idempotency repo close timed out")
+        except Exception:
+            logger.warning("Idempotency repo close failed", exc_info=True)
 
         logger.debug("Shutting down embedding factory...")
         try:
