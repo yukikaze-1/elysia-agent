@@ -207,9 +207,10 @@ class WorkflowEngine:
                 self._task_futures[task_id] = task     # 必须登记——stop() 靠它等待/取消
                 dispatched = True                      # 已派发：槽位归执行包装所有
             except asyncio.CancelledError:
+                # 注：held_permit=True→dispatched=True 之间无任何 await，本分支（已 acquire 未派发
+                # 时被取消）在协作式调度下不可达——取消只送达 acquire 阻塞处（held_permit=False）或
+                # 下一轮 get()。保留防御性释放，防未来引入中断点导致槽位泄漏。
                 if held_permit and not dispatched:
-                    # stop() 取消：已 acquire 未派发 → 释放槽位 + 移出 _active
-                    # （执行包装不存在，槽位不能泄漏；acquire 等待中被取消则 held_permit=False，无槽位可释放）
                     self._active.discard(task_id)
                     self._semaphore.release()
                 raise
@@ -376,35 +377,43 @@ class WorkflowEngine:
 
         从 submit() 闭包提取为方法（E2），供 _drain_queue 后台派发。
         context/mailbox 从 self._contexts/self._mailboxes 取参，不再闭包捕获。
+        取参用 .get() 且移入 try——派发后、运行前被 cancel/stop 终态化清理时
+        （_cleanup_task 弹出 _contexts/_mailboxes）缺失索引抛 KeyError 会跳过 finally
+        导致槽位永久泄漏；此处缺失时早退，由 finally 兜底释放槽位。
         """
-        context = self._contexts[task_id]
-        mailbox = self._mailboxes[task_id]
         try:
+            context = self._contexts.get(task_id)
+            mailbox = self._mailboxes.get(task_id)
+            if context is None or mailbox is None:
+                # 派发后、运行前已被 cancel/stop 清理——不再执行，finally 兜底释放槽位
+                return
             await sub_agent.run(context, mailbox)
         except asyncio.CancelledError:
-            # stop() 触发的取消——推送 FAILED 后重新抛出，让 cancel 正确传播
-            push_mailbox_event(
-                mailbox, WorkflowEventType.FAILED, {
-                    "task_id": str(task_id),
-                    "error": "任务被取消",
-                    "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
-                },
-                caller="WorkflowEngine",
-            )
+            if mailbox is not None:
+                # stop() 触发的取消——推送 FAILED 后重新抛出，让 cancel 正确传播
+                push_mailbox_event(
+                    mailbox, WorkflowEventType.FAILED, {
+                        "task_id": str(task_id),
+                        "error": "任务被取消",
+                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                    },
+                    caller="WorkflowEngine",
+                )
             raise
         except Exception:
             logger.exception("WorkflowEngine: task_id=%s 执行异常", task_id)
-            # 补推送 FAILED 事件——SubAgent 在 run() 前期阶段
-            # （Planner/Validator）抛异常时可能来不及推送，
-            # WorkflowEngine 在此兜底，确保 mailbox 消费者不会永久阻塞
-            push_mailbox_event(
-                mailbox, WorkflowEventType.FAILED, {
-                    "task_id": str(task_id),
-                    "error": "任务执行异常",
-                    "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
-                },
-                caller="WorkflowEngine",
-            )
+            if mailbox is not None:
+                # 补推送 FAILED 事件——SubAgent 在 run() 前期阶段
+                # （Planner/Validator）抛异常时可能来不及推送，
+                # WorkflowEngine 在此兜底，确保 mailbox 消费者不会永久阻塞
+                push_mailbox_event(
+                    mailbox, WorkflowEventType.FAILED, {
+                        "task_id": str(task_id),
+                        "error": "任务执行异常",
+                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                    },
+                    caller="WorkflowEngine",
+                )
         finally:
             # PAUSED 任务释放执行槽（E2 §5）——checkpoint/mailbox/SubAgent/注册表全部保留，
             # 等待 resume() 恢复执行。slot 释放不变式：每取得一次 semaphore 恰释放一次。
@@ -554,29 +563,34 @@ class WorkflowEngine:
         """
         if sub_agent._task_state is not None:
             sub_agent._task_state.resume_pending = False   # 统一清理点：已开始执行，清除排队标记
-        mailbox = self._mailboxes[task_id]
+        mailbox = self._mailboxes.get(task_id)             # .get() + 移入 try——防派发后/运行前被清理 → KeyError 跳过 finally 泄漏槽位
         try:
+            if mailbox is None:
+                # 派发后、运行前已被 cancel/stop 清理——不再执行，finally 兜底释放槽位
+                return
             await sub_agent.resume_from_pause()
         except asyncio.CancelledError:
-            push_mailbox_event(
-                mailbox, WorkflowEventType.FAILED, {
-                    "task_id": str(task_id),
-                    "error": "任务被取消",
-                    "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
-                },
-                caller="WorkflowEngine",
-            )
+            if mailbox is not None:
+                push_mailbox_event(
+                    mailbox, WorkflowEventType.FAILED, {
+                        "task_id": str(task_id),
+                        "error": "任务被取消",
+                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                    },
+                    caller="WorkflowEngine",
+                )
             raise
         except Exception:
             logger.exception("WorkflowEngine: task_id=%s resume 异常", task_id)
-            push_mailbox_event(
-                mailbox, WorkflowEventType.FAILED, {
-                    "task_id": str(task_id),
-                    "error": "resume 执行异常",
-                    "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
-                },
-                caller="WorkflowEngine",
-            )
+            if mailbox is not None:
+                push_mailbox_event(
+                    mailbox, WorkflowEventType.FAILED, {
+                        "task_id": str(task_id),
+                        "error": "resume 执行异常",
+                        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+                    },
+                    caller="WorkflowEngine",
+                )
         finally:
             # PAUSED 任务释放执行槽（与 _run_and_cleanup 对称，E2 §5）——resume 已 acquire，
             # 再次 PAUSED 时释放 slot + 移出 _active，checkpoint/mailbox/注册表保留。
