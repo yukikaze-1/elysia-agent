@@ -1080,6 +1080,24 @@ class TestReloadPlugin:
 
 
 # ============================================================
+# ToolManager —— _load_safety_config（共用 config 加载 helper）
+# ============================================================
+
+@pytest.mark.service
+class TestLoadSafetyConfig:
+    @pytest.mark.asyncio
+    async def test_load_safety_config_applies_yaml(self, plugin_dir, write_simple):
+        write_simple(plugin_dir, suffix="v1")
+        write_config = """max_concurrency: 7\n"""
+        (plugin_dir / "config.yaml").write_text(write_config)
+        import reload_plugins.simple as mod
+        tm = ToolManager()
+        instance = mod.SimplePlugin()
+        tm._load_safety_config(instance, mod.SimplePlugin)
+        assert instance.safety.max_concurrency == 7
+
+
+# ============================================================
 # ToolManager —— set_hitl_broadcast（设置 HITL 广播）
 # ============================================================
 

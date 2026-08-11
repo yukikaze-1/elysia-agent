@@ -86,20 +86,7 @@ class ToolManager:
             instance = cls()
             try:
                 # 从插件所在目录加载 config.yaml，覆盖 SafetyProfile 字段
-                module_file = inspect.getfile(cls)
-                plugin_dir = Path(module_file).parent
-                config_file = plugin_dir / "config.yaml"
-                if config_file.is_file():
-                    try:
-                        raw = yaml.safe_load(config_file.read_text("utf-8"))
-                        if isinstance(raw, dict):
-                            for key, value in raw.items():
-                                if hasattr(instance.safety, key):
-                                    setattr(instance.safety, key, value)
-                    except (yaml.YAMLError, OSError) as e:
-                        logger.warning(
-                            "工具 '%s' config.yaml 加载失败: %s", cls.__name__, e,
-                        )
+                self._load_safety_config(instance, cls)
                 await instance.setup(ctx)
                 self._plugins[instance.name] = instance
                 self._plugin_classes[instance.name] = cls
@@ -117,6 +104,29 @@ class ToolManager:
                 )
         names = list(self._plugins.keys())
         logger.info("工具: 已加载 %d 个 (%s)", len(names), ", ".join(names))
+
+    def _load_safety_config(self, instance: ToolPlugin, cls: type[ToolPlugin]) -> None:
+        """从插件目录加载 config.yaml 覆盖 SafetyProfile 字段（load/reload 共用）。
+
+        Args:
+            instance: 待配置的插件实例。
+            cls: 插件类（用于定位模块文件所在目录）。
+        """
+        module_file = inspect.getfile(cls)
+        plugin_dir = Path(module_file).parent
+        config_file = plugin_dir / "config.yaml"
+        if not config_file.is_file():
+            return
+        try:
+            raw = yaml.safe_load(config_file.read_text("utf-8"))
+            if isinstance(raw, dict):
+                for key, value in raw.items():
+                    if hasattr(instance.safety, key):
+                        setattr(instance.safety, key, value)
+        except (yaml.YAMLError, OSError) as e:
+            logger.warning(
+                "工具 '%s' config.yaml 加载失败: %s", cls.__name__, e,
+            )
 
     async def shutdown(self) -> None:
         """优雅关闭管理器。
