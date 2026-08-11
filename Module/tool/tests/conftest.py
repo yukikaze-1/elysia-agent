@@ -50,11 +50,16 @@ def _invalidate_pycache(plugin_dir):
 def write_simple():
     """写 simple.py——含 execute 返回带版本标记的 ToolResult。
 
-    setup_raises=True 时 setup() 抛 RuntimeError（新实例 setup 失败回滚用例）。
+    setup_raises=True 时 setup() 抛 RuntimeError（新实例 setup 失败回滚用例）；
+    teardown_raises=True 时 teardown() 抛（旧 teardown 异常用例）。
     每次改写后清 pyc 缓存（见 _invalidate_pycache）。
     """
-    def _write(src, *, setup_raises=False, suffix="v1"):
+    def _write(src, *, setup_raises=False, suffix="v1", teardown_raises=False):
         setup_line = "def setup(self, ctx): raise RuntimeError('boom')\n    " if setup_raises else ""
+        teardown_line = (
+            "async def teardown(self):\n        raise RuntimeError('boom')\n    "
+            if teardown_raises else ""
+        )
         body = f"""from Module.tool.protocol import ToolPlugin, ToolResult, ToolContext
 from Module.tool.safety import SafetyProfile
 class SimplePlugin(ToolPlugin):
@@ -63,10 +68,43 @@ class SimplePlugin(ToolPlugin):
     param_model = None
     capabilities = set()
     safety = SafetyProfile()
-    {setup_line}async def execute(self, ctx: ToolContext, **params):
+    {setup_line}{teardown_line}async def execute(self, ctx: ToolContext, **params):
         return ToolResult.ok(name="simple", content="exec-{suffix}", duration_ms=0.0)
 """
         (src / "simple.py").write_text(body)
+        _invalidate_pycache(src)
+    return _write
+
+
+@pytest.fixture
+def write_slow():
+    """写 slow.py——execute 挂起 delay 秒后返回带版本标记的 ToolResult。
+
+    in-flight 排空/新调用不阻塞用例需要「reload 瞬间仍在执行」的旧调用——
+    write_simple 的 execute 秒回，快照前已完成（排空恒空）。teardown 写入
+    模块级 CALLED 列表供断言（reload 复用同一模块 dict，旧实例 teardown 的
+    __globals__ 指向同一 CALLED，reload 后取到的是同一列表）。
+    """
+    def _write(src, *, suffix="v1", delay=0.5):
+        body = f'''from Module.tool.protocol import ToolPlugin, ToolResult, ToolContext
+from Module.tool.safety import SafetyProfile
+import asyncio
+CALLED = []
+class SlowPlugin(ToolPlugin):
+    name = "slow"
+    description = "slow-{suffix}"
+    param_model = None
+    capabilities = set()
+    safety = SafetyProfile()
+    async def setup(self, ctx):
+        pass
+    async def execute(self, ctx: ToolContext, **params):
+        await asyncio.sleep({delay})
+        return ToolResult.ok(name="slow", content="exec-{suffix}", duration_ms=0.0)
+    async def teardown(self):
+        CALLED.append("teardown")
+'''
+        (src / "slow.py").write_text(body)
         _invalidate_pycache(src)
     return _write
 

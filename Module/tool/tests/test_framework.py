@@ -1,6 +1,7 @@
 """框架层单元测试 — ErrorType, Capability, SafetyProfile, SafetyPipeline, ToolManager, Plugins。"""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -1103,6 +1104,201 @@ class TestReloadPlugin:
         assert ok is False and "热重载失败" in reason
         result = await tm.execute("simple", ctx=ToolContext())
         assert result.content == "exec-v1"      # 旧实例仍可用
+
+
+# ============================================================
+# ToolManager —— 热重载全表行为（原子替换 + 失败回滚，spec §6）
+# ============================================================
+
+@pytest.mark.service
+class TestReloadAtomicBehavior:
+    """reload 全表：class/description/config 变化、回滚、排空、并发、连续 reload。"""
+
+    @pytest.mark.asyncio
+    async def test_reload_class_change_updates_classes(self, plugin_dir, write_simple):
+        """class 变化生效——_plugin_classes 指向新 module 的新 class。"""
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        old_cls = mod_v1.SimplePlugin                      # 捕获旧 class 引用（reload 前）
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        write_simple(plugin_dir, suffix="v2")
+        ok, _ = await tm.reload_plugin("simple")
+        assert ok is True
+        # importlib.reload 复用同一模块 dict——mod_v1.SimplePlugin 此刻即新 class
+        assert tm._plugin_classes["simple"] is mod_v1.SimplePlugin
+        assert tm._plugin_classes["simple"] is not old_cls
+
+    @pytest.mark.asyncio
+    async def test_reload_description_change(self, plugin_dir, write_simple):
+        """description 变化生效——plugin_list 反映新描述。"""
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        write_simple(plugin_dir, suffix="v2")
+        ok, _ = await tm.reload_plugin("simple")
+        assert ok is True
+        meta = next(p for p in tm.plugin_list if p["name"] == "simple")
+        assert meta["description"] == "desc-v2"
+
+    @pytest.mark.asyncio
+    async def test_reload_applies_config_change(self, plugin_dir, write_simple, write_config):
+        """config.yaml 变化生效——plugin_list 反映新 SafetyProfile 值。"""
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        write_config(plugin_dir, max_concurrency=7)
+        ok, _ = await tm.reload_plugin("simple")
+        assert ok is True
+        meta = next(p for p in tm.plugin_list if p["name"] == "simple")
+        assert meta["safety"]["max_concurrency"] == 7
+        # max_concurrency>0 → 信号量已重建
+        assert "simple" in tm._semaphores
+
+    @pytest.mark.asyncio
+    async def test_reload_discover_failure_keeps_old(self, plugin_dir, write_simple):
+        """discover 不到类回滚——模块删除类 → reload False，注册表未动。"""
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        old_instance = tm._plugins["simple"]
+        # 改写模块删除类（importlib.reload 不清空模块命名空间——须显式 del，
+        # 否则旧 SimplePlugin 仍留在模块 dict 中，discover 仍能找到）
+        (plugin_dir / "simple.py").write_text(
+            "from Module.tool.protocol import ToolPlugin\ndel SimplePlugin\n",
+        )
+        ok, reason = await tm.reload_plugin("simple")
+        assert ok is False and "未找到" in reason
+        assert tm._plugins["simple"] is old_instance   # 注册表未动
+        result = await tm.execute("simple", ctx=ToolContext())
+        assert result.content == "exec-v1"             # 旧实例仍可用
+
+    @pytest.mark.asyncio
+    async def test_reload_teardown_exception_returns_true(self, plugin_dir, write_simple):
+        """teardown 异常——替换已成功、返回 True（warning 记录）。"""
+        write_simple(plugin_dir, suffix="v1", teardown_raises=True)
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        write_simple(plugin_dir, suffix="v2")
+        ok, reason = await tm.reload_plugin("simple")
+        assert ok is True
+        result = await tm.execute("simple", ctx=ToolContext())
+        assert result.content == "exec-v2"
+
+    @pytest.mark.asyncio
+    async def test_reload_drains_inflight_then_teardown(self, plugin_dir, write_slow):
+        """in-flight 排空——旧调用用旧实例跑完、之后新调用用新实例、旧 teardown 被调。"""
+        write_slow(plugin_dir, suffix="v1", delay=0.5)
+        import reload_plugins.slow as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SlowPlugin], ctx)
+        old_task = asyncio.create_task(tm.execute("slow", ctx=ToolContext()))
+        await asyncio.sleep(0.05)                        # 旧调用进入 _inflight
+        write_slow(plugin_dir, suffix="v2", delay=0.01)  # 新实现秒回
+        ok, reason = await tm.reload_plugin("slow")      # 排空等待旧调用完成
+        assert ok is True
+        result_old = await old_task
+        assert result_old.content == "exec-v1"           # 旧调用用旧实例跑完
+        result_new = await tm.execute("slow", ctx=ToolContext())
+        assert result_new.content == "exec-v2"           # 新调用用新实例
+        assert mod_v1.CALLED == ["teardown"]             # 旧实例 teardown 被调
+
+    @pytest.mark.asyncio
+    async def test_new_call_not_blocked_by_reload_drain(self, plugin_dir, write_slow):
+        """新调用不阻塞 reload——排空期间（锁已释放）新调用立即用新实例执行。"""
+        write_slow(plugin_dir, suffix="v1", delay=0.5)
+        import reload_plugins.slow as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SlowPlugin], ctx)
+        old_instance = tm._plugins["slow"]
+        old_task = asyncio.create_task(tm.execute("slow", ctx=ToolContext()))
+        await asyncio.sleep(0.05)                        # 旧调用进入 _inflight
+        write_slow(plugin_dir, suffix="v2", delay=0.01)  # 新实现秒回
+        reload_task = asyncio.create_task(tm.reload_plugin("slow"))
+        # 等 swap 完成——reload 进入排空阶段（锁已释放）
+        for _ in range(200):
+            if tm._plugins["slow"] is not old_instance:
+                break
+            await asyncio.sleep(0.02)
+        else:
+            raise AssertionError("reload 未完成 swap")
+        assert reload_task.done() is False               # 排空仍在等待旧任务
+        t0 = time.monotonic()
+        result_new = await tm.execute("slow", ctx=ToolContext())
+        elapsed = time.monotonic() - t0
+        assert result_new.content == "exec-v2"           # 新调用走新实例
+        assert elapsed < 0.3                             # 未等排空完成
+        ok, reason = await reload_task
+        assert ok is True
+        result_old = await old_task
+        assert result_old.content == "exec-v1"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_reload_execute_consistency(self, plugin_dir, write_simple):
+        """并发取值互斥——reload 与 execute 并发，每次读到完整旧版或新版。"""
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        write_simple(plugin_dir, suffix="v2")
+
+        results: list[str] = []
+
+        async def hammer() -> None:
+            for _ in range(20):
+                r = await tm.execute("simple", ctx=ToolContext())
+                results.append(r.content)
+
+        await asyncio.gather(tm.reload_plugin("simple"), hammer())
+        assert set(results) <= {"exec-v1", "exec-v2"}    # 无混合/撕裂状态
+
+    @pytest.mark.asyncio
+    async def test_shutdown_concurrent_with_reload(self, plugin_dir, write_simple):
+        """shutdown∥reload——并发不 double-teardown、不抛异常。"""
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        write_simple(plugin_dir, suffix="v2")
+        r1 = asyncio.create_task(tm.reload_plugin("simple"))
+        await asyncio.sleep(0.01)
+        r2 = asyncio.create_task(tm.shutdown())
+        results = await asyncio.gather(r1, r2, return_exceptions=True)
+        assert all(isinstance(x, BaseException) is False for x in results)
+
+    @pytest.mark.asyncio
+    async def test_consecutive_reloads(self, plugin_dir, write_simple):
+        """连续 reload——两次均成功，第二次基于最新 module。"""
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        write_simple(plugin_dir, suffix="v2")
+        ok1, _ = await tm.reload_plugin("simple")
+        assert ok1 is True
+        r = await tm.execute("simple", ctx=ToolContext())
+        assert r.content == "exec-v2"
+        write_simple(plugin_dir, suffix="v3")
+        ok2, _ = await tm.reload_plugin("simple")
+        assert ok2 is True
+        r = await tm.execute("simple", ctx=ToolContext())
+        assert r.content == "exec-v3"                    # 第二次基于最新 module
+
+    @pytest.mark.asyncio
+    async def test_reload_without_config_yaml(self, plugin_dir, write_simple):
+        """目录无 config.yaml——helper 跳过，safety 用 class 默认。"""
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([mod_v1.SimplePlugin], ctx)
+        write_simple(plugin_dir, suffix="v2")
+        ok, _ = await tm.reload_plugin("simple")
+        assert ok is True
+        assert tm._plugins["simple"].safety.max_concurrency == 0
 
 
 # ============================================================
