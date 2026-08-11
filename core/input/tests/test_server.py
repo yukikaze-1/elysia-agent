@@ -917,6 +917,8 @@ class TestEndpoints:
         assert resp.status == 200
         data = await resp.json()
         assert data["status"] == "ok"
+        assert data["chatReady"] is True
+        assert data["fullReady"] is True
 
     @pytest.mark.asyncio
     async def test_shutdown_sets_state_stopping(self, app, aiohttp_client):

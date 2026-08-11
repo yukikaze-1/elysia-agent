@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 
 from paths import ProjectPath
 
-# 依赖健康检查超时（秒）——挂起/慢依赖视为 down，探活请求不无限阻塞
+# Readiness 依赖探针超时（秒）——/ready 各依赖 wait_for，挂起/慢依赖视为 down；
+# /health 纯 liveness 零探针，不用本常量
 _HEALTH_TIMEOUT = 2.0
 # 进程启动时刻（monotonic），/health uptime 用
 _PROCESS_START = time.monotonic()
@@ -253,45 +254,20 @@ def _make_rate_limit_middleware(limiter: RateLimiter):
     return _rate
 
 
-async def _collect_health_payload(agent: "Agent") -> dict:
-    """聚合健康探针负载：依赖检查（wait_for 超时/异常视为 down）+ 运行信息。
+def _runtime_info(agent: "Agent") -> dict:
+    """运行信息负载（/health 与 /ready 共用）：fsm/llm/memory/tools/版本/uptime。
+
+    全部进程内存读取，无任何外部 I/O——liveness 借此实现零网络探针，readiness 借此
+    附加可观测字段。fsm 内省失败降级 "unknown"（探针不应 500）。
 
     Args:
-        agent: Agent 实例（公开接口 session.health_check / long_term.health_check）。
-
-    Returns:
-        探针 JSON 负载：status/fsm/llm/memory/tools/version/build_sha/uptime/
-        request_id/dependencies{`mongo`, `milvus`}。
+        agent: Agent 实例（公开接口 session / long_term / tool_adapter）。
     """
-    async def _probe(factory: Callable[[], Any]) -> bool:
-        try:
-            return bool(await asyncio.wait_for(factory(), timeout=_HEALTH_TIMEOUT))
-        except Exception:
-            # 超时 / 依赖抛异常 / mock 不可 await → 一律视为 down
-            return False
-
-    # P1-05：/ready 必须真实反映 mandatory 依赖。mongo = session + message + attachment
-    # 三个 repo 全部可达（各自真实 ping）；milvus = long_term。桌面/版本/生成降级不门禁。
-    mongo_ok = bool(
-        await _probe(agent.session.health_check)
-        and await _probe(agent.message_repo.health_check)
-        and await _probe(agent.attachment_repo.health_check)
-    )
-    milvus_ok = await _probe(agent.long_term.health_check)
-    dependencies = {"mongo": mongo_ok, "milvus": milvus_ok}
-    status = "ok" if all(dependencies.values()) else "degraded"
-
     try:
         fsm_state = agent.status.current_name()
     except Exception:
         fsm_state = "unknown"
-
-    # 探活不应扰动 request_id 计数器（批次 8a Task 15）：request_id 独立 uuid 生成，
-    # 不触碰 agent.next_request_id（该计数器由真实业务请求/生成链路驱动）。
-    request_id = f"req_{uuid.uuid4().hex[:24]}"
-
     return {
-        "status": status,
         "fsm": fsm_state,
         "llm": getattr(agent.llm, "model", "unknown"),
         "memory": {
@@ -305,36 +281,122 @@ async def _collect_health_payload(agent: "Agent") -> dict:
         "version": build_server_version(),
         "build_sha": get_build_sha(),
         "uptime": round(time.monotonic() - _PROCESS_START, 1),
-        "request_id": request_id,
+        # 探活不应扰动 request_id 计数器（批次 8a Task 15）：request_id 独立 uuid 生成，
+        # 不触碰 agent.next_request_id（该计数器由真实业务请求/生成链路驱动）。
+        "request_id": f"req_{uuid.uuid4().hex[:24]}",
+    }
+
+
+def _liveness_payload(agent: "Agent") -> dict:
+    """Liveness 负载：进程/FSM/运行信息，**零网络探针**（BE-P2-01 D9）。
+
+    /health 只做进程存活检查 + 运行信息（fsm/uptime/build），不触碰任何外部依赖
+    （session/message/attachment/Milvus/idempotency 一律不 wait_for）——任何依赖
+    挂起都在固定预算内返回。status 恒 "ok"（进程存活即 ok；依赖状态由 /ready 负责）。
+
+    Args:
+        agent: Agent 实例。
+    """
+    return {"status": "ok", **_runtime_info(agent)}
+
+
+async def _probe(factory: Callable[[], Any]) -> bool:
+    """单依赖真实探测：wait_for 限时，超时/抛异常/mock 不可 await → 一律视为 down。
+
+    Args:
+        factory: 返回 awaitable 的探测工厂（如 repo.health_check）。
+    """
+    try:
+        return bool(await asyncio.wait_for(factory(), timeout=_HEALTH_TIMEOUT))
+    except Exception:
+        # 超时 / 依赖抛异常 / mock 不可 await → 一律视为 down
+        return False
+
+
+async def _readiness_payload(
+    agent: "Agent", *,
+    product_mode: bool,
+    idempotency_repo: "IdempotencyRepository | None",
+) -> dict:
+    """Readiness 负载：核心 chat 门禁 + 依赖明细（BE-P2-01 D9）。
+
+    - ``chatReady``（HTTP 门禁）= ``mongo_ok``（session+message+attachment 真实 ping，
+      ``asyncio.gather`` 并行探测）且（非 product_mode 或 ``idempotency_ok`` 真实 ping）；
+    - ``fullReady`` = ``chatReady`` 且 ``milvus_ok``——Milvus 仅上报**不门禁 HTTP**
+      （文本可降级使用）；
+    - ``status``：全依赖 ok → "ok" 否则 "degraded"（可观测，非 HTTP 门禁）。
+
+    Args:
+        agent: Agent 实例。
+        product_mode: 产品模式（幂等 fail-closed）；dev 模式允许 idempotency 降级不门禁。
+        idempotency_repo: 幂等 claim 仓库；None（纯内存 dev）→ 无持久依赖可探视为 ok。
+    """
+    # mongo 三 repo 并行探测（asyncio.gather + 每项 wait_for）——慢依赖不串行累加
+    session_ok, message_ok, attachment_ok = await asyncio.gather(
+        _probe(agent.session.health_check),
+        _probe(agent.message_repo.health_check),
+        _probe(agent.attachment_repo.health_check),
+    )
+    mongo_ok = session_ok and message_ok and attachment_ok
+
+    milvus_ok = await _probe(agent.long_term.health_check)
+
+    # idempotency：repo 为 None（纯内存 dev）→ 无持久依赖可探，视为 ok；product 模式
+    # 真实 ping（fail-closed 门禁），dev 模式仅上报不门禁（内存降级允许）。
+    idempotency_ok = True
+    if idempotency_repo is not None:
+        idempotency_ok = await _probe(idempotency_repo.health_check)
+
+    chat_ready = mongo_ok and (not product_mode or idempotency_ok)
+    full_ready = chat_ready and milvus_ok
+    dependencies = {
+        "mongo": mongo_ok,
+        "milvus": milvus_ok,
+        "idempotency": idempotency_ok,
+    }
+    status = "ok" if all(dependencies.values()) else "degraded"
+
+    return {
+        "status": status,
+        "chatReady": chat_ready,
+        "fullReady": full_ready,
+        **_runtime_info(agent),
         "dependencies": dependencies,
     }
 
 
 async def health_handler(request: web.Request) -> web.Response:
-    """Liveness 探针——进程存活探测，恒 200；status 反映依赖健康度（ok/degraded）。
+    """Liveness 探针——进程存活检查，恒 200，**零网络探针**（BE-P2-01 D9）。
 
     Args:
         request: aiohttp Request。
 
     Returns:
-        web.Response: 200 JSON 探针负载（依赖异常不阻断存活上报）。
+        web.Response: 200 JSON 探针负载（进程/FSM/运行信息；不探外部依赖）。
     """
-    agent = request.app["agent"]
-    return web.json_response(await _collect_health_payload(agent))
+    return web.json_response(_liveness_payload(request.app["agent"]))
 
 
 async def ready_handler(request: web.Request) -> web.Response:
-    """Readiness 探针——依赖不 ok 时 503（流量路由/滚动发布用）。
+    """Readiness 探针——核心 chat 门禁：``chatReady`` 才 200（BE-P2-01 D9）。
+
+    chatReady = mongo 并行 ping 且（非 product 或 idempotency ping）；Milvus 不门禁
+    HTTP（文本可降级），经 payload 的 fullReady/dependencies 可观测。
 
     Args:
-        request: aiohttp Request。
+        request: aiohttp Request（product_mode / idempotency_repo 在 create_app 注入）。
 
     Returns:
-        web.Response: 依赖全 ok → 200，任一 down → 503（负载 status 同形状）。
+        web.Response: chatReady → 200；否则 503（payload 带 chatReady/fullReady/
+        dependencies 解释）。
     """
     agent = request.app["agent"]
-    payload = await _collect_health_payload(agent)
-    status_code = 200 if payload["status"] == "ok" else 503
+    payload = await _readiness_payload(
+        agent,
+        product_mode=request.app.get("product_mode", False),
+        idempotency_repo=request.app.get("idempotency_repo"),
+    )
+    status_code = 200 if payload["chatReady"] else 503
     return web.json_response(payload, status=status_code)
 
 
@@ -424,6 +486,10 @@ def create_app(
 
     # 将 agent + stt + task_system 注入 app context，供 handler 访问
     app["agent"] = agent
+    # BE-P2-01：/ready 依赖 product_mode（idempotency fail-closed 门禁依据）与
+    # idempotency_repo（幂等真实 ping），注入 app context 供 ready_handler 读取。
+    app["product_mode"] = product_mode
+    app["idempotency_repo"] = idempotency_repo
     if task_system is not None:
         app["task_system"] = task_system
 

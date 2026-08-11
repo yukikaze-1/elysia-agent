@@ -1,16 +1,42 @@
-"""Tests for core/input/server.py — /health 与 /ready 探活端点（批次 7 Task 9）。
+"""Tests for core/input/server.py — /health 与 /ready 探活端点（批次 9 Task 9 探针分层）。
 
-/health 恒 200（liveness），status 反映依赖健康度（ok/degraded）；
-/ready 依赖不 ok 时 503（readiness）。依赖检查经 asyncio.wait_for 限时，
-挂起/异常一律视为 down。
+/health 纯 liveness：进程/FSM 存活检查 + 运行信息，零网络探针，恒 200；
+/ready readiness：HTTP 门禁 = 核心 chat（mongo 并行 ping + product 模式 idempotency
+ping），Milvus 仅上报不门禁；payload 带 chatReady/fullReady/dependencies。
 
 Run: python -m pytest core/input/tests/test_health.py -v --asyncio-mode=auto
 """
 
 import asyncio
+import time
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _make_mock_agent() -> MagicMock:
+    """构造健康端点测试用 mock agent（依赖 health_check 全部可翻转）。"""
+    agent = MagicMock()
+    agent.status.current_name.return_value = "idle"
+    agent.llm.model = "test-model"
+    agent.session._messages = [1, 2, 3]
+    agent.session.health_check = AsyncMock(return_value=True)
+    agent.long_term.count = 42
+    agent.long_term.health_check = AsyncMock(return_value=True)
+    # P1-05：/ready 聚合 message/attachment repo 真实健康
+    agent.message_repo.health_check = AsyncMock(return_value=True)
+    agent.attachment_repo.health_check = AsyncMock(return_value=True)
+    agent.tool_adapter._manager.tool_names = ["t1", "t2"]
+    agent.output = MagicMock()
+    agent.bus = MagicMock()
+    return agent
+
+
+def _idem_repo(ok: bool) -> MagicMock:
+    """idempotency 仓库 fake——health_check 可翻转。"""
+    repo = MagicMock()
+    repo.health_check = AsyncMock(return_value=ok)
+    return repo
 
 
 @pytest.mark.service
@@ -18,25 +44,11 @@ class TestHealthEndpoints:
     @pytest.fixture
     def app(self):
         from core.input.server import create_app
-
-        agent = MagicMock()
-        agent.status.current_name.return_value = "idle"
-        agent.llm.model = "test-model"
-        agent.session._messages = [1, 2, 3]
-        agent.session.health_check = AsyncMock(return_value=True)
-        agent.long_term.count = 42
-        agent.long_term.health_check = AsyncMock(return_value=True)
-        # P1-05：/ready 聚合 message/attachment repo 真实健康
-        agent.message_repo.health_check = AsyncMock(return_value=True)
-        agent.attachment_repo.health_check = AsyncMock(return_value=True)
-        agent.tool_adapter._manager.tool_names = ["t1", "t2"]
-        agent.output = MagicMock()
-        agent.bus = MagicMock()
-        return create_app(agent, serve_static=False)
+        return create_app(_make_mock_agent(), serve_static=False)
 
     @pytest.mark.asyncio
     async def test_deps_ok_health_and_ready(self, app, aiohttp_client):
-        """依赖全 ok → /health status==ok 且 200，/ready 200。"""
+        """依赖全 ok → /health 200 status ok，/ready 200 chatReady/fullReady true。"""
         client = await aiohttp_client(app)
         resp = await client.get("/health")
         assert resp.status == 200
@@ -45,35 +57,98 @@ class TestHealthEndpoints:
         assert data["fsm"] == "idle"
         ready = await client.get("/ready")
         assert ready.status == 200
-        assert (await ready.json())["status"] == "ok"
+        ready_data = await ready.json()
+        assert ready_data["status"] == "ok"
+        assert ready_data["chatReady"] is True
+        assert ready_data["fullReady"] is True
 
     @pytest.mark.asyncio
-    async def test_dep_false_health_degraded_ready_503(self, app, aiohttp_client):
-        """依赖一 false（long_term）→ /health status==degraded 且 200，/ready 503。"""
+    async def test_milvus_down_ready_200_chat_ready(self, app, aiohttp_client):
+        """Milvus down → /health 200（liveness 不探依赖）；/ready 200（chatReady=true、
+        fullReady=false）+ payload 解释（Milvus 不门禁 HTTP，文本可降级）。"""
         agent = app["agent"]
         agent.long_term.health_check = AsyncMock(return_value=False)
         client = await aiohttp_client(app)
         resp = await client.get("/health")
         assert resp.status == 200
-        data = await resp.json()
-        assert data["status"] == "degraded"
+        ready = await client.get("/ready")
+        assert ready.status == 200
+        data = await ready.json()
+        assert data["chatReady"] is True
+        assert data["fullReady"] is False
         assert data["dependencies"]["milvus"] is False
         assert data["dependencies"]["mongo"] is True
-        ready = await client.get("/ready")
-        assert ready.status == 503
-        assert (await ready.json())["status"] == "degraded"
+        # 可观测：全依赖非 ok → degraded（即便 HTTP 200）
+        assert data["status"] == "degraded"
+
+    @pytest.mark.asyncio
+    async def test_ready_mongo_down_503(self, app, aiohttp_client):
+        """mongo（session）down → /ready 503（核心 chat 门禁失败），chatReady=false。"""
+        agent = app["agent"]
+        agent.session.health_check = AsyncMock(return_value=False)
+        client = await aiohttp_client(app)
+        resp = await client.get("/ready")
+        assert resp.status == 503
+        data = await resp.json()
+        assert data["chatReady"] is False
+        assert data["dependencies"]["mongo"] is False
+
+    @pytest.mark.asyncio
+    async def test_ready_product_idempotency_down_503(self, aiohttp_client):
+        """product 模式 + idempotency down → /ready 503（fail-closed），chatReady=false。"""
+        from core.input.server import create_app
+        app = create_app(_make_mock_agent(), serve_static=False, product_mode=True,
+                         idempotency_repo=_idem_repo(ok=False))
+        client = await aiohttp_client(app)
+        resp = await client.get("/ready")
+        assert resp.status == 503
+        data = await resp.json()
+        assert data["chatReady"] is False
+        assert data["dependencies"]["idempotency"] is False
+        assert data["dependencies"]["mongo"] is True
+
+    @pytest.mark.asyncio
+    async def test_ready_dev_idempotency_down_200(self, aiohttp_client):
+        """dev 模式 + idempotency down → /ready 200（内存降级不门禁），chatReady=true。"""
+        from core.input.server import create_app
+        app = create_app(_make_mock_agent(), serve_static=False, product_mode=False,
+                         idempotency_repo=_idem_repo(ok=False))
+        client = await aiohttp_client(app)
+        resp = await client.get("/ready")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["chatReady"] is True
+        assert data["fullReady"] is True
+        assert data["dependencies"]["idempotency"] is False
+        assert data["status"] == "degraded"  # 可观测：idempotency 非 ok
 
     @pytest.mark.asyncio
     async def test_health_response_fields(self, app, aiohttp_client):
-        """/health 响应含 version / build_sha / dependencies / fsm 等字段。"""
+        """/health 响应含 fsm/uptime/build 等运行信息，且无 dependencies（零网络探针）。"""
         client = await aiohttp_client(app)
         resp = await client.get("/health")
         assert resp.status == 200
         data = await resp.json()
         for key in ("status", "fsm", "llm", "memory", "tools",
-                    "version", "build_sha", "uptime", "request_id", "dependencies"):
+                    "version", "build_sha", "uptime", "request_id"):
             assert key in data, f"缺少字段 {key}"
-        assert set(data["dependencies"]) == {"mongo", "milvus"}
+        assert "dependencies" not in data
+        assert isinstance(data["version"], str) and data["version"]
+        assert isinstance(data["request_id"], str) and data["request_id"]
+        assert isinstance(data["uptime"], (int, float))
+
+    @pytest.mark.asyncio
+    async def test_ready_response_fields(self, app, aiohttp_client):
+        """/ready 响应含 chatReady / fullReady / dependencies（mongo/milvus/idempotency）。"""
+        client = await aiohttp_client(app)
+        resp = await client.get("/ready")
+        assert resp.status == 200
+        data = await resp.json()
+        for key in ("status", "chatReady", "fullReady", "fsm", "llm", "memory",
+                    "tools", "version", "build_sha", "uptime", "request_id",
+                    "dependencies"):
+            assert key in data, f"缺少字段 {key}"
+        assert set(data["dependencies"]) == {"mongo", "milvus", "idempotency"}
         assert isinstance(data["version"], str) and data["version"]
         assert isinstance(data["request_id"], str) and data["request_id"]
         assert isinstance(data["uptime"], (int, float))
@@ -97,19 +172,45 @@ class TestHealthEndpoints:
         assert calls["n"] == 0
 
     @pytest.mark.asyncio
-    async def test_hanging_dep_timeout_treated_down(self, app, aiohttp_client):
-        """依赖检查被 asyncio.wait_for 包裹——挂起依赖超时后按 down 处理，请求不阻塞。"""
+    async def test_health_no_network_probes_fast(self, app, aiohttp_client):
+        """依赖全挂起 → /health 零网络探针：<0.5s 返回 200 且不触碰任何 health_check（BE-P2-01）。"""
         agent = app["agent"]
 
         async def _hang() -> bool:
             await asyncio.sleep(3600)
             return True
 
-        agent.session.health_check = AsyncMock(side_effect=_hang)
-        with patch("core.input.server._HEALTH_TIMEOUT", 0.1):
-            client = await aiohttp_client(app)
-            resp = await client.get("/health")
+        for name in ("session", "message_repo", "attachment_repo", "long_term"):
+            getattr(agent, name).health_check = AsyncMock(side_effect=_hang)
+        client = await aiohttp_client(app)
+        start = time.monotonic()
+        resp = await client.get("/health")
+        elapsed = time.monotonic() - start
         assert resp.status == 200
-        data = await resp.json()
-        assert data["status"] == "degraded"
-        assert data["dependencies"]["mongo"] is False
+        assert elapsed < 0.5, f"/health 应零网络探针快速返回，实际 {elapsed:.2f}s"
+        # 零网络探针：4 个 health_check 均未被调用
+        for name in ("session", "message_repo", "attachment_repo", "long_term"):
+            assert getattr(agent, name).health_check.await_count == 0, \
+                f"/health 不应探测 {name}"
+
+    @pytest.mark.asyncio
+    async def test_ready_hanging_mongo_parallel_timeout_503(self, app, aiohttp_client):
+        """/ready mongo 三 repo 并行探测（asyncio.gather）：全挂起约 1×超时内返回 503，
+        而非串行 3×超时。"""
+        agent = app["agent"]
+
+        async def _hang() -> bool:
+            await asyncio.sleep(3600)
+            return True
+
+        for name in ("session", "message_repo", "attachment_repo"):
+            getattr(agent, name).health_check = AsyncMock(side_effect=_hang)
+        client = await aiohttp_client(app)
+        with patch("core.input.server._HEALTH_TIMEOUT", 0.2):
+            start = time.monotonic()
+            resp = await client.get("/ready")
+            elapsed = time.monotonic() - start
+        assert resp.status == 503
+        assert elapsed < 0.5, \
+            f"mongo 三探针应并行（约 0.2s），实际 {elapsed:.2f}s（串行约 0.6s）"
+        assert (await resp.json())["chatReady"] is False
