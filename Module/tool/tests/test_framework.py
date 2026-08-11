@@ -1132,6 +1132,36 @@ class TestReloadInfrastructure:
         assert tm._teardown_tasks == {}
 
 
+@pytest.mark.service
+class TestDrainAndTeardown:
+    @pytest.mark.asyncio
+    async def test_drain_waits_inflight_then_teardown(self):
+        tm = ToolManager()
+        old = MagicMock(); old.teardown = AsyncMock()
+        never_done = asyncio.create_task(asyncio.Event().wait())     # 永不完成
+        try:
+            await tm._drain_and_teardown("x", old, {never_done}, timeout=0.1)
+            # 超时 → 未等待完成 → 延迟 teardown 登记
+            assert len(tm._teardown_tasks) == 1
+            await asyncio.sleep(0.05)
+            assert old.teardown.await_count == 1     # 后台延迟 teardown 已执行
+        finally:
+            never_done.cancel()
+
+    @pytest.mark.asyncio
+    async def test_drain_timeout_schedules_teardown(self):
+        tm = ToolManager()
+        old = MagicMock(); old.teardown = AsyncMock()
+        never = asyncio.create_task(asyncio.sleep(5))
+        try:
+            await tm._drain_and_teardown("x", old, {never}, timeout=0.1)   # 0.1s 超时
+            assert len(tm._teardown_tasks) == 1       # 延迟 teardown 已登记
+            await asyncio.sleep(0.05)
+            assert old.teardown.await_count == 1
+        finally:
+            never.cancel()
+
+
 # ============================================================
 # ToolManager —— set_hitl_broadcast（设置 HITL 广播）
 # ============================================================

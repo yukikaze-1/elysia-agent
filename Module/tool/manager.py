@@ -562,19 +562,7 @@ class ToolManager:
             return False, f"工具 '{name}' 在 reload 期间被并发修改"
 
         # 4. 排空旧实例 in-flight + teardown（锁已释放——新调用立即走新实例，不受阻塞）
-        #    注：Task 3 内联最小版（等旧任务排空后 teardown；超时跳过），Task 4 替换为 _drain_and_teardown。
-        if old_tasks:
-            _done, pending = await asyncio.wait(old_tasks, timeout=10.0)
-            if pending:
-                logger.warning(
-                    "工具 '%s' 热重载：%d 个 in-flight 未在 10s 内排空，跳过 teardown",
-                    name, len(pending),
-                )
-                return True, ""
-        try:
-            await old.teardown()
-        except Exception as e:
-            logger.warning("旧插件 '%s' teardown() 异常: %s", name, e)
+        await self._drain_and_teardown(name, old, old_tasks)
         logger.info("工具 '%s' 已热重载", name)
         return True, ""
 
@@ -599,6 +587,57 @@ class ToolManager:
             ):
                 return obj
         return None
+
+    async def _drain_and_teardown(
+        self, name: str, old: ToolPlugin, old_tasks: set[asyncio.Task], timeout: float = 10.0,
+    ) -> None:
+        """等旧实例 in-flight 归零后 teardown。超时转后台延迟 teardown，不阻塞 reload。
+
+        Args:
+            name: 工具名称。
+            old: 替换前的旧实例。
+            old_tasks: swap 瞬间快照的旧 in-flight 任务（不含替换后的新调用）。
+            timeout: 排空等待超时（秒），超时后登记延迟 teardown。
+        """
+        if old_tasks:
+            _done, pending = await asyncio.wait(old_tasks, timeout=timeout)
+            if pending:
+                logger.warning(
+                    "工具 '%s' 热重载：%d 个 in-flight 未在 %.0fs 内排空，延迟 teardown",
+                    name, len(pending), timeout,
+                )
+                self._schedule_teardown(name, old)
+                return
+        try:
+            await old.teardown()
+        except Exception as e:
+            logger.warning("旧插件 '%s' teardown() 异常: %s", name, e)
+
+    def _schedule_teardown(self, name: str, old: ToolPlugin) -> None:
+        """后台延迟 teardown——登记到 _teardown_tasks + done 回调收异常。
+
+        _teardown_tasks 独立登记（非 _tasks），不被 cancel_all 取消；shutdown()
+        显式 gather 收尾。
+
+        Args:
+            name: 工具名称。
+            old: 排空超时后待清理的旧实例。
+        """
+        task = asyncio.create_task(old.teardown())
+        # 独立登记——不被 cancel_all 取消
+        self._teardown_tasks[f"{name}:teardown:{id(old)}"] = task
+
+        def _on_done(t: asyncio.Task) -> None:
+            try:
+                t.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning("延迟 teardown 工具 '%s' 异常: %s", name, e)
+            finally:
+                self._teardown_tasks.pop(f"{name}:teardown:{id(old)}", None)
+
+        task.add_done_callback(_on_done)
 
     # ---- Prompt Generation ----
 
