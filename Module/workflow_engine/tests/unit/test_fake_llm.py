@@ -2,14 +2,24 @@
 
 import asyncio
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
+from Module.workflow_contract import (
+    AgentInfra,
+    ConstraintConfig,
+    DelegationContext,
+    SessionId,
+    WorkflowEventType,
+)
+from Module.workflow_engine.mailbox import WorkflowMailbox
 from Module.workflow_engine.tests.helpers.fake_llm import (
     CountingLLM,
     FakeLLM,
     with_deadline,
 )
+from Module.workflow_engine.workflow_engine import WorkflowEngine
 
 pytestmark = pytest.mark.unit
 
@@ -72,3 +82,26 @@ async def test_counting_llm_forwards_messages():
     await cl.create(messages=[{"role": "user", "content": "x"}], model="m")
     assert cl.count == 1
     assert real.calls == [[{"role": "user", "content": "x"}]]   # messages 被透传
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_submit_first_event_is_queued():
+    """submit 立即返回 mailbox，首事件为 QUEUED（E2 契约）。"""
+    fake = FakeLLM()
+    infra = AgentInfra(llm=fake, milvus=None, http=None,
+                       tool_registry=MagicMock(), constraints=ConstraintConfig())
+    engine = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=1)
+    await engine.start()
+    # 占满槽 → 新任务排队。注：asyncio.BoundedSemaphore.acquire_nowait() 为 3.13+，
+    # 项目为 3.12——用 await acquire()（队列空时 runner 停在 queue.get()，必能拿到 permit）。
+    await engine._semaphore.acquire()
+    try:
+        ctx = DelegationContext(intent="t", session_id=SessionId("s1"))
+        result = await with_deadline(engine.submit(ctx), timeout=1.0)
+        assert isinstance(result, WorkflowMailbox)
+        ev = await with_deadline(result.get(), timeout=1.0)   # 首事件
+        assert ev.type == WorkflowEventType.QUEUED
+    finally:
+        engine._semaphore.release()             # 释放预占 permit——防失败路径遗留 worker 阻塞（loop 关闭告警）
+        await engine.stop()
