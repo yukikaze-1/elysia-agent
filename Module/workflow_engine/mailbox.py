@@ -192,8 +192,10 @@ def push_mailbox_event(
 
     # E3 §3.5 终态唯一性守卫——已推过终态事件则静默丢弃，
     # 防止 orchestrator FAILED + engine 兜底 FAILED + CancelledError 分支多路径重复推。
+    # 用 `is True` 身份判断而非真值——mock mailbox（MagicMock）的 _terminal_pushed
+    # 属性访问会返回真值 MagicMock，真值判断会把首个终态误判为已推送而丢弃。
     if event_type in _TERMINAL_EVENTS:
-        if mailbox._terminal_pushed:
+        if mailbox._terminal_pushed is True:
             logger.debug(
                 "%s: task_id=%s 已推过终态事件（%s），丢弃重复终态 %s",
                 caller or "push_mailbox_event",
