@@ -14,6 +14,25 @@
 
 > **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 3467。`make test-quick`（`-m "unit or service"`，含 WorkflowEngine unit）3326；`make test-normal`（`-m "not slow and not external"`）3428。各层相加与全量的差异（多 marker 重复计入 / 未标记四层）以脚本输出为准。
 
+### 外部测试门禁（E4，`RUN_EXTERNAL_TESTS=1`）
+
+`external` 测试（真实 LLM/DB E2E）**双保险门禁**：
+
+1. 合并门禁 `-m "unit or service"` / `-m "not slow and not external"` 已排除 `external` marker。
+2. `Module/conftest.py` 的 collection hook：未设 `RUN_EXTERNAL_TESTS=1` 时，所有 `external` 测试整体 `skip`（用 `item.add_marker(skipif)`——裸 `pytest.skip()` 在 collection 阶段会中断收集）。
+
+即「环境恰有 `DEEPSEEK_API_KEY` + 显式 `-m external` 但忘设 env」也不会误跑真实 LLM。显式 opt-in：
+
+```bash
+make test-external
+# 或: conda run -n Elysia RUN_EXTERNAL_TESTS=1 python -m pytest -m "external" -q --tb=short
+```
+
+真实 LLM 测试必须同时标 `integration + external`。workflow 确定性测试基建在
+`Module/workflow_engine/tests/helpers/fake_llm.py`：`FakeLLM`（对齐 `chat.completions.create`
+的 `tool_calls`/`content`/`usage` 访问面 + `gate`/`calls`/`prompts`）、`with_deadline`（gated 测试
+挂死防线，`asyncio.wait_for` 封装）、`CountingLLM`（外部成本计数包装，委托透传 `messages`）。
+
 ## 日常命令
 
 ```bash

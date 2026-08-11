@@ -83,7 +83,7 @@
 | 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） |
 |--------|----------|----------------|----------------|
 | 中 | **Workflow cancel/pause 终态单调性（E3，P2-08 + M19/M20）** | `planning.py` 返回后无条件写 RUNNING，cancel 期间可把终态逆转；resume 后再次 pause 会销毁 task/mailbox（M19） | 每 workflow 建 cancellation token/owned task；每个外部 await 后检查；CANCELLED/FAILED/COMPLETED 终态不可逆；terminal event 只推一次；M19：resume→pause 不销毁 task/mailbox |
-| 中 | **Workflow 测试确定性与外部 E2E 分层（E4，P2-11 部分）** | 全量 `pytest` 2 个失败均为带真实 `DEEPSEEK_API_KEY` 的 workflow 外部 E2E 首事件超时；`make test-quick/normal` 永久 `--ignore=Module/workflow_engine/tests` | 新增 `external` marker（真实 LLM 必须同时标 `integration+external`）；cancel/pause/mailbox 首事件用 fake LLM 确定性测试；`make test-workflow-engine` 覆盖核心 unit/service；`make test-external` 单独跑；修 `coroutine was never awaited` warning |
+| ~~中~~ ✅ | **Workflow 测试确定性与外部 E2E 分层（E4，P2-11 部分）** | **2026-08-11 完成（已拍板：`RUN_EXTERNAL_TESTS=1` 显式门禁 + fake-LLM 确定性基建）** | 新增 `external` marker（真实 LLM 必须同时标 `integration+external`）；cancel/pause/mailbox 首事件用 fake LLM 确定性测试；`make test-workflow-engine` 覆盖核心 unit/service；`make test-external` 单独跑；修 `coroutine was never awaited` warning | commit 本批次（E4）：`tests/helpers/fake_llm.py`（FakeLLM 对齐 `chat.completions.create` 访问面 tool_calls/content/usage + gate/calls/prompts）+ `with_deadline` 挂死防线 + `CountingLLM` 成本计数；`Module/conftest.py` external skip hook（未设 `RUN_EXTERNAL_TESTS=1` 全部 skip）；`make test-external` 显式带 env；两真实 E2E 文件补 `integration` marker；mailbox 首事件 QUEUED 确定性测试 |
 | 中 | **工具热重载原子回滚（E1，P2-06）** | `importlib.reload()` 后读旧 `_plugin_classes[name]`（即使模块暴露 New class 仍是 Old class）；新 setup 失败后工具永久消失 | reload 后从新 module 重新 discover class；共用统一 config 流程；先构造/setup 新实例、成功后原子替换、等旧实例 in-flight 排空；setup 失败保留旧工具 |
 
 ### C. 工程化/文档（F 批次，正式 release candidate 前置）
