@@ -180,12 +180,22 @@ class IdempotencyStore:
         内存权威 overlay（D5）：
         - repo 非空 → 恒 ``repo.claim``：acquired=True 写内存返回 ``(entry, True)``；
           acquired=False 把 winner 也写内存返回 ``(winner, False)``（内存镜像完整）；
+        - **内存降级窗口（``_in_memory_fallback``）→ 内存优先短路**：同键已有有效内存
+          entry 直接返回 ``(mem, False)``，不触碰 Mongo——关闭「down→up 且 recover()
+          未跑时 repo.claim 对内存 claim 重新 insert 导致重复处理」窗口（D5 进程内去重）；
         - repo 报错 → 产品模式透传（fail-closed）；dev 模式内存降级（内存已有 →
           ``(mem, False)``，否则插入 → ``(entry, True)``）；
         - repo 为 None（纯内存）→ 保留内存优先去重：同键二次返回既有 ``(entry, False)``，
           不生成新 message_id（防 dev/无 Mongo 双生成）。
         """
         if self._repo is not None:
+            # 内存降级窗口（Mongo 断连/恢复但 recover() 未跑）：同键已有内存 entry →
+            # 短路返回既有（不写 Mongo）——防「内存 claim 未落库，Mongo 恢复后 repo.claim
+            # 视为新 claim 插入」导致的重复处理（review Important#2）。
+            if self._in_memory_fallback:
+                prev = self._memory_lookup(conversation_id, client_request_id)
+                if prev is not None:
+                    return StoreResult(entry=prev, acquired=False)
             try:
                 result = await self._repo.claim(
                     conversation_id, client_request_id,
@@ -232,6 +242,11 @@ class IdempotencyStore:
         for (conversation_id, client_request_id), entry in list(self._entries.items()):
             doc = await self._repo.get(conversation_id, client_request_id)
             if doc is None:
+                if self._is_stale(entry):
+                    # 过期内存 claim（Mongo 已 TTL 清除）→ 不复活插入（review Minor#3）：
+                    # 随内存 TTL 自然过期；原请求已不在任何权威存储，重试即重新进入。
+                    self._entries.pop((conversation_id, client_request_id), None)
+                    continue
                 # Mongo 无 → 插入（claim），内存已权威，仅补落库
                 await self._repo.claim(
                     conversation_id, client_request_id,
@@ -301,8 +316,9 @@ class IdempotencyStore:
         """拒绝并持久化 error 负载（rejected ACK 前调用）。
 
         写内存（status=rejected + 完整负载 + error）+ best-effort repo 写穿（失败仅记
-        日志，不抛）。error 负载含 code/message/retryable + 可选 details/retryAfterMs
-        （重放逐字一致）。
+        日志，不抛）——error 负载含 code/message/retryable + 可选 details/retryAfterMs，
+        完整 ACK 负载（received_at/client_message_id/conversation_id_wire）经
+        ``repo.reject(payload=...)`` 一并落库（重放逐字一致，spec §1.1）。
         """
         error: dict = {"code": code, "message": message, "retryable": retryable}
         if details is not None:
@@ -319,7 +335,13 @@ class IdempotencyStore:
             entry.conversation_id_wire = conversation_id_wire
         if self._repo is not None:
             try:
-                await self._repo.reject(conversation_id, client_request_id, error=error)
+                await self._repo.reject(
+                    conversation_id, client_request_id,
+                    error=error,
+                    payload={"received_at": received_at,
+                             "client_message_id": client_message_id,
+                             "conversation_id_wire": conversation_id_wire},
+                )
                 self._in_memory_fallback = False
             except StorageUnavailableError:
                 logger.warning("IdempotencyStore.reject 写穿失败（key=%s/%s）",

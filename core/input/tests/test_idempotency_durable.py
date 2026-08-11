@@ -485,6 +485,22 @@ class TestRepoClaimContract:
         assert set2["status"] == STATUS_REJECTED
         assert set2["error"]["code"] == "CONTRACT_VALIDATION"
 
+        # reject(payload=...) 落完整 ACK 负载；显式 status/error 恒优先（payload 不得覆盖）
+        fake.updates.clear()
+        await repo.reject("c1", "r1",
+                          error={"code": "X", "message": "m", "retryable": False},
+                          payload={"status": STATUS_ACCEPTED, "error": {"code": "hack"},
+                                   "received_at": "2026-08-11T00:00:00Z",
+                                   "client_message_id": "cm1",
+                                   "conversation_id_wire": "w"})
+        assert fake.updates
+        set3 = fake.updates[0][1]["$set"]
+        assert set3["status"] == STATUS_REJECTED        # 显式 status 恒优先
+        assert set3["error"]["code"] == "X"              # 显式 error 恒优先
+        assert set3["received_at"] == "2026-08-11T00:00:00Z"
+        assert set3["client_message_id"] == "cm1"
+        assert set3["conversation_id_wire"] == "w"
+
     @pytest.mark.asyncio
     async def test_is_connected_reflects_db(self):
         """is_connected：_db 非空 True；close() 后 False。"""
@@ -545,10 +561,11 @@ class _FlipRepo:
                                   status=status, payload=payload)
 
     async def reject(self, conversation_id: str, client_request_id: str, *,
-                     error: dict) -> None:
+                     error: dict, payload: dict | None = None) -> None:
         if not self.available:
             raise StorageUnavailableError("Mongo down")
-        await self._impl.reject(conversation_id, client_request_id, error=error)
+        await self._impl.reject(conversation_id, client_request_id,
+                                error=error, payload=payload)
 
     async def release(self, conversation_id: str, client_request_id: str) -> None:
         if not self.available:
@@ -610,6 +627,29 @@ class TestStoreOverlay:
         assert r3.entry.user_message_id == "msg_1"
 
     @pytest.mark.asyncio
+    async def test_down_up_before_recover_no_dedup_loss(self, fresh_store):
+        """down→up 且 recover() 未跑：同键 store() 走内存短路返回 (entry, False)，
+        不新生成 message_id / 不二次 acquired（review Important#2 回归）。"""
+        repo = _FlipRepo()
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        repo.available = False  # Mongo down → dev 降级 claim（仅内存）
+        r1 = await store.store("default", "crid", _entry("msg_1", "abc"))
+        assert r1.acquired is True
+        assert store.durable is False  # 进入内存降级窗口（_in_memory_fallback=True）
+        repo.available = True   # Mongo up，但 recover() 尚未调用
+        # 同键 store()：内存短路 → 返回既有 entry，不触碰 Mongo（不重复处理）
+        r2 = await store.store("default", "crid", _entry("msg_2", "abc"))
+        assert r2.acquired is False
+        assert r2.entry.user_message_id == "msg_1"  # 既有 entry，不新生成 message_id
+        # 内存 claim 从未落 Mongo（短路径不写库）→ 无第二条 doc
+        assert (await repo.get("default", "crid")) is None
+        # 恢复后仍可去重（后续 recover 或再 store 仍返回既有）
+        r3 = await store.store("default", "crid", _entry("msg_3", "abc"))
+        assert r3.acquired is False
+        assert r3.entry.user_message_id == "msg_1"
+
+    @pytest.mark.asyncio
     async def test_recover_reconciles_memory_to_mongo_and_durable(self, fresh_store):
         """recover()：Mongo 已有→内存刷新为其状态；Mongo 无→插入内存 claim；
         结束后 _in_memory_fallback=False → durable=True。"""
@@ -639,8 +679,7 @@ class TestStoreOverlay:
         assert store._in_memory_fallback is False  # noqa: SLF001
         assert store.durable is True
 
-    @pytest.mark.asyncio
-    async def test_durable_false_before_connect(self, fresh_store):
+    def test_durable_false_before_connect(self, fresh_store):
         """repo 未连接（is_connected=False）→ configure 后 durable=False（初值不误报）。"""
         repo = _FlipRepo(available=False)  # 未连接
         configure_store(repo, product_mode=False)
@@ -689,6 +728,10 @@ class TestStoreOverlay:
         assert doc2["status"] == STATUS_REJECTED
         assert doc2["error"]["code"] == "CONTRACT_VALIDATION"
         assert doc2["error"]["retryAfterMs"] == 5000
+        # rejected 完整负载也经 repo.reject(payload=...) 落 Mongo（重放逐字一致，spec §1.1）
+        assert doc2["received_at"] == "2026-08-11T00:00:00Z"
+        assert doc2["client_message_id"] == "cm1"
+        assert doc2["conversation_id_wire"] == "wire-1"
 
     @pytest.mark.asyncio
     async def test_pure_memory_path_keeps_memory_first_dedup(self, fresh_store):

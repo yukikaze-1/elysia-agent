@@ -324,24 +324,30 @@ class IdempotencyRepository(Repository):
         )
 
     async def reject(self, conversation_id: str, client_request_id: str, *,
-                     error: dict) -> None:
-        """拒绝并持久化 error 负载（rejected ACK 前调用）。
+                     error: dict, payload: dict | None = None) -> None:
+        """拒绝并持久化 error + 完整 ACK 负载（rejected ACK 前调用）。
 
-        ``$set`` status=STATUS_REJECTED + error——rejected 重放逐字一致
-        （received_at 等完整负载由调用方在后续 complete 侧可选补充，error 随本方法落库）。
+        ``$set`` status=STATUS_REJECTED + error + payload（received_at/client_message_id/
+        conversation_id_wire 等）——rejected 重放逐字一致（Task 4 的
+        RejectedUserAckMessage 需要持久化 receivedAt 原值）。显式 status/error 最后写入
+        恒优先（对齐 ``complete()`` 的 status-wins 模式，payload 不得覆盖）。
 
         Args:
             conversation_id: 目标会话 ID。
             client_request_id: 客户端请求 ID。
             error: rejected ACK 的 error 负载（code/message/retryable/...）。
+            payload: 附加 ACK 负载字段（合并进 ``$set``）。
         """
         db = self._require_db()
+        set_expr: dict = dict(payload) if payload else {}
+        set_expr["status"] = STATUS_REJECTED
+        set_expr["error"] = error  # 显式 status/error 恒优先（最后写入覆盖 payload 同名键）
         await self._call(
             lambda: db.update_one(
                 COLLECTION,
                 {"conversation_id": conversation_id,
                  "client_request_id": client_request_id},
-                {"$set": {"status": STATUS_REJECTED, "error": error}},
+                {"$set": set_expr},
             ),
             reason="IdempotencyRepository.reject 写入失败",
         )
