@@ -309,7 +309,13 @@ async def test_stop_cancels_active_task_unique_event():
 
 
 def test_init_exec_cancelled_does_not_write_running():
-    """resume 加载 checkpoint 时任务已 CANCELLED → _init_exec 不写 RUNNING（逆转防护，§4）。"""
+    """resume 加载 checkpoint 时任务已 CANCELLED → _init_exec 不写 RUNNING（不变量，§4）。
+
+    注：_init_exec 的「RESUMING→RUNNING 写前查 is_terminal」守卫为防御性代码——
+    RESUMING 非终态，且 cancel() 同步覆写 status 为 CANCELLED 后 RESUMING 分支
+    本就不命中；本测试验证的是可观测不变量（CANCELLED 不被覆写为 RUNNING），
+    不直接执行守卫行（守卫行在公开 API 下不可达）。
+    """
     from Module.workflow_engine.core.graph import PlanGraph
     from Module.workflow_engine.core.orchestrator import Orchestrator
 

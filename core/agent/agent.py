@@ -486,6 +486,22 @@ class Agent(AgentLifecycle, AgentServer):
                                 info.intent, data.get('error', '未知错误'),
                             )
                             break
+                        elif event.type.value == "cancelled":
+                            # E3：取消事件改推 CANCELLED——消费侧须 pop 条目 + 呈现结果，
+                            # 否则 _background_tasks 条目永久驻留（直到下次 start 清理）。
+                            self._bus.post(TaskResultData(
+                                task_id=task_id,
+                                result=f"任务已取消: {data.get('reason', '用户取消')}",
+                                original_intent=info.intent,
+                                dispatched_at=info.dispatched_at,
+                                is_error=True,
+                            ))
+                            self._background_tasks.pop(task_id, None)
+                            logger.info(
+                                "后台任务已取消: %s — %s",
+                                info.intent, data.get('reason', '用户取消'),
+                            )
+                            break
                 except Exception:
                     # 处理单个事件时的意外错误（event.data 访问 / TaskResultData
                     # 构造 / bus.post 等）——不中断整体轮询，但必须留日志诊断。

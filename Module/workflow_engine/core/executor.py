@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from Module.workflow_contract import NodeId, SessionId, WorkflowId, WorkflowStatus
 from Module.tool.tool_descriptor import Tool
+from Module.workflow_engine.cancel import check_cancelled
 from Module.workflow_engine.schema import (
     Artifact,
     ArtifactId,
@@ -36,12 +37,6 @@ if TYPE_CHECKING:
     from Module.workflow_engine.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)
-
-
-def _check_cancelled(ts: "WorkflowState") -> None:
-    """取消检查——cancel() 已同步置 CANCELLED，await 边界一查即中。"""
-    if ts.status == WorkflowStatus.CANCELLED:
-        raise asyncio.CancelledError()
 
 # LLM 直出文本的哨兵值——当 _match_tool 返回此 tool_name 时，
 # 表示 LLM 判断不需要外部工具，直接用自身能力完成了节点（如汇总/分析/改写）。
@@ -117,7 +112,7 @@ class Executor:
         """执行单个 DAGNode——LLM 匹配工具（或直出文本）→ 调用/存储结果。
 
         E3 §3.3 取消语义：
-            - 四个 `_check_cancelled(ts)` 边界检查点（①执行前 / ②LLM 返回后 / ③工具返回后 / ④存储前）
+            - 四个 `check_cancelled(ts)` 边界检查点（①执行前 / ②LLM 返回后 / ③工具返回后 / ④存储前）
             - LLM 匹配/直出文本**不 shield**——owned.cancel() 直接打断 in-flight await（强取消）
             - 工具调用 **asyncio.shield 保护**——已开始工具完成（副作用不打断）、结果弃用、
               不再开始下一个调用；孤儿工具登记到 `self._infra.orphan_tools`（跨任务共享容器，stop() 采集）
@@ -144,7 +139,7 @@ class Executor:
         start = time.monotonic()
 
         try:
-            _check_cancelled(ts)                                # ① 执行前（任务已取消 → 不启动）
+            check_cancelled(ts)                                # ① 执行前（任务已取消 → 不启动）
 
             # 1. 解析上游输入（input_bindings → ArtifactStore）
             upstream_data = await self._resolve_inputs(node, task_id)
@@ -153,7 +148,7 @@ class Executor:
             if node.execution_mode == ExecutionMode.LLM_DIRECT:
                 # Planner 显式标注的纯 LLM 任务——跳过工具匹配，直接调 LLM
                 content = await self._call_llm_direct(node, upstream_data)
-                _check_cancelled(ts)                            # 直出路径检查点（不 shield，②④ 适用）
+                check_cancelled(ts)                            # 直出路径检查点（不 shield，②④ 适用）
                 tool_result = ToolResult.ok(
                     name="llm_direct",
                     content=content,
@@ -168,11 +163,11 @@ class Executor:
                 # 或 LLM 自行判断不需要工具 → __llm_direct__
                 tool_name, params = await self._match_tool(node, tools, upstream_data)
 
-                _check_cancelled(ts)                            # ② LLM 返回后、工具调用前
+                check_cancelled(ts)                            # ② LLM 返回后、工具调用前
 
                 if tool_name == _DIRECT_TEXT_SENTINEL:
                     content = params["content"]
-                    _check_cancelled(ts)
+                    check_cancelled(ts)
                     tool_result = ToolResult.ok(
                         name="llm_direct",
                         content=content,
@@ -195,10 +190,10 @@ class Executor:
                     try:
                         tool_result = await asyncio.shield(tool_task)
                     except asyncio.CancelledError:
-                        _check_cancelled(ts)                    # ③ 工具返回后被取消 → 走 CANCELLED
+                        check_cancelled(ts)                    # ③ 工具返回后被取消 → 走 CANCELLED
                         raise                                   # 否则正常抛（非取消语义的 CancelledError）
 
-            _check_cancelled(ts)                                # ④ 存储前（取消后结果不落 artifact）
+            check_cancelled(ts)                                # ④ 存储前（取消后结果不落 artifact）
 
             # 4. 存储结果（ToolResult → Artifact → ArtifactStore）
             artifact = await self._store_result(node, task_id, tool_result)

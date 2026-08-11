@@ -184,10 +184,10 @@ async def cancel(
 
     # ── 分支 2: RUNNING / PLANNING → 强取消（E3 §3.2）──
     # 单同步块（无 await）：① 同步置权威终态 → ② exec_state 快速路径 → ③ owned.cancel()。
+    # is_terminal() 已覆盖 COMPLETED/FAILED/CANCELLED——与 finalize 竞争的
+    # 「终态写入已原子发生则不覆盖」由 is_terminal 短路保证（§3.5 顺序不变量）。
     if ts.is_terminal():
         return True                            # 已终态 = 已取消（幂等）
-    if ts.status == WorkflowStatus.COMPLETED:  # 与 finalize 竞争：终态写入已原子发生则不再覆盖
-        return True
     ts.status = WorkflowStatus.CANCELLED       # ① 同步置权威终态（PLANNING/RUNNING 恒可达）
     ts.updated_at = now_iso()
     if sub_agent._orchestrator is not None:

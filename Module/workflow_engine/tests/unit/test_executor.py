@@ -12,7 +12,8 @@ from openai.types.chat.chat_completion_message_tool_call import (
     Function,
 )
 
-from Module.workflow_engine.core.executor import Executor, _check_cancelled
+from Module.workflow_engine.cancel import check_cancelled
+from Module.workflow_engine.core.executor import Executor
 from Module.workflow_engine.tests.helpers.fake_llm import FakeLLM
 from Module.workflow_contract import (
     AgentInfra,
@@ -465,7 +466,7 @@ class TestCheckCancelled:
             session_id=SessionId("s1"),
         )
         with pytest.raises(asyncio.CancelledError):
-            _check_cancelled(ts)
+            check_cancelled(ts)
 
     def test_passes_when_not_cancelled(self):
         ts = WorkflowState(
@@ -474,7 +475,7 @@ class TestCheckCancelled:
             tools=[],
             session_id=SessionId("s1"),
         )
-        _check_cancelled(ts)   # 不抛
+        check_cancelled(ts)   # 不抛
 
 
 # ── Executor 取消语义（E3 Task 3）───────────────────────────────────────────
