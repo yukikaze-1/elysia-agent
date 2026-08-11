@@ -363,6 +363,42 @@ class TestValidTokenWsChat:
 
 
 @pytest.mark.service
+class TestRateLimitAuthPrincipal:
+    """BE-P2-02：限流按认证主体分桶——合法 token（access/admin）独立配额互不挤占。"""
+
+    @pytest.mark.asyncio
+    async def test_two_valid_tokens_independent_rate_quotas(self, aiohttp_client):
+        """两个合法 token → 独立限流桶：一个耗尽是另一个不受影响（互不挤占）。"""
+        from core.input.server import create_app
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False,
+                         access_token="token-a", auth_token="token-b",
+                         rate_limits={"provider_test": 2})
+        client = await aiohttp_client(app)
+        try:
+            hdr_a = {"Authorization": "Bearer token-a"}
+            hdr_b = {"Authorization": "Bearer token-b"}
+            # token-b（管理面）先耗尽自己的 2 次配额（业务 API 401，但限流桶独立消耗）
+            for _ in range(2):
+                assert (await client.post(
+                    "/api/providers/test", json={"service": "llm"}, headers=hdr_b)).status != 429
+            # token-a 配额独立：仍放行自己的 2 次（互不挤占）
+            for _ in range(2):
+                assert (await client.post(
+                    "/api/providers/test", json={"service": "llm"}, headers=hdr_a)).status != 429
+            # 各自第 3 次 → 429（独立桶已耗）
+            assert (await client.post(
+                "/api/providers/test", json={"service": "llm"}, headers=hdr_a)).status == 429
+            assert (await client.post(
+                "/api/providers/test", json={"service": "llm"}, headers=hdr_b)).status == 429
+        finally:
+            await agent.stop()
+
+
+@pytest.mark.service
 class TestSecureBind:
     """D6a：非回环绑定无 token → fail-closed 拒绝启动。
 

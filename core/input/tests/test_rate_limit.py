@@ -12,6 +12,7 @@ Run: python -m pytest core/input/tests/test_rate_limit.py -v --asyncio-mode=auto
 """
 
 import asyncio
+import hashlib
 import json
 
 import pytest
@@ -120,27 +121,51 @@ class TestRateLimiter:
 
 class TestRateKey:
     def test_authenticated_key_stable_across_ips(self):
-        """认证主体优先：同一 token 不同 IP → 同一 key。"""
+        """认证主体优先：同一合法 token（∈ valid_tokens）不同 IP → 同一 key。"""
         from types import SimpleNamespace
         auth = "Bearer secret"
+        valid = frozenset({"secret"})
         r1 = SimpleNamespace(headers={"Authorization": auth}, remote="1.2.3.4")
         r2 = SimpleNamespace(headers={"Authorization": auth}, remote="5.6.7.8")
-        assert rate_key_for_request(r1) == rate_key_for_request(r2)
-        assert rate_key_for_request(r1).startswith("auth:")
+        assert rate_key_for_request(r1, valid) == rate_key_for_request(r2, valid)
+        assert rate_key_for_request(r1, valid).startswith("auth:")
 
     def test_anonymous_falls_back_to_ip(self):
         from types import SimpleNamespace
         a = SimpleNamespace(headers={}, remote="1.2.3.4")
         b = SimpleNamespace(headers={}, remote="5.6.7.8")
-        assert rate_key_for_request(a) == "ip:1.2.3.4"
-        assert rate_key_for_request(a) != rate_key_for_request(b)
+        assert rate_key_for_request(a, frozenset()) == "ip:1.2.3.4"
+        assert rate_key_for_request(a, frozenset()) != rate_key_for_request(b, frozenset())
 
     def test_x_forwarded_for_not_trusted(self):
         """默认不信任 X-Forwarded-For——伪造代理头不改变 key。"""
         from types import SimpleNamespace
         forged = SimpleNamespace(headers={"X-Forwarded-For": "6.6.6.6"}, remote="1.2.3.4")
         plain = SimpleNamespace(headers={}, remote="1.2.3.4")
-        assert rate_key_for_request(forged) == rate_key_for_request(plain)
+        assert rate_key_for_request(forged, frozenset()) == rate_key_for_request(plain, frozenset())
+
+    def test_valid_token_gets_auth_bucket(self):
+        """合法 token（∈ valid_tokens）→ auth:<sha256(token)[:16]> 桶。"""
+        from types import SimpleNamespace
+        r = SimpleNamespace(headers={"Authorization": "Bearer ok"}, remote="1.2.3.4")
+        key = rate_key_for_request(r, frozenset({"ok"}))
+        assert key == "auth:" + hashlib.sha256(b"ok").hexdigest()[:16]
+
+    def test_invalid_token_falls_back_to_ip(self):
+        """无效 token（∉ valid_tokens）→ ip 桶——任意 Authorization 不再独立分桶。"""
+        from types import SimpleNamespace
+        valid = frozenset({"secret"})
+        r1 = SimpleNamespace(headers={"Authorization": "Bearer bad1"}, remote="1.2.3.4")
+        r2 = SimpleNamespace(headers={"Authorization": "Bearer bad2"}, remote="1.2.3.4")
+        assert rate_key_for_request(r1, valid) == "ip:1.2.3.4"
+        assert rate_key_for_request(r2, valid) == "ip:1.2.3.4"
+        assert rate_key_for_request(r1, valid) == rate_key_for_request(r2, valid)
+
+    def test_missing_authorization_falls_back_to_ip(self):
+        """缺失 Authorization → ip 桶（即使 valid_tokens 非空）。"""
+        from types import SimpleNamespace
+        r = SimpleNamespace(headers={}, remote="9.9.9.9")
+        assert rate_key_for_request(r, frozenset({"secret"})) == "ip:9.9.9.9"
 
 
 # ── 集成：REST 429 ────────────────────────────────────────────────────────
@@ -184,6 +209,123 @@ class TestRestRateLimit:
             for _ in range(3):
                 r = await client.post("/api/providers/test", json={"service": "llm"})
                 assert r.status != 429
+        finally:
+            await agent.stop()
+
+
+# ── BE-P2-02：认证主体分类限流 ─────────────────────────────────────────────
+
+@pytest.mark.service
+class TestRateLimitAuthPrincipal:
+    """BE-P2-02：限流按认证主体分桶——缺失/无效 Authorization 统一 ip 桶。
+
+    只有命中 valid_tokens 的 Bearer token 才获 auth 桶；伪造/轮换 token 不再
+    获得 per-token 配额，也不能填满 max_keys 挤掉合法主体桶。
+    """
+
+    def test_fake_token_rotation_same_ip_no_quota_explosion(self):
+        """同 IP 轮换 10001 个假 Token → 仍受 ip 桶限制（≤2 次放行），不挤掉合法主体。"""
+        from types import SimpleNamespace
+        limiter = RateLimiter({"messages": 2}, max_keys=10_000)
+        valid = frozenset({"real-token"})
+        # 合法主体先占自己的桶：2 次配额后第 3 次被限
+        legit = SimpleNamespace(headers={"Authorization": "Bearer real-token"},
+                                remote="1.2.3.4")
+        for _ in range(2):
+            assert limiter.check("messages", rate_key_for_request(legit, valid)) is True
+        assert limiter.check("messages", rate_key_for_request(legit, valid)) is False
+        # 同 IP 轮换 10001 个假 token：全部落同一 ip 桶，最多放行 2 次（ip 配额）
+        allowed = 0
+        for i in range(10_001):
+            fake = SimpleNamespace(
+                headers={"Authorization": f"Bearer fake-{i}"}, remote="1.2.3.4")
+            if limiter.check("messages", rate_key_for_request(fake, valid)):
+                allowed += 1
+        assert allowed <= 2, f"假 token 轮换应受 ip 桶限制，实际放行 {allowed}"
+        # 不创建 per-token 桶：桶数恒为 2（合法 auth + ip）——旧行为会填满 max_keys
+        assert len(limiter._buckets) == 2  # noqa: SLF001 — 测试断言桶基数
+        # 合法主体桶未被挤掉/复用：仍是已耗的旧桶（配额仍尽 → 仍被限）
+        assert limiter.check("messages", rate_key_for_request(legit, valid)) is False
+        # 攻击后新合法主体仍能创建自己的桶（旧行为下 max_keys 满会拒新 key）
+        late = SimpleNamespace(headers={"Authorization": "Bearer late-valid"},
+                               remote="1.2.3.4")
+        valid2 = frozenset({"real-token", "late-valid"})
+        assert limiter.check("messages", rate_key_for_request(late, valid2)) is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_and_anonymous_share_ip_bucket_http(self, aiohttp_client):
+        """端到端：匿名耗尽 ip 桶后，无效 token（同 IP）立即 429——不再 per-token 独立配额。"""
+        from core.input.server import create_app
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False, access_token="secret",
+                         rate_limits={"provider_test": 2})
+        client = await aiohttp_client(app)
+        try:
+            # 匿名 2 次（限流先于 auth，消耗 ip 桶）
+            for _ in range(2):
+                r = await client.post("/api/providers/test", json={"service": "llm"})
+                assert r.status != 429, f"配额内不应限流: {r.status}"
+            # 无效 token（同 IP）→ 同一 ip 桶已耗 → 429（旧行为：独立 auth 桶 → 放行）
+            r3 = await client.post("/api/providers/test", json={"service": "llm"},
+                                   headers={"Authorization": "Bearer wrong-token"})
+            assert r3.status == 429
+            body = json.loads((await r3.read()).decode())
+            assert body["code"] == "RATE_LIMITED"
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_valid_token_own_auth_bucket_http(self, aiohttp_client):
+        """端到端：合法 token 独立 auth 桶——匿名耗尽 ip 桶后合法 token 仍可用自己配额。"""
+        from core.input.server import create_app
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False, access_token="secret",
+                         rate_limits={"provider_test": 2})
+        client = await aiohttp_client(app)
+        try:
+            for _ in range(2):
+                assert (await client.post(
+                    "/api/providers/test", json={"service": "llm"})).status != 429
+            hdr = {"Authorization": "Bearer secret"}
+            # 合法 token 独立 auth 桶：不受 ip 桶影响，自己的 2 次配额放行
+            for _ in range(2):
+                r = await client.post(
+                    "/api/providers/test", json={"service": "llm"}, headers=hdr)
+                assert r.status != 429, f"合法 token 配额内不应限流: {r.status}"
+            # 自己配额耗尽 → 429
+            assert (await client.post(
+                "/api/providers/test", json={"service": "llm"}, headers=hdr)).status == 429
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_ws_connect_fake_token_no_fresh_bucket(self, aiohttp_client):
+        """WS 建连：无 token 环境轮换假 Authorization → 仍受 ip 桶限制（不获独立桶）。"""
+        import aiohttp
+        from core.input.server import create_app
+        from core.input.tests.test_server import _make_agent
+
+        agent = _make_agent()
+        await agent.start()
+        app = create_app(agent, serve_static=False, rate_limits={"ws": 1})
+        client = await aiohttp_client(app)
+        try:
+            # 第 1 次假 token 建连成功（ip 桶配额内）
+            ws = await client.session.ws_connect(
+                client.make_url("/ws"), headers={"Authorization": "Bearer fake-1"})
+            await ws.close()
+            # 第 2 次不同假 token、同 IP → 同一 ip 桶已耗 → 升级前 429
+            with pytest.raises(aiohttp.WSServerHandshakeError) as exc:
+                await client.session.ws_connect(
+                    client.make_url("/ws"), headers={"Authorization": "Bearer fake-2"})
+            assert exc.value.status == 429
+            assert exc.value.headers.get("Retry-After")
         finally:
             await agent.stop()
 

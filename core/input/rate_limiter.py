@@ -1,8 +1,11 @@
 """D6b 公开入口限流 — 单进程 token-bucket 限流器。
 
-语义（plan Task D6b）：
-- key 优先认证主体（token 摘要），匿名回退 IP；默认不信任 ``X-Forwarded-For``
-  （本实现不解析代理头——伪造代理头不得改变 key，防限流绕过与内存 DoS）。
+语义（plan Task D6b + BE-P2-02）：
+- key 优先合法认证主体（token 摘要），缺失/无效 Authorization 一律回退 IP——只有
+  命中 ``valid_tokens`` 的 Bearer token 才按 auth 主体分桶（伪造/轮换 token 不获
+  per-token 配额，也不能填满 ``max_keys`` 挤掉合法主体）；默认不信任
+  ``X-Forwarded-For``（本实现不解析代理头——伪造代理头不得改变 key，防限流绕过与
+  内存 DoS）。
 - 内存有界（``max_keys``）：超限时拒绝新 key（宁可误拒，不撑爆内存）；
   旧 key 定期清理（``stale_after`` 未使用即回收）。
 - **单进程语义**：per-process 限流，不假装全局限流——多实例部署需自建
@@ -13,6 +16,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import time
 
 from aiohttp import web
@@ -123,13 +127,45 @@ class RateLimiter:
         self._buckets.clear()
 
 
-def rate_key_for_request(request: web.Request) -> str:
-    """请求限流 key：认证主体（token 摘要）优先，匿名回退 IP。
+_BEARER_PREFIX = "Bearer "
 
+
+def _extract_bearer_token(auth_header: str) -> str | None:
+    """解析 ``Authorization: Bearer <token>`` → token；非 Bearer 格式/空 token → None。
+
+    Args:
+        auth_header: Authorization 头原文（可为空串）。
+
+    Returns:
+        str | None: Bearer token；格式不符或 token 为空 → None。
+    """
+    if auth_header.startswith(_BEARER_PREFIX):
+        token = auth_header[len(_BEARER_PREFIX):]
+        return token if token else None
+    return None
+
+
+def rate_key_for_request(request: web.Request, valid_tokens: frozenset[str]) -> str:
+    """请求限流 key：合法认证主体（token 摘要）优先，缺失/无效回退 IP。
+
+    BE-P2-02：只有与 ``valid_tokens`` 之一常量时间相等的 Bearer token 才获得
+    ``auth:`` 桶；缺失 Authorization 或无效 token（含伪造/轮换）一律
+    ``ip:<remote>`` 分桶——任意 Authorization 字符串不再生成独立 key（假 token
+    轮换无法获得 per-token 配额，也无法填满 ``max_keys`` 挤掉合法主体桶）。
     默认不信任 ``X-Forwarded-For``——只有显式 trusted proxy 才应解析，本实现不解析
     （无信任代理配置），伪造代理头不影响 key（防限流绕过与高基数内存 DoS）。
+
+    Args:
+        request: aiohttp Request。
+        valid_tokens: 合法 token 集合（auth_token/access_token 去空，见 create_app），
+            遍历用 ``hmac.compare_digest`` 常量时间比较（集合极小）。
+
+    Returns:
+        str: ``auth:<sha256(token)[:16]>``（合法主体）或 ``ip:<remote>``。
     """
-    auth = request.headers.get("Authorization", "")
-    if auth:
-        return "auth:" + hashlib.sha256(auth.encode("utf-8")).hexdigest()[:16]
+    token = _extract_bearer_token(request.headers.get("Authorization", ""))
+    if token is not None:
+        for valid in valid_tokens:
+            if hmac.compare_digest(token, valid):
+                return "auth:" + hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
     return "ip:" + (request.remote or "unknown")

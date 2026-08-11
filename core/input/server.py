@@ -231,11 +231,17 @@ def _rest_rate_category(path: str) -> str | None:
     return None
 
 
-def _make_rate_limit_middleware(limiter: RateLimiter):
+def _make_rate_limit_middleware(limiter: RateLimiter, valid_tokens: frozenset[str]):
     """公开 REST 入口限流中间件（D6b）：超限 → 429 RATE_LIMITED + Retry-After。
 
     先于 auth 挂载——认证失败/匿名 401 洪水同样被限（防凭据爆破）。/ws 不走此
     中间件（WS 建连限流在 ws_handler 升级前单独检查）。
+
+    Args:
+        limiter: 单进程令牌桶限流器。
+        valid_tokens: 合法 token 集合（BE-P2-02）——只有命中集合的 Bearer token
+            才按 auth 主体分桶，缺失/无效统一 ip 桶（防伪造 Authorization 轮换
+            获得 per-token 配额）。
     """
 
     @web.middleware
@@ -244,7 +250,7 @@ def _make_rate_limit_middleware(limiter: RateLimiter):
         if request.path != "/ws":
             category = _rest_rate_category(request.path)
             if category is not None and not limiter.check(
-                    category, rate_key_for_request(request)):
+                    category, rate_key_for_request(request, valid_tokens)):
                 resp = _protocol_error_response(
                     "RATE_LIMITED", "请求过于频繁，请稍后重试", 429, True)
                 resp.headers["Retry-After"] = "60"
@@ -461,12 +467,16 @@ def create_app(
             resp.headers["X-Content-Type-Options"] = "nosniff"
         return resp
     app.middlewares.append(_nosniff_uploads)
+    # BE-P2-02：限流合法主体集（auth_token + access_token 去空）——只有命中集合的
+    # Bearer token 才按 auth 主体分桶，缺失/无效统一 ip 桶（防伪造 Authorization
+    # 轮换获得 per-token 配额）。WS 建连经 request.app 读取同一集合。
+    valid_tokens = frozenset({auth_token, access_token} - {""})
     # D6b：公开入口限流中间件（先于 auth——认证失败/匿名 401 洪水同样被限）。
     # 单进程语义（per-process），不假装全局限流。
     limiter: RateLimiter | None = None
     if rate_limits:
         limiter = RateLimiter(rate_limits)
-        app.middlewares.append(_make_rate_limit_middleware(limiter))
+        app.middlewares.append(_make_rate_limit_middleware(limiter, valid_tokens))
         app["rate_limiter"] = limiter
     # D6c：幂等存储后端配置（product_mode 由绑定 host 判定——非回环=产品）。
     # configure_store 幂等（多次 create_app/restart 安全）；测试经 reset_store 隔离。
@@ -486,6 +496,9 @@ def create_app(
 
     # 将 agent + stt + task_system 注入 app context，供 handler 访问
     app["agent"] = agent
+    # BE-P2-02：合法 token 集注入 app context——WS 建连限流 key 分类器读取
+    # （与 REST 中间件闭包持有的 valid_tokens 同源）。
+    app["rate_valid_tokens"] = valid_tokens
     # BE-P2-01：/ready 依赖 product_mode（idempotency fail-closed 门禁依据）与
     # idempotency_repo（幂等真实 ping），注入 app context 供 ready_handler 读取。
     app["product_mode"] = product_mode
@@ -536,10 +549,13 @@ def create_app(
             WebSocket 连接对象。
         """
         nonlocal _ws_active
-        # D6b：WS 建连限流——per-key（认证主体优先、匿名回退 IP），升级前 429 拒绝
+        # D6b：WS 建连限流——per-key（合法认证主体优先、缺失/无效回退 IP），升级前 429 拒绝
         # （防重连风暴/滥用；配合 max_ws_connections 并发硬上限，二者正交）。
+        # BE-P2-02：与 REST 中间件同分类器——合法 token 集经 app context 传入。
         limiter = request.app.get("rate_limiter")
-        if limiter is not None and not limiter.check("ws", rate_key_for_request(request)):
+        if limiter is not None and not limiter.check(
+                "ws", rate_key_for_request(
+                    request, request.app.get("rate_valid_tokens", frozenset()))):
             resp = _protocol_error_response(
                 "RATE_LIMITED", "连接过于频繁，请稍后重试", 429, True)
             # Task 7（BE-P1-03）：建连 429 带 Retry-After（与 REST 中间件一致，秒）。

@@ -381,7 +381,9 @@ async def handle_ws(
                         data, agent, audio_buf, ws, voice_mgr=voice_mgr,
                         sent_message_ids=sent_message_ids,
                         limiter=request.app.get("rate_limiter"),
-                        rate_key=rate_key_for_request(request)
+                        rate_key=rate_key_for_request(
+                            request,
+                            request.app.get("rate_valid_tokens", frozenset()))
                         if request.app.get("rate_limiter") is not None else None,
                     )
                 except json.JSONDecodeError:
