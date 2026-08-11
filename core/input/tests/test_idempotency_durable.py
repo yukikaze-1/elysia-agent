@@ -1111,4 +1111,3 @@ class TestD3DurableInDetails:
         assert acks[-1]["error"]["details"]["idempotency_durable"] is store.durable
         assert store.durable is False
         assert mgr.reserve_calls == 0, "lookup fail-closed 在 reserve 前返回"
-

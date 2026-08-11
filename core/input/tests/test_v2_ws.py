@@ -1715,4 +1715,3 @@ class TestWsRateLimitCorrelation:
             await ws.close()
         finally:
             await agent.stop()
-
