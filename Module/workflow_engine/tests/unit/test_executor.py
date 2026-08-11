@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,10 +12,12 @@ from openai.types.chat.chat_completion_message_tool_call import (
     Function,
 )
 
-from Module.workflow_engine.core.executor import Executor
+from Module.workflow_engine.core.executor import Executor, _check_cancelled
 from Module.workflow_contract import (
     NodeId,
+    SessionId,
     WorkflowId,
+    WorkflowStatus,
 )
 from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
@@ -25,6 +28,7 @@ from Module.workflow_engine.schema import (
     NodeResult,
     OutputContract,
     TokenComponentType,
+    WorkflowState,
 )
 from Module.tool.protocol import ErrorType, ToolResult
 
@@ -429,3 +433,27 @@ async def test_execute_llm_direct_mode(executor, sample_tools):
     assert result.error is None
     # llm_direct 路径不应调用 tool_registry
     executor._infra.tool_registry.execute.assert_not_called()
+
+
+# ── _check_cancelled 取消检查（E3 Task 1）──────────────────────────────────
+
+
+class TestCheckCancelled:
+    def test_raises_when_cancelled(self):
+        ts = WorkflowState(
+            task_id=WorkflowId("t1"),
+            status=WorkflowStatus.CANCELLED,
+            tools=[],
+            session_id=SessionId("s1"),
+        )
+        with pytest.raises(asyncio.CancelledError):
+            _check_cancelled(ts)
+
+    def test_passes_when_not_cancelled(self):
+        ts = WorkflowState(
+            task_id=WorkflowId("t1"),
+            status=WorkflowStatus.RUNNING,
+            tools=[],
+            session_id=SessionId("s1"),
+        )
+        _check_cancelled(ts)   # 不抛

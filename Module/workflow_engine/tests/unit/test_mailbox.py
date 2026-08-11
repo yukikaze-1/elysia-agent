@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from Module.workflow_engine.mailbox import WorkflowMailbox
+from Module.workflow_engine.mailbox import WorkflowMailbox, push_mailbox_event
 from Module.workflow_contract import (
     WorkflowEvent,
     WorkflowEventType,
@@ -194,3 +194,14 @@ async def test_concurrent_get_multiple():
     await asyncio.wait_for(c, timeout=1.0)
     assert len(received) == 3
     assert [e.data["n"] for e in received] == [0, 1, 2]
+
+
+# ── 终态事件唯一性守卫（E3 Task 1）────────────────────────────────────────
+
+
+class TestMailboxTerminalGuard:
+    def test_terminal_event_once(self):
+        mb = WorkflowMailbox(WorkflowId("t1"))
+        push_mailbox_event(mb, WorkflowEventType.COMPLETED, {})
+        push_mailbox_event(mb, WorkflowEventType.CANCELLED, {})
+        assert mb.count() == 1          # 第二个终态被守卫丢弃

@@ -9,12 +9,13 @@ v2 考虑审批风暴检测：执行前扫描所有节点 → 汇总 MUTATION �
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from Module.workflow_contract import NodeId, SessionId, WorkflowId
+from Module.workflow_contract import NodeId, SessionId, WorkflowId, WorkflowStatus
 from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
     Artifact,
@@ -31,9 +32,16 @@ if TYPE_CHECKING:
     from Module.workflow_engine.artifact_store import ArtifactStore
     from Module.workflow_contract import AgentInfra
     from Module.workflow_contract import HITLNotifier
+    from Module.workflow_engine.schema.internal import WorkflowState
     from Module.workflow_engine.token_ledger import TokenLedger
 
 logger = logging.getLogger(__name__)
+
+
+def _check_cancelled(ts: "WorkflowState") -> None:
+    """取消检查——cancel() 已同步置 CANCELLED，await 边界一查即中。"""
+    if ts.status == WorkflowStatus.CANCELLED:
+        raise asyncio.CancelledError()
 
 # LLM 直出文本的哨兵值——当 _match_tool 返回此 tool_name 时，
 # 表示 LLM 判断不需要外部工具，直接用自身能力完成了节点（如汇总/分析/改写）。

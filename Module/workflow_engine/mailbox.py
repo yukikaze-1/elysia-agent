@@ -14,6 +14,7 @@ from Module.workflow_contract import (
     WorkflowEvent,
     WorkflowEventType,
     WorkflowId,
+    WorkflowStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,21 @@ logger = logging.getLogger(__name__)
 # 有界队列上限。溢出时丢弃最旧的 progress 事件，保留关键事件（approval_needed/
 # completed/failed/cancelled/paused 等终态事件）。
 _MAXSIZE = 100
+
+# 终态事件——任务进入终态后只允许推一次（E3 §3.5 终态单调性）。
+# QUEUED/PROGRESS/PAUSED 等非终态不入（暂停后任务仍可继续）。
+_TERMINAL_EVENTS = {
+    WorkflowEventType.COMPLETED,
+    WorkflowEventType.FAILED,
+    WorkflowEventType.CANCELLED,
+}
+
+# 终态事件 → 对应 WorkflowStatus 映射（供 _terminal_status 记录首个终态）。
+_TERMINAL_STATUS_MAP: dict[WorkflowEventType, WorkflowStatus] = {
+    WorkflowEventType.COMPLETED: WorkflowStatus.COMPLETED,
+    WorkflowEventType.FAILED: WorkflowStatus.FAILED,
+    WorkflowEventType.CANCELLED: WorkflowStatus.CANCELLED,
+}
 
 
 class WorkflowMailbox:
@@ -49,6 +65,9 @@ class WorkflowMailbox:
         self.task_id: WorkflowId = task_id
         self._deque: deque[WorkflowEvent] = deque()
         self._event = asyncio.Event()
+        # E3 §3.5 终态唯一性守卫——记录首个终态事件，后续终态静默丢弃。
+        self._terminal_pushed: bool = False
+        self._terminal_status: WorkflowStatus | None = None
 
     # ── 消费者 API ─────────────────────────────────────────────────────────
 
@@ -170,6 +189,21 @@ def push_mailbox_event(
         caller: 调用方标识（用于日志，如 "Orchestrator" / "SubAgent"）。
     """
     from Module.workflow_contract import WorkflowEvent
+
+    # E3 §3.5 终态唯一性守卫——已推过终态事件则静默丢弃，
+    # 防止 orchestrator FAILED + engine 兜底 FAILED + CancelledError 分支多路径重复推。
+    if event_type in _TERMINAL_EVENTS:
+        if mailbox._terminal_pushed:
+            logger.debug(
+                "%s: task_id=%s 已推过终态事件（%s），丢弃重复终态 %s",
+                caller or "push_mailbox_event",
+                mailbox.task_id,
+                mailbox._terminal_status.value if mailbox._terminal_status else "?",
+                event_type.value,
+            )
+            return
+        mailbox._terminal_pushed = True
+        mailbox._terminal_status = _TERMINAL_STATUS_MAP[event_type]
 
     event = WorkflowEvent(type=event_type, data=data)
     mailbox._push(event)
