@@ -1314,3 +1314,21 @@ class TestCancelBounded:
         engine._mailboxes[tid] = WorkflowMailbox(tid)
         await engine.cancel(tid)                    # 不应抛 ValueError
         await engine.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E2: debug snapshot slots/queued 修正
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDebugSnapshotBounded:
+    @pytest.mark.asyncio
+    async def test_snapshot_slots_from_active_and_queued(self):
+        engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=2)
+        await engine.start()
+        # 槽全空（_active 空）、队列有 1 个 QUEUED 任务
+        engine._queue.put_nowait(QueuedItem(WorkflowId("q1"), QueuedItemKind.SUBMIT))
+        snap = engine._get_debug_snapshot()
+        assert snap["slots_used"] == 0     # 槽空 = 0（不能用 len(active or tasks) 回退到任务数）
+        assert snap["queued"] == 1
+        await engine.stop()

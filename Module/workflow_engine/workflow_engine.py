@@ -430,6 +430,7 @@ class WorkflowEngine:
         """
         return query.get_debug_snapshot(
             self._tasks, self._mailboxes, self._max_sub_agents,
+            active=self._active, queue=self._queue,
         )
 
     # ── 任务控制 ─────────────────────────────────────────────────────────

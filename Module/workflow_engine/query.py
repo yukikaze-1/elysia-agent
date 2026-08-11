@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
@@ -437,6 +438,8 @@ def get_debug_snapshot(
     tasks: dict[WorkflowId, SubAgent],
     mailboxes: dict[WorkflowId, WorkflowMailbox],
     max_sub_agents: int,
+    active: set[WorkflowId] | None = None,
+    queue: asyncio.Queue | None = None,
 ) -> dict:
     """供 WorkflowDebugAPI 内部轮询使用。
 
@@ -453,9 +456,11 @@ def get_debug_snapshot(
         tasks: 所有活跃任务的 SubAgent 映射。
         mailboxes: 所有活跃任务的事件邮箱映射。
         max_sub_agents: 最大并发 Sub-Agent 数。
+        active: 已持有执行槽的任务集合（E2），None 时回退 len(tasks)。
+        queue: 有界排队队列（E2），None 时 queued 计为 0。
 
     Returns:
-        dict: 包含 tasks 列表和 slots_total/slots_used 的调试快照。
+        dict: 包含 tasks 列表和 slots_total/slots_used/queued 的调试快照。
     """
     task_list = []
     for task_id, sub_agent in tasks.items():
@@ -468,7 +473,9 @@ def get_debug_snapshot(
     return {
         "tasks": task_list,
         "slots_total": max_sub_agents,
-        "slots_used": len(tasks),
+        # 显式判 None，不用 `active or tasks`——空集 falsy 会把 _active 回退到任务数（E2 bug）
+        "slots_used": len(active) if active is not None else len(tasks),
+        "queued": queue.qsize() if queue is not None else 0,
     }
 
 
