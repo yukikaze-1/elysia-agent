@@ -37,11 +37,11 @@ core/（应用层） ──import──▶ workflow_contract ◀──import─�
 
 | 枚举 | 含义 |
 |------|------|
-| `WorkflowStatus` | 工作流生命周期状态（pending/planning/running/.../completed） |
-| `SubmitRejectionCode` | submit 拒绝原因码 |
+| `WorkflowStatus` | 工作流生命周期状态（queued/pending/planning/running/.../completed，12 态） |
+| `SubmitRejectionCode` | submit 拒绝原因码（含 QUEUE_FULL——执行队列已满快速失败） |
 | `ReturnMode` | 回传模式（STRUCTURED / NATURAL_LANGUAGE） |
 | `DelegationStatus` | 委派结果三态（ok / no_matching_tools / too_vague） |
-| `WorkflowEventType` | 对外事件类型（progress/approval_needed/completed/failed/cancelled/paused） |
+| `WorkflowEventType` | 对外事件类型（progress/approval_needed/completed/failed/cancelled/paused/queued） |
 
 ### 约束（Pydantic）
 

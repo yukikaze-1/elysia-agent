@@ -1332,3 +1332,31 @@ class TestDebugSnapshotBounded:
         assert snap["slots_used"] == 0     # 槽空 = 0（不能用 len(active or tasks) 回退到任务数）
         assert snap["queued"] == 1
         await engine.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# E2: service 级——完整 WorkflowEngine 非阻塞 submit（不阻塞聊天轮）
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_submit_never_blocks_turn_when_slot_busy():
+    """完整 WorkflowEngine：首任务 PAUSED 占槽 → 第二次 submit 立即返回 mailbox（不阻塞聊天轮）。"""
+    engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
+    await engine.start()
+    # 占满唯一槽 + 一个 PAUSED 任务在 _tasks
+    await engine._semaphore.acquire()
+    engine._active.add(WorkflowId("busy"))
+    sa = MagicMock()
+    ts = MagicMock()
+    ts.status = WorkflowStatus.PAUSED
+    sa._task_state = ts
+    engine._tasks[WorkflowId("paused")] = sa
+    engine._mailboxes[WorkflowId("paused")] = WorkflowMailbox(WorkflowId("paused"))
+    ctx = DelegationContext(intent="second", session_id=SessionId("s1"))
+    started = time.monotonic()
+    result = await asyncio.wait_for(engine.submit(ctx), timeout=1.0)
+    assert isinstance(result, WorkflowMailbox)
+    assert time.monotonic() - started < 1.0
+    await engine.stop()

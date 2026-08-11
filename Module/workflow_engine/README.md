@@ -44,12 +44,24 @@ WorkflowEngine 是独立于 CognitiveLoop 的后台任务编排引擎：LLM 通�
 ## 关键机制
 
 - **委派入口**：`submit_task` 工具调用 → core 侧 `DelegationPreparer`（LLM 工具筛选 + 参数填充）→ 产出 `DelegationContext` → 契约层 `WorkflowEngine.submit()`
+- **非阻塞有界 submit（E2）**：`submit()` 预创建 `QUEUED` 状态 + 注册后立即返回 mailbox（不等待执行槽）；`acquire` 移到后台 `_drain_queue` worker（有界队列 `max_queue_size=5`）；PAUSED 任务释放执行槽；resume 槽满入队（`resume_pending` 幂等），队列满快速失败 `QUEUE_FULL`
 - **Sub-Agent 决策循环**：`SubAgent` 对每个任务执行 plan → validate → execute → evaluate →（失败时）replan，超过 `check_meltdown` 阈值熔断
 - **Orchestrator 执行层**：按 DAG 拓扑序驱动节点，节点经 `execution.py` 管线（execute → evaluate → apply）
 - **校验**：`PlanValidator` 对计划做 9 项静态校验（工具存在性、参数类型、约束合规）
 - **安全**：`ConstraintConfig`（全局天花板，随 `AgentInfra` 注入）+ 任务级 `WorkflowConstraints` 取 min 生效
 - **持久化**：`CheckpointManager` 任务级快照、`TokenLedger` token 记账、`ArtifactStore` 节点产物存储
 - **回传**：`WorkflowMailbox` 单播异步队列，agent `_poll_mailboxes()` 轮询消费
+
+## 执行槽与排队（E2 非阻塞 submit）
+
+`WorkflowEngine.submit()` 立即返回 mailbox，不阻塞聊天轮（首任务无限暂停时第二次 submit 仍即时返回）：
+
+- **状态机入口新增 `QUEUED`**（12 态）：已注册（`_tasks`/`_mailboxes`/`_contexts` 就位）、等待首个执行槽、**不消耗 semaphore**；可被 `cancel`/`stop` 直接终态化为 CANCELLED
+- `submit()` 预创建 `WorkflowState(status=QUEUED)` 注入 `sub_agent._task_state` → 注册 → 入队（有界 `max_queue_size=5`）即返；队列满快速失败 `SubmitError(QUEUE_FULL)`，不无限 await
+- 后台单任务 **`_drain_queue`** worker 负责「终态复核 → `acquire` 槽位 → 按 `QueuedItem.kind` 派发 `_run_and_cleanup`/`_run_resume`」——`acquire` 不再阻塞聊天轮
+- **PAUSED 释放执行槽**：`_run_and_cleanup`/`_run_resume` 的 finally 遇 PAUSED 释放 semaphore + 移出 `_active`，checkpoint/mailbox/注册表保留；resume 重新 acquire（槽满入队、`resume_pending` 幂等短路、队列满 `ResumeError(QUEUE_FULL)`）
+- `stop()` 停 worker + 扫描 `_tasks` 终态化 QUEUED/PAUSED（推唯一 CANCELLED 事件）；`cancel()` 新增 QUEUED 分支直接 CANCELLED（不 release——QUEUED 从未 acquire）
+- debug snapshot：`slots_used` 改由 `_active` 集合计算（不把 QUEUED/PAUSED 计入占槽）、新增 `queued`（队列深度）
 
 ## 文件布局
 

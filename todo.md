@@ -76,7 +76,7 @@
 |--------|----------|----------------|----------------|--------|
 | ~~中（产品化门禁）~~ ✅ | **跨重启持久化幂等（D6c）** | **2026-08-11 完成（已拍板：产品 fail-closed + dev 内存降级）** | 持久化 `(conversation_id, client_request_id, content_digest, message_id, status, expires_at)` + 唯一索引；同键同内容重试返回原 ACK、同键异内容拒绝；`expires_at` 用 BSON Date 真 TTL；Mongo 不可用产品模式 fail-closed/503、dev 内存降级 + `server_info.features.idempotency_durable` 暴露 | commit 本批次（D6b `75e7aee` 后的 D6c 提交）：`core/storage/idempotency_repo.py` + `core/input/idempotency.py` + ws_handler 接线 + contract 字段 |
 | ~~中（产品化门禁）~~ ✅ | **公开入口实际请求限流（D6b）** | **2026-08-11 完成（已拍板：单进程 token-bucket，per-process 语义文档化）** | 可配置 token-bucket；key 优先认证主体、匿名回退 IP（默认不信任 X-Forwarded-For）；REST 429 / WS `RATE_LIMITED` + retry hint；limiter 内存有界、旧 key 清理 | commit `75e7aee`：`core/input/rate_limiter.py` + 中间件/WS 接线 + config |
-| 中 | **Workflow submit 立即返回且有界排队（E2，P2-07）** | `submit()` 先等 semaphore（PAUSED 任务占 slot）——`max_concurrent_tasks=1` 时首任务暂停会让第二次 submit 无限等待，阻塞当前聊天轮 | submit 先注册 mailbox 立即返回；acquire 移到后台 runner；显式 QUEUED 状态 + 队列上限；PAUSED 释放 slot | **需拍板**：计划推荐「立即返回 + 后台有界 QUEUED」；若改选快速 `BUSY/QUEUE_FULL` 必须先改公开契约与计划记录 |
+| ~~中~~ ✅ | **Workflow submit 立即返回且有界排队（E2，P2-07）** | **2026-08-11 完成（已拍板：方案 A——立即返回 + 后台有界 QUEUED）** | submit 先注册 mailbox 立即返回；acquire 移到后台 runner；显式 QUEUED 状态 + 队列上限（max_queue_size=5）；PAUSED 释放 slot；resume 槽满入队（resume_pending 幂等）；队列满 QUEUE_FULL 快速失败 | commit 本批次（E2）：`submit`/`_drain_queue`/`resume`/`stop`/`cancel` 改造 + 契约 `QUEUED`/`QUEUE_FULL` + debug snapshot slots/queued |
 
 ### B. Workflow 独立子系统（工作量大，非 P1）
 

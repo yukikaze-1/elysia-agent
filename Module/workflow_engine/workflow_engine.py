@@ -168,6 +168,9 @@ class WorkflowEngine:
         槽位所有权：已派发 → 归执行包装（_run_and_cleanup/_run_resume 的 finally）所有；
         未派发被 stop() 取消 → 由本循环释放，防泄漏。
         """
+        # start() 创建 semaphore/queue 后才创建本 worker——两者必定已初始化
+        assert self._semaphore is not None
+        assert self._queue is not None
         while True:
             item: QueuedItem = await self._queue.get()   # 阻塞等排队条目
             task_id = item.task_id
