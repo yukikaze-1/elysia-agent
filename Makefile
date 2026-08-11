@@ -33,7 +33,7 @@ test-full:
 
 # F1：外部 E2E 显式 opt-in（真实 LLM/DB，受保护凭据/受信 ref 才能跑）
 test-external:
-	conda run -n Elysia python -m pytest -m "external" -q --tb=short
+	conda run -n Elysia RUN_EXTERNAL_TESTS=1 python -m pytest -m "external" -q --tb=short
 
 # workflow_engine / workflow_contract 独立迭代门禁（不含 external——真实 LLM）
 test-workflow-engine:
