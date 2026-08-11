@@ -1334,13 +1334,17 @@ class TestDrainAndTeardown:
     async def test_drain_waits_inflight_then_teardown(self):
         tm = ToolManager()
         old = MagicMock(); old.teardown = AsyncMock()
-        never_done = asyncio.create_task(asyncio.Event().wait())     # 永不完成
+        gate = asyncio.Event()
+        never_done = asyncio.create_task(gate.wait())     # 挂起旧任务
         try:
             await tm._drain_and_teardown("x", old, {never_done}, timeout=0.1)
-            # 超时 → 未等待完成 → 延迟 teardown 登记
+            # 超时 → 未等待完成 → 延迟 teardown 登记（先等 pending，不立即 teardown）
             assert len(tm._teardown_tasks) == 1
             await asyncio.sleep(0.05)
-            assert old.teardown.await_count == 1     # 后台延迟 teardown 已执行
+            assert old.teardown.await_count == 0          # pending 未归零 → teardown 延迟
+            gate.set()                                    # pending 完成 → 延迟 teardown 执行
+            await asyncio.sleep(0.05)
+            assert old.teardown.await_count == 1          # 后台延迟 teardown 已执行
         finally:
             never_done.cancel()
 
@@ -1348,14 +1352,18 @@ class TestDrainAndTeardown:
     async def test_drain_timeout_schedules_teardown(self):
         tm = ToolManager()
         old = MagicMock(); old.teardown = AsyncMock()
-        never = asyncio.create_task(asyncio.sleep(5))
+        gate = asyncio.Event()
+        pending = asyncio.create_task(gate.wait())   # 挂起的旧 in-flight 任务
         try:
-            await tm._drain_and_teardown("x", old, {never}, timeout=0.1)   # 0.1s 超时
+            await tm._drain_and_teardown("x", old, {pending}, timeout=0.1)   # 0.1s 超时
             assert len(tm._teardown_tasks) == 1       # 延迟 teardown 已登记
+            await asyncio.sleep(0.05)
+            assert old.teardown.await_count == 0      # 先等 pending 归零（不立即 teardown，防并发关资源）
+            gate.set()                                # pending 完成 → 延迟 teardown 执行
             await asyncio.sleep(0.05)
             assert old.teardown.await_count == 1
         finally:
-            never.cancel()
+            pending.cancel()
 
 
 class SlowPlugin(ToolPlugin):
@@ -1383,7 +1391,7 @@ class TestExecuteInflight:
         await asyncio.sleep(0.05)
         assert len(tm._inflight["slow"]) == 1
         await task
-        assert tm._inflight["slow"] == set()
+        assert tm._inflight.get("slow", set()) == set()   # 归零后 key 被清（用 .get 防 KeyError）
 
     @pytest.mark.asyncio
     async def test_executing_still_populated(self):

@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 # 结构化参数摘要（BE-042 §7）中单参数 preview 的最大字符数
 _PARAM_PREVIEW_LIMIT = 100
 
+# 延迟 teardown 前等待 pending 旧任务归零的有界时长（秒）——防 teardown 与
+# 仍在旧实例上执行的 in-flight 并发关闭共享资源（E1 review）
+_DEFERRED_TEARDOWN_WAIT = 5.0
+
 
 @dataclass(frozen=True)
 class ToolMetadata:
@@ -197,7 +201,11 @@ class ToolManager:
             return result
         finally:
             self._executing.discard(name)
+            if not task.done():
+                task.cancel()                      # 提前退出（消费者关闭生成器/调用被取消）——取消执行任务防继续消费旧实例
             self._inflight.setdefault(name, set()).discard(task)
+            if not self._inflight[name]:
+                del self._inflight[name]           # 任务归零清 key（防永久空 set 条目）
             self._tasks.pop(ctx.call_id or name, None)
 
     async def execute_stream(
@@ -259,7 +267,11 @@ class ToolManager:
                 yield item
         finally:
             self._executing.discard(name)
+            if not task.done():
+                task.cancel()                      # 提前退出（消费者关闭生成器/调用被取消）——取消执行任务防继续消费旧实例
             self._inflight.setdefault(name, set()).discard(task)
+            if not self._inflight[name]:
+                del self._inflight[name]           # 任务归零清 key（防永久空 set 条目）
             self._tasks.pop(ctx.call_id or name, None)
 
     # ---- Schema Export ----
@@ -623,24 +635,34 @@ class ToolManager:
                     "工具 '%s' 热重载：%d 个 in-flight 未在 %.0fs 内排空，延迟 teardown",
                     name, len(pending), timeout,
                 )
-                self._schedule_teardown(name, old)
+                self._schedule_teardown(name, old, pending)
                 return
         try:
             await old.teardown()
         except Exception as e:
             logger.warning("旧插件 '%s' teardown() 异常: %s", name, e)
 
-    def _schedule_teardown(self, name: str, old: ToolPlugin) -> None:
-        """后台延迟 teardown——登记到 _teardown_tasks + done 回调收异常。
+    def _schedule_teardown(self, name: str, old: ToolPlugin, pending: set[asyncio.Task]) -> None:
+        """后台延迟 teardown——先有界等待 pending 旧任务归零，再 teardown 旧实例。
 
-        _teardown_tasks 独立登记（非 _tasks），不被 cancel_all 取消；shutdown()
-        显式 gather 收尾。
+        超时路径：swap 快照的旧 in-flight 未在排空窗口内完成，延迟到后台。
+        **不能立即 teardown**——那会与仍在旧实例上执行的 pending 任务并发关闭
+        共享资源（http_client/DB 连接），pending 任务拿到已关闭资源报错；
+        先 `asyncio.wait(pending, timeout=deferred_wait)` 再 teardown，两者串行。
+        若 pending 在 deferred_wait 内仍不归零，teardown 照常执行（降级路径，
+        pending 任务随后可能报资源错误——与直接同步 teardown 的旧行为等价）。
 
         Args:
             name: 工具名称。
             old: 排空超时后待清理的旧实例。
+            pending: 排空窗口内仍未完成的旧 in-flight 任务（待其归零后 teardown）。
         """
-        task = asyncio.create_task(old.teardown())
+        async def _deferred() -> None:
+            if pending:
+                await asyncio.wait(pending, timeout=_DEFERRED_TEARDOWN_WAIT)
+            await old.teardown()
+
+        task = asyncio.create_task(_deferred())
         # 独立登记——不被 cancel_all 取消
         self._teardown_tasks[f"{name}:teardown:{id(old)}"] = task
 
