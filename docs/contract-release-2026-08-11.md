@@ -10,9 +10,12 @@
 |---|---|
 | transportVersion（握手可用值） | `"2"` |
 | protocolVersion（展示） | `"2.0"` |
-| schemaHash | `30ece81962a4a669` |
-| 后端 commit | `c15ea9e`（`git rev-parse HEAD` 快照） |
-| 生成日期 | 2026-08-11 |
+| schemaHash | `7a5348a4767a9fc6`（**机器契约身份标识**——契约漂移门禁与跨仓 replay 据此对账；`python -m frontend_contract --check` 通过） |
+| **contractCommit**（契约生成时后端 SHA） | `5690cfc`（**加固批次 ACK 判别联合 commit**，`git rev-parse HEAD` 快照——契约生成快照，非联调运行时） |
+| **runtimeCommit**（联调后端运行时 SHA） | **`<待联调时回填>`**（联调实际启动/冻结的后端 commit；与 `schemaHash` 一起构成冻结基线，Electron 据此固定 runtime） |
+| 生成日期 | 2026-08-11（**加固批次重新生成**：ACK 判别联合 + AckError + 嵌套判别联合生成器 + 6 负面帧，见 `docs/review/electron-v2-backend-change-list-2026-08-11.md` §6） |
+
+> **contractCommit ≠ runtimeCommit**：`contractCommit` 只证明「这份契约产物在哪个后端 commit 上生成」；实际联调以后端**运行时** commit 为准——两者可能不同（契约生成后后端又演进，只要 `schemaHash` 未变即 wire 兼容，但 Electron 应对账后端运行时与冻结 manifest）。`runtimeCommit` 留占位，**联调启动时回填**并同步前端 manifest（spec DoD 声明：runbook 唯一列出）。
 
 ## 产物清单
 
@@ -27,6 +30,7 @@
 
 - `ServerInfoFeatures.idempotency_durable`（D6c）：true=幂等 claim 跨重启持久化 / false=内存降级窗口。
 - 错误码目录 41 码单源化（`frontend_contract/errors.py` + `scripts/check_error_codes.py`）。
+- **加固批次（ACK 判别联合，`5690cfc`）**：`user_message.ack` 拆 `AcceptedUserAckMessage`/`RejectedUserAckMessage`（status 判别联合）+ `AckError`；`ErrorMessage` 加可选 `clientRequestId` + 顶层 `retryAfterMs`；6 个命令消息加可选 `clientRequestId`；嵌套判别联合生成器支持；负面 golden 增 6 帧（`CONTRACT_VALIDATION` / `SESSION_NOT_FOUND` / `QUEUE_FULL` / `STORAGE_UNAVAILABLE` / `RATE_LIMITED` / `IN_PROGRESS`）。详见 `docs/review/electron-v2-backend-change-list-2026-08-11.md` §6-10。
 
 ## Electron 交接入口
 

@@ -1,5 +1,11 @@
 # 后端 + 前端适配进度总览（2026-08-10）
 
+> **⚠️ 历史快照（2026-08-11 起）**：本文档记录 2026-08-10~11 的状态，**不再作为当前联调事实源**，仅作历史参考。
+> 当前事实源：
+> - **联调 runbook**：`docs/electron-v2-first-integration-runbook.md`（runtime SHA / Token / 探针口径 / WS 三头 / clean-start / ACK 成功标准与负面用例）
+> - **后端复核与整改**：`docs/review/electron-v2-first-integration-backend-review-2026-08-11.md`（P0×2 + P1×5 + P2×3，已闭环）+ `docs/review/electron-v2-backend-change-list-2026-08-11.md`
+> - 本文档中过时的「浏览器 WS query-token 阻塞」「E2/E3/F 未完成」表述已由本标注 + 下方针对性修订覆盖。
+
 > **快照时间**：2026-08-10（文档持续更新，每次重大里程碑修订本文件）。
 > **后端基线**：`d1cb3ae`（2026-08-10 全项目评审基线）；当前 `HEAD = 4a6e198`，`d1cb3ae..HEAD` 共 **38 个提交**。
 > **前端仓库**：`/home/yomu/elysia-frontend`（Cyrene Electron，独立仓库）；当前 `HEAD = f6f7ef1`。
@@ -13,7 +19,7 @@
 
 **前端适配**（Cyrene Electron）：阶段 1 安全骨架三块全部落地并全量验证；阶段 2 块 A（领域契约 + raw wire 层 + frame mapper）收尾中；两端已具备**首次真实后端联调**条件。
 
-**关键判断**：两端单机联调可开始；远程发布仍受 WS Bearer token 缺口 + 后端产品化门禁约束。
+**关键判断**：两端单机联调可开始；浏览器 WS Bearer token 缺口已随「v1 聊天停用 + Electron 走 Authorization header」解决（2026-08-11 决策：不做 query token），后端产品化门禁（D6a/D6b/D6c + E1-E4 + F1-F5）已全部完成。
 
 ---
 
@@ -202,8 +208,8 @@
 
 ### 4.2 已知联调阻塞
 
-- **WS Bearer token 缺口（已记 todo.md）**：业务中间件只认 `Authorization` 头，WS 握手不能设自定义 Header → `AGENT_ACCESS_TOKEN` 模式下浏览器前端 WS 连不上。开发期远程用 `ALLOW_INSECURE_REMOTE=1` 规避；**若 `.env` 同时配 `AGENT_ACCESS_TOKEN` + `ALLOW_INSECURE_REMOTE=1`，bind 守卫被放行但前端 WS 仍连不上**。修法：WS 握手接受 query param token（`/ws?token=...`）+ 前端接线（约一个提交，进入联调/发布阶段时做）。
-- **后端产品化门禁**：D6b 限流、D6c 跨重启幂等 **已于 2026-08-11 完成**（拍板：单进程限流 + 产品 fail-closed/dev 降级）；剩余 E2/E3 Workflow——远程发布前仍需。
+- **浏览器 WS Bearer token 缺口（已解决，2026-08-11 决策：不做 query token）**：业务中间件只认 `Authorization` 头，浏览器 WS 握手不能设自定义 Header。**2026-08-11 拍板**：v1 浏览器聊天已停用（`SERVE_CHAT` 默认关），Electron 用 Node `ws` 带 `Authorization` header（real-backend.ts:254-260，已核实）不受影响；Debug 页走 REST/SSE 无 WS——**无浏览器 WS 客户端 → `/ws?token=...` 无消费方，不做**。Electron 联调走「WS 三请求头」（`Authorization: Bearer` / `X-Protocol-Version: 2` / `X-Client-Platform: electron`），见 runbook。
+- **后端产品化门禁**：D6a fail-closed 鉴权、D6b 限流、D6c 跨重启幂等、E1-E4 Workflow、F1-F5 工程化 **已于 2026-08-11 全部完成**（拍板：单进程限流 + 产品 fail-closed/dev 降级）；2026-08-11 加固批次（P0×2 + P1×5 + P2×3，`docs/review/electron-v2-first-integration-backend-review-2026-08-11.md`）已闭环，见 `docs/electron-v2-first-integration-runbook.md`。
 - **前端 Mock→真实切换**：阶段 2 前 Adapter 主要靠 Mock 推进，标注「已开发、未联调」。
 
 ### 4.3 远程开发（开发期）说明
@@ -230,7 +236,7 @@
 **并行轨**：
 - 后端：D6b/D6c + F1-F5 + **E1-E4 全部完成（2026-08-11）**——后端产品化门禁 + Workflow 子系统 + 工具热重载 + 测试确定性已落地。
 - 前端：阶段 2 块 A 收尾（review + 进度文档 doc16 同步）→ 进入阶段 2「核心聊天纵向闭环」，用真实后端做首次联调。
-- 联调衔接：做 WS query-param token 支持（一个提交）以解除远程联调阻塞。
+- 联调衔接：Electron 走 WS 三请求头（Authorization / X-Protocol-Version / X-Client-Platform）真实联调，按 `docs/electron-v2-first-integration-runbook.md` 执行；浏览器 WS query-param token **不做**（无消费方，2026-08-11 决策）。
 
 **里程碑**：两端「真实后端联调打通阶段 2 主链路」→ 前端阶段 3/4 → 两端同时收敛到发布候选。
 

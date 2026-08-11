@@ -93,7 +93,7 @@ bash scripts/check.sh           # 环境预检（推荐，自动检测 conda/pyt
 bash scripts/check.sh --full    # 含连通性探活
 python app.py --check            # 同上（需手动激活 conda 环境）
 python app.py --check --full     # 同上
-python app.py --host 0.0.0.0 --port 8080  # 自定义端口
+python app.py --host 0.0.0.0 --port 8080  # 自定义端口（非回环绑定需配 AGENT_ACCESS_TOKEN，否则被 fail-closed 拒绝，见「远程访问」）
 python app.py --verbose          # 详细日志（调试用）
 python app.py --config custom.yaml --character custom/char.yaml  # 自定义配置
 ```
@@ -311,8 +311,10 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 ### Electron 后端联调（协议 / 安全）
 | 文档 | 内容 |
 |------|------|
+| [docs/electron-v2-first-integration-runbook.md](docs/electron-v2-first-integration-runbook.md) | **Electron v2 首次联调最小 runbook**（唯一列出 runtime SHA / schemaHash / Token / 探针口径 / WS 三头 / clean-start / ACK 成功标准与负面用例 / requestId 对照） |
 | [docs/electron-backend-protocol-v2.md](docs/electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + **通用附件与媒体契约（§13）** + 错误码目录 41 码（批次 2-9） |
-| [docs/electron-backend-security.md](docs/electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + **附件签名下载与签发安全（§3.5）**（批次 1-8c） |
+| [docs/electron-backend-security.md](docs/electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + **附件签名下载与签发安全（§3.5）** + **探针分层 /health /ready（§3.7）**（批次 1-8c + 2026-08-11 加固） |
+| [docs/review/electron-v2-first-integration-backend-review-2026-08-11.md](docs/review/electron-v2-first-integration-backend-review-2026-08-11.md) | Electron 首次真实联调后端复核：P0×2 + P1×5 + P2×3 整改清单（2026-08-11，已闭环） |
 | [docs/review/electron-v2-backend-integration-readiness-review-2026-08-10.md](docs/review/electron-v2-backend-integration-readiness-review-2026-08-10.md) | Electron 接入充分性复审：可联调范围、已修阻断项与远程产品化门禁 |
 | [docs/archive/electron-backend-baseline.md](docs/archive/electron-backend-baseline.md) | 后端协议基线（v1 现状，批次 0）⚠️ 已归档 |
 | [docs/archive/electron-backend-progress.md](docs/archive/electron-backend-progress.md) | 后端改造进度（批次 0-8c，全部完成）⚠️ 已归档 |
@@ -552,7 +554,7 @@ llm:
   model: deepseek/deepseek-v4-flash  # 可换 openai/gpt-4o、ollama/llama3 等
 
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1                   # 安全默认：仅回环。远程绑定需显式配置（SERVER_HOST=0.0.0.0 + AGENT_ACCESS_TOKEN，见「远程访问」）
   port: 8765
   image_max_mb: 10                  # 图片上传上限 (MB)
 

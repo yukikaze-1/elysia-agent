@@ -1,6 +1,6 @@
 # Electron 后端安全部署指南
 
-**文档版本：** v0.7（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新；批次 8a 补 §1.1 管理面认证 fallback + §1.4 启动守卫双 token 检查 + §3.5 下载校验序前置；2026-08-10 接入复审同步会话与 Desktop 精确投递现状）
+**文档版本：** v0.8（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新；批次 8a 补 §1.1 管理面认证 fallback + §1.4 启动守卫双 token 检查 + §3.5 下载校验序前置；2026-08-10 接入复审同步会话与 Desktop 精确投递现状；2026-08-11 加固批次同步 §1.4 启动守卫 fail-closed + 默认 host 127.0.0.1 + §3.7 探针分层）
 **关联：** `docs/archive/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch8a-security-attachment-search.md`
 
 本文件说明 Elysia Agent 后端的**远程安全部署**方式：产品认证、TLS 终止、防护范围与已知缺口。远程部署必须遵循本指南；本地开发（回环 + 无 token）维持匿名。
@@ -38,11 +38,16 @@
 - Electron Main 持有凭据，Renderer 不接触明文 token；
 - 日志、错误体、诊断包**不记录 token**（`secret=True` + 日志敏感扫描测试守护）。
 
-### 1.4 启动守卫
+### 1.4 启动守卫（fail-closed）
 
-服务绑定**非回环地址**（非 `127.0.0.1/localhost/::1`）且未配置 `AGENT_ACCESS_TOKEN` 时，启动输出 **ERROR 级显著阻塞告警**（指引如何配置）。这是 PRD「拒绝启动或输出显著阻塞告警」的"或"分支——不拒绝启动，避免破坏本地开发（config 默认 host=`0.0.0.0`）。
+服务绑定**非回环地址**（非 `127.0.0.1/localhost/::1`）且未配置 `AGENT_ACCESS_TOKEN` 时，启动被 **fail-closed 拒绝**（`assert_secure_bind` 抛 `RuntimeError`，D6a）。默认 `server.host=127.0.0.1`（回环）——本地开发无需 token 即匿名放行；**远程绑定必须显式配置**（改 host + 配 token，或显式 `ALLOW_INSECURE_REMOTE=1` 开发开关）。
 
-**批次 8a（`2c5a293`）**：`warn_if_unsecured` 现在接收 `auth_token` 参数一并检查——非回环绑定下仅配置一个 token（`AGENT_ACCESS_TOKEN` / `SERVER_AUTH_TOKEN` 缺一）→ 输出 **WARNING 级告警**，建议补齐另一个 token（否则管理端点回退用 access_token 校验或保持匿名）；两者都空 → 维持 ERROR 级告警。
+fail-closed 放行条件（任一满足即放行）：
+- host 为回环地址（`127.0.0.1` / `localhost` / `::1`）；
+- 已配置 `AGENT_ACCESS_TOKEN`（业务 `/ws`、`/api/*`、`/uploads/*` 的唯一放行凭据；**仅配 `SERVER_AUTH_TOKEN` 不构成放行**——管理 token 不保护业务端点，review 复核确认）；
+- 显式设 `ALLOW_INSECURE_REMOTE=1`（仅本地开发开关，日志/health 明确 insecure）。
+
+**批次 8a（`2c5a293`）**：放行后的安全提示由 `warn_if_unsecured` 输出——非回环绑定下仅配置一个 token（`AGENT_ACCESS_TOKEN` / `SERVER_AUTH_TOKEN` 缺一）→ 输出 **WARNING 级告警**，建议补齐另一个 token（否则管理端点回退用 access_token 校验或保持匿名）；两者都空 → ERROR 级告警（正常路径已被 fail-closed 前置拦截，除非显式 insecure opt-in）。
 
 ## 2. TLS / HTTPS-WSS 部署
 
@@ -85,7 +90,7 @@ server {
 ### 2.2 后端监听建议
 
 - 远程部署时后端 host 建议绑定 `127.0.0.1`（仅代理可达）或内网地址 + `AGENT_ACCESS_TOKEN`；
-- 若绑定 `0.0.0.0` 且无 token，启动会告警（见 §1.4）——远程部署必须配置 token。
+- 若绑定 `0.0.0.0` 且无 token，启动会被 **fail-closed 拒绝**（见 §1.4）——远程部署必须配置 token。
 
 ### 2.3 可重复测试
 
@@ -152,6 +157,17 @@ server {
 
 - **限流（D6b）**：单进程 token-bucket，覆盖 WS 建连、消息（text/voice）、provider test、upload、search、工具审批。REST 超限 → **429 `RATE_LIMITED`** + `Retry-After: 60`；WS 建连超限 → 升级前 429；WS 消息超限 → `error{RATE_LIMITED, retryable, retryHint}` 连接存活。key **认证主体优先**、匿名回退 IP；**默认不信任 `X-Forwarded-For`**（伪造代理头不改变 key，防限流绕过与高基数内存 DoS）；内存有界（max_keys）+ 旧 key 定期清理。**单进程语义**——多实例部署需自建共享后端，`RATE_LIMITED` 不代表全局配额（产品化门禁登记）。默认配额（`config.yaml` `server.rate_limit_*_per_min`，env `RATE_LIMIT_*_PER_MIN` 覆盖，0 关闭）：ws 120 / messages 120 / provider_test 30 / upload 60 / search 60 / tools 120。
 - **幂等持久化（D6c）**：`clientRequestId` claim 持久化到 Mongo（`idempotency` 集合，`(conversation_id, client_request_id)` 唯一 + `expires_at` BSON Date TTL 1h）——ACK 丢失 + 后端重启后重试不重复生成。**产品模式 + Mongo 离线 → fail-closed**（v2 文本/`voice.commit` 幂等 lookup/claim 失败 → `user_message.ack{rejected, STORAGE_UNAVAILABLE, retryable}`，不生成 messageId）；**回环 dev + Mongo 离线 → 内存降级**，`server_info.features.idempotency_durable=false` 暴露非 durable 窗口（Mongo 恢复自动回 durable）。
+- **幂等状态机与恢复（加固批次 2026-08-11）**：claim 三态 `CLAIMED/ACCEPTED/REJECTED` + claim 所有权（`ClaimResult.acquired`，并发 loser 恒不进入业务处理）；崩溃/拒绝残留不再被重放成幽灵 accepted（新鲜 CLAIMED→retryable `IN_PROGRESS`、过期+generation 证据→重放 accepted、过期+无证据→接管重执行）；dev 内存权威 overlay + Mongo 写穿 + 恢复 reconcile（进程内 Mongo 任意切换不去重）；idempotency 纳入健康探测/恢复/关闭生命周期。
+
+### 3.7 探针分层（BE-P2-01，2026-08-11 加固批次）
+
+- **`/health`（liveness）**：纯进程存活检查——FSM/uptime/build 运行信息，**零网络探针**（Mongo/Milvus/idempotency 一律不 `wait_for`），**恒 200**，任何依赖挂起都在小固定预算内返回；不携带依赖状态。
+- **`/ready`（readiness）**：HTTP 门禁 = **核心 chat**：
+  - `chatReady`（=HTTP 门禁）= mongo 三 repo（session+message+attachment）**并行真实 ping** 且（非 product 模式 或 idempotency 真实 ping）；
+  - **Milvus 不门禁 HTTP**（文本可降级使用）——经 `fullReady`（=`chatReady` AND milvus）可观测；
+  - **product 模式（非回环绑定）idempotency 失效 → `/ready` 503**（v2 send 不可用）；dev 模式（回环）允许 idempotency 降级不门禁；
+  - payload：`status`（全依赖 ok→"ok" 否则 "degraded"，可观测非门禁）、`chatReady`、`fullReady`、`dependencies`（mongo/milvus/idempotency 明细）。
+- **语义**：`/ready=200` ⇒ v2 send 可用；`/ready=503` ⇒ 读 payload 的 `chatReady`/`fullReady`/`dependencies` 判断文本可用/不可用原因。Electron 探活口径：`/health` 只看进程存活，`/ready` 才是文本可用门禁。
 
 ## 4. 已知缺口（后置批次）
 

@@ -115,7 +115,7 @@ CLAIMED ──(process_message 返回 True 后立即 complete)──→ ACCEPTED
 `frontend_contract/ws_message.py`：`UserAckMessage` 拆为 status 判别联合：
 
 - **`AcceptedUserAckMessage`**：`status: Literal["accepted"]`、`messageId: str (min_length=1)`、`clientRequestId: str (min_length=1)`、`clientMessageId?`、`conversationId?`、`receivedAt`；**无 error**；
-- **`RejectedUserAckMessage`**：`status: Literal["rejected"]`、**`messageId: Literal[""]`（决策记录 D2：短期保留空白串兼容前端批次 A；omit 记未来协议版本备忘）**、`clientRequestId: str (min_length=1)`、`clientMessageId?`、`conversationId?`、`receivedAt`、**`error: AckError`（必填）**；
+- **`RejectedUserAckMessage`**：`status: Literal["rejected"]`、**`messageId: Literal[""]`（决策记录 D2：短期保留空白串兼容前端批次 A；omit 记未来协议版本备忘）**、`clientRequestId: str`（**无 `min_length`——记录偏差：handler 的「缺少 clientRequestId」拒绝路径回显空串，Rejected 允许空；Accepted 保持 `min_length=1`**，见决策记录 D2 注）、`clientMessageId?`、`conversationId?`、`receivedAt`、**`error: AckError`（必填）**；
 - **`AckError`**（取代任意 dict）：`code`、`message`、`retryable`、`details?`、**`retryAfterMs?`（顶层，与 ErrorMessage 同位置）**；`details` 可携带 `idempotency_durable`（bool，STORAGE_UNAVAILABLE 时）。
 
 模块级命名联合 `UserAckMessage = Annotated[Union[Accepted, Rejected], Discriminator("status")]`（Python 侧类型用）；`ServerMessage` 的 `user_message.ack` 分支引用它。
@@ -221,6 +221,7 @@ marker 分配（CLAUDE.md 强制，review 复核要求显式）：契约/golden 
 
 1. **D1 批次范围**：一次 spec 覆盖 A+B+C（后端部分），plan 内按批次序；「真实 Electron Main 联调 + 跨仓 golden replay」属前端仓活动，后端交付 runbook/manifest 与门禁证据。
 2. **D2 rejected messageId**：保留 `messageId:""`（判别联合 `Literal[""]` 表达不变量）；omit 记未来协议版本备忘。
+   - **D2 注（记录偏差，2026-08-11 实现期）**：`RejectedUserAckMessage.clientRequestId` **不加 `min_length`**（空串合法）——handler 的「缺少 clientRequestId」拒绝路径会回显空串，若 schema 加了 `min_length=1` 会拒绝真实 wire。`AcceptedUserAckMessage.clientRequestId` **保持 `min_length=1`**（accepted 恒有幂等键）。future reviewer 请勿再把它标记为 schema 缺陷。
 3. **D3 durable 能力变化**：server_info = 握手快照，不推送能力事件；STORAGE_UNAVAILABLE 的 rejected ACK/error 在 details 携带当前 `idempotency_durable`。
 4. **D4 clean-start 会话**：eager default 建合法本地 summary + Mongo 可用 best-effort 持久化；合并 `max(updated_at)`；activeConversationId 前端契约留作未来。
 5. **D5 dev 降级连续性**：内存权威 overlay + Mongo 写穿 + 恢复 reconcile（Mongo 优先且读时一致）；进程内任意 Mongo 切换不去重。
