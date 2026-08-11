@@ -169,23 +169,25 @@ class ToolManager:
         Returns:
             ToolResult: 工具执行结果。
         """
-        plugin = self._plugins.get(name)
-        if plugin is None:
-            return self._unknown_tool_result(name)
-
-        sem = self._semaphores.get(name)
-        self._executing.add(name)
+        async with self._reload_lock:                    # 与 swap 互斥（微秒级，无 await）
+            plugin = self._plugins.get(name)
+            if plugin is None:
+                return self._unknown_tool_result(name)
+            sem = self._semaphores.get(name)
+        self._executing.add(name)                        # 保留——debug executing_now 依赖
         task = asyncio.create_task(
             self._pipeline.execute(plugin, name, ctx, raw_params, sem),
         )
         # C2/P1-13：_tasks 按 call_id 跟踪（同工具可同时多个调用，互不覆盖）
         self._tasks[ctx.call_id or name] = task
+        self._inflight.setdefault(name, set()).add(task)  # 供 reload 排空快照
         try:
             result = await task
             self._record(result)
             return result
         finally:
             self._executing.discard(name)
+            self._inflight.setdefault(name, set()).discard(task)
             self._tasks.pop(ctx.call_id or name, None)
 
     async def execute_stream(
@@ -202,12 +204,15 @@ class ToolManager:
         Yields:
             ToolProgress | ToolResult: 中间进度事件或最终执行结果。
         """
-        plugin = self._plugins.get(name)
+        # 取值段加锁（与 execute 一致）；yield 必须在锁外——async generator
+        # 锁跨 yield 持有到下一 __anext__/GC，锁内 yield 会阻塞后续 reload/execute
+        async with self._reload_lock:
+            plugin = self._plugins.get(name)
+            sem = self._semaphores.get(name)
         if plugin is None:
-            yield self._unknown_tool_result(name)
+            yield self._unknown_tool_result(name)   # 锁外 yield
             return
 
-        sem = self._semaphores.get(name)
         self._executing.add(name)
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -233,6 +238,7 @@ class ToolManager:
         task = asyncio.create_task(_drive())
         # C2/P1-13：按 call_id 跟踪（流式同理）
         self._tasks[ctx.call_id or name] = task
+        self._inflight.setdefault(name, set()).add(task)  # 供 reload 排空快照
         try:
             while True:
                 item = await queue.get()
@@ -243,6 +249,7 @@ class ToolManager:
                 yield item
         finally:
             self._executing.discard(name)
+            self._inflight.setdefault(name, set()).discard(task)
             self._tasks.pop(ctx.call_id or name, None)
 
     # ---- Schema Export ----

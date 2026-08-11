@@ -1162,6 +1162,43 @@ class TestDrainAndTeardown:
             never.cancel()
 
 
+class SlowPlugin(ToolPlugin):
+    name = "slow"
+    description = "slow"
+    param_model = None
+    capabilities = set()
+    safety = SafetyProfile()
+
+    async def setup(self, ctx):
+        pass
+
+    async def execute(self, ctx, **params):
+        await asyncio.sleep(0.2)
+        return ToolResult.ok(name="slow", content="done", duration_ms=0.0)
+
+
+@pytest.mark.service
+class TestExecuteInflight:
+    @pytest.mark.asyncio
+    async def test_execute_tracks_inflight(self):
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([SlowPlugin], ctx)
+        task = asyncio.create_task(tm.execute("slow", ctx=ToolContext()))
+        await asyncio.sleep(0.05)
+        assert len(tm._inflight["slow"]) == 1
+        await task
+        assert tm._inflight["slow"] == set()
+
+    @pytest.mark.asyncio
+    async def test_executing_still_populated(self):
+        tm = ToolManager(); ctx = PluginContext()
+        await tm.load_all([SlowPlugin], ctx)
+        task = asyncio.create_task(tm.execute("slow", ctx=ToolContext()))
+        await asyncio.sleep(0.05)
+        assert "slow" in tm._executing      # executing_now 不回归
+        await task
+
+
 # ============================================================
 # ToolManager —— set_hitl_broadcast（设置 HITL 广播）
 # ============================================================
