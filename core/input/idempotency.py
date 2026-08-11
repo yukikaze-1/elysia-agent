@@ -46,6 +46,10 @@ _DEFAULT_TTL_SECONDS = 3600.0
 # 全局单源——idempotency_repo._is_stale 惰性 import 本常量，禁止在 repo 层重定义。
 GRACE_SECONDS = 30.0
 
+# 新鲜 CLAIMED 命中的 IN_PROGRESS 拒绝 ACK retryAfterMs（= GRACE_SECONDS 毫秒）。
+# 语义：原请求大概率仍在途，客户端应在此退避后重试；Task 6 golden 帧同值单源。
+_IN_PROGRESS_RETRY_AFTER_MS = int(GRACE_SECONDS * 1000)
+
 
 @dataclass
 class IdempotencyEntry:

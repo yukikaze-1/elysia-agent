@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import pytest
 
 from core.input.idempotency import (
+    _IN_PROGRESS_RETRY_AFTER_MS,
     IdempotencyEntry,
     StoreResult,
     configure_store,
@@ -25,6 +26,7 @@ from core.input.idempotency import (
     reset_store,
 )
 from core.input.rate_limiter import RateLimiter
+from core.input.voice_sessions import VoiceSessionError
 from core.storage.idempotency_repo import (
     COLLECTION,
     ClaimResult,
@@ -172,10 +174,10 @@ class TestWsHandlerProductMode:
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeAgent, FakeWs
 
-        configure_store(_down_repo(), product_mode=True)
+        configure_store(_FlipRepo(available=False), product_mode=True)
         ws = FakeWs()
         agent = FakeAgent(ws)
-        agent.bus = type("Bus", (), {"post": lambda self, d: None})()
+        agent.bus = type("Bus", (), {"post": lambda d: None})()
         await handle_json_message(
             {"type": "text", "content": "你好", "clientRequestId": "r1"},
             agent, None, ws, voice_mgr=None)
@@ -184,6 +186,9 @@ class TestWsHandlerProductMode:
         assert acks[-1]["status"] == "rejected"
         assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
         assert acks[-1]["error"]["retryable"] is True
+        # D3：STORAGE_UNAVAILABLE rejected ACK 的 details 携带当前 idempotency_durable
+        assert acks[-1]["error"]["details"]["idempotency_durable"] is get_store().durable
+        assert get_store().durable is False
 
 
 class TestServerInfoExposure:
@@ -744,3 +749,314 @@ class TestStoreOverlay:
         assert r2.acquired is False
         assert r2.entry.user_message_id == "msg_1"  # 既有 entry（去重，不新生成）
         assert (await store.lookup("default", "crid")).user_message_id == "msg_1"
+
+
+# ---------------------------------------------------------------------------
+# Task 4：voice.commit 顺序修正（spec §1.1 BE-P0-01#4）+ D3 durable 详情。marker=service。
+# ---------------------------------------------------------------------------
+
+
+class _FakeGenRegistry:
+    """find_by_user_message 证据 fake（stale CLAIMED 恢复判定；None = 无证据）。"""
+
+    def __init__(self, doc=None):
+        self.doc = doc
+        self.calls: list[str] = []
+
+    async def find_by_user_message(self, user_message_id):
+        self.calls.append(str(user_message_id))
+        return self.doc
+
+
+class _FakeVoiceMgr:
+    """可控 voice.commit 的 fake：commit_recording 可抛错、记录调用（防「不消费录音」断言）。"""
+
+    def __init__(self, commit_error: VoiceSessionError | None = None):
+        self.commit_error = commit_error
+        self.commit_calls: list[tuple[str, str]] = []
+
+    def commit_recording(self, recording_id: str, text: str) -> tuple[str, str, list[str]]:
+        self.commit_calls.append((recording_id, text))
+        if self.commit_error is not None:
+            raise self.commit_error
+        return text, "", []
+
+
+class _CountingSessionMgr:
+    """记录 reserve_work/release_work 调用次数（voice 顺序/泄漏断言）。"""
+
+    def __init__(self, known: set | None = None):
+        self._known = set(known or {"default", "conv_a"})
+        self.reserve_calls = 0
+        self.release_calls = 0
+
+    async def has_session(self, sid) -> bool:
+        return str(sid) in self._known
+
+    async def resolve(self, conversation_id, protocol_version):
+        return type("S", (), {"session_id": str(conversation_id or "default")})()
+
+    async def ensure_loaded(self, sid):
+        return type("S", (), {"session_id": str(sid)})()
+
+    async def reserve_work(self, conversation_id, protocol_version):
+        from core.memory.session_manager import SessionNotFoundError
+        self.reserve_calls += 1
+        sid = str(conversation_id or "default")
+        if sid not in self._known:
+            raise SessionNotFoundError(sid)
+        return type("S", (), {"session_id": sid})()
+
+    def release_work(self, sid):
+        self.release_calls += 1
+        return None
+
+
+class _VoiceFakeAgent:
+    """voice.commit 的 fake agent（输出 v2 channel + 计数 session manager + 记录 bus）。"""
+
+    def __init__(self, ws, *, session_manager: _CountingSessionMgr | None = None,
+                 gen_registry: _FakeGenRegistry | None = None):
+        from Module.output import WebSocketChannel
+        self.output = type("O", (), {
+            "_channels": [WebSocketChannel(ws, protocol_version=2)]})()
+        self.user_name = "用户"
+        self._rid = 0
+        self.idle = type("Idle", (), {"touch": lambda self: None})()
+        self.bus_posts = []
+        bus_posts = self.bus_posts
+        self.bus = type("Bus", (), {
+            "post": lambda self, d: bus_posts.append(d)})()
+        self.session_manager = session_manager or _CountingSessionMgr()
+        self._gen_registry = gen_registry
+        self.stt_enabled = True
+
+    @property
+    def generation_registry(self):
+        return self._gen_registry
+
+    def next_request_id(self):
+        self._rid += 1
+        return f"req_{self._rid}"
+
+
+def _voice_commit_msg(client_request_id: str, text: str = "你好") -> dict:
+    return {"type": "voice.commit", "recordingId": "rec_1", "text": text,
+            "clientRequestId": client_request_id, "conversationId": None}
+
+
+def _voice_digest(text: str = "你好") -> str:
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class TestVoiceCommitOrder:
+    """voice.commit：claim 前 reserve_work；acquired=False/claim 失败 → release_work +
+    对应 ACK（不消费录音）；commit_recording 失败 → reject + release_work；TAKEOVER
+    保持既有 reserve_work 从 commit_recording 续跑（不重复 reserve）。"""
+
+    pytestmark = pytest.mark.service
+
+    @pytest.mark.asyncio
+    async def test_claim_failure_releases_work_no_consume(self, fresh_store):
+        """claim 失败（产品模式 fail-closed）→ 先 reserve_work、后 release_work；
+        不调 commit_recording（不消费录音）。"""
+        from core.input.idempotency import get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.storage.idempotency_repo import IdempotencyRepository
+
+        class _ClaimFailFake(FakeDocumentDBBackend):
+            async def find(self, *a, **kw):
+                return []  # lookup miss（get 走 find）
+            async def insert_one(self, *a, **kw):
+                raise RuntimeError("Mongo down")  # claim 写穿失败 → StorageUnavailableError
+
+        configure_store(IdempotencyRepository(db=_ClaimFailFake()), product_mode=True)
+        store = get_store()
+        ws = FakeWs()
+        mgr = _CountingSessionMgr()
+        agent = _VoiceFakeAgent(ws, session_manager=mgr)
+        vmg = _FakeVoiceMgr()
+        await handle_json_message(_voice_commit_msg("vc1"), agent, None, ws, voice_mgr=vmg)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+        assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
+        assert mgr.reserve_calls == 1 and mgr.release_calls == 1, \
+            "claim 前 reserve、claim 失败后 release（不泄漏 work）"
+        assert vmg.commit_calls == [], "claim 失败不消费录音"
+
+    @pytest.mark.asyncio
+    async def test_acquired_false_releases_work_no_consume(self, fresh_store):
+        """并发 loser（store 返回 acquired=False）→ release_work + IN_PROGRESS 拒绝，
+        不消费录音（claim 未获取不进入 commit）。"""
+        import core.input.ws_handler as _m
+        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+
+        class _LoserStore(IdempotencyStore):
+            """lookup 恒 miss；store 返回既有新鲜 CLAIMED winner（acquired=False）。"""
+
+            def __init__(self, winner: IdempotencyEntry):
+                super().__init__()
+                self.winner = winner
+
+            async def lookup(self, conversation_id, client_request_id):
+                return None
+
+            async def store(self, conversation_id, client_request_id, entry):
+                return StoreResult(entry=self.winner, acquired=False)
+
+        winner = IdempotencyEntry(
+            user_message_id="msg_winner", content_digest=_voice_digest(),
+            created_at=time.monotonic(), conversation_id="default")
+        original = _m.get_store
+        _m.get_store = lambda: _LoserStore(winner)
+        try:
+            ws = FakeWs()
+            mgr = _CountingSessionMgr()
+            agent = _VoiceFakeAgent(ws, session_manager=mgr)
+            vmg = _FakeVoiceMgr()
+            await handle_json_message(_voice_commit_msg("vc2"), agent, None, ws, voice_mgr=vmg)
+        finally:
+            _m.get_store = original
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+        assert acks[-1]["error"]["code"] == "IN_PROGRESS"
+        assert acks[-1]["error"]["retryable"] is True
+        assert acks[-1]["error"]["retryAfterMs"] == _IN_PROGRESS_RETRY_AFTER_MS == 30000
+        assert mgr.reserve_calls == 1 and mgr.release_calls == 1
+        assert vmg.commit_calls == [], "loser 不消费录音"
+
+    @pytest.mark.asyncio
+    async def test_recording_failure_rejects_and_releases(self, fresh_store):
+        """commit_recording 抛 VoiceSessionError → store.reject + release_work + rejected ACK。"""
+        from core.input.idempotency import get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.input.voice_sessions import VoiceSessionError
+        from core.storage.idempotency_repo import STATUS_REJECTED
+
+        ws = FakeWs()
+        mgr = _CountingSessionMgr()
+        agent = _VoiceFakeAgent(ws, session_manager=mgr)
+        vmg = _FakeVoiceMgr(commit_error=VoiceSessionError(
+            "VOICE_RECORDING_NOT_FOUND", "无待提交录音"))
+        await handle_json_message(_voice_commit_msg("vc3"), agent, None, ws, voice_mgr=vmg)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+        assert acks[-1]["error"]["code"] == "VOICE_RECORDING_NOT_FOUND"
+        assert mgr.reserve_calls == 1 and mgr.release_calls == 1
+        assert vmg.commit_calls == [("rec_1", "你好")], "录音已被消费（进入 commit）"
+        entry = await get_store().lookup("default", "vc3")
+        assert entry is not None and entry.status == STATUS_REJECTED
+        assert entry.error["code"] == "VOICE_RECORDING_NOT_FOUND"
+
+    @pytest.mark.asyncio
+    async def test_takeover_keeps_existing_reserve_work(self, fresh_store):
+        """TAKEOVER（stale CLAIMED + 无证据，经 store 路径）→ 保持既有 reserve_work，
+        从 commit_recording 续跑（不重复 reserve、不释放 work）。"""
+        import core.input.ws_handler as _m
+        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+
+        class _TakeoverStore(IdempotencyStore):
+            """首个 store 返回 stale CLAIMED loser；二次 store 接管返回 acquired=True。"""
+
+            def __init__(self, stale: IdempotencyEntry):
+                super().__init__()
+                self.stale = stale
+                self.store_calls = 0
+
+            async def lookup(self, conversation_id, client_request_id):
+                return None
+
+            async def store(self, conversation_id, client_request_id, entry):
+                self.store_calls += 1
+                if self.store_calls == 1:
+                    return StoreResult(entry=self.stale, acquired=False)
+                return StoreResult(entry=self.stale, acquired=True)
+
+        stale = IdempotencyEntry(
+            user_message_id="msg_voice", content_digest=_voice_digest(),
+            created_at=time.monotonic(), conversation_id="default",
+            claimed_at=time.time() - 60.0)  # 过期 CLAIMED
+        fake_store = _TakeoverStore(stale)
+        original = _m.get_store
+        _m.get_store = lambda: fake_store
+        try:
+            ws = FakeWs()
+            mgr = _CountingSessionMgr()
+            agent = _VoiceFakeAgent(ws, session_manager=mgr,
+                                    gen_registry=_FakeGenRegistry(doc=None))  # 无证据
+            vmg = _FakeVoiceMgr()
+            await handle_json_message(_voice_commit_msg("vc4"), agent, None, ws, voice_mgr=vmg)
+        finally:
+            _m.get_store = original
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "accepted", f"实际 {ws.sent}"
+        assert acks[-1]["messageId"] == "msg_voice", "接管沿用原 messageId"
+        assert mgr.reserve_calls == 1, "TAKEOVER 不重复 reserve"
+        assert mgr.release_calls == 0, "TAKEOVER 保持既有 work，不释放"
+        assert fake_store.store_calls == 2, "接管 = 二次 claim"
+        assert vmg.commit_calls == [("rec_1", "你好")], "从 commit_recording 续跑"
+        assert len(agent.bus_posts) == 1, "续跑后正常入队"
+
+    @pytest.mark.asyncio
+    async def test_voice_accepted_completes_before_ack(self, fresh_store):
+        """voice 正常路径：complete 在 accepted ACK 前（complete-before-ack 不变量）。"""
+        from core.input.idempotency import get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.storage.idempotency_repo import STATUS_ACCEPTED
+
+        ws = FakeWs()
+        mgr = _CountingSessionMgr()
+        agent = _VoiceFakeAgent(ws, session_manager=mgr)
+        vmg = _FakeVoiceMgr()
+        await handle_json_message(_voice_commit_msg("vc5"), agent, None, ws, voice_mgr=vmg)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "accepted", f"实际 {ws.sent}"
+        assert acks[-1]["messageId"]
+        assert len(agent.bus_posts) == 1
+        # complete 已落库（accepted ACK 前）→ 重放命中 accepted
+        entry = await get_store().lookup("default", "vc5")
+        assert entry is not None and entry.status == STATUS_ACCEPTED
+        assert entry.received_at == acks[-1]["receivedAt"], "complete 与 ack 同一 receivedAt"
+        # 同键重放 → 重放原 accepted（receivedAt 持久化原值，逐字一致）
+        ws.sent.clear()
+        await handle_json_message(_voice_commit_msg("vc5"), agent, None, ws, voice_mgr=vmg)
+        acks2 = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks2 and acks2[-1]["status"] == "accepted"
+        assert acks2[-1]["receivedAt"] == entry.received_at
+        assert len(agent.bus_posts) == 1, "重放不重复入队"
+
+
+class TestD3DurableInDetails:
+    """D3：STORAGE_UNAVAILABLE rejected ACK/error 的 details 携带当前 idempotency_durable。"""
+
+    pytestmark = pytest.mark.service
+
+    @pytest.mark.asyncio
+    async def test_voice_storage_unavailable_ack_carries_durable(self, fresh_store):
+        """voice.commit 的 STORAGE_UNAVAILABLE rejected ACK error.details 含 durable。"""
+        from core.input.idempotency import get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+
+        configure_store(_FlipRepo(available=False), product_mode=True)
+        store = get_store()
+        ws = FakeWs()
+        mgr = _CountingSessionMgr()
+        agent = _VoiceFakeAgent(ws, session_manager=mgr)
+        vmg = _FakeVoiceMgr()
+        await handle_json_message(_voice_commit_msg("vc_d3"), agent, None, ws, voice_mgr=vmg)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+        assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
+        assert acks[-1]["error"]["details"]["idempotency_durable"] is store.durable
+        assert store.durable is False
+        assert mgr.reserve_calls == 0, "lookup fail-closed 在 reserve 前返回"
+

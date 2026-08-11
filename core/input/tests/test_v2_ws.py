@@ -10,6 +10,7 @@
 import asyncio
 import json
 import struct
+import time
 
 import pytest
 from aiohttp import WSMsgType
@@ -514,7 +515,7 @@ class TestV2EmptyTextAck:
 
 @pytest.mark.service
 class TestQueueFullAck:
-    """§3.7：纯文本队列满 → rejected QUEUE_FULL + entry 删；抛异常 → rejected INTERNAL + entry 删。"""
+    """§3.7：纯文本队列满 → rejected QUEUE_FULL + reject 持久化；抛异常 → rejected INTERNAL + reject 持久化。"""
 
     class _QueueFullAgent:
         """process_message 返回 False（队列满）。"""
@@ -539,6 +540,7 @@ class TestQueueFullAck:
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.input.idempotency import get_store
+        from core.storage.idempotency_repo import STATUS_REJECTED
         ws = FakeWs()
         agent = self._QueueFullAgent(ws)
         await handle_json_message(
@@ -548,14 +550,25 @@ class TestQueueFullAck:
         assert ack and ack[0]["status"] == "rejected"
         assert ack[0]["error"]["code"] == "QUEUE_FULL"
         assert ack[0]["error"]["retryable"] is True
-        # 幂等 entry 已删——同 clientRequestId 重试可重新进入（lookup 未命中）
-        assert await get_store().lookup("default", "q1") is None
+        # Task 4：reject 持久化——同 clientRequestId 重试重放原 rejected（非重新进入）
+        entry = await get_store().lookup("default", "q1")
+        assert entry is not None and entry.status == STATUS_REJECTED
+        assert entry.error["code"] == "QUEUE_FULL"
+        ws.sent.clear()
+        await handle_json_message(
+            {"type": "text", "content": "你好", "clientRequestId": "q1"},
+            agent, None, ws, voice_mgr=None)
+        ack2 = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert ack2 and ack2[0]["status"] == "rejected"
+        assert ack2[0]["error"] == ack[0]["error"], "rejected 重放 error 逐字一致"
+        assert ack2[0]["receivedAt"] == ack[0]["receivedAt"], "receivedAt 用持久化原值"
 
     @pytest.mark.asyncio
     async def test_plain_text_exception_rejected_and_entry_deleted(self, fresh_idempotency):
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.input.idempotency import get_store
+        from core.storage.idempotency_repo import STATUS_REJECTED
         ws = FakeWs()
         agent = self._RaisingAgent(ws)
         await handle_json_message(
@@ -564,7 +577,10 @@ class TestQueueFullAck:
         ack = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert ack and ack[0]["status"] == "rejected"
         assert ack[0]["error"]["code"] == "INTERNAL"
-        assert await get_store().lookup("default", "q2") is None  # entry 已删——异常不残留
+        # Task 4：异常路径 persist rejected（不残留 CLAIMED——重放原 rejected）
+        entry = await get_store().lookup("default", "q2")
+        assert entry is not None and entry.status == STATUS_REJECTED
+        assert entry.error["code"] == "INTERNAL"
 
     @pytest.mark.asyncio
     async def test_plain_text_accepted_adds_sent_id(self, fresh_idempotency):
@@ -584,10 +600,11 @@ class TestQueueFullAck:
 
     @pytest.mark.asyncio
     async def test_media_exception_rejected_and_entry_deleted(self, fresh_idempotency):
-        """#12：附件消息 process_message 抛异常 → rejected INTERNAL + entry 删（异常不残留）。"""
+        """#12：附件消息 process_message 抛异常 → rejected INTERNAL + reject 持久化。"""
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.input.idempotency import get_store
+        from core.storage.idempotency_repo import STATUS_REJECTED
         ws = FakeWs()
         agent = self._RaisingAgent(ws)
         async def _fake_get(self, aid):
@@ -605,7 +622,10 @@ class TestQueueFullAck:
         ack = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert ack and ack[0]["status"] == "rejected"
         assert ack[0]["error"]["code"] == "INTERNAL"
-        assert await get_store().lookup("default", "q4") is None  # entry 已删——重试可重新进入
+        # Task 4：异常路径 persist rejected（重试重放原 rejected，不重新进入）
+        entry = await get_store().lookup("default", "q4")
+        assert entry is not None and entry.status == STATUS_REJECTED
+        assert entry.error["code"] == "INTERNAL"
 
 
 import re as _re
@@ -1048,3 +1068,354 @@ class TestV2TextValidation:
         assert acks and acks[-1]["status"] == "accepted", f"实际 {ws.sent}"
         # 缺省 conversationId 在 ACK 前解析并固化为实际 active，避免消费前切 active 改投。
         assert agent.processed_kwargs["conversation_id"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# Task 4：v2 幂等命中状态机 + 并发 loser 分支（spec §1.1/§1.2，fake agent + fake
+# generation registry + fake session manager；marker=service）。
+# ---------------------------------------------------------------------------
+
+
+class _FakeGenRegistry:
+    """find_by_user_message 证据 fake（stale CLAIMED 恢复判定；None = 无证据）。"""
+
+    def __init__(self, doc=None):
+        self.doc = doc
+        self.calls: list[str] = []
+
+    async def find_by_user_message(self, user_message_id):
+        self.calls.append(str(user_message_id))
+        return self.doc
+
+
+class _FakeSessionMgr:
+    """计数版 session_manager：text 走 has_session/resolve/ensure_loaded；
+    voice 断言 reserve_work/release_work 顺序与泄漏。"""
+
+    def __init__(self, known=None):
+        self._known = set(known or {"default", "conv_a"})
+        self.reserve_calls = 0
+        self.release_calls = 0
+
+    async def has_session(self, sid) -> bool:
+        return str(sid) in self._known
+
+    async def resolve(self, conversation_id, protocol_version):
+        return type("S", (), {"session_id": str(conversation_id or "default")})()
+
+    async def ensure_loaded(self, sid):
+        return type("S", (), {"session_id": str(sid)})()
+
+    async def reserve_work(self, conversation_id, protocol_version):
+        from core.memory.session_manager import SessionNotFoundError
+        self.reserve_calls += 1
+        sid = str(conversation_id or "default")
+        if sid not in self._known:
+            raise SessionNotFoundError(sid)
+        return type("S", (), {"session_id": sid})()
+
+    def release_work(self, sid):
+        self.release_calls += 1
+        return None
+
+
+class _FakeV2Agent:
+    """_route_v2_text 的 fake agent（可注入 process 行为 / generation 证据 / 附件 repo）。"""
+
+    def __init__(self, ws, *, gen_registry=None, session_manager=None):
+        from Module.output import WebSocketChannel
+        self.output = type("O", (), {
+            "_channels": [WebSocketChannel(ws, protocol_version=2)]})()
+        self.user_name = "用户"
+        self._rid = 0
+        self.idle = type("Idle", (), {"touch": lambda self: None})()
+        self.stt_enabled = True
+        self.bus_posts = []
+        bus_posts = self.bus_posts
+        self.bus = type("Bus", (), {
+            "post": lambda self, d: bus_posts.append(d)})()
+        self.process_calls = 0
+        self.process_result: bool = True
+        self.process_exc: Exception | None = None
+        self.gen_registry = gen_registry
+        self.session_manager = session_manager or _FakeSessionMgr()
+
+    @property
+    def generation_registry(self):
+        return self.gen_registry
+
+    def next_request_id(self):
+        self._rid += 1
+        return f"req_{self._rid}"
+
+    async def process_message(self, **kwargs):
+        self.process_calls += 1
+        if self.process_exc is not None:
+            raise self.process_exc
+        return self.process_result
+
+
+class _FakeAttachmentRepo:
+    """附件 fake：get 恒返回 active；add_ref 可注入失败；记录 release_reservation。"""
+
+    def __init__(self, *, fail_on=None):
+        self.fail_on = set(fail_on or [])
+        self.released: list[str] = []
+        self.refs: list[tuple[str, str]] = []
+
+    async def get(self, attachment_id):
+        return {"attachment_id": str(attachment_id), "kind": "image", "status": "active",
+                "mime": "image/png", "filename": "x.png", "size": 10}
+
+    async def add_ref(self, aid, mid):
+        if str(aid) in self.fail_on:
+            from core.storage.attachment_repo import StorageUnavailableError
+            raise StorageUnavailableError("offline")
+        self.refs.append((str(aid), str(mid)))
+
+    async def release_reservation(self, aid, mid):
+        self.released.append(str(aid))
+
+
+def _text_msg(client_request_id: str, content: str = "你好") -> dict:
+    return {"type": "text", "content": content, "clientRequestId": client_request_id}
+
+
+@pytest.mark.service
+class TestV2IdempotencyStateMachine:
+    """Task 4：v2 text/附件幂等命中状态机（§1.1/§1.2）+ reject 持久化 + 并发去重。"""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_same_key_same_content_single_process(self, fresh_idempotency):
+        """并发同键同内容：单进程内并发请求恒恰一次 process；accepted ACK 同 messageId。"""
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        # 首请求（winner）先完成 → 后续并发请求均为 accepted 重放
+        await handle_json_message(_text_msg("r1"), agent, None, ws, voice_mgr=None)
+        await asyncio.gather(
+            handle_json_message(_text_msg("r1"), agent, None, ws, voice_mgr=None),
+            handle_json_message(_text_msg("r1"), agent, None, ws, voice_mgr=None),
+        )
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        accepted = [a for a in acks if a["status"] == "accepted"]
+        assert len(accepted) == 3, f"三请求都应 accepted: {acks}"
+        assert len({a["messageId"] for a in accepted}) == 1, "同键重放须同一 messageId"
+        assert agent.process_calls == 1, "并发同键不重复 process"
+        assert len(agent.bus_posts) == 0  # text 路径不直接 bus.post（process_message 负责）
+
+    @pytest.mark.asyncio
+    async def test_concurrent_same_key_diff_content_no_crosswire(self, fresh_idempotency):
+        """并发同键异内容：winner accepted；loser 异摘要 → CONTRACT_VALIDATION，不串线。"""
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        await handle_json_message(_text_msg("r1", "内容A"), agent, None, ws, voice_mgr=None)
+        await asyncio.gather(
+            handle_json_message(_text_msg("r1", "内容A"), agent, None, ws, voice_mgr=None),
+            handle_json_message(_text_msg("r1", "内容B"), agent, None, ws, voice_mgr=None),
+        )
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        accepted = [a for a in acks if a["status"] == "accepted"]
+        rejected = [a for a in acks if a["status"] == "rejected"]
+        assert len(accepted) == 2 and all(a["messageId"] for a in accepted)
+        assert len(rejected) == 1
+        assert rejected[0]["error"]["code"] == "CONTRACT_VALIDATION"
+        assert not rejected[0].get("messageId"), "异摘要拒绝不串 winner 的 messageId"
+        assert agent.process_calls == 1, "异内容拒绝不触发 process"
+
+    @pytest.mark.asyncio
+    async def test_claimed_fresh_rejects_in_progress(self, fresh_idempotency):
+        """同键 CLAIMED 新鲜 → rejected IN_PROGRESS（retryable + retryAfterMs=30000）。"""
+        import hashlib as _hl
+        from core.input.idempotency import (
+            _IN_PROGRESS_RETRY_AFTER_MS, IdempotencyEntry, get_store,
+        )
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        store = get_store()
+        digest = _hl.sha256("你好".encode("utf-8")).hexdigest()
+        await store.store("default", "r1", IdempotencyEntry(
+            user_message_id="msg_inflight", content_digest=digest,
+            created_at=time.monotonic(), conversation_id="default"))
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        await handle_json_message(_text_msg("r1"), agent, None, ws, voice_mgr=None)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
+        err = acks[-1]["error"]
+        assert err["code"] == "IN_PROGRESS"
+        assert err["retryable"] is True
+        assert err["retryAfterMs"] == _IN_PROGRESS_RETRY_AFTER_MS == 30000
+        assert agent.process_calls == 0, "新鲜 CLAIMED 命中不进入业务处理"
+        # entry 保持 claimed（未接管、未 complete）
+        entry = await store.lookup("default", "r1")
+        assert entry is not None and entry.status == "claimed"
+
+    @pytest.mark.asyncio
+    async def test_claimed_stale_with_evidence_replays_accepted(self, fresh_idempotency):
+        """同键 CLAIMED 过期 + 证据（generation 存在）→ 重放 accepted + complete。"""
+        import hashlib as _hl
+        from core.input.idempotency import IdempotencyEntry, get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        store = get_store()
+        digest = _hl.sha256("你好".encode("utf-8")).hexdigest()
+        await store.store("default", "r1", IdempotencyEntry(
+            user_message_id="msg_stale_evidence", content_digest=digest,
+            created_at=time.monotonic(), conversation_id="default"))
+        entry = store._entries[("default", "r1")]  # noqa: SLF001 — 测试篡改 claimed_at
+        entry.claimed_at = time.time() - 60.0  # 过期 CLAIMED（> GRACE_SECONDS）
+        ws = FakeWs()
+        gen = _FakeGenRegistry(doc={"generation_id": "gen_1"})
+        agent = _FakeV2Agent(ws, gen_registry=gen)
+        await handle_json_message(_text_msg("r1"), agent, None, ws, voice_mgr=None)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "accepted", f"实际 {ws.sent}"
+        assert acks[-1]["messageId"] == "msg_stale_evidence"
+        assert agent.process_calls == 0, "有证据不重执行"
+        assert gen.calls == ["msg_stale_evidence"]
+        # complete 已前置：entry 标记 accepted（重放后终态确定）
+        assert (await store.lookup("default", "r1")).status == "accepted"
+
+    @pytest.mark.asyncio
+    async def test_claimed_stale_no_evidence_takeover_reprocesses(self, fresh_idempotency):
+        """同键 CLAIMED 过期 + 无证据 → 接管重执行（process 一次，同 messageId）。
+
+        接管经 repo.claim 对 stale CLAIMED 的 update_one 实现（acquired=True）——
+        纯内存路径内存优先去重不可接管，故用 fake repo 预置 stale CLAIMED 文档。
+        """
+        import hashlib as _hl
+        from core.input.idempotency import configure_store, get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.storage.idempotency_repo import IdempotencyRepository, STATUS_CLAIMED
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        repo = IdempotencyRepository(db=FakeDocumentDBBackend())
+        await repo.claim(
+            "default", "r1",
+            content_digest=_hl.sha256("你好".encode("utf-8")).hexdigest(),
+            message_id="msg_takeover", status=STATUS_CLAIMED,
+            claimed_at=time.time() - 60.0,  # 过期 CLAIMED（> GRACE_SECONDS）
+            expires_at=None)
+        configure_store(repo, product_mode=False)
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws, gen_registry=_FakeGenRegistry(doc=None))  # 无证据
+        await handle_json_message(_text_msg("r1"), agent, None, ws, voice_mgr=None)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "accepted", f"实际 {ws.sent}"
+        assert acks[-1]["messageId"] == "msg_takeover", "接管沿用原 messageId"
+        assert agent.process_calls == 1, "无证据接管重执行一次"
+        assert (await get_store().lookup("default", "r1")).status == "accepted"
+
+    @pytest.mark.asyncio
+    async def test_rejected_replay_byte_identical(self, fresh_idempotency):
+        """rejected 路径（QUEUE_FULL）→ store.reject；同键重试重放原 rejected（receivedAt 原值）。"""
+        from core.input.idempotency import get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        agent.process_result = False  # 队列满
+        await handle_json_message(_text_msg("q1"), agent, None, ws, voice_mgr=None)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected"
+        assert acks[-1]["error"]["code"] == "QUEUE_FULL"
+        first_error = dict(acks[-1]["error"])
+        first_received = acks[-1]["receivedAt"]
+        # entry 已 reject（不再 delete）：重试重放原 rejected ACK（逐字一致）
+        entry = await get_store().lookup("default", "q1")
+        assert entry is not None and entry.status == "rejected"
+        assert entry.error["code"] == "QUEUE_FULL"
+        ws.sent.clear()
+        await handle_json_message(_text_msg("q1"), agent, None, ws, voice_mgr=None)
+        acks2 = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks2 and acks2[-1]["status"] == "rejected"
+        assert acks2[-1]["error"] == first_error, "rejected 重放 error 逐字一致"
+        assert acks2[-1]["receivedAt"] == first_received, "rejected 重放 receivedAt 用持久化原值"
+        assert acks2[-1]["clientRequestId"] == "q1"
+        assert agent.process_calls == 1, "rejected 重放不重复 process"
+
+    @pytest.mark.asyncio
+    async def test_process_exception_rejects_internal(self, fresh_idempotency):
+        """process_message 抛异常 → store.reject INTERNAL；重试重放原 rejected。"""
+        from core.input.idempotency import get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        agent.process_exc = RuntimeError("boom")
+        await handle_json_message(_text_msg("q2"), agent, None, ws, voice_mgr=None)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected"
+        assert acks[-1]["error"]["code"] == "INTERNAL"
+        entry = await get_store().lookup("default", "q2")
+        assert entry is not None and entry.status == "rejected"
+        assert entry.error["code"] == "INTERNAL"
+
+    @pytest.mark.asyncio
+    async def test_attachment_refs_failure_reject_and_rollback(self, fresh_idempotency):
+        """附件 refs 失败 → store.reject STORAGE_UNAVAILABLE + 附件预留回滚。"""
+        from core.input.idempotency import get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        repo = _FakeAttachmentRepo(fail_on={"att_y"})
+        agent.attachment_repo = repo
+        await handle_json_message(
+            {"type": "text", "content": "hi", "clientRequestId": "ab",
+             "attachments": [{"attachmentId": "att_x", "kind": "image", "mime": "image/png"},
+                             {"attachmentId": "att_y", "kind": "image", "mime": "image/png"}]},
+            agent, None, ws, voice_mgr=None)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected"
+        assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
+        assert agent.process_calls == 0, "refs 未全持久化不调 process"
+        assert repo.released == ["att_x"], "已预留 refs 需回滚"
+        entry = await get_store().lookup("default", "ab")
+        assert entry is not None and entry.status == "rejected"
+        assert entry.error["code"] == "STORAGE_UNAVAILABLE"
+
+    @pytest.mark.asyncio
+    async def test_storage_unavailable_ack_carries_idempotency_durable(self, fresh_idempotency):
+        """D3：STORAGE_UNAVAILABLE rejected ACK 的 error.details 含 idempotency_durable。"""
+        from core.input.idempotency import configure_store, get_store
+        from core.input.ws_handler import handle_json_message
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.storage.attachment_repo import StorageUnavailableError
+
+        class _OfflineRepo:
+            """is_connected=False + 全操作抛 StorageUnavailableError（离线 Mongo fake）。"""
+            is_connected = False
+
+            async def get(self, conversation_id, client_request_id):
+                raise StorageUnavailableError("Mongo down")
+
+            async def claim(self, *a, **kw):
+                raise StorageUnavailableError("Mongo down")
+
+            async def complete(self, *a, **kw):
+                raise StorageUnavailableError("Mongo down")
+
+            async def reject(self, *a, **kw):
+                raise StorageUnavailableError("Mongo down")
+
+            async def release(self, *a, **kw):
+                raise StorageUnavailableError("Mongo down")
+
+        # 产品模式 + Mongo 离线 → lookup fail-closed → STORAGE_UNAVAILABLE
+        configure_store(_OfflineRepo(), product_mode=True)
+        store = get_store()
+        assert store.durable is False
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        await handle_json_message(_text_msg("durable"), agent, None, ws, voice_mgr=None)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["status"] == "rejected"
+        assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
+        assert acks[-1]["error"]["details"]["idempotency_durable"] is store.durable
+        assert store.durable is False
+

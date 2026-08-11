@@ -9,7 +9,7 @@
 - 附件 404 → rejected ATTACHMENT_NOT_FOUND + 不落幂等 entry
 - stickerId 不在注册表 → rejected CONTRACT_VALIDATION
 - 空文本 sticker-only → 进门触发生成（content=[StickerPart dict]）
-- 队列满（mock process_message=False）→ rejected QUEUE_FULL + 幂等 entry 删除 + refs 不递增
+- 队列满（mock process_message=False）→ rejected QUEUE_FULL + 幂等 entry reject 持久化 + refs 不递增
 - 同 clientRequestId 不同附件 → 摘要不同 → 非幂等重放（§4.2 异摘要 → rejected）
 - 删除消息 → refs 递减 + ref_count 归零 → mark_deleted + resolver unregister
 - _resolve_image_source：/api/attachments/{id} → data URI（resolver 注册后）
@@ -338,8 +338,8 @@ class TestAttachmentMessage:
             await agent.stop()
 
     @pytest.mark.asyncio
-    async def test_queue_full_rejected_no_refs_entry_deleted(self, aiohttp_client):
-        """队列满（mock process_message=False）→ rejected QUEUE_FULL + 幂等 entry 删除 + refs 不递增。"""
+    async def test_queue_full_rejected_no_refs_entry_rejected(self, aiohttp_client):
+        """队列满（mock process_message=False）→ rejected QUEUE_FULL + 幂等 entry reject 持久化 + refs 不递增。"""
         agent, app = _make_agent_app()
         _add_attachment(agent._attachment_repo, "att_x")  # noqa: SLF001
         client = await aiohttp_client(app)
@@ -361,8 +361,10 @@ class TestAttachmentMessage:
             # refs 不递增
             doc = agent._attachment_repo.records["att_x"]  # noqa: SLF001
             assert doc["ref_count"] == 0 and not doc["refs"]
-            # 幂等 entry 已删：重试重新进入（不重发 accepted）
-            assert await get_store().lookup("default", "req_qfull") is None
+            # Task 4：reject 持久化——重试重放原 rejected QUEUE_FULL（非重新进入）
+            entry = await get_store().lookup("default", "req_qfull")
+            assert entry is not None and entry.status == "rejected"
+            assert entry.error["code"] == "QUEUE_FULL"
             await ws.send_json({
                 "type": "text", "content": "hi",
                 "clientRequestId": "req_qfull",
@@ -371,6 +373,8 @@ class TestAttachmentMessage:
             ack2 = await _read_ack(ws)
             assert ack2["status"] == "rejected"
             assert ack2["error"]["code"] == "QUEUE_FULL"
+            assert ack2["error"] == ack["error"], "rejected 重放 error 逐字一致"
+            assert ack2["receivedAt"] == ack["receivedAt"], "receivedAt 用持久化原值"
             await ws.close()
         finally:
             await agent.stop()
