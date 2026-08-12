@@ -266,6 +266,9 @@ class IdempotencyStore:
         ``_needs_recovery = False``（durable 翻回）。并发降级 ``store()`` 在循环
         await 间隙新增的 entry（写入路径已置 ``_needs_recovery=True``）不在此轮被清
         ——留给下轮 recover reconcile，防 S2 重复处理窗口经并发向量复开。
+        守卫边界：子集判断只覆盖「循环期间新增 key」（并发降级 store）；快照内 key 的
+        并发终态写穿失败（complete/reject，不改 key 集但置位）不会被重检——该残余属
+        既有 BE-RISK-01 类（终态 ACK 跨重启丢失），非本守卫引入，接受。
         任一 get/restore 失败 → 异常冒泡，不翻 durable（下轮健康循环重试）。
         repo 为 None（纯内存）→ no-op。
         """
