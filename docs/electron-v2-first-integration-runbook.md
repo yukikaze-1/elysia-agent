@@ -12,7 +12,7 @@
 | 项 | 值 | 说明 |
 |---|---|---|
 | **backend runtime SHA** | **`<待联调回填>`** | 联调实际启动/冻结的后端 commit（`git rev-parse HEAD`），与前端 manifest 固定一致（≠ contractCommit） |
-| **schemaHash** | `7a5348a4767a9fc6` | 机器契约身份标识（`frontend_contract/contract.schema.json`）；联调前 `python -m frontend_contract --check` + `python scripts/gen_contract_frames.py --check` 必须通过 |
+| **schemaHash** | `7a5348a4767a9fc6` | 机器契约身份标识（`frontend_contract/contract.schema.json`，**非 server_info wire 字段**）；联调前 `python -m frontend_contract --check` + `python scripts/gen_contract_frames.py --check` 必须通过，并记录冻结产物 hash |
 | contractCommit | `5690cfc` | 契约生成时 SHA（非运行时，见 `docs/contract-release-2026-08-11.md`） |
 | **frontend SHA** | **`<待联调回填>`** | elysia-frontend 联调 commit（含 raw wire + frame mapper + 负面帧 replay） |
 | transportVersion / protocolVersion | `"2"` / `"2.0"` | 握手头 `X-Protocol-Version: 2`（缺省/`"1"`→v1；`"2.0"`/`"3"`→升级前 400） |
@@ -57,7 +57,7 @@
 ## 5. clean-start bootstrap（全新数据目录）
 
 1. `GET /api/sessions` → `[default(active=true)]`（恒恰一个 active；detail `updatedAt` 非空可解析）；
-2. WS 首帧 `session{conversationId:"default", ...}`（回放）→ `server_info`（features/version/schemaHash）；
+2. WS 首帧 `session{conversationId:"default", ...}`（回放）→ `server_info`（features/version——**无 schemaHash**；schemaHash 仅离线门禁，见 :15）；
 3. Electron **无需手工「新建会话」即可发送**——缺省 `conversationId` 解析为当前 active；显式 `conversationId` 必须是已登记会话（未知 → rejected `SESSION_NOT_FOUND`，禁幽灵会话）。
 
 ## 6. ACK 成功标准与负面用例
@@ -122,7 +122,7 @@ generation.started                    # messageId = assistant 父消息（预分
 首轮受控联调记录以下序列全部通过（结果只标「happy path 已联调」，不据此宣称故障恢复/生产就绪）：
 
 1. **session**：WS 首帧 `session` 回放，`conversationId=default`；
-2. **server_info**：握手快照（版本 + schemaHash + `features`）；
+2. **server_info**：握手快照（版本 + `features`；**不携带 schemaHash**——schemaHash 是 `contract.schema.json` 的离线身份，联调前经 `python -m frontend_contract --check` 验证，不上握手帧）；
 3. **expression**：情绪/表情帧出现；
 4. **REST 创建/列表**：`POST/GET /api/sessions`——创建新会话 + 列表含 default active；
 5. **accepted ACK**：messageId 非空、clientRequestId 回显原值；
