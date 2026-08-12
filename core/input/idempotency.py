@@ -130,6 +130,7 @@ class IdempotencyStore:
         self._repo: IdempotencyRepository | None = None
         self._product_mode = False
         self._in_memory_fallback = True
+        self._needs_recovery = False   # BE-P1-07：存在未 reconcile 到 Mongo 的内存记录
 
     # ---- 配置 ----
 
@@ -147,8 +148,21 @@ class IdempotencyStore:
 
     @property
     def durable(self) -> bool:
-        """当前是否持久化（Mongo 可用且非降级）。server_info 能力暴露用。"""
-        return self._repo is not None and not self._in_memory_fallback
+        """当前是否完整持久化（BE-P1-07 强化）：repo 已配置 且 非操作级降级
+        且 无未 reconcile 记录。server_info 能力暴露用——无关成功操作不再能静默清零。
+        """
+        return (self._repo is not None and not self._in_memory_fallback
+                and not self._needs_recovery)
+
+    @property
+    def configured(self) -> bool:
+        """是否配置了持久化后端（repo 非 None；恢复触发 guard，防 repo-None 死循环）。"""
+        return self._repo is not None
+
+    @property
+    def needs_recovery(self) -> bool:
+        """是否有未 reconcile 到 Mongo 的内存记录（/ready 门禁信号）。"""
+        return self._repo is not None and self._needs_recovery
 
     # ---- operations ----
 
@@ -219,6 +233,7 @@ class IdempotencyStore:
                     return StoreResult(entry=prev, acquired=False)
                 self._apply_timestamps(entry)
                 self._entries[(conversation_id, client_request_id)] = entry
+                self._needs_recovery = True  # BE-P1-07：降级写入未 reconcile
                 return StoreResult(entry=entry, acquired=True)
             self._in_memory_fallback = False
             # acquired=True（新插入/接管）与 False（并发 loser/重放）都写内存
@@ -306,10 +321,14 @@ class IdempotencyStore:
                 )
                 self._in_memory_fallback = False
             except StorageUnavailableError:
-                # 消息已 ACK：仅丢状态字段，不抛；repo 不可用 → 非 durable 窗口
+                # 消息已 ACK：仅丢状态字段，不抛；内存终态超前 Mongo → 需 recover 补落
                 logger.warning("IdempotencyStore.complete 写穿失败（key=%s/%s）",
                                conversation_id, client_request_id)
                 self._in_memory_fallback = True
+                if entry is not None:
+                    # 仅内存有 entry（可 reconcile）才置位——无 entry 的写穿失败
+                    # 无记录可补落，置位会成假 flag（recover 空转清位）
+                    self._needs_recovery = True  # BE-P1-06/07：终态未落 Mongo
 
     async def reject(self, conversation_id: str, client_request_id: str, *,
                      code: str, message: str, retryable: bool,
@@ -351,6 +370,8 @@ class IdempotencyStore:
                 logger.warning("IdempotencyStore.reject 写穿失败（key=%s/%s）",
                                conversation_id, client_request_id)
                 self._in_memory_fallback = True
+                if entry is not None:
+                    self._needs_recovery = True  # BE-P1-06/07：终态未落 Mongo
 
     # ---- 内部 ----
 
@@ -389,6 +410,7 @@ class IdempotencyStore:
         self._repo = None
         self._product_mode = False
         self._in_memory_fallback = True
+        self._needs_recovery = False   # BE-P1-07：测试隔离清位（configure 不清，防 S2 复开）
 
 
 def _mongo_expiry(ttl_seconds: float) -> datetime:
