@@ -62,7 +62,7 @@ async def restore(self, doc: dict) -> None:
         StorageUnavailableError: 存储不可用。
     """
     db = self._require_db()
-    if not doc.get("conversation_id") or not doc.get("client_request_id"):
+    if doc.get("conversation_id") is None or doc.get("client_request_id") is None:
         raise ValueError("IdempotencyRepository.restore 缺少身份键")
     set_expr = {k: v for k, v in doc.items()
                 if k not in ("conversation_id", "client_request_id")}
