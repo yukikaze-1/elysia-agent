@@ -2,8 +2,9 @@
 
 > **⚠️ 历史快照（2026-08-11 起）**：本文档记录 2026-08-10~11 的状态，**不再作为当前联调事实源**，仅作历史参考。
 > 当前事实源：
-> - **联调 runbook**：`docs/electron-v2-first-integration-runbook.md`（runtime SHA / Token / 探针口径 / WS 三头 / clean-start / ACK 成功标准与负面用例）
-> - **后端复核与整改**：`docs/review/electron-v2-first-integration-backend-review-2026-08-11.md`（P0×2 + P1×5 + P2×3，已闭环）+ `docs/review/electron-v2-backend-change-list-2026-08-11.md`
+> - **联调 runbook**：`docs/electron-v2-first-integration-runbook.md`（runtime SHA / Token / 探针口径 / WS 三头 / clean-start / ACK 成功标准与负面用例；2026-08-12 修正 `server_info` 不再声称携带 schemaHash）
+> - **后端复核与整改**：`docs/review/electron-v2-first-integration-backend-review-2026-08-11.md`（P0×2 + P1×5 + P2×3，已闭环）+ `docs/review/electron-v2-backend-change-list-2026-08-11.md` + **`docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md`（P1×2 已修复 + BE-RISK-01 接受风险）**
+> - **2026-08-12 加固后复核整改**：BE-P1-06（完整记录恢复 API `restore` 条件 upsert + recover 四分支）与 BE-P1-07（`_needs_recovery`/durable 强化 + 协调器首轮补触发 + product `/ready` 补偿门禁）**本批修复**；BE-P2-04（runbook schemaHash）修正；**BE-RISK-01 保持开放**（accepted 后、generation register 前 kill 窗口）。设计见 `docs/superpowers/specs/2026-08-12-electron-v2-backend-post-hardening-recovery-design.md`，计划见 `docs/superpowers/plans/2026-08-12-electron-v2-backend-post-hardening-recovery-plan.md`。
 > - 本文档中「浏览器 WS query-token 阻塞」「E2/E3/F 未完成」等显著过时项已针对性修订（一句话总览、§4.2、§5.2、§3.6 发布判断）；§2.1 的「发布判断原文」为 2026-08-10 评审引文，**保留原文**仅作历史记录。
 
 > **快照时间**：2026-08-10（文档持续更新，每次重大里程碑修订本文件）。
@@ -15,7 +16,7 @@
 
 ## 1. 一句话总览
 
-**后端**：P0 ×2 + P1 ×19 已全部修复清零，D6b/D6c 产品化门禁 **2026-08-11 完成**，本机/受控联调可用；正式发布前置的 F 批次工程化 + Workflow E 项（E1-E4 / F1-F5）**2026-08-11 全部完成**，不再构成发布阻塞。
+**后端**：P0 ×2 + P1 ×19 已全部修复清零，D6b/D6c 产品化门禁 **2026-08-11 完成**，本机/受控联调可用；正式发布前置的 F 批次工程化 + Workflow E 项（E1-E4 / F1-F5）**2026-08-11 全部完成**，不再构成发布阻塞。**2026-08-12 加固后复核整改**：BE-P1-06（降级终态负载丢失）/ BE-P1-07（首轮健康探测漏补偿）已修复（完整记录恢复 + 触发条件 + /ready 补偿门禁），BE-RISK-01（accepted 提交窗口）保持开放——后端可作 **happy-path 联调候选**，不作 D6c 故障恢复冻结基线。
 
 **前端适配**（Cyrene Electron）：阶段 1 安全骨架三块全部落地并全量验证；阶段 2 块 A（领域契约 + raw wire 层 + frame mapper）收尾中；两端已具备**首次真实后端联调**条件。
 
