@@ -655,9 +655,10 @@ class TestStoreOverlay:
         assert r3.entry.user_message_id == "msg_1"
 
     @pytest.mark.asyncio
-    async def test_recover_reconciles_memory_to_mongo_and_durable(self, fresh_store):
+    async def test_recover_reconciles_memory_to_mongo_flags_until_cleared(self, fresh_store):
         """recover()：Mongo 已有→内存刷新为其状态；Mongo 无→插入内存 claim；
-        结束后 _in_memory_fallback=False → durable=True。"""
+        T2 中间态：_in_memory_fallback=False 但 needs_recovery 仍 True → durable=False
+        （本批次 Task 3 的 recover 清位后翻回 durable True）。"""
         repo = _FlipRepo()
         # Mongo 已有 crid_mongo（另一进程已 claim + complete → accepted）
         await repo.claim("default", "crid_mongo", content_digest="mongo-d",
@@ -842,6 +843,27 @@ class TestNeedsRecovery:
         assert get_store().configured is False
         configure_store(_FlipRepo(), product_mode=False)
         assert get_store().configured is True
+
+    @pytest.mark.asyncio
+    async def test_write_through_failure_no_entry_does_not_flag_recovery(self, fresh_store):
+        """守卫反例：写穿失败但内存无 entry（store 后 delete 已弹）→ 不置
+        _needs_recovery——无记录可 reconcile，置位即成假 flag（recover 空转清位）。
+        complete/reject 两路径都不置位。"""
+        repo = _FlipRepo()
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        await store.store("default", "crid", _entry("msg_1", "abc"))  # claim 落库 + 内存镜像
+        await store.delete("default", "crid")  # 释放并弹出内存 entry
+        repo.available = False  # Mongo down
+        await store.complete("default", "crid", received_at="2026-08-12T00:00:00Z",
+                             client_message_id="cm1", conversation_id_wire="wire-1")
+        assert store.needs_recovery is False  # 无 entry 可 reconcile → 不置假 flag
+        await store.reject("default", "crid", code="CONTRACT_VALIDATION",
+                           message="digest mismatch", retryable=False,
+                           received_at="2026-08-12T00:00:00Z",
+                           client_message_id="cm1", conversation_id_wire="wire-1")
+        assert store.needs_recovery is False
+        assert store.durable is False  # 操作级降级（_in_memory_fallback=True）如实暴露
 
 
 # ---------------------------------------------------------------------------

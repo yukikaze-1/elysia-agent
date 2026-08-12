@@ -225,7 +225,10 @@ class TestHealthLoopProbeRecovery:
         # recover() reconcile：内存 entry 已补落 Mongo（Mongo 无 → claim）
         doc = await repo.get("default", "crid_1")
         assert doc is not None and doc["message_id"] == "msg_1"
-        assert store.durable is True  # durable 翻回
+        # T2 中间态：recover 已触发（connect_calls>=1、doc 已落库）但 recover 尚不清位
+        # （本批次 Task 3 的 recover 清位后翻回 durable True）——强化下不因 recover 翻 True
+        assert store.needs_recovery is True
+        assert store.durable is False
 
     @pytest.mark.asyncio
     async def test_healthy_disconnect_then_recover(self, fresh_store):
