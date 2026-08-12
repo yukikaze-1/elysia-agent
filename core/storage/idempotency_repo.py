@@ -363,3 +363,57 @@ class IdempotencyRepository(Repository):
             ),
             reason="IdempotencyRepository.release 删除失败",
         )
+
+    async def restore(self, doc: dict) -> None:
+        """完整记录恢复（BE-P1-06）：缺失插入 / claimed 升级 / 终态防御读回（原子 upsert）。
+
+        区别于 claim()（只写最小 claim 字段），restore() 写入完整 ACK 重放负载
+        （received_at/client_message_id/conversation_id_wire/error）——降级期终态补落
+        Mongo 后跨重启重放逐字一致。
+
+        过滤器 status∈{claimed,in_progress} + upsert：
+        - Mongo 缺失 → 插入完整 doc；
+        - Mongo 为 claimed（本进程写穿失败的前进状态）→ $set 升级为完整终态；
+        - Mongo 已终态（另一进程 winner / 已落库）→ 过滤器失配，upsert 尝试插入同键 →
+          唯一索引 E11000 → non_fatal 防御层读回 winner（不覆盖）。recover() 的
+          get-first 已保证终态 doc 不进入本方法（Task 3），E11000 层仅兜底并发/直调。
+
+        Args:
+            doc: 完整记录（conversation_id/client_request_id 必含——身份键守卫，缺失
+                抛 ValueError；其余为 content_digest/message_id/status/claimed_at/
+                expires_at + 终态负载）。
+
+        Raises:
+            ValueError: 缺 conversation_id/client_request_id（编程错误，非存储故障）。
+            StorageUnavailableError: 存储不可用。
+        """
+        db = self._require_db()
+        if doc.get("conversation_id") is None or doc.get("client_request_id") is None:
+            raise ValueError("IdempotencyRepository.restore 缺少身份键")
+        set_expr = {k: v for k, v in doc.items()
+                    if k not in ("conversation_id", "client_request_id")}
+        try:
+            await self._call(
+                lambda: db.update_one(
+                    COLLECTION,
+                    {"conversation_id": doc["conversation_id"],
+                     "client_request_id": doc["client_request_id"],
+                     "status": {"$in": [STATUS_CLAIMED, "in_progress"]}},
+                    {"$set": set_expr},
+                    upsert=True,
+                ),
+                reason="IdempotencyRepository.restore 写入失败",
+                non_fatal=_is_duplicate_key,
+            )
+        except Exception as e:
+            if not _is_duplicate_key(e):
+                raise
+            # 并发 upsert 竞态（罕见 E11000）：读回 winner，不判死 repo（防御层）
+            await self._call(
+                lambda: db.find(COLLECTION,
+                                {"conversation_id": doc["conversation_id"],
+                                 "client_request_id": doc["client_request_id"]},
+                                limit=1),
+                reason="IdempotencyRepository.restore 冲突读回失败",
+            )
+            # winner 已在 Mongo；调用方（recover）内存已含完整终态或按 Mongo 优先刷新

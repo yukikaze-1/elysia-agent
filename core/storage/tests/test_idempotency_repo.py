@@ -19,9 +19,11 @@ from datetime import datetime, timezone
 import pytest
 
 from core.storage.idempotency_repo import (
+    COLLECTION,
     IdempotencyRepository,
     STATUS_ACCEPTED,
     STATUS_CLAIMED,
+    STATUS_REJECTED,
     StorageUnavailableError,
 )
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
@@ -161,3 +163,162 @@ class TestConnect:
         result = _run(repo.connect())
         assert result is False
         assert repo._db is None  # noqa: SLF001
+
+
+class DuplicateKeyError(RuntimeError):
+    """模拟 pymongo.errors.DuplicateKeyError（repo 按异常类名匹配，驱动无关）。"""
+
+
+class _UpsertDuplicateFake(FakeDocumentDBBackend):
+    """update_one upsert 对已存在同键 doc 抛 DuplicateKeyError（模拟唯一索引竞态）。
+
+    与 _DuplicateOnceFake（拦 insert_one）不同——本 fake 拦 upsert 的 update_one，
+    覆盖 restore() 的 E11000 防御层路径（终态同键 doc 过滤器失配 → upsert 尝试插入
+    → 唯一索引冲突）。
+    """
+
+    def __init__(self, winner: dict | None = None) -> None:
+        super().__init__()
+        self._winner = winner
+        self.duplicate_key_raised = 0  # E11000 触发计数（断言防御层真实走到的信号）
+
+    async def update_one(self, collection, filter_expr, update, upsert=False):
+        coll = self._coll(collection)
+        key = (filter_expr.get("conversation_id"), filter_expr.get("client_request_id"))
+        if upsert and any(
+            d.get("conversation_id") == key[0] and d.get("client_request_id") == key[1]
+            for d in coll
+        ):
+            self.duplicate_key_raised += 1
+            raise DuplicateKeyError("E11000 duplicate key error")
+        return await super().update_one(collection, filter_expr, update, upsert=upsert)
+
+    async def find(self, collection, filter_expr, **kwargs):
+        if self._winner is not None:
+            if (self._winner.get("conversation_id") == filter_expr.get("conversation_id")
+                    and self._winner.get("client_request_id") == filter_expr.get("client_request_id")):
+                return [dict(self._winner)]
+        return await super().find(collection, filter_expr, **kwargs)
+
+
+class _RecordingUpdateFake(FakeDocumentDBBackend):
+    """记录 update_one 调用（filter/$set/upsert）供断言 restore 升级形态。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.updates: list[tuple[dict, dict, bool]] = []
+
+    async def update_one(self, collection, filter_expr, update, upsert=False):
+        self.updates.append((filter_expr, update, upsert))
+        return await super().update_one(collection, filter_expr, update, upsert=upsert)
+
+
+class TestRestore:
+    """IdempotencyRepository.restore——完整记录条件 upsert（BE-P1-06）。"""
+
+    pytestmark = pytest.mark.service
+
+    def _full_doc(self, *, status: str = STATUS_CLAIMED, message_id: str = "msg_1") -> dict:
+        """对齐生产 _build_full_doc 形态：终态才含 ACK 负载键，None 键不写入。"""
+        doc = {
+            "conversation_id": "c1",
+            "client_request_id": "r1",
+            "content_digest": "d1",
+            "message_id": message_id,
+            "status": status,
+            "claimed_at": time.time(),
+            "expires_at": _expires(),
+        }
+        if status != STATUS_CLAIMED:
+            doc["received_at"] = "2026-08-12T00:00:00Z"
+            doc["client_message_id"] = "cm1"
+            doc["conversation_id_wire"] = "wire-1"
+            if status == STATUS_REJECTED:
+                doc["error"] = {"code": "RATE_LIMITED", "message": "限流",
+                                "retryable": True, "retryAfterMs": 30000}
+        return doc
+
+    def test_restore_missing_identity_keys_raises(self):
+        """缺 conversation_id/client_request_id → ValueError（编程错误，非存储故障）。"""
+        repo = IdempotencyRepository(db=FakeDocumentDBBackend())
+        with pytest.raises(ValueError):
+            _run(repo.restore({"content_digest": "d1", "message_id": "m"}))
+
+    def test_restore_inserts_full_doc(self):
+        """Mongo 缺失 → upsert 插入完整文档（含终态 ACK 负载）。"""
+        repo = IdempotencyRepository(db=FakeDocumentDBBackend())
+        doc = self._full_doc(status=STATUS_ACCEPTED)
+        _run(repo.restore(doc))
+        got = _run(repo.get("c1", "r1"))
+        assert got is not None
+        assert got["status"] == STATUS_ACCEPTED
+        assert got["message_id"] == "msg_1"
+        assert got["received_at"] == "2026-08-12T00:00:00Z"
+        assert got["client_message_id"] == "cm1"
+        assert got["conversation_id_wire"] == "wire-1"
+
+    def test_restore_upgrades_claimed_to_terminal(self):
+        """Mongo 已有 claimed → $set 升级为完整终态（保留 claimed 的身份键）。"""
+        fake = _RecordingUpdateFake()
+        fake.collections[COLLECTION] = [{
+            "conversation_id": "c1", "client_request_id": "r1",
+            "content_digest": "old", "message_id": "old-msg",
+            "status": STATUS_CLAIMED, "claimed_at": time.time() - 60.0,
+            "expires_at": _expires(),
+        }]
+        repo = IdempotencyRepository(db=fake)
+        doc = self._full_doc(status=STATUS_ACCEPTED)
+        _run(repo.restore(doc))
+        # 过滤器含 status∈{claimed,in_progress}（命中升级）
+        filt, update, upsert = fake.updates[0]
+        assert upsert is True
+        assert filt["status"] == {"$in": [STATUS_CLAIMED, "in_progress"]}
+        set_expr = update["$set"]
+        assert set_expr["status"] == STATUS_ACCEPTED
+        assert set_expr["received_at"] == "2026-08-12T00:00:00Z"
+        assert "error" not in set_expr  # accepted 无 error 键（对齐 _build_full_doc）
+        # Mongo 已升级（$set 生效）
+        got = _run(repo.get("c1", "r1"))
+        assert got["status"] == STATUS_ACCEPTED
+        assert got["received_at"] == "2026-08-12T00:00:00Z"
+
+    def test_restore_terminal_winner_not_overwritten(self):
+        """Mongo 已终态（另一进程 winner）→ 过滤器失配 → upsert 触发 E11000 →
+        防御层读回 winner，不覆盖、repo 不判死。"""
+        winner = self._full_doc(status=STATUS_REJECTED, message_id="winner-msg")
+        fake = _UpsertDuplicateFake(winner=winner)
+        fake.collections[COLLECTION] = [dict(winner)]
+        repo = IdempotencyRepository(db=fake)
+        repo._injected_db = False  # noqa: SLF001  # 强制非注入路径：E11000 必须不 _mark_unavailable
+        loser = self._full_doc(status=STATUS_CLAIMED, message_id="loser-msg")
+        _run(repo.restore(loser))
+        # 不抛异常（E11000 防御层读回后返回）；断言防御层真实触发（非 upsert 漏掉后
+        # 的 no-op 假绿——filter 对终态失配 + 无 upsert → update_one 无操作即过）
+        assert fake.duplicate_key_raised >= 1, "E11000 防御层必须真实触发（upsert 插入同键）"
+        assert repo.is_connected is True  # 不判死
+        assert _run(repo.health_check()) is True  # 后续可用
+        # Mongo 仍是 winner（未被 loser 覆盖）
+        got = _run(repo.get("c1", "r1"))
+        assert got["message_id"] == "winner-msg"
+        assert got["status"] == STATUS_REJECTED
+
+    def test_restore_offline_raises(self):
+        """Mongo 离线（db=None）→ StorageUnavailableError（fail-closed）。"""
+        repo = IdempotencyRepository(db=None)
+        with pytest.raises(StorageUnavailableError):
+            _run(repo.restore(self._full_doc()))
+
+    def test_restore_inserts_terminal_status_from_set(self):
+        """Mongo 缺失 + filter 含 status $in → upsert 插入文档的 status 来自 $set
+        （非等值条件不并入插入文档）。"""
+        fake = _RecordingUpdateFake()
+        repo = IdempotencyRepository(db=fake)
+        doc = self._full_doc(status=STATUS_REJECTED)
+        _run(repo.restore(doc))
+        _, update, upsert = fake.updates[0]
+        assert upsert is True
+        # 插入文档含 filter 等值字段（conversation_id/client_request_id）——upsert 语义
+        got = _run(repo.get("c1", "r1"))
+        assert got["status"] == STATUS_REJECTED
+        assert got["error"]["code"] == "RATE_LIMITED"
+        assert got["error"]["retryAfterMs"] == 30000
