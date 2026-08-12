@@ -96,6 +96,8 @@ class TestHealthEndpoints:
     @pytest.mark.asyncio
     async def test_ready_product_idempotency_down_503(self, aiohttp_client):
         """product 模式 + idempotency down → /ready 503（fail-closed），chatReady=false。"""
+        from core.input.idempotency import reset_store
+        reset_store()  # 防跨用例 _needs_recovery 泄漏（BE-P1-07 D4）
         from core.input.server import create_app
         app = create_app(_make_mock_agent(), serve_static=False, product_mode=True,
                          idempotency_repo=_idem_repo(ok=False))
@@ -110,6 +112,8 @@ class TestHealthEndpoints:
     @pytest.mark.asyncio
     async def test_ready_dev_idempotency_down_200(self, aiohttp_client):
         """dev 模式 + idempotency down → /ready 200（内存降级不门禁），chatReady=true。"""
+        from core.input.idempotency import reset_store
+        reset_store()  # 防跨用例 _needs_recovery 泄漏（BE-P1-07 D4）
         from core.input.server import create_app
         app = create_app(_make_mock_agent(), serve_static=False, product_mode=False,
                          idempotency_repo=_idem_repo(ok=False))
@@ -214,3 +218,94 @@ class TestHealthEndpoints:
         assert elapsed < 0.5, \
             f"mongo 三探针应并行（约 0.2s），实际 {elapsed:.2f}s（串行约 0.6s）"
         assert (await resp.json())["chatReady"] is False
+
+
+@pytest.mark.service
+class TestReadyIdempotencyNeedsRecovery:
+    """D4：product 模式 /ready 幂等门禁含补偿状态——needs_recovery 时 503，补偿后 200。"""
+
+    @pytest.fixture
+    def _clean_store(self):
+        from core.input.idempotency import reset_store
+        reset_store()
+        yield
+        reset_store()
+
+    def _server_info_agent(self):
+        """build_server_info 可用的最小 agent stub（config/services 齐备，无需真实 Agent）。"""
+        class _Cfg:
+            class _L:
+                static_image = ""
+            class _M:
+                model = "test-model"
+            live2d = _L()
+            llm = _M()
+            stt = _M()
+            tts = _M()
+
+        class _Agent:
+            config = _Cfg()
+            llm = _Cfg._M()
+            stt = None
+            stt_enabled = False
+            tts = None
+            tts_enabled = False
+
+        return _Agent()
+
+    @pytest.mark.asyncio
+    async def test_ready_503_until_recover_then_200(self, _clean_store, aiohttp_client):
+        from core.input.capabilities import build_server_info
+        from core.input.idempotency import configure_store, get_store
+        from core.input.tests.test_idempotency_durable import _FlipRepo
+        from core.input.tests.test_idempotency_durable import _entry as _make_entry
+        from core.input.server import create_app
+
+        repo = _FlipRepo(available=False)
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        # 降级窗口写一条记录 → needs_recovery=True
+        await store.store("default", "crid", _make_entry("msg_1", "abc"))
+        assert store.needs_recovery is True
+        repo.available = True  # Mongo 恢复，但 recover 未跑
+        assert get_store().durable is False
+        # create_app 会以 product_mode=True 重配 store（configure 不清 needs_recovery）
+        app = create_app(_make_mock_agent(), serve_static=False,
+                         product_mode=True, idempotency_repo=repo)
+        client = await aiohttp_client(app)
+        # 补偿未完成 → /ready 503（chatReady=false）+ server_info durable=False
+        resp = await client.get("/ready")
+        assert resp.status == 503
+        data = await resp.json()
+        assert data["chatReady"] is False
+        assert data["dependencies"]["idempotency"] is False
+        assert build_server_info(self._server_info_agent()).features.idempotency_durable is False
+        # 补偿完成 → /ready 200（durable=true，server_info 同步反映）
+        await get_store().recover()
+        assert get_store().durable is True
+        assert build_server_info(self._server_info_agent()).features.idempotency_durable is True
+        resp2 = await client.get("/ready")
+        assert resp2.status == 200
+        data2 = await resp2.json()
+        assert data2["chatReady"] is True
+        assert data2["dependencies"]["idempotency"] is True
+
+    @pytest.mark.asyncio
+    async def test_ready_dev_mode_unaffected(self, _clean_store, aiohttp_client):
+        """dev 模式：needs_recovery 不门禁（内存降级允许），仍 200。"""
+        from core.input.idempotency import configure_store, get_store
+        from core.input.tests.test_idempotency_durable import _FlipRepo
+        from core.input.tests.test_idempotency_durable import _entry as _make_entry
+        from core.input.server import create_app
+
+        repo = _FlipRepo(available=False)
+        configure_store(repo, product_mode=False)
+        await get_store().store("default", "crid", _make_entry("msg_1", "abc"))
+        repo.available = True
+        app = create_app(_make_mock_agent(), serve_static=False,
+                         product_mode=False, idempotency_repo=repo)
+        client = await aiohttp_client(app)
+        resp = await client.get("/ready")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["chatReady"] is True
