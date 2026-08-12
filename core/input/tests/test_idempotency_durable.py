@@ -577,10 +577,10 @@ class _FlipRepo:
             raise StorageUnavailableError("Mongo down")
         await self._impl.release(conversation_id, client_request_id)
 
-    async def restore(self, doc: dict) -> None:
+    async def restore(self, doc: dict) -> dict:
         if not self.available:
             raise StorageUnavailableError("Mongo down")
-        await self._impl.restore(doc)
+        return await self._impl.restore(doc)
 
 
 class TestStoreOverlay:
@@ -1097,6 +1097,75 @@ class TestRecoverRestart:
         assert store.needs_recovery is False
         assert store.durable is True
         assert (await repo.get("default", "crid_new")) is not None
+
+    @pytest.mark.asyncio
+    async def test_recover_refreshes_memory_from_restore_winner(self, fresh_store):
+        """restore 在 get-first 后输掉竞态时，返回的 Mongo winner 必须覆盖本地 loser。"""
+        repo = _FlipRepo(available=False)
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        await store.store("default", "crid", _entry("loser-msg", "loser-digest"))
+        repo.available = True
+        winner = {
+            "conversation_id": "default", "client_request_id": "crid",
+            "content_digest": "winner-digest", "message_id": "winner-msg",
+            "status": STATUS_REJECTED, "claimed_at": time.time(),
+            "expires_at": _expires(), "received_at": "2026-08-13T00:00:00Z",
+            "error": {"code": "QUEUE_FULL", "message": "winner", "retryable": True},
+        }
+
+        async def stale_get(_conversation_id, _client_request_id):
+            return None  # 模拟 get 后、restore 前另一恢复者已提交终态 winner
+
+        async def restore_winner(_doc):
+            return dict(winner)
+
+        repo.get = stale_get
+        repo.restore = restore_winner
+        await store.recover()
+
+        entry = store._entries[("default", "crid")]  # noqa: SLF001
+        assert entry.user_message_id == "winner-msg"
+        assert entry.content_digest == "winner-digest"
+        assert entry.status == STATUS_REJECTED
+        assert entry.error == winner["error"]
+
+    @pytest.mark.asyncio
+    async def test_recover_keeps_flag_when_same_key_terminal_write_fails(self, fresh_store):
+        """recover await 间隙同 key complete 写穿失败：不得因 key 集未变误清补偿位。"""
+        repo = _FlipRepo(available=False)
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        await store.store("default", "crid", _entry("msg-1", "digest-1"))
+
+        repo.available = True
+        original_get = repo.get
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def gated_get(conversation_id, client_request_id):
+            entered.set()
+            await release.wait()
+            return await original_get(conversation_id, client_request_id)
+
+        repo.get = gated_get
+        task = asyncio.create_task(store.recover())
+        await entered.wait()
+
+        repo.available = False
+        await store.complete(
+            "default", "crid", received_at="2026-08-13T00:00:00Z",
+            client_message_id="cm-1", conversation_id_wire="default")
+        repo.available = True
+        release.set()
+        await task
+
+        assert store.needs_recovery is True
+        assert store.durable is False
+        repo.get = original_get
+        await store.recover()
+        assert store.needs_recovery is False
+        assert store.durable is True
 
 
 # ---------------------------------------------------------------------------

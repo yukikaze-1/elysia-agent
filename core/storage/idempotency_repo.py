@@ -364,7 +364,7 @@ class IdempotencyRepository(Repository):
             reason="IdempotencyRepository.release 删除失败",
         )
 
-    async def restore(self, doc: dict) -> None:
+    async def restore(self, doc: dict) -> dict:
         """完整记录恢复（BE-P1-06）：缺失插入 / claimed 升级 / 终态防御读回（原子 upsert）。
 
         区别于 claim()（只写最小 claim 字段），restore() 写入完整 ACK 重放负载
@@ -382,6 +382,11 @@ class IdempotencyRepository(Repository):
             doc: 完整记录（conversation_id/client_request_id 必含——身份键守卫，缺失
                 抛 ValueError；其余为 content_digest/message_id/status/claimed_at/
                 expires_at + 终态负载）。
+
+        Returns:
+            实际生效的完整记录。本次 insert/claimed 升级成功时返回输入
+            doc；并发 E11000 时返回 Mongo 中已提交的 winner，供 recover
+            刷新本地镜像。
 
         Raises:
             ValueError: 缺 conversation_id/client_request_id（编程错误，非存储故障）。
@@ -405,15 +410,19 @@ class IdempotencyRepository(Repository):
                 reason="IdempotencyRepository.restore 写入失败",
                 non_fatal=_is_duplicate_key,
             )
+            return dict(doc)
         except Exception as e:
             if not _is_duplicate_key(e):
                 raise
             # 并发 upsert 竞态（罕见 E11000）：读回 winner，不判死 repo（防御层）
-            await self._call(
+            winner = await self._call(
                 lambda: db.find(COLLECTION,
                                 {"conversation_id": doc["conversation_id"],
                                  "client_request_id": doc["client_request_id"]},
                                 limit=1),
                 reason="IdempotencyRepository.restore 冲突读回失败",
             )
-            # winner 已在 Mongo；调用方（recover）内存已含完整终态或按 Mongo 优先刷新
+            if winner:
+                return winner[0]
+            # 唯一索引冲突但 winner 已被 TTL/并发删除：无法证明恢复完成，fail-closed。
+            raise

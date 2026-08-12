@@ -11,8 +11,9 @@
 - `recover()`（Mongo 恢复 reconcile）：内存权威 overlay 逐条四分支对齐——Mongo 缺失 →
   restore() 补落完整文档（含终态 ACK 负载）；Mongo claimed + 内存终态 → restore() 升级
   为终态；Mongo claimed + 内存 claimed / Mongo 已终态 → 刷新内存为 Mongo 状态（Mongo
-  优先）。结束后清 `_in_memory_fallback`（操作级）→ durable 翻回；`_needs_recovery`
-  仅当循环期间无新增内存 entry 才清（并发降级 store 新 key 的置位留给下轮 reconcile）。
+  优先）。结束后仅在恢复期间无新补偿事实时同时清
+  `_in_memory_fallback`/`_needs_recovery`；单调 recovery epoch 同时覆盖新 key
+  降级与已有 key 的 complete/reject 写穿失败。
 - `complete()/reject()`：写内存（status + 完整 ACK 负载）+ best-effort repo 写穿
   （失败仅记日志，不抛——条目保留仍可重放）。
 - `durable`（D5-b）：`repo is not None and not _in_memory_fallback`；`configure()`
@@ -134,6 +135,7 @@ class IdempotencyStore:
         self._product_mode = False
         self._in_memory_fallback = True
         self._needs_recovery = False   # BE-P1-07：存在未 reconcile 到 Mongo 的内存记录
+        self._recovery_epoch = 0       # 单调补偿事实版本，防 recover await 间隙误清位
 
     # ---- 配置 ----
 
@@ -237,7 +239,7 @@ class IdempotencyStore:
                     return StoreResult(entry=prev, acquired=False)
                 self._apply_timestamps(entry)
                 self._entries[(conversation_id, client_request_id)] = entry
-                self._needs_recovery = True  # BE-P1-07：降级写入未 reconcile
+                self._mark_needs_recovery()  # BE-P1-07：降级写入未 reconcile
                 return StoreResult(entry=entry, acquired=True)
             self._in_memory_fallback = False
             # acquired=True（新插入/接管）与 False（并发 loser/重放）都写内存
@@ -262,19 +264,15 @@ class IdempotencyStore:
           权威，防多 worker 翻转）；
         - Mongo 已终态 → 刷新内存为 Mongo 状态（Mongo 优先、读时一致）。
         跨重启重放逐字一致（修复 S1：不再用陈旧 claimed 覆盖前进终态）。结束后
-        ``_in_memory_fallback = False``（操作级）且循环期间无新增内存 entry 时
-        ``_needs_recovery = False``（durable 翻回）。并发降级 ``store()`` 在循环
-        await 间隙新增的 entry（写入路径已置 ``_needs_recovery=True``）不在此轮被清
-        ——留给下轮 recover reconcile，防 S2 重复处理窗口经并发向量复开。
-        守卫边界：子集判断只覆盖「循环期间新增 key」（并发降级 store）；快照内 key 的
-        并发终态写穿失败（complete/reject，不改 key 集但置位）不会被重检——该残余属
-        既有 BE-RISK-01 类（终态 ACK 跨重启丢失），非本守卫引入，接受。
+        ``_in_memory_fallback = False`` 与 ``_needs_recovery = False`` 只在恢复期间
+        ``_recovery_epoch`` 未变时同步清除。任意并发降级新 key，或快照内已有 key
+        的 complete/reject 写穿失败，都会递增 epoch，强制保留补偿位到下一轮。
         任一 get/restore 失败 → 异常冒泡，不翻 durable（下轮健康循环重试）。
         repo 为 None（纯内存）→ no-op。
         """
         if self._repo is None:
             return  # 纯内存路径无可 reconcile
-        snapshot_keys = set(self._entries)
+        recovery_epoch = self._recovery_epoch
         for (conversation_id, client_request_id), entry in list(self._entries.items()):
             if self._is_stale(entry):
                 # 过期内存记录（Mongo 已 TTL 清除）→ 不复活
@@ -290,12 +288,14 @@ class IdempotencyStore:
                 continue
             # Mongo 缺失，或（Mongo claimed + 内存终态 = 本进程写穿失败的前进状态）→
             # restore 原子 upsert 完整文档（缺失→插入 / claimed→升级终态，含重放负载）
-            await self._repo.restore(_build_full_doc(conversation_id, client_request_id,
-                                                     entry, self._ttl))
-        self._in_memory_fallback = False
-        if set(self._entries) <= snapshot_keys:
-            # 循环期间无新增内存 entry（无并发降级写）→ 已 reconcile 全部，清位翻 durable；
-            # 有新增（并发降级 store 的 key）→ 保留置位，留给下轮 recover reconcile
+            restored = await self._repo.restore(
+                _build_full_doc(conversation_id, client_request_id, entry, self._ttl))
+            # get-first 后仍可输掉 E11000 竞态；用 restore 读回的 Mongo winner
+            # 刷新本地，不保留 loser 并误报 durable。
+            self._entries[(conversation_id, client_request_id)] = IdempotencyEntry.from_doc(restored)
+        if self._recovery_epoch == recovery_epoch:
+            # 恢复期间无新补偿事实：本轮已 reconcile 全部，同时清两位。
+            self._in_memory_fallback = False
             self._needs_recovery = False
 
     async def delete(self, conversation_id: str, client_request_id: str) -> None:
@@ -346,7 +346,7 @@ class IdempotencyStore:
                 if entry is not None:
                     # 仅内存有 entry（可 reconcile）才置位——无 entry 的写穿失败
                     # 无记录可补落，置位会成假 flag（recover 空转清位）
-                    self._needs_recovery = True  # BE-P1-06/07：终态未落 Mongo
+                    self._mark_needs_recovery()  # BE-P1-06/07：终态未落 Mongo
 
     async def reject(self, conversation_id: str, client_request_id: str, *,
                      code: str, message: str, retryable: bool,
@@ -389,9 +389,14 @@ class IdempotencyStore:
                                conversation_id, client_request_id)
                 self._in_memory_fallback = True
                 if entry is not None:
-                    self._needs_recovery = True  # BE-P1-06/07：终态未落 Mongo
+                    self._mark_needs_recovery()  # BE-P1-06/07：终态未落 Mongo
 
     # ---- 内部 ----
+
+    def _mark_needs_recovery(self) -> None:
+        """记录新的「内存超前 Mongo」事实；重复置位也必须递增版本。"""
+        self._needs_recovery = True
+        self._recovery_epoch += 1
 
     def _memory_lookup(self, conversation_id: str, client_request_id: str
                        ) -> IdempotencyEntry | None:
@@ -429,6 +434,7 @@ class IdempotencyStore:
         self._product_mode = False
         self._in_memory_fallback = True
         self._needs_recovery = False   # BE-P1-07：测试隔离清位（configure 不清，防 S2 复开）
+        self._recovery_epoch = 0
 
 
 def _mongo_expiry(ttl_seconds: float) -> datetime:

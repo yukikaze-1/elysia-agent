@@ -291,7 +291,7 @@ class TestRestore:
         repo = IdempotencyRepository(db=fake)
         repo._injected_db = False  # noqa: SLF001  # 强制非注入路径：E11000 必须不 _mark_unavailable
         loser = self._full_doc(status=STATUS_CLAIMED, message_id="loser-msg")
-        _run(repo.restore(loser))
+        restored = _run(repo.restore(loser))
         # 不抛异常（E11000 防御层读回后返回）；断言防御层真实触发（非 upsert 漏掉后
         # 的 no-op 假绿——filter 对终态失配 + 无 upsert → update_one 无操作即过）
         assert fake.duplicate_key_raised >= 1, "E11000 防御层必须真实触发（upsert 插入同键）"
@@ -301,6 +301,8 @@ class TestRestore:
         got = _run(repo.get("c1", "r1"))
         assert got["message_id"] == "winner-msg"
         assert got["status"] == STATUS_REJECTED
+        assert restored["message_id"] == "winner-msg"
+        assert restored["status"] == STATUS_REJECTED
 
     def test_restore_offline_raises(self):
         """Mongo 离线（db=None）→ StorageUnavailableError（fail-closed）。"""

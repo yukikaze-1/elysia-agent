@@ -113,10 +113,10 @@ class _FlipIdemRepo:
             raise StorageUnavailableError("Mongo down")
         await self._impl.release(conversation_id, client_request_id)
 
-    async def restore(self, doc: dict) -> None:
+    async def restore(self, doc: dict) -> dict:
         if not self.available:
             raise StorageUnavailableError("Mongo down")
-        await self._impl.restore(doc)
+        return await self._impl.restore(doc)
 
 
 class _SplitIdemRepo:
@@ -167,10 +167,10 @@ class _SplitIdemRepo:
             raise StorageUnavailableError("Mongo down")
         return await self._impl.get(conversation_id, client_request_id)
 
-    async def restore(self, doc: dict) -> None:
+    async def restore(self, doc: dict) -> dict:
         if not self.ping_ok:
             raise StorageUnavailableError("Mongo down")
-        await self._impl.restore(doc)
+        return await self._impl.restore(doc)
 
     async def complete(self, conversation_id: str, client_request_id: str, *,
                        status: str = STATUS_ACCEPTED,
