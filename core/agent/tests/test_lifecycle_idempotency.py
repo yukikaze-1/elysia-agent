@@ -32,6 +32,7 @@ from core.storage.idempotency_repo import (
     ClaimResult,
     IdempotencyRepository,
     STATUS_ACCEPTED,
+    STATUS_REJECTED,
     StorageUnavailableError,
 )
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
@@ -118,6 +119,80 @@ class _FlipIdemRepo:
         await self._impl.restore(doc)
 
 
+class _SplitIdemRepo:
+    """is_connected 与 health_check 解耦的 repo fake（BE-P1-07 首轮直接 true 用例）。
+
+    connected: 启动建连状态（configure 的 durable 初值依据——False = 启动离线）。
+    ping_ok:   当前 Mongo 可达性（health_check/connect/操作 gate——False = 断网）。
+    两者独立翻转：connected=False + ping_ok=True 表达「启动建连失败、首轮探测前 Mongo
+    已恢复」——首轮 health_check 直接 true、durable 仍 False（未 recover）。
+    """
+
+    def __init__(self, connected: bool, ping_ok: bool) -> None:
+        self.connected = connected
+        self.ping_ok = ping_ok
+        self.connect_calls = 0
+        self._backend = FakeDocumentDBBackend()
+        self._impl = IdempotencyRepository(db=self._backend)
+
+    @property
+    def is_connected(self) -> bool:
+        return self.connected
+
+    async def health_check(self) -> bool:
+        return self.ping_ok
+
+    async def connect(self) -> bool:
+        self.connect_calls += 1
+        if self.ping_ok:
+            self.connected = True
+        return self.ping_ok
+
+    async def close(self) -> None:
+        pass
+
+    async def claim(self, conversation_id: str, client_request_id: str, *,
+                    content_digest: str, message_id: str, status: str,
+                    claimed_at: float | None = None,
+                    expires_at: object = None) -> ClaimResult:
+        if not self.ping_ok:
+            raise StorageUnavailableError("Mongo down")
+        return await self._impl.claim(
+            conversation_id, client_request_id,
+            content_digest=content_digest, message_id=message_id, status=status,
+            claimed_at=claimed_at, expires_at=expires_at)
+
+    async def get(self, conversation_id: str, client_request_id: str) -> dict | None:
+        if not self.ping_ok:
+            raise StorageUnavailableError("Mongo down")
+        return await self._impl.get(conversation_id, client_request_id)
+
+    async def restore(self, doc: dict) -> None:
+        if not self.ping_ok:
+            raise StorageUnavailableError("Mongo down")
+        await self._impl.restore(doc)
+
+    async def complete(self, conversation_id: str, client_request_id: str, *,
+                       status: str = STATUS_ACCEPTED,
+                       payload: dict | None = None) -> None:
+        if not self.ping_ok:
+            raise StorageUnavailableError("Mongo down")
+        await self._impl.complete(conversation_id, client_request_id,
+                                  status=status, payload=payload)
+
+    async def reject(self, conversation_id: str, client_request_id: str, *,
+                     error: dict, payload: dict | None = None) -> None:
+        if not self.ping_ok:
+            raise StorageUnavailableError("Mongo down")
+        await self._impl.reject(conversation_id, client_request_id,
+                                error=error, payload=payload)
+
+    async def release(self, conversation_id: str, client_request_id: str) -> None:
+        if not self.ping_ok:
+            raise StorageUnavailableError("Mongo down")
+        await self._impl.release(conversation_id, client_request_id)
+
+
 def _entry(message_id: str = "msg_1", digest: str = "abc") -> IdempotencyEntry:
     """内存 entry：created_at 用 monotonic 基准（不立即过期）。"""
     return IdempotencyEntry(user_message_id=message_id, content_digest=digest,
@@ -202,10 +277,10 @@ class TestHealthLoopProbeRecovery:
     async def test_offline_start_recovers_after_availability_flip(self, fresh_store):
         """Mongo 离线启动 durable=False；不重启翻转可用 → health loop 检测 False→True 后恢复。
 
-        协调器语义：首轮 prev={} 只记录基线（`name not in prev` 不触发恢复），恢复仅在
-        「上一轮 False → 本轮 True」边界触发——故离线启动需两轮（第 1 轮离线入 prev，
-        第 2 轮翻转可用触发 reconcile）。离线期间 dev 降级 store 的内存 entry 经
-        recover() 补落库（Mongo 无 → claim）。
+        协调器语义：False→True 边界触发恢复（首轮离线入 prev，二轮翻转可用触发
+        reconcile）；BE-P1-07 后首轮直接 healthy 也会经 _dependency_needs_recovery
+        （configured and not durable）当轮触发。离线期间 dev 降级 store 的内存 entry
+        经 recover() 补落库（Mongo 无 → restore 完整文档）。
         """
         repo = _FlipIdemRepo(available=False)
         configure_store(repo, product_mode=False)
@@ -253,6 +328,127 @@ class TestHealthLoopProbeRecovery:
 
         assert repo.connect_calls == 1, "仅断开后恢复那轮触发一次 connect"
         assert store.durable is True
+
+    @pytest.mark.asyncio
+    async def test_first_round_healthy_recovers(self, fresh_store):
+        """BE-P1-07：离线启动 + 首轮探测前 Mongo 已恢复 → 首轮 health_check 直接 true，
+        当轮执行 recover（不因 prev={} 基线跳过），记录落库、durable=true。"""
+        repo = _SplitIdemRepo(connected=False, ping_ok=False)  # 启动离线（configure durable=False）
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        assert store.durable is False
+        # 降级窗口写一条内存记录
+        result = await store.store("default", "crid_1", _entry("msg_1", "abc"))
+        assert result.acquired is True
+        assert store.needs_recovery is True
+        # Mongo 在首轮探测前恢复（ping_ok 翻 true，connect 未跑）；同时另一 key 的
+        # store() 成功（S2：fallback 清零但 needs_recovery 保持 → durable 仍 False）
+        repo.ping_ok = True
+        r2 = await store.store("default", "other_key", _entry("msg_2", "abc"))
+        assert r2.acquired is True
+        assert store._in_memory_fallback is False  # noqa: SLF001
+        assert store.needs_recovery is True
+        assert store.durable is False  # S2：无关成功操作不静默清零
+        agent = _make_health_agent(repo)
+        await _run_health_rounds(agent, n_rounds=1)  # 首轮直接 true
+        # 当轮已 recover（needs_recovery/durable 触发，非边界）
+        assert repo.connect_calls >= 1, "首轮直接 true 应触发 recover"
+        doc = await repo.get("default", "crid_1")
+        assert doc is not None and doc["message_id"] == "msg_1"
+        assert store.durable is True
+        assert store.needs_recovery is False
+
+    @pytest.mark.asyncio
+    async def test_consecutive_recover_failures_retried(self, fresh_store):
+        """报告 §9#3：recover 连续失败后重试——前两轮失败、第三轮成功，每轮都重试。"""
+        class _UpsertFailFake(FakeDocumentDBBackend):
+            """upsert update_one 前 N 次抛 RuntimeError（restore 失败注入）。"""
+
+            def __init__(self, fail_times: int) -> None:
+                super().__init__()
+                self.fail_times = fail_times
+
+            async def update_one(self, collection, filter_expr, update, upsert=False):
+                if upsert and self.fail_times > 0:
+                    self.fail_times -= 1
+                    raise RuntimeError("Mongo down")
+                return await super().update_one(collection, filter_expr, update, upsert=upsert)
+
+        class _RestoreFailRepo(_FlipIdemRepo):
+            """restore 的 upsert 可注入失败次数的 _FlipIdemRepo。"""
+
+            def __init__(self, fail_times: int = 0, available: bool = True) -> None:
+                super().__init__(available=available)
+                self._backend = _UpsertFailFake(fail_times)
+                self._impl = IdempotencyRepository(db=self._backend)
+
+        repo = _RestoreFailRepo(fail_times=2, available=False)  # 启动离线 + restore 前两次失败
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        await store.store("default", "crid_1", _entry("msg_1", "abc"))  # 降级
+        repo.available = True
+        agent = _make_health_agent(repo)
+        # 三轮：r1 restore 失败、r2 失败、r3 成功——每轮都重试（不被 prev 污染跳过）
+        await _run_health_rounds(agent, n_rounds=3)
+        doc = await repo.get("default", "crid_1")
+        assert doc is not None and doc["message_id"] == "msg_1"
+        assert store.durable is True
+        assert repo.connect_calls >= 3, "连续失败每轮都应重试（connect+recover）"
+
+    @pytest.mark.asyncio
+    async def test_healthy_startup_no_duplicate_compensation(self, fresh_store):
+        """启动即健康且无降级记录 → 不产生破坏性重复补偿（recover no-op、不触发）。"""
+        repo = _FlipIdemRepo(available=True)
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        assert store.durable is True  # 健康启动
+        agent = _make_health_agent(repo)
+        await _run_health_rounds(agent, n_rounds=1)
+        assert store.durable is True
+        assert repo.connect_calls == 0, "durable=True → 不触发 recover（无破坏性补偿）"
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_store_does_not_spin(self, fresh_store):
+        """S4：store 未配置（repo=None）→ 健康循环 probe true 也不触发（configured guard）。"""
+        reset_store()  # store 未配置
+        repo = _FlipIdemRepo(available=True)  # agent 侧 repo 已连接
+        agent = _make_health_agent(repo)
+        await _run_health_rounds(agent, n_rounds=2)
+        assert repo.connect_calls == 0, "_dependency_needs_recovery = configured and not durable"
+
+    @pytest.mark.asyncio
+    async def test_first_round_recovers_terminal_states_across_restart(self, fresh_store):
+        """§8.2#7（P1-06+P1-07 组合）：首轮直接恢复 accepted/rejected → 重启后逐字一致。"""
+        repo = _SplitIdemRepo(connected=False, ping_ok=False)
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        # 降级窗口：accepted + rejected 各一条（完整负载）
+        await store.store("default", "crid_a", _entry("msg_a", "da"))
+        await store.complete("default", "crid_a", received_at="2026-08-12T00:00:00Z",
+                             client_message_id="cm1", conversation_id_wire="wire-1")
+        await store.store("default", "crid_r", _entry("msg_r", "dr"))
+        await store.reject("default", "crid_r", code="RATE_LIMITED", message="限流",
+                           retryable=True, received_at="2026-08-12T00:00:01Z",
+                           client_message_id="cm2", conversation_id_wire="wire-2",
+                           retry_after_ms=30000)
+        # 首轮探测前 Mongo 已恢复 → 首轮直接 recover
+        repo.ping_ok = True
+        agent = _make_health_agent(repo)
+        await _run_health_rounds(agent, n_rounds=1)
+        assert store.durable is True
+        assert store.needs_recovery is False
+        # 重启：清内存、同 repo 重配 → 从 Mongo 逐字重放
+        reset_store()
+        configure_store(repo, product_mode=False)
+        ea = await get_store().lookup("default", "crid_a")
+        er = await get_store().lookup("default", "crid_r")
+        assert ea is not None and ea.status == STATUS_ACCEPTED
+        assert ea.received_at == "2026-08-12T00:00:00Z"
+        assert ea.client_message_id == "cm1" and ea.conversation_id_wire == "wire-1"
+        assert er is not None and er.status == STATUS_REJECTED
+        assert er.error == {"code": "RATE_LIMITED", "message": "限流",
+                            "retryable": True, "retryAfterMs": 30000}
+        assert er.received_at == "2026-08-12T00:00:01Z"
 
 
 class TestStopPersistenceClose:
