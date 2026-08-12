@@ -117,12 +117,18 @@ class CognitiveTools:
         # 1. 拆分：submit_task 单独放行
         gate_tcs = [tc for tc in tool_calls if tc.function.name != "submit_task"]
 
-        # 2. 构建已知工具名集合
+        # 2. 构建已知工具名集合：definitions() 暴露脱点名（desktop.* → desktop_*），
+        #    反查回运行时名后与 _execute_tool_round 反查过的 tc.function.name 对齐。
         known_names: set[str] = set()
         if self._tool_adapter is not None:
+            resolver = getattr(self._tool_adapter, "resolve_llm_name", None)
             for d in self._tool_adapter.definitions():
                 name = d.get("function", {}).get("name", "")
                 if name:
+                    if resolver is not None:
+                        resolved = resolver(name)
+                        if isinstance(resolved, str) and resolved:
+                            name = resolved
                     known_names.add(name)
 
         # 3. 逐项校验

@@ -7,21 +7,32 @@ from core.adapter.tool_adapter import ToolAdapter
 from core.cognitive.tools import CognitiveTools
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
+from Module.tool.protocol import to_llm_name
 
 
 pytestmark = pytest.mark.unit
 
 
 class _FakeExecutor:
-    """Mock ToolExecutor — 返回固定的 definitions 列表。"""
+    """Mock ToolExecutor — 返回固定的 definitions 列表。
+
+    _names 存运行时工具名；definitions() 暴露脱点名（真实 ToolManager 行为），
+    resolve_llm_name() 反查回运行时名（gate 用它归一 known_names）。
+    """
     def __init__(self, names: list[str] | None = None):
         self._names = names or ["search_memory", "save_memory", "get_time"]
 
     def definitions(self) -> list[dict]:
         return [
-            {"type": "function", "function": {"name": n}}
+            {"type": "function", "function": {"name": to_llm_name(n)}}
             for n in self._names
         ]
+
+    def resolve_llm_name(self, llm_name: str) -> str | None:
+        for n in self._names:
+            if to_llm_name(n) == llm_name:
+                return n
+        return None
 
     def execute(self, name, ctx=None, **kwargs):
         raise NotImplementedError("gate test should not execute")
@@ -77,6 +88,17 @@ def test_all_known_plus_submit_task_passes():
         _make_tc("submit_task", "c2"),
     ])
     assert ok is True
+
+
+def test_desktop_tool_runtime_name_passes_when_offered_sanitized():
+    """desktop 工具运行时名通过 gate（LLM 收到脱点名，_execute_tool_round 反查回
+    desktop.file.read 后再进 gate；known_names 亦经 resolve_llm_name 归一）。"""
+    ok, msgs = _gate(
+        [_make_tc("desktop.file.read", "c1")],
+        executor_names=["desktop.file.read"],
+    )
+    assert ok is True
+    assert len(msgs) == 0
 
 
 # ---- 拒绝路径 ----

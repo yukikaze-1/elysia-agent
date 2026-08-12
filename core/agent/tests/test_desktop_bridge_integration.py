@@ -20,6 +20,7 @@ from core.agent import Agent
 from core.agent._lifecycle_persistence import _LifecyclePersistence
 from core.agent._lifecycle_tools import _LifecycleTools
 from core.config import AppConfig
+from Module.tool.protocol import to_llm_name
 
 pytestmark = pytest.mark.service
 
@@ -27,6 +28,8 @@ DESKTOP_TOOLS = {
     "desktop.file.select", "desktop.file.read",
     "desktop.file.write", "desktop.screen.capture",
 }
+# definitions() 暴露脱点名（OpenAI 禁点号，desktop.* → desktop_*）
+LLM_DESKTOP_TOOLS = {to_llm_name(n) for n in DESKTOP_TOOLS}
 
 
 @pytest.fixture
@@ -62,7 +65,7 @@ class TestDefinitionsFilter:
         try:
             defs = agent.tool_adapter.definitions()
             names = {d["function"]["name"] for d in defs}
-            assert not (names & DESKTOP_TOOLS)
+            assert not (names & LLM_DESKTOP_TOOLS)
             assert "read_file" in names  # backend 工具不受影响
         finally:
             await agent.tool_adapter.shutdown()
@@ -76,7 +79,7 @@ class TestDefinitionsFilter:
             assert agent.desktop_bridge.is_available() is True
             defs = agent.tool_adapter.definitions()
             names = {d["function"]["name"] for d in defs}
-            assert DESKTOP_TOOLS.issubset(names)
+            assert LLM_DESKTOP_TOOLS.issubset(names)
         finally:
             await agent.tool_adapter.shutdown()
 

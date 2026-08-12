@@ -367,6 +367,14 @@ class Executor:
         tc = msg.tool_calls[0]
         tc_any: Any = tc  # type: ignore[assignment]
         tool_name = tc_any.function.name
+        # definitions() 暴露脱点名（OpenAI/Anthropic/Gemini 禁点号，desktop.* →
+        # desktop_*），workflow 子 LLM 原样回传脱点名；_call_tool 需要运行时名
+        # （ToolManager 以 desktop.file.read 为键）。未知/合成名原样透传。
+        resolver = getattr(self._infra.tool_registry, "resolve_llm_name", None)
+        if resolver is not None:
+            resolved = resolver(tool_name)
+            if isinstance(resolved, str) and resolved:
+                tool_name = resolved
         try:
             params = json.loads(tc_any.function.arguments)
         except json.JSONDecodeError as e:

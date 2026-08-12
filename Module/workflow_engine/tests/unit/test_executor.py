@@ -233,6 +233,33 @@ async def test_execute_success(executor, sample_node, sample_tools, mock_tool_re
 
 
 @pytest.mark.asyncio
+async def test_execute_reverse_maps_desktop_llm_name(
+        executor, sample_node, mock_tool_registry, running_state):
+    """LLM 回传脱点名 desktop_file_read → 反查回运行时名 desktop.file.read 再 execute。
+
+    definitions() 暴露脱点名（OpenAI 禁点号），workflow 子 LLM 原样回传脱点名；
+    _call_tool 需要运行时名（ToolManager 以 desktop.file.read 为键）。
+    """
+    mock_tool_registry.definitions = MagicMock(return_value=[
+        {"type": "function", "function": {"name": "desktop_file_read", "description": "读取用户文件"}},
+        {"type": "function", "function": {"name": "web_search", "description": "搜索"}},
+    ])
+    mock_tool_registry.resolve_llm_name = MagicMock(side_effect=lambda n: {
+        "desktop_file_read": "desktop.file.read",
+    }.get(n))
+    tools = [
+        Tool(name="desktop_file_read", description="读取用户文件"),
+        Tool(name="web_search", description="搜索"),
+    ]
+    result = await executor.execute(
+        sample_node, WorkflowId("task_1"), tools, SessionId("s1"), running_state)
+
+    assert result.error is None
+    mock_tool_registry.execute.assert_called_once()
+    assert mock_tool_registry.execute.call_args[0][0] == "desktop.file.read"
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_match_failure(executor, sample_node, sample_tools, mock_llm_client, running_state):
     """LLM 返回空 tool_calls 且空 content → NodeErrorCode.TOOL_NOT_FOUND。"""
     async def _no_tool_calls(**kwargs):

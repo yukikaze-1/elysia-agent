@@ -16,7 +16,9 @@ import yaml
 
 from Module.output.manager import OutputManager
 from Module.tool.capability import Capability
-from Module.tool.protocol import ErrorType, PluginContext, ToolContext, ToolDefinition, ToolEmitter, ToolPlugin, ToolResult, ToolExecutor
+from Module.tool.protocol import (
+    ErrorType, PluginContext, ToolContext, ToolDefinition, ToolEmitter, ToolExecutor, ToolPlugin, ToolResult, to_llm_name,
+)
 from Module.tool.safety import SafetyPipeline
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,33 @@ class ToolManager:
                 )
         names = list(self._plugins.keys())
         logger.info("工具: 已加载 %d 个 (%s)", len(names), ", ".join(names))
+        self._assert_no_llm_name_collisions()
+
+    def _assert_no_llm_name_collisions(self) -> None:
+        """校验注册名在 to_llm_name 映射下无碰撞（撞名 → LLM 名不可逆，fail-fast）。
+
+        `desktop.file.select` 与未来 `desktop_file_select` 同名会映射到同一 LLM 名，
+        resolve_llm_name 无法反查——注册时即拒绝（配置错误，启动即失败比运行期错乱好）。
+        """
+        seen: dict[str, str] = {}
+        for name in self._plugins:
+            llm = to_llm_name(name)
+            if llm in seen and seen[llm] != name:
+                raise ValueError(
+                    f"工具 LLM 名冲突: {seen[llm]!r} 与 {name!r} 均映射为 {llm!r}"
+                    "（点号工具与下划线同名工具撞车，无法反查）")
+            seen[llm] = name
+
+    def resolve_llm_name(self, llm_name: str) -> str | None:
+        """LLM 返回的（可能脱点）函数名 → 运行时工具名；非本管理器工具 → None。
+
+        惰性扫描 `self._plugins`（覆盖测试直插 `_plugins` 的路径，不依赖 load_all
+        预建表）；`submit_task` 等合成/未知名返回 None，由调用方原样透传（gate 拒绝）。
+        """
+        for name in self._plugins:
+            if to_llm_name(name) == llm_name:
+                return name
+        return None
 
     def _load_safety_config(self, instance: ToolPlugin, cls: type[ToolPlugin]) -> None:
         """从插件目录加载 config.yaml 覆盖 SafetyProfile 字段（load/reload 共用）。

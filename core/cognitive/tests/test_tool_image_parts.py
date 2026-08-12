@@ -23,13 +23,17 @@ from core.cognitive.timing import TimingClock
 from core.adapter.llm_adapter import LLMAdapter
 from core.schema.part import ImageMime, ImagePart, TextPart
 from core.schema.message import ToolResultMessage
-from Module.tool.protocol import MediaItem, ToolResult
+from Module.tool.protocol import MediaItem, ToolResult, to_llm_name
 
 pytestmark = pytest.mark.service
 
 
 class _FakeAdapter:
-    """最小 ToolAdapter 替身：gate 校验已知工具 + tool_context.services 供桥注入。"""
+    """最小 ToolAdapter 替身：gate 校验已知工具 + tool_context.services 供桥注入。
+
+    _names 存运行时工具名；definitions() 暴露脱点名、resolve_llm_name() 反查
+    （镜像真实 ToolManager 行为）。
+    """
 
     def __init__(self, tool_names: list[str] | None = None,
                  bridge: object | None = None):
@@ -38,7 +42,13 @@ class _FakeAdapter:
         self._ctx.services = {"desktop_bridge": bridge} if bridge is not None else {}
 
     def definitions(self) -> list[dict]:
-        return [{"function": {"name": n}} for n in self._names]
+        return [{"function": {"name": to_llm_name(n)}} for n in self._names]
+
+    def resolve_llm_name(self, llm_name: str) -> str | None:
+        for n in self._names:
+            if to_llm_name(n) == llm_name:
+                return n
+        return None
 
     @property
     def tool_context(self):
@@ -158,7 +168,32 @@ class TestImagePartLanding:
         await loop._output.close()
 
 
-# ---- ImagePart.mime 兜底 ----
+# ---- LLM 脱点名反查（BE：dot 名 OpenAI 非法） ----
+
+class TestLLMNameReverseMapping:
+    @pytest.mark.asyncio
+    async def test_sanitized_llm_name_reversed_before_dispatch(self):
+        """LLM 发出脱点名 desktop_screen_capture → _execute_tool_round 反查回运行时名
+        desktop.screen.capture 再 dispatch（execute/gate/session 全部对得上）。"""
+        adapter = _FakeAdapter(["desktop.screen.capture"])
+        loop = _make_loop(adapter)
+        loop._session = SessionMemory(session_id="default")
+        loop._clock = TimingClock()
+        await loop.phases.enter_thinking()
+
+        dispatched: list[str] = []
+
+        async def fake_execute(tcs):
+            dispatched.extend(tc.function.name for tc in tcs)
+            return [(tc, ToolResult.ok(
+                name="desktop.screen.capture", content="截图", duration_ms=0)) for tc in tcs]
+
+        await loop._execute_tool_round(
+            [], "", _raw_tool_call(call_id="c_llm", name="desktop_screen_capture"),
+            fake_execute)
+
+        assert dispatched == ["desktop.screen.capture"]
+        await loop._output.close()
 
 class TestMimeFallback:
     @pytest.mark.asyncio

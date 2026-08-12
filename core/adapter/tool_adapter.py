@@ -200,3 +200,17 @@ class ToolAdapter:
             list[str]: 已注册工具的名称列表。
         """
         return list(self._manager.tool_names)
+
+    def resolve_llm_name(self, llm_name: str) -> str | None:
+        """LLM 返回函数名 → 运行时工具名（desktop_file_select → desktop.file.select）。
+
+        definitions() 暴露脱点名（OpenAI/Anthropic/Gemini 禁点号），LLM 会原样回传
+        脱点名；执行/审批/落库需要运行时名，消费端反查。非本管理器工具返回 None。
+
+        Args:
+            llm_name: LLM 产出的 function.name。
+
+        Returns:
+            对应运行时工具名；未知（submit_task/幻觉名）返回 None。
+        """
+        return self._manager.resolve_llm_name(llm_name)

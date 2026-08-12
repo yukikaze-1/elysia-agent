@@ -17,6 +17,7 @@ from aiohttp import FormData
 
 from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
 from core.input.idempotency import reset_store
+from Module.tool.protocol import to_llm_name
 
 
 @pytest.fixture
@@ -33,6 +34,8 @@ DESKTOP_NAMES = {
     "desktop.file.write",
     "desktop.screen.capture",
 }
+# definitions() 暴露脱点名（OpenAI 禁点号，desktop.* → desktop_*）
+LLM_DESKTOP_NAMES = {to_llm_name(n) for n in DESKTOP_NAMES}
 
 
 def _call_doc(call_id, *, status="running", connection="conn_test"):
@@ -187,7 +190,7 @@ class TestLlmExposureFilter:
 
             # 未连接：definitions 无 desktop 工具；plugin_list 列出 desktop（available=False）
             defs = [d["function"]["name"] for d in adapter.definitions()]
-            assert not any(n.startswith("desktop.") for n in defs)
+            assert not (LLM_DESKTOP_NAMES & set(defs))
             assert "read_file" in defs and "write_file" in defs  # backend 恒在
             plugs = {p["name"]: p for p in manager.plugin_list}
             for name in DESKTOP_NAMES:
@@ -201,7 +204,7 @@ class TestLlmExposureFilter:
             await agent.desktop_bridge.on_client_connect("conn_x")
             agent._sync_desktop_available()  # noqa: SLF001 — 组合根私有同步入口
             defs = [d["function"]["name"] for d in adapter.definitions()]
-            assert all(n in defs for n in DESKTOP_NAMES)
+            assert all(n in defs for n in LLM_DESKTOP_NAMES)
             plugs = {p["name"]: p for p in manager.plugin_list}
             assert all(plugs[n]["available"] is True for n in DESKTOP_NAMES)
             assert "desktop.command.run" not in defs  # spec §四.7 不注册
@@ -210,7 +213,7 @@ class TestLlmExposureFilter:
             await agent.desktop_bridge.on_client_disconnect("conn_x")
             agent._sync_desktop_available()  # noqa: SLF001
             defs = [d["function"]["name"] for d in adapter.definitions()]
-            assert not any(n.startswith("desktop.") for n in defs)
+            assert not (LLM_DESKTOP_NAMES & set(defs))
             plugs = {p["name"]: p for p in manager.plugin_list}
             assert all(plugs[n]["available"] is False for n in DESKTOP_NAMES)
         finally:

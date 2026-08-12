@@ -288,6 +288,20 @@ class ToolParameter:
 # ToolDefinition — 工具定义
 # ---------------------------------------------------------------------------
 
+def to_llm_name(name: str) -> str:
+    """运行时工具名 → LLM 可见函数名（脱点）。
+
+    OpenAI/Anthropic/Gemini 函数名禁点号（`^[a-zA-Z0-9_-]+$` / `{1,64}` /
+    `[a-zA-Z_][a-zA-Z0-9_]*`），而 desktop.* 运行时名（契约/wire 名，不可改）
+    含点。映射规则：点号 → 下划线（`desktop.file.select` → `desktop_file_select`）。
+
+    反向（LLM 返回的函数名 → 运行时名）不是纯函数（`_` 可能原本就是 `_`），
+    由 `ToolManager.resolve_llm_name` 基于注册表反查——本函数保证在注册名集上
+    是单射（ToolManager.load_all 撞名 fail-fast），往返可逆。
+    """
+    return name.replace(".", "_")
+
+
 @dataclass
 class ToolDefinition:
     """工具的完整定义 — 跨 Provider 的中性格式。
@@ -326,28 +340,28 @@ class ToolDefinition:
     # ---- Provider-specific export ----
 
     def to_openai(self) -> dict:
-        """OpenAI function-calling 格式。"""
+        """OpenAI function-calling 格式（函数名脱点，desktop.* → desktop_*）。"""
         return {
             "type": "function",
             "function": {
-                "name": self.name,
+                "name": to_llm_name(self.name),
                 "description": self.description,
                 "parameters": self._build_json_schema(),
             },
         }
 
     def to_anthropic(self) -> dict:
-        """Anthropic tool use 格式。"""
+        """Anthropic tool use 格式（函数名脱点）。"""
         return {
-            "name": self.name,
+            "name": to_llm_name(self.name),
             "description": self.description,
             "input_schema": self._build_json_schema(),
         }
 
     def to_gemini(self) -> dict:
-        """Google Gemini function declaration 格式。"""
+        """Google Gemini function declaration 格式（函数名脱点）。"""
         return {
-            "name": self.name,
+            "name": to_llm_name(self.name),
             "description": self.description,
             "parameters": self._build_json_schema(),
         }

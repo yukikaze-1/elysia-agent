@@ -788,6 +788,18 @@ class CognitiveLoop(CognitiveTools):
             assistant_entry["tool_calls"] = [tc.model_dump(mode="json") for tc in normalized]
         messages.append(assistant_entry)
 
+        # LLM 函数名反查回运行时名：definitions() 暴露脱点名（OpenAI/Anthropic/Gemini
+        # 禁点号，desktop.* → desktop_*），LLM 原样回传脱点名；gate/执行/落库/前端
+        # 事件需要运行时名（desktop.file.read）。assistant_entry 已快照脱点名（与 LLM
+        # 看到的历史一致），此处只修正后续消费；未知/合成名（submit_task）原样透传。
+        if self._tool_adapter is not None:
+            resolver = getattr(self._tool_adapter, "resolve_llm_name", None)
+            if resolver is not None:
+                for tc in normalized:
+                    runtime_name = resolver(tc.function.name)
+                    if isinstance(runtime_name, str) and runtime_name:
+                        tc.function.name = runtime_name
+
         # Gate: 校验 tool_calls 合法性，拦截未知工具名
         if not self._gate_tool_calls(normalized, messages):
             await self.phases.return_to_thinking()  # 恢复 THINKING，避免 FSM 卡在 EXECUTING 触发非法转换

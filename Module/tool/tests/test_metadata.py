@@ -10,6 +10,7 @@
 import pytest
 
 from Module.tool.manager import ToolManager, ToolMetadata
+from Module.tool.protocol import to_llm_name
 
 _DESKTOP_NAMES = {
     "desktop.file.select",
@@ -17,6 +18,9 @@ _DESKTOP_NAMES = {
     "desktop.file.write",
     "desktop.screen.capture",
 }
+
+# desktop 工具经 to_llm_name 脱点后的 LLM 可见函数名（OpenAI `^[a-zA-Z0-9_-]+$`）
+_LLM_DESKTOP_NAMES = {to_llm_name(n) for n in _DESKTOP_NAMES}
 
 
 def _make_manager() -> ToolManager:
@@ -104,17 +108,49 @@ class TestDefinitionsFilterRuntime:
         defs = tm.definitions(filter_runtime=lambda rt: rt != "desktop")
         names = {d["function"]["name"] for d in defs}
         assert len(defs) == 12
-        assert not (_DESKTOP_NAMES & names)
+        assert not (_LLM_DESKTOP_NAMES & names)
 
     def test_filter_only_desktop(self):
         tm = _make_manager()
         defs = tm.definitions(filter_runtime=lambda rt: rt == "desktop")
         names = {d["function"]["name"] for d in defs}
-        assert names == _DESKTOP_NAMES
+        assert names == _LLM_DESKTOP_NAMES
 
     def test_default_definitions_unaffected(self):
         tm = _make_manager()
         assert len(tm.definitions("openai")) == 16
+
+
+@pytest.mark.unit
+class TestLLMNameMapping:
+    """LLM 函数名与运行时名分离（dot 名脱点 + 反查往返）。
+
+    OpenAI/Anthropic/Gemini 函数名禁点号（`desktop.file.select` 不合法）；
+    definitions() 暴露脱点名，resolve_llm_name() 反查回运行时名供执行。
+    """
+
+    def test_definitions_emit_no_dots(self):
+        tm = _make_manager()
+        names = {d["function"]["name"] for d in tm.definitions()}
+        assert _LLM_DESKTOP_NAMES <= names
+        assert not any("." in n for n in names)
+
+    def test_resolve_llm_name_reverses_desktop(self):
+        tm = _make_manager()
+        assert tm.resolve_llm_name("desktop_file_select") == "desktop.file.select"
+        assert tm.resolve_llm_name("desktop_file_read") == "desktop.file.read"
+        assert tm.resolve_llm_name("desktop_file_write") == "desktop.file.write"
+        assert tm.resolve_llm_name("desktop_screen_capture") == "desktop.screen.capture"
+
+    def test_resolve_llm_name_roundtrip_all_plugins(self):
+        tm = _make_manager()
+        for runtime_name in tm.tool_names:
+            assert tm.resolve_llm_name(to_llm_name(runtime_name)) == runtime_name
+
+    def test_resolve_llm_name_unknown_returns_none(self):
+        tm = _make_manager()
+        assert tm.resolve_llm_name("hallucinated_tool") is None
+        assert tm.resolve_llm_name("submit_task") is None  # 合成工具不在注册表
 
 
 @pytest.mark.unit
