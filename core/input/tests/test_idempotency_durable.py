@@ -1059,6 +1059,45 @@ class TestRecoverRestart:
         assert r.entry.user_message_id == "msg_1"  # 既有 entry，不新生成
         assert (await repo.get("default", "crid_1")) is None  # 内存 claim 未落 Mongo
 
+    @pytest.mark.asyncio
+    async def test_recover_keeps_flag_when_concurrent_degrade_during_loop(self, fresh_store):
+        """recover 循环期间并发降级写置位 → 结束不清 _needs_recovery（S2 窗口不复开）。"""
+        repo = _FlipRepo()
+        configure_store(repo, product_mode=False)
+        store = get_store()
+        repo.available = False
+        await store.store("default", "crid_0", _entry("m0", "d0"))  # 降级触发 recover
+        repo.available = True
+        # 给 repo.get 加 barrier：recover 首条 get 暂停，期间并发 store 降级新 key
+        orig_get = repo.get
+        gate = asyncio.Event()
+        released = asyncio.Event()
+
+        async def gated_get(conversation_id, client_request_id):
+            if (conversation_id, client_request_id) == ("default", "crid_0"):
+                gate.set()
+                await released.wait()
+            return await orig_get(conversation_id, client_request_id)
+
+        repo.get = gated_get
+        task = asyncio.create_task(store.recover())
+        await gate.wait()  # recover 停在首条 get
+        # 并发：Mongo 又断，降级写一个新 key（置 needs_recovery）
+        repo.available = False
+        await store.store("default", "crid_new", _entry("m1", "d1"))
+        assert store.needs_recovery is True
+        repo.available = True
+        released.set()  # 放行 recover
+        await task
+        # recover 结束后：crid_new 是循环期间新增的降级记录 → needs_recovery 必须保留
+        assert store.needs_recovery is True, "循环期间降级写置位被 recover 清掉 → S2 复开"
+        assert store.durable is False
+        # 下轮 recover 补落 crid_new
+        await store.recover()
+        assert store.needs_recovery is False
+        assert store.durable is True
+        assert (await repo.get("default", "crid_new")) is not None
+
 
 # ---------------------------------------------------------------------------
 # Task 4：voice.commit 顺序修正（spec §1.1 BE-P0-01#4）+ D3 durable 详情。marker=service。

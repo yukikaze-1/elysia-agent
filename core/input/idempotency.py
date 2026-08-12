@@ -11,7 +11,8 @@
 - `recover()`（Mongo 恢复 reconcile）：内存权威 overlay 逐条四分支对齐——Mongo 缺失 →
   restore() 补落完整文档（含终态 ACK 负载）；Mongo claimed + 内存终态 → restore() 升级
   为终态；Mongo claimed + 内存 claimed / Mongo 已终态 → 刷新内存为 Mongo 状态（Mongo
-  优先）。结束后清 `_in_memory_fallback` + `_needs_recovery` → durable 翻回。
+  优先）。结束后清 `_in_memory_fallback`（操作级）→ durable 翻回；`_needs_recovery`
+  仅当循环期间无新增内存 entry 才清（并发降级 store 新 key 的置位留给下轮 reconcile）。
 - `complete()/reject()`：写内存（status + 完整 ACK 负载）+ best-effort repo 写穿
   （失败仅记日志，不抛——条目保留仍可重放）。
 - `durable`（D5-b）：`repo is not None and not _in_memory_fallback`；`configure()`
@@ -261,12 +262,16 @@ class IdempotencyStore:
           权威，防多 worker 翻转）；
         - Mongo 已终态 → 刷新内存为 Mongo 状态（Mongo 优先、读时一致）。
         跨重启重放逐字一致（修复 S1：不再用陈旧 claimed 覆盖前进终态）。结束后
-        ``_in_memory_fallback = False`` 且 ``_needs_recovery = False``（durable 翻回）。
+        ``_in_memory_fallback = False``（操作级）且循环期间无新增内存 entry 时
+        ``_needs_recovery = False``（durable 翻回）。并发降级 ``store()`` 在循环
+        await 间隙新增的 entry（写入路径已置 ``_needs_recovery=True``）不在此轮被清
+        ——留给下轮 recover reconcile，防 S2 重复处理窗口经并发向量复开。
         任一 get/restore 失败 → 异常冒泡，不翻 durable（下轮健康循环重试）。
         repo 为 None（纯内存）→ no-op。
         """
         if self._repo is None:
             return  # 纯内存路径无可 reconcile
+        snapshot_keys = set(self._entries)
         for (conversation_id, client_request_id), entry in list(self._entries.items()):
             if self._is_stale(entry):
                 # 过期内存记录（Mongo 已 TTL 清除）→ 不复活
@@ -285,7 +290,10 @@ class IdempotencyStore:
             await self._repo.restore(_build_full_doc(conversation_id, client_request_id,
                                                      entry, self._ttl))
         self._in_memory_fallback = False
-        self._needs_recovery = False
+        if set(self._entries) <= snapshot_keys:
+            # 循环期间无新增内存 entry（无并发降级写）→ 已 reconcile 全部，清位翻 durable；
+            # 有新增（并发降级 store 的 key）→ 保留置位，留给下轮 recover reconcile
+            self._needs_recovery = False
 
     async def delete(self, conversation_id: str, client_request_id: str) -> None:
         """释放 claim（消息被拒/异常后删除，允许重试重新进入）。
