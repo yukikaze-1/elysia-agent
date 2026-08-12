@@ -362,7 +362,7 @@ INTERRUPTED → IDLE
 
 ### 4.2.1 Agent 公开接口（组合根访问路径）
 
-`Agent` 是组合根（composition root），持有 22+ 子系统。除 `agent.status` / `agent.phases` 外，通过 **31 个同名 `@property`** 公开子系统访问路径——`@property` 只是薄 getter（`return self._xxx`），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+`Agent` 是组合根（composition root），持有 22+ 子系统。除 `agent.status` / `agent.phases` 外，通过 **39 个同名 `@property`** 公开子系统访问路径——`@property` 只是薄 getter（`return self._xxx`），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
 
 **子系统对象（23 个）**：`agent.session` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.tts` / `agent.config` / `agent.bus` / `agent.cognitive` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine` / `agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder`
 
@@ -804,7 +804,7 @@ aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂�
 
 ### 6.4 浏览器客户端 (frontend/)
 
-Vue 3 + Vite + Pinia + TypeScript。开发时通过 Vite 代理（:5173 → :8765），生产构建产物 `frontend/dist/` 复制到 `static/` 由 aiohttp serve。
+Vue 3 + Vite + Pinia + TypeScript。开发时通过 Vite 代理（:5173 → :8765），生产构建经 `vite.config.ts` `outDir` 直接输出到 `static/` 由 aiohttp serve（无 `frontend/dist/` 复制步骤）。
 
 三栏布局：
 - **左栏**: 角色面板 — 状态灯 (CSS transition)、心情标签、LLM 模型名
@@ -1003,7 +1003,7 @@ core/utils/log_setup.py:
 
 ## 11. 测试架构
 
-3,186 个测试按 4 层 markers 组织（unit / service / integration / slow；全量收集，`make test-normal` 口径 not-slow 2,854）。
+3,503 个测试按 5 层 markers 组织（unit / service / integration / slow / external opt-in；全量收集，合并门禁 `-m "not external"` 3,467，`make test-normal` 口径 `not slow and not external` 3,428；具体数字以 `scripts/print_test_stats.py` 为准，不手写易漂移）。
 
 完整分层体系、测试文件索引、按模块运行命令 → [docs/testing.md](testing.md)
 
@@ -1039,7 +1039,7 @@ Agent/
 │
 ├── core/                    # L1 认知控制 + L2 记忆
 │   ├── agent/                #   Agent 组装包 (agent + lifecycle + server + _types + 4 lifecycle mixins)
-│   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message + 31 公开 @property（含 stt/stt_enabled/tts_enabled/stt_emotion_state）
+│   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message + 39 公开 @property（含 stt/stt_enabled/tts_enabled/stt_emotion_state）
 │   │   ├── lifecycle.py      #     AgentLifecycle: start/stop 编排 + _STARTUP_STEPS / _SHUTDOWN_STEPS
 │   │   ├── server.py         #     AgentServer: run_server/repl + switch_*/set_service + run_server STT 槽位 + banner
 │   │   ├── _types.py         #     RunState + 辅助类
@@ -1054,12 +1054,14 @@ Agent/
 │   │   ├── tool_call_parser.py
 │   │   ├── message_builder.py
 │   │   └── prompt_assembler.py
-├── cognitive/            #   CognitiveLoop 包 (loop + tools + timing)
+│   ├── cognitive/            #   CognitiveLoop 包 (loop + tools + timing + generation + delegation)
 │   │   ├── loop.py           #     CognitiveLoop(CognitiveTools): process + _think_loop + _dispatch_stream_event
 │   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   ├── timing.py         #     Timer + TimingClock 延迟统计
 │   │   ├── generation.py     #     GenerationContext: generation_id/assistant_message_id/conversation_id 预分配（ID 字段对齐 NewType：GenerationId/MessageId/SessionId/RequestId/SegmentId；channel/kind 对齐契约层 MessageChannel/SegmentKind StrEnum）
-│   │   └── generation_registry.py # GenerationRegistry: generation 生命周期持久化（register/mark 终态 + stale 清理）
+│   │   ├── generation_registry.py # GenerationRegistry: generation 生命周期持久化（register/mark 终态 + stale 清理）
+│   │   ├── delegation.py     #     DelegationPreparer: 任务委托预处理
+│   │   └── user_profile.py   #     用户画像
 │   ├── monitoring/            #   监控子包
 │   │   ├── event_bus.py       #     优先级事件总线
 │   │   ├── idle_monitor.py    #     空闲监控 + 主动触发
@@ -1079,7 +1081,7 @@ Agent/
 │   ├── status/                #   AgentStatus 接口层 (protocol + FSMBacked 实现)
 │   │   ├── protocol.py       #     AgentStatus（对外只读）+ CognitivePhaseController（对内写）
 │   │   └── fsm.py            #     FSMBackedStatus + FSMBackedPhaseController
-│   ├── storage/               #   存储层 — Repository 模式 (MongoDB/Milvus)（12 文件）
+│   ├── storage/               #   存储层 — Repository 模式 (MongoDB/Milvus)（13 文件）
 │   │   ├── base.py           #     Repository 基类 + 共享连接/索引辅助
 │   │   ├── session_repo.py   #     SessionRepository: session CRUD + 30d TTL
 │   │   ├── message_repo.py   #     MessageRepository: 消息归档 append-only
@@ -1091,6 +1093,7 @@ Agent/
 │   │   ├── attachment_release.py #  AttachmentRelease: 会话/消息删除的附件引用释放共享 helper
 │   │   ├── attachment_gc.py  #     AttachmentGC: 启动兜底扫描四规则（软删/孤儿/未关联/磁盘）
 │   │   ├── desktop_call_repo.py #  DesktopCallRepository: 桌面调用状态（Mongo + 进程内缓存 + 30d TTL，批次 4）
+│   │   ├── idempotency_repo.py #    IdempotencyRepository: 幂等 claim 三态持久化（唯一约束 + TTL，claim 所有权 + restore 条件 upsert，D6c + 2026-08-12）
 │   │   └── secret_store.py   #     SecretStore: 密钥存储（data/secrets/profiles.json，0600 + 原子写，批次 5）
 │   ├── debug/                #   Debug 仪表板包
 │   │   ├── info.py           #     /debug 数据聚合
@@ -1111,8 +1114,10 @@ Agent/
 │   │   ├── wakeword.py       #     唤醒词检测
 │   │   ├── custom_providers.py #   自定义 provider 路由（批次 5：Secret Store 优先 + runtime/能力）
 │   │   ├── provider_registry.py # /api/providers 响应组装（env 过滤 + 未配置引导）
-│   │   ├── idempotency.py   #     v2 消息幂等存储
-│   │   └── ssrf.py          #     批次 5 SSRFGuard（validate_endpoint + guarded transport）
+│   │   ├── idempotency.py   #     v2 消息幂等存储（内存权威 overlay + Mongo 写穿 + recover 四分支，D6c + 2026-08-12）
+│   │   ├── rate_limiter.py  #     D6b token-bucket 限流（REST 429 + WS RATE_LIMITED；key 认证主体优先）
+│   │   ├── ssrf.py          #     批次 5 SSRFGuard（validate_endpoint + guarded transport）
+│   │   └── __main__.py      #     python -m core.input 入口
 │   ├── config/               #   配置子包
 │   │   ├── __init__.py       #     重导出 AppConfig + CharacterConfig
 │   │   ├── app_config.py     #     App 配置
@@ -1146,15 +1151,24 @@ Agent/
 │   │   ├── PersonalityCompression.j2     # L3→L2 性格压缩
 │   │   └── ref/                      # GPT 生成原始版本
 │   ├── tools/               #   Agent 工具集 (16 个插件)
+│   ├── desktop/             #   桌面桥（DesktopToolBridge: desktop_calls 集合 + 持有者校验）
+│   ├── hitl.py              #   HITL 审批通知器（pending 审批 /tools 审批流）
+│   ├── version.py           #   后端版本（__version__ + build SHA，server_info.server_version）
 │   └── tests/               #   测试
 │
 ├── frontend_contract/          # 前后端契约单源（零依赖，仅 pydantic + stdlib）
 │   ├── base.py                 #   ContractModel 基类 + TsNull marker + wire_dict 序列化
+│   ├── version.py              #   TRANSPORT_VERSION="2" / PROTOCOL_VERSION="2.0" 协议版本单源（批次 9B）
 │   ├── ws_message.py           #   WS 消息契约（ServerMessage 判别联合 38 具名成员 + 支持类型 + Client 消息）
-│   ├── rest.py                 #   REST 业务契约（providers/images/messages 等 12 模型）
+│   ├── rest.py                 #   REST 业务契约（providers/images/messages 等 40 模型）
 │   ├── debug.py                #   Debug API 契约（DebugData 16 面板等 38 模型）
-│   ├── gen_ts.py               #   TS 发射器：模型 → contract.generated.ts（只读快照）
-│   ├── __main__.py             #   python -m frontend_contract（生成 / --check 漂移门禁）
+│   ├── errors.py               #   错误码单源（41 码，F5；check_error_codes.py 比对协议文档 §9.1）
+│   ├── gen_ts.py               #   TS 发射器：模型 → contract.generated.ts + generate_raw_ts（raw wire 快照，批次 9B）
+│   ├── gen_schema.py           #   JSON Schema 发射器：模型 → contract.schema.json（含 schemaHash，批次 9B）
+│   ├── contract.schema.json    #   生成产物（机器契约 JSON Schema，Electron replay 主源，批次 9B）
+│   ├── contract.raw.ts         #   生成产物（Electron raw wire 类型快照，批次 9B）
+│   ├── __main__.py             #   python -m frontend_contract（生成 ts/schema/raw_ts 三产物 / --check 漂移门禁）
+│   ├── README.md               #   契约层说明
 │   └── tests/                  #   契约建模测试（marker=unit）
 │
 ├── character/
@@ -1181,7 +1195,6 @@ Agent/
 │
 ├── static/                     # 静态资源（仅图片/文档）
 │   ├── Elysia.png              # 角色头像
-│   └── live2d-demo/            # Live2D Cubism SDK + demo
 
 ├── docs/                   # 文档
 │   ├── README.md           #   文档导航索引

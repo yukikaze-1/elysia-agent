@@ -44,7 +44,7 @@ make test-quick
 
 # 提交前 — 排除 slow（~5min）
 make test-normal
-# 或: pytest -m "not slow" -q --tb=short --ignore=Module/workflow_engine/tests
+# 或: pytest -m "not slow and not external" -q --tb=short
 
 # 全量 — 推之前（~20min）
 make test-full
@@ -52,7 +52,7 @@ make test-full
 
 # 导入风格门禁（秒级）
 make lint
-# 或: ruff check core/ Module/ --exclude __pycache__
+# 或: ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
 ```
 
 ## Import 门禁（ruff TID252）
@@ -61,7 +61,7 @@ make lint
 
 ```bash
 # 自动修复相对导入 → 绝对（一次性迁移用）
-ruff check core/ Module/ --exclude __pycache__ --fix --unsafe-fixes
+ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__ --fix --unsafe-fixes
 
 # 查非豁免文件残留相对导入（应输出为空）
 grep -rEn "^from \." core/ Module/ --include="*.py" \

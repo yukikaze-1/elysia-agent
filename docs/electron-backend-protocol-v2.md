@@ -16,7 +16,7 @@
 - **批次 8c（F15）**：switch_model / set_service 后的 `capabilities` 重播仅达 v1 通道——v2 用 `server_info` 取代 capabilities，`broadcast_capabilities` 跳过 protocol_version ≥ 2 的通道；v2 对切换的感知经自身 `switch_model_result`/`service_mode_result` 回显（多客户端 v2 切换同步为已知限制）。
 - **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。Desktop 工具 call 同样登记该 ID 为 `target_connection`，后端只向 `client_platform=electron && connection_id=target_connection` 的精确通道投递；重连期间旧连接即使尚未移除也不会收到新请求。
 - **`server_info.build_sha`（批次 7，BE-081）**：构建 git HEAD 完整 SHA（`core/version.py` `get_build_sha()`，`git rev-parse HEAD`，非 git 仓库/失败 → None 缺省省略）；`server_version` 为 `__version__ + "+" + build_sha[:7]` 后缀（`build_server_version()`，无 git 时仅 `0.1.0`）。供前端展示/反馈定位。
-- `server_info.features` 如实反映能力：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）、**`media_upload`（批次 7 = true，POST /api/uploads，见 §13）**、**`idempotency_durable`（批次 D6c：true=幂等跨重启持久化，false=内存降级非 durable 窗口）**。
+- `server_info.features` 如实反映能力：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）、**`media_upload`（批次 7 = true，POST /api/uploads，见 §13）**、**`idempotency_durable`（批次 D6c + 2026-08-12 BE-P1-07 强化：true=幂等 claim 完整跨重启持久化；false=内存降级窗口 或 存在未 reconcile 到 Mongo 的记录——Mongo 已恢复但 recover() 未跑/未清位时也为 false，不止内存降级）**。
 - **v1 忽略 `X-Client-Platform`**：v1 无 desktop 概念，伪冒 platform 头不生效（负面隔离，spec §5.1）。
 
 ## 2. 一次完整 v2 回复事件序列
@@ -147,8 +147,9 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 - `ws-v2-fail.jsonl` — 当前 Provider 失败（started → `GENERATION_PROVIDER_UNAVAILABLE` → idle）。
 - `ws-v2-session.jsonl` — 当前多会话 conversationId 贯通。
 - `ws-v2-tool.jsonl` / `ws-v2-voice.jsonl` — 当前 Desktop 工具与实时语音样例。
+- `ws-v2-rejected.jsonl` — 当前负面 ACK（rejected：`CONTRACT_VALIDATION` / `SESSION_NOT_FOUND` / `QUEUE_FULL` / `STORAGE_UNAVAILABLE` / `RATE_LIMITED` / `IN_PROGRESS`，加固批次 2026-08-11 新增）。
 
-上述七个无 `legacy` 后缀的文件由 `scripts/gen_contract_frames.py` 从
+上述八个无 `legacy` 后缀的文件由 `scripts/gen_contract_frames.py` 从
 `frontend_contract/` 确定性生成，并由 `--check` 做漂移门禁。批次 2 真实抓包改名为
 `ws-v2-cancel-legacy-batch2.jsonl` / `ws-v2-fail-legacy-batch2.jsonl`，只作历史参考；
 已停用的 `scripts/capture_ws_trace.py` 不是当前契约生成入口。

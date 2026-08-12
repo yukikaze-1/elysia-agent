@@ -19,11 +19,11 @@ Plain Python（无 `pyproject.toml` 等构建系统）。前端 Vue 3 + Vite + T
 ```bash
 # 日常开发 — 秒级（unit + service）
 make test-quick
-# 或: pytest -m "unit or service" -q -x --tb=short --ignore=Module/workflow_engine/tests
+# 或: pytest -m "unit or service" -q -x --tb=short
 
 # 提交前 — 排除 slow（~5min）
 make test-normal
-# 或: pytest -m "not slow" -q --tb=short --ignore=Module/workflow_engine/tests
+# 或: pytest -m "not slow and not external" -q --tb=short
 
 # 全量 — 推之前（~22min）
 make test-full
@@ -108,7 +108,7 @@ Module/<service>/
 ```
 core/
 ├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types + AgentStatus + FSM + 4 lifecycle mixins
-│   ├── agent.py           #   Agent.__init__ + event handling + process_message + 38 公开 @property + background tasks
+│   ├── agent.py           #   Agent.__init__ + event handling + process_message + 39 公开 @property + background tasks
 │   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + _STARTUP_STEPS + _SHUTDOWN_STEPS + 3 flush
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
 │   ├── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
@@ -280,7 +280,7 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
 - **Project paths**: `from paths import ProjectPath, get_project_root` — 所有项目文件系统路径的唯一定义点。`ProjectPath.X.resolve()` 返回基于 `ELYSIA_ROOT` 环境变量（fallback 为项目根目录）的绝对 `Path`。
 - **AgentStatus**: `agent.status`（`AgentStatus`）提供语义状态查询（`is_accepting_input` / `is_speaking` / `should_suppress_vad_interrupt` 等）；`agent.phases`（`CognitivePhaseController`）驱动阶段转换。底层 `AgentFSM` 不对外暴露。设计文档：[spec](docs/superpowers/specs/archive/2026-07/2026-07-30-agent-status-interface-design.md)。
-- **Agent 公开接口**: `Agent` 作为组合根，通过 38 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+- **Agent 公开接口**: `Agent` 作为组合根，通过 39 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
 
 ## Prompt files (`core/prompts/`)
 
@@ -427,7 +427,7 @@ cd frontend && npm run build
 
 CharacterReflector is a subcomponent — after LLM reflection, it submits events to `CharacterEngine.consume_trigger("reflector", ...)` instead of writing `self_perception_history` directly.
 
-C1 renders L1 + L2. C9 conditionally renders L3 via `AwarenessTrigger` (cooldown: 1 hour, persisted to session).
+C1 renders L1 + L2. C9 conditionally renders L3 via `AwarenessTrigger` (cooldown: 5 minutes, persisted to session).
 
 - **C6 SpeakingStyle 动态联动**: L2 演化后，LLM 编辑说话风格描述使与 L2 一致。版本历史与 L2 共享 `character_versions` 集合，per content_type 独立计数。
 

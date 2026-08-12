@@ -8,7 +8,7 @@
 
 > **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
 
-> 最近 (2026-08-09/10): Electron v2 联调后端契约封口（Batch 9A/9B/9C + 接入充分性复审）——session 回放 `conversationId` / 历史分页显式 cursor（严格区分，before/after 只认 cursor）/ 显式会话存在性校验（禁幽灵会话）/ 版本化机器契约产物（`contract.schema.json` + `contract.raw.ts` + 七类 golden frames 漂移门禁）/ ClientMessage 判别联合统一入站校验 / 严格版本协商（{缺省/"1"→v1, "2"→v2}，其余 400）/ 输入音频固定格式 + descriptor / dictation 会话内 STT profile / Desktop 重连交叠按 `connectionId` 精确投递。产品化门禁（远程鉴权 fail-closed、幂等持久化、实际请求限流）defer 单独批次。2026-08-09: pyright 门禁扩展到全仓——include core/ + Module/ + frontend_contract/（清 Module 28 errors + frontend 0 error 纳入）。同日: core 生产代码 pyright 门禁（`make pyright` 锁 Elysia env 清 92 处报错）+ 全项目文档体检（删除/归档过时文档）。2026-08-08: core ID NewType 化 + channel/kind 对齐契约枚举（MessageChannel/SegmentKind StrEnum）+ MemoryEntry.memory_type 对齐（try_coerce/coerce 归一）。2026-08-06: 通用附件与媒体链路（批次 7）——`POST /api/uploads`（filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载 + Range/206）、`GET /api/attachments/{id}/sign`（签发）、`GET /api/stickers`（内置表情包）+ 附件 GC 四规则 + `/health`/`/ready` 拆分 + `build_sha`/`requestId`。2026-08-03: 前后端契约单源化——顶层 `frontend_contract/` 包（Pydantic 唯一权威），WS/REST/Debug 契约建模 + `gen_ts.py` 发射器生成前端 TS 快照 + `make check-types` 漂移门禁。同日: 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。测试统计见 `scripts/print_test_stats.py`（2026-08-11 起不手写易漂移数字）。
+> 最近 (2026-08-12): Electron v2 后端加固后复核整改（见 [docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md](docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md)）——BE-P1-06（降级终态负载丢失）与 BE-P1-07（首轮健康探测漏补偿）已修复：完整记录恢复 `restore` 条件 upsert + recover 四分支、store 显式 `needs_recovery`/durable 强化、协调器首轮补触发、product `/ready` 门禁含补偿状态；BE-P2-04（runbook schemaHash）修正。**BE-RISK-01 保持开放**（accepted 提交窗口；happy-path 联调候选，不作 D6c 故障恢复冻结基线）。2026-08-11: 加固批次（[review](docs/review/electron-v2-first-integration-backend-review-2026-08-11.md) 已闭环）——并发 claim 所有权、幂等三态 + 崩溃恢复、dev 降级 overlay/reconcile、WS 限流 clientRequestId 关联、ACK 判别联合 + 负面 golden、clean-start 会话发现、探针分层 /ready、限流认证主体分桶、联调 runbook。2026-08-09/10: Electron v2 联调后端契约封口（Batch 9A/9B/9C + 接入充分性复审）——session 回放 `conversationId` / 历史分页显式 cursor（严格区分，before/after 只认 cursor）/ 显式会话存在性校验（禁幽灵会话）/ 版本化机器契约产物（`contract.schema.json` + `contract.raw.ts` + 七类 golden frames 漂移门禁）/ ClientMessage 判别联合统一入站校验 / 严格版本协商（{缺省/"1"→v1, "2"→v2}，其余 400）/ 输入音频固定格式 + descriptor / dictation 会话内 STT profile / Desktop 重连交叠按 `connectionId` 精确投递。产品化门禁（远程鉴权 fail-closed、幂等持久化、实际请求限流）defer 单独批次。2026-08-09: pyright 门禁扩展到全仓——include core/ + Module/ + frontend_contract/（清 Module 28 errors + frontend 0 error 纳入）。同日: core 生产代码 pyright 门禁（`make pyright` 锁 Elysia env 清 92 处报错）+ 全项目文档体检（删除/归档过时文档）。2026-08-08: core ID NewType 化 + channel/kind 对齐契约枚举（MessageChannel/SegmentKind StrEnum）+ MemoryEntry.memory_type 对齐（try_coerce/coerce 归一）。2026-08-06: 通用附件与媒体链路（批次 7）——`POST /api/uploads`（filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载 + Range/206）、`GET /api/attachments/{id}/sign`（签发）、`GET /api/stickers`（内置表情包）+ 附件 GC 四规则 + `/health`/`/ready` 拆分 + `build_sha`/`requestId`。2026-08-03: 前后端契约单源化——顶层 `frontend_contract/` 包（Pydantic 唯一权威），WS/REST/Debug 契约建模 + `gen_ts.py` 发射器生成前端 TS 快照 + `make check-types` 漂移门禁。同日: 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。测试统计见 `scripts/print_test_stats.py`（2026-08-11 起不手写易漂移数字）。
 
 ---
 
@@ -18,7 +18,7 @@
 
 ```bash
 git clone <仓库地址>   # 点击页面上绿色「Code」按钮复制
-cd Agent
+cd elysia-agent
 ```
 
 ### 2. 装好三样东西
@@ -359,7 +359,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | **模型切换** — DeepSeek/OpenAI/Ollama/MiMo + 运行时热切换 | done |
 | **多模态** — 图片上传/预览/lightbox + describe_image 视觉工具 | done |
 | **通用附件与媒体** — POST /api/uploads + 签名下载（Range/206）+ 签发 + 内置表情包 + GC 清理（批次 7，BE-070/071） | done |
-| **版本与可观测** — /health（liveness）/ready（readiness）拆分 + git build_sha + 统一错误 40 码 + 请求 ID 关联（批次 7，BE-081） | done |
+| **版本与可观测** — /health（liveness）/ready（readiness）拆分 + git build_sha + 统一错误 41 码 + 请求 ID 关联（批次 7，BE-081） | done |
 | ~~Live2D 虚拟角色渲染~~（Cubism SDK 目录已移除，改用静态图 AvatarDisplay） | 已移除 |
 | 前端 Vue 3 重构 (Vite + Pinia + TypeScript) | done |
 | 配置系统 (YAML + env + 类型校验 + providers.yaml) | done |

@@ -24,11 +24,11 @@
 | TS 快照 | `frontend/src/types/contract.generated.ts` | v1 Vue 只读快照（Vite 构建消费） |
 | JSON Schema | `frontend_contract/contract.schema.json` | 机器契约（Electron replay 主源） |
 | raw TS | `frontend_contract/contract.raw.ts` | Electron raw wire 类型快照 |
-| golden frames | `docs/archive/frontend-handoff-v2/traces/ws-v2-*.jsonl` | 七类契约源 golden（handshake/session/chat/tool/voice/cancel/fail） |
+| golden frames | `docs/archive/frontend-handoff-v2/traces/ws-v2-*.jsonl` | 八类契约源 golden（handshake/session/chat/tool/voice/cancel/fail/**rejected**——rejected 为加固批次 2026-08-11 新增负面帧） |
 
 ## 本发版含（相对上一批次 9A/9B/9C）
 
-- `ServerInfoFeatures.idempotency_durable`（D6c）：true=幂等 claim 跨重启持久化 / false=内存降级窗口。
+- `ServerInfoFeatures.idempotency_durable`（D6c + 2026-08-12 BE-P1-07 强化）：true=幂等 claim 完整跨重启持久化 / false=内存降级窗口 或 存在未 reconcile 到 Mongo 的记录（Mongo 已恢复但 recover() 未跑/未清位时也为 false）。
 - 错误码目录 41 码单源化（`frontend_contract/errors.py` + `scripts/check_error_codes.py`）。
 - **加固批次（ACK 判别联合，`5690cfc`）**：`user_message.ack` 拆 `AcceptedUserAckMessage`/`RejectedUserAckMessage`（status 判别联合）+ `AckError`；`ErrorMessage` 加可选 `clientRequestId` + 顶层 `retryAfterMs`；6 个命令消息加可选 `clientRequestId`；嵌套判别联合生成器支持；负面 golden 增 6 帧（`CONTRACT_VALIDATION` / `SESSION_NOT_FOUND` / `QUEUE_FULL` / `STORAGE_UNAVAILABLE` / `RATE_LIMITED` / `IN_PROGRESS`）。详见 `docs/review/electron-v2-backend-change-list-2026-08-11.md` §6-10。
 

@@ -41,7 +41,7 @@
 ## 3. 探针口径（不要误解）
 
 - **`/health`（liveness）**：纯进程存活检查，**恒 200**，零网络探针——任何依赖挂起都在固定小预算内返回，不携带依赖状态；
-- **`/ready`（readiness）** = **核心 chat 门禁**：`chatReady`（mongo 三 repo 并行 ping + product 模式时 idempotency ping）→ `200`，否则 `503`（读 payload `chatReady`/`fullReady`/`dependencies` 判断文本可用/不可用原因）；**Milvus 不门禁 HTTP**；**product 模式（非回环绑定）idempotency 失效 → `/ready` 503**（v2 send 不可用）。
+- **`/ready`（readiness）** = **核心 chat 门禁**：`chatReady`（mongo 三 repo 并行 ping + product 模式时 `idempotency ping AND not needs_recovery`——降级期幂等记录未 reconcile 时 503，2026-08-12 BE-P1-07）→ `200`，否则 `503`（读 payload `chatReady`/`fullReady`/`dependencies` 判断文本可用/不可用原因）；**Milvus 不门禁 HTTP**；**product 模式（非回环绑定）idempotency 失效或未 reconcile → `/ready` 503**（v2 send 不可用）。
 - **`SERVE_CHAT=0`（默认）→ `/` 返回 404 是正常现象**（v1 网页聊天停用），**不是联调失败**；Debug `/debug` HTML 页匿名可加载（`/debug/api/*` 走管理 token）。
 
 ## 4. WS 握手三请求头（Electron Main 必带）

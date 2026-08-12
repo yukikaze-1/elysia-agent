@@ -164,8 +164,9 @@ server {
 - **`/health`（liveness）**：纯进程存活检查——FSM/uptime/build 运行信息，**零网络探针**（Mongo/Milvus/idempotency 一律不 `wait_for`），**恒 200**，任何依赖挂起都在小固定预算内返回；不携带依赖状态。
 - **`/ready`（readiness）**：HTTP 门禁 = **核心 chat**：
   - `chatReady`（=HTTP 门禁）= mongo 三 repo（session+message+attachment）**并行真实 ping** 且（非 product 模式 或 idempotency 真实 ping）；
+  - **product 模式 idempotency 门禁含补偿状态（BE-P1-07，2026-08-12）**：`idempotency_ok = ping AND not needs_recovery`——降级期内存幂等记录未 reconcile（`_needs_recovery=True`）时 chatReady 保持 false（用 needs_recovery 而非 durable，避免零降级瞬时窗口误伤）；
   - **Milvus 不门禁 HTTP**（文本可降级使用）——经 `fullReady`（=`chatReady` AND milvus）可观测；
-  - **product 模式（非回环绑定）idempotency 失效 → `/ready` 503**（v2 send 不可用）；dev 模式（回环）允许 idempotency 降级不门禁；
+  - **product 模式（非回环绑定）idempotency 失效或未 reconcile → `/ready` 503**（v2 send 不可用）；dev 模式（回环）允许 idempotency 降级不门禁；
   - payload：`status`（全依赖 ok→"ok" 否则 "degraded"，可观测非门禁）、`chatReady`、`fullReady`、`dependencies`（mongo/milvus/idempotency 明细）。
 - **语义**：`/ready=200` ⇒ v2 send 可用；`/ready=503` ⇒ 读 payload 的 `chatReady`/`fullReady`/`dependencies` 判断文本可用/不可用原因。Electron 探活口径：`/health` 只看进程存活，`/ready` 才是文本可用门禁。
 
