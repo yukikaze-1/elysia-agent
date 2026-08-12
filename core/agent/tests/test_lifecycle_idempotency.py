@@ -112,6 +112,11 @@ class _FlipIdemRepo:
             raise StorageUnavailableError("Mongo down")
         await self._impl.release(conversation_id, client_request_id)
 
+    async def restore(self, doc: dict) -> None:
+        if not self.available:
+            raise StorageUnavailableError("Mongo down")
+        await self._impl.restore(doc)
+
 
 def _entry(message_id: str = "msg_1", digest: str = "abc") -> IdempotencyEntry:
     """内存 entry：created_at 用 monotonic 基准（不立即过期）。"""
@@ -222,13 +227,12 @@ class TestHealthLoopProbeRecovery:
         await _run_health_rounds(agent, n_rounds=2, flip=_flip)
 
         assert repo.connect_calls >= 1, "恢复边界应触发 repo.connect"
-        # recover() reconcile：内存 entry 已补落 Mongo（Mongo 无 → claim）
+        # recover() reconcile：内存 entry 已补落 Mongo（Mongo 无 → claim/restore）
         doc = await repo.get("default", "crid_1")
         assert doc is not None and doc["message_id"] == "msg_1"
-        # T2 中间态：recover 已触发（connect_calls>=1、doc 已落库）但 recover 尚不清位
-        # （本批次 Task 3 的 recover 清位后翻回 durable True）——强化下不因 recover 翻 True
-        assert store.needs_recovery is True
-        assert store.durable is False
+        # recover 末尾清两标志（_needs_recovery + _in_memory_fallback）→ durable 翻回 True
+        assert store.needs_recovery is False
+        assert store.durable is True
 
     @pytest.mark.asyncio
     async def test_healthy_disconnect_then_recover(self, fresh_store):

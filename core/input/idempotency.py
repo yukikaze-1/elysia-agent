@@ -8,8 +8,10 @@
   调用方映射 503）、dev 模式内存降级（进程内任意 Mongo 切换不去重）。
 - `store()` 返回 `StoreResult{entry, acquired}`：acquired=True = 取得所有权（进入业务
   处理）；False = 既有记录（重放/并发 loser/降级去重，恒不进入业务处理）。
-- `recover()`（Mongo 恢复 reconcile）：对每条内存 entry——Mongo 无 → 插入（claim），
-  Mongo 已有 → 内存刷新为 Mongo 状态（Mongo 优先、读时一致）；成功后 durable 翻回。
+- `recover()`（Mongo 恢复 reconcile）：内存权威 overlay 逐条四分支对齐——Mongo 缺失 →
+  restore() 补落完整文档（含终态 ACK 负载）；Mongo claimed + 内存终态 → restore() 升级
+  为终态；Mongo claimed + 内存 claimed / Mongo 已终态 → 刷新内存为 Mongo 状态（Mongo
+  优先）。结束后清 `_in_memory_fallback` + `_needs_recovery` → durable 翻回。
 - `complete()/reject()`：写内存（status + 完整 ACK 负载）+ best-effort repo 写穿
   （失败仅记日志，不抛——条目保留仍可重放）。
 - `durable`（D5-b）：`repo is not None and not _in_memory_fallback`；`configure()`
@@ -207,10 +209,11 @@ class IdempotencyStore:
           不生成新 message_id（防 dev/无 Mongo 双生成）。
         """
         if self._repo is not None:
-            # 内存降级窗口（Mongo 断连/恢复但 recover() 未跑）：同键已有内存 entry →
-            # 短路返回既有（不写 Mongo）——防「内存 claim 未落库，Mongo 恢复后 repo.claim
-            # 视为新 claim 插入」导致的重复处理（review Important#2）。
-            if self._in_memory_fallback:
+            # 降级/未 reconcile 窗口：同键有效内存 entry 恒去重短路（不触碰 Mongo）——
+            # 关闭「down→up 且 recover() 未跑时 repo.claim 对内存 claim 重新 insert 导致
+            # 重复处理」窗口（BE-P1-07）。正常路径（已 reconcile）不走短路，保留
+            # repo.claim 的 stale 接管（TAKEOVER）语义。
+            if self._in_memory_fallback or self._needs_recovery:
                 prev = self._memory_lookup(conversation_id, client_request_id)
                 if prev is not None:
                     return StoreResult(entry=prev, acquired=False)
@@ -249,36 +252,40 @@ class IdempotencyStore:
         return StoreResult(entry=entry, acquired=True)
 
     async def recover(self) -> None:
-        """Mongo 恢复 reconcile（D5）：对每条内存 entry 与 Mongo 对齐。
+        """Mongo 恢复 reconcile（D5 + BE-P1-06/07）：对每条内存 entry 与 Mongo 对齐。
 
-        内存权威 overlay：Mongo 无对应文档 → 插入（claim）；Mongo 已有 → 内存刷新为
-        Mongo 状态（Mongo 优先、读时一致——此后 lookup 内存命中即对齐后状态）。
-        结束后 ``_in_memory_fallback = False``（durable 翻回；Task 5 断言依赖）。
+        内存权威 overlay 逐条对齐，四分支：
+        - Mongo 缺失 → restore() 插入完整文档（含终态 ACK 负载）；
+        - Mongo claimed + 内存终态（本进程写穿失败的前进状态）→ restore() 升级为终态；
+        - Mongo claimed + 内存 claimed → 刷新内存为 Mongo 状态（Mongo 的 message_id
+          权威，防多 worker 翻转）；
+        - Mongo 已终态 → 刷新内存为 Mongo 状态（Mongo 优先、读时一致）。
+        跨重启重放逐字一致（修复 S1：不再用陈旧 claimed 覆盖前进终态）。结束后
+        ``_in_memory_fallback = False`` 且 ``_needs_recovery = False``（durable 翻回）。
+        任一 get/restore 失败 → 异常冒泡，不翻 durable（下轮健康循环重试）。
         repo 为 None（纯内存）→ no-op。
         """
         if self._repo is None:
             return  # 纯内存路径无可 reconcile
         for (conversation_id, client_request_id), entry in list(self._entries.items()):
+            if self._is_stale(entry):
+                # 过期内存记录（Mongo 已 TTL 清除）→ 不复活
+                self._entries.pop((conversation_id, client_request_id), None)
+                continue
             doc = await self._repo.get(conversation_id, client_request_id)
-            if doc is None:
-                if self._is_stale(entry):
-                    # 过期内存 claim（Mongo 已 TTL 清除）→ 不复活插入（review Minor#3）：
-                    # 随内存 TTL 自然过期；原请求已不在任何权威存储，重试即重新进入。
-                    self._entries.pop((conversation_id, client_request_id), None)
-                    continue
-                # Mongo 无 → 插入（claim），内存已权威，仅补落库
-                await self._repo.claim(
-                    conversation_id, client_request_id,
-                    content_digest=entry.content_digest,
-                    message_id=entry.user_message_id,
-                    status=entry.status,
-                    claimed_at=entry.claimed_at if entry.claimed_at is not None else time.time(),
-                    expires_at=_mongo_expiry(self._ttl),
-                )
-            else:
-                # Mongo 已有 → 内存刷新为 Mongo 状态（Mongo 优先）
+            mongo_terminal = doc is not None and _is_terminal_status(doc.get("status"))
+            memory_terminal = entry.status in (STATUS_ACCEPTED, STATUS_REJECTED)
+            if doc is not None and (mongo_terminal or not memory_terminal):
+                # Mongo 已终态（另一进程 winner / 已落库）或双方皆 claimed（Mongo 的
+                # message_id 权威）→ 刷新内存为 Mongo 状态
                 self._entries[(conversation_id, client_request_id)] = IdempotencyEntry.from_doc(doc)
+                continue
+            # Mongo 缺失，或（Mongo claimed + 内存终态 = 本进程写穿失败的前进状态）→
+            # restore 原子 upsert 完整文档（缺失→插入 / claimed→升级终态，含重放负载）
+            await self._repo.restore(_build_full_doc(conversation_id, client_request_id,
+                                                     entry, self._ttl))
         self._in_memory_fallback = False
+        self._needs_recovery = False
 
     async def delete(self, conversation_id: str, client_request_id: str) -> None:
         """释放 claim（消息被拒/异常后删除，允许重试重新进入）。
@@ -425,6 +432,38 @@ def _doc_expires(value: object) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+def _is_terminal_status(status: str | None) -> bool:
+    """Mongo status 是否终态（accepted/rejected + legacy completed）。"""
+    return status in (STATUS_ACCEPTED, STATUS_REJECTED, "completed")
+
+
+def _build_full_doc(conversation_id: str, client_request_id: str,
+                    entry: IdempotencyEntry, ttl_seconds: float) -> dict:
+    """从内存 entry 构建 Mongo 完整文档（claim 字段 + 终态 ACK 负载）。
+
+    client_request_id 是 _entries 的 dict key 部分、不在 entry 内，由调用方传入；
+    ttl_seconds 传 store 的 self._ttl（与 claim() 写穿同基，防自定义 TTL 分裂）。
+    """
+    full = {
+        "conversation_id": conversation_id,
+        "client_request_id": client_request_id,
+        "content_digest": entry.content_digest,
+        "message_id": entry.user_message_id,
+        "status": entry.status,
+        "claimed_at": entry.claimed_at if entry.claimed_at is not None else time.time(),
+        "expires_at": _mongo_expiry(ttl_seconds),
+    }
+    if entry.received_at is not None:
+        full["received_at"] = entry.received_at
+    if entry.client_message_id is not None:
+        full["client_message_id"] = entry.client_message_id
+    if entry.conversation_id_wire is not None:
+        full["conversation_id_wire"] = entry.conversation_id_wire
+    if entry.error is not None:
+        full["error"] = entry.error
+    return full
 
 
 # 模块级单例（进程内；测试用 reset_store 隔离）
