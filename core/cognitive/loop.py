@@ -826,6 +826,7 @@ class CognitiveLoop(CognitiveTools):
                     "truncated": result.truncated,
                 })
                 self._session.add_message(ToolResultMessage(
+                    message_id=new_message_id(),
                     content=[TextPart(content=result.content or "")],
                     tool_call_id=tc.id,
                     tool_name="submit_task",
@@ -905,6 +906,7 @@ class CognitiveLoop(CognitiveTools):
                 "truncated": tool_result.truncated,
             })
             self._session.add_message(ToolResultMessage(
+                message_id=new_message_id(),
                 content=_build_tool_result_parts(tool_result),
                 tool_call_id=tc.id,
                 tool_name=tc.function.name,

@@ -352,3 +352,52 @@ class TestDesktopCancel:
 
         await loop._handle_interrupt()  # cancel 失败被吞，不抛
         await loop._output.close()
+
+
+# ---- ToolResultMessage.message_id 非空（spec D2/D3，Task 4） ----
+
+class TestToolResultMessageHasId:
+    @pytest.mark.asyncio
+    async def test_normal_tool_dispatch_gets_message_id(self):
+        """普通工具分发（loop.py:907）→ ToolResultMessage.message_id 非空。"""
+        adapter = _FakeAdapter(["desktop.screen.capture"])
+        loop = _make_loop(adapter)
+        loop._session = SessionMemory(session_id="default")
+        loop._clock = TimingClock()
+        await loop.phases.enter_thinking()
+
+        async def fake_execute(tcs):
+            return [(tc, ToolResult.ok(
+                name=tc.function.name, content="ok", duration_ms=0)) for tc in tcs]
+
+        await loop._execute_tool_round(
+            [], "", _raw_tool_call(call_id="c_1", name="desktop_screen_capture"),
+            fake_execute)
+
+        tool_msgs = [m for m in loop._session.messages
+                     if isinstance(m, ToolResultMessage)]
+        assert len(tool_msgs) == 1
+        assert str(tool_msgs[0].message_id).startswith("msg_")
+        await loop._output.close()
+
+    @pytest.mark.asyncio
+    async def test_submit_task_interception_gets_message_id(self):
+        """submit_task 拦截（loop.py:828）→ ToolResultMessage.message_id 非空。"""
+        adapter = _FakeAdapter([])
+        loop = _make_loop(adapter)
+        loop._session = SessionMemory(session_id="default")
+        loop._clock = TimingClock()
+        # 注入 delegation_preparer 触发 submit_task 拦截分支；mock _handle_submit_task
+        loop._delegation_preparer = MagicMock()
+        loop._handle_submit_task = AsyncMock(return_value=ToolResult.ok(
+            name="submit_task", content="ok", duration_ms=0.0))
+        await loop.phases.enter_thinking()
+
+        await loop._execute_tool_round(
+            [], "", _raw_tool_call(call_id="c_2", name="submit_task"), None)
+
+        tool_msgs = [m for m in loop._session.messages
+                     if isinstance(m, ToolResultMessage) and m.tool_name == "submit_task"]
+        assert len(tool_msgs) == 1
+        assert str(tool_msgs[0].message_id).startswith("msg_")
+        await loop._output.close()
