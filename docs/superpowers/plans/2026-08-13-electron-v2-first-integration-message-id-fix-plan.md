@@ -471,7 +471,7 @@ git commit -m "feat(message_repo): append 归档空 ID 守卫（spec D4）"
 **Files:**
 - Modify: `frontend_contract/rest.py`（`Message.message_id`）
 - Test: `frontend_contract/tests/test_rest.py`
-- Regenerate: `frontend/src/types/contract.generated.ts`、`contract.schema.json`、`contract.raw.ts`
+- Regenerate: `frontend/src/types/contract.generated.ts`、`frontend_contract/contract.schema.json`、`frontend_contract/contract.raw.ts`（后两者受管路径在 `frontend_contract/` 下）
 
 **Interfaces:**
 - Consumes: Task 3 派生（读侧恒非空）→ 契约收紧不误伤。
@@ -532,7 +532,7 @@ Expected: PASS + 漂移门禁通过（产物已重新生成）。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add frontend_contract/rest.py frontend_contract/tests/test_rest.py frontend/src/types/contract.generated.ts contract.schema.json contract.raw.ts
+git add frontend_contract/rest.py frontend_contract/tests/test_rest.py frontend/src/types/contract.generated.ts frontend_contract/contract.schema.json frontend_contract/contract.raw.ts
 git commit -m "feat(contract): Message.message_id min_length=1 + 三产物重生成（spec D5）"
 ```
 
