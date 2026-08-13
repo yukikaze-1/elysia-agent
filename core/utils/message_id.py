@@ -1,6 +1,7 @@
 """消息 ID 生成。"""
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 from core.schema.types import AttachmentId, GenerationId, MemoryId, MessageId, SegmentId, TaskId
@@ -43,3 +44,15 @@ def new_memory_id() -> MemoryId:
 def new_task_id() -> TaskId:
     """生成一个新的调度任务 ID（'task_' 前缀，与消息 ID 值空间隔离）。"""
     return TaskId(_new_id("task"))
+
+
+def stable_tool_message_id(tool_call_id: str, timestamp: str) -> MessageId:
+    """历史工具消息的稳定 ID（spec D1）：msg_ + sha256(tool_call_id:timestamp)[:26]。
+
+    存量空 message_id 工具消息的读侧派生与回填共用本函数：同一
+    (tool_call_id, timestamp) 恒同一 ID，跨 archive / session 快照 / JSONL 一致；
+    与 new_message_id() 同为 msg_ + 26hex 值空间，互不冲突。
+    timestamp 参与哈希覆盖「同一 tool_call 未来一对多」场景。
+    """
+    digest = hashlib.sha256(f"{tool_call_id}:{timestamp}".encode("utf-8")).hexdigest()
+    return MessageId("msg_" + digest[:26])
