@@ -877,6 +877,94 @@ class TestSessionReplayContract:
         items = _build_session_items(msgs)
         assert len(items) == 0
 
+    def test_build_session_items_rejects_tool_with_empty_identity(self):
+        """键存在但为空串的 message_id/timestamp 同样被新契约拒绝（spec §5.3.3 空值形态）。"""
+        from core.input.ws_handler import _build_session_items
+
+        for case in (
+            {"role": "tool", "message_id": "", "timestamp": "t1",
+             "tool_call_id": "c1", "name": "web", "content": "ok",
+             "success": True, "duration_ms": 1.0, "truncated": False},
+            {"role": "tool", "message_id": "m1", "timestamp": "",
+             "tool_call_id": "c1", "name": "web", "content": "ok",
+             "success": True, "duration_ms": 1.0, "truncated": False},
+        ):
+            items = _build_session_items([case])
+            assert len(items) == 0, f"空身份未被拒绝: {case}"
+
+    def test_two_tool_replays_distinct_ids(self):
+        """同会话两个工具，WS replay 两个 ID 均非空且互不相同（spec §5.3.5）。"""
+        from core.memory.session import SessionMemory
+        from core.schema.message import ToolResultMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId, ToolCallId
+
+        s = SessionMemory()
+        s.add_message(ToolResultMessage(
+            content=[TextPart(content="a")], tool_call_id=ToolCallId("call_a"),
+            tool_name="get_time", success=True, duration_ms=1.0,
+            message_id=MessageId("msg_aaaaaaaaaaaaaaaaaaaaaaaaaa")))
+        s.add_message(ToolResultMessage(
+            content=[TextPart(content="b")], tool_call_id=ToolCallId("call_b"),
+            tool_name="web_search", success=True, duration_ms=2.0,
+            message_id=MessageId("msg_bbbbbbbbbbbbbbbbbbbbbbbbbb")))
+        ids = [m["message_id"] for m in s.messages_for_client() if m["role"] == "tool"]
+        assert len(ids) == 2
+        assert all(ids), f"工具 replay 出现空 ID: {ids}"
+        assert len(set(ids)) == 2, f"工具 replay ID 重复: {ids}"
+
+    def test_rest_and_ws_replay_share_identity(self):
+        """同一工具消息经 REST（_archive_msg_to_contract）与 WS（messages_for_client）
+        返回 message_id/timestamp/tool_call_id 完全一致（spec §5.3.6）。"""
+        from core.input.api_routes import _archive_msg_to_contract, _archive_to_client
+        from core.memory.session import SessionMemory
+        from core.schema.adapters.message_adapter import validate_message_legacy_compat
+        from core.storage.message_repo import _doc_to_message
+
+        # 存量空 ID 工具文档（archive 形状）——REST 与 WS 都经同一适配器派生稳定 ID
+        doc = {
+            "_id": "0123456789abcdef01234567", "session_id": "conv_s",
+            "role": "tool", "message_id": "", "tool_call_id": "call_rest_ws",
+            "timestamp": "2026-08-13T00:00:00Z", "tool_name": "get_time",
+            "content": [{"type": "text", "content": "ok"}],
+        }
+        # REST 侧：_doc_to_message（派生）→ _archive_to_client → _archive_msg_to_contract
+        rest_msg = _doc_to_message(doc)
+        wire = _archive_to_client([rest_msg])[0]
+        contract = _archive_msg_to_contract(wire)
+        assert contract is not None
+        # WS 侧：validate_message_legacy_compat（同一派生）→ messages_for_client
+        ws_msg = validate_message_legacy_compat(doc)
+        s = SessionMemory()
+        s.add_message(ws_msg)
+        tool_item = next(m for m in s.messages_for_client() if m["role"] == "tool")
+        # 三身份字段一致
+        assert tool_item["message_id"] == contract.message_id
+        assert tool_item["timestamp"] == contract.timestamp
+        assert tool_item["tool_call_id"] == contract.tool_call_id
+
+    def test_legacy_derived_replay_id_stable_across_calls(self):
+        """历史稳定派生 ID 的工具消息重复 replay，ID 每次相同（spec §5.3.7）。"""
+        from core.memory.session import SessionMemory
+        from core.schema.adapters.message_adapter import validate_message_legacy_compat
+
+        doc = {
+            "role": "tool", "message_id": "", "tool_call_id": "call_legacy_stable",
+            "timestamp": "2026-08-13T00:00:00Z", "tool_name": "get_time",
+            "content": [{"type": "text", "content": "ok"}],
+        }
+        s = SessionMemory()
+        s.add_message(validate_message_legacy_compat(doc))
+        first = [m["message_id"] for m in s.messages_for_client() if m["role"] == "tool"]
+        second = [m["message_id"] for m in s.messages_for_client() if m["role"] == "tool"]
+        assert first == second
+        assert all(first)
+        # 重新构造会话加载同一文档，派生 ID 与首次一致（确定性派生）
+        s2 = SessionMemory()
+        s2.add_message(validate_message_legacy_compat(doc))
+        third = [m["message_id"] for m in s2.messages_for_client() if m["role"] == "tool"]
+        assert third == first
+
 
 @pytest.mark.service
 @pytest.mark.asyncio
