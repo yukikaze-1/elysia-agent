@@ -110,8 +110,16 @@ class ClientAssistantMessage(_ClientMessageBase, total=False):
 
 
 class ClientToolMessage(TypedDict):
-    """工具执行结果客户端格式。"""
+    """工具执行结果客户端格式。
+
+    D1/D2：message_id/timestamp 必填——tool replay 输出消息自身身份，与 REST
+    一致、前端据此去重/时间分隔。不继承 _ClientMessageBase（基类 parts:
+    list[dict[str, str]] 与 content: list[dict] 与 tool 的 content: str 形状
+    冲突，PEP 589 禁止不兼容覆盖）。
+    """
     role: Literal[MessageRole.TOOL]
+    message_id: str
+    timestamp: str
     tool_call_id: str
     name: str
     content: str

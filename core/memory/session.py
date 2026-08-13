@@ -208,8 +208,12 @@ class SessionMemory:
                 )
                 # role 键运行时是 str（"tool"），与 TypedDict 的 Literal[MessageRole.TOOL]
                 # 仅类型层面不一致（StrEnum 值序列化后即 "tool"），cast 收口。
+                # D1/D2：输出消息自身 message_id/timestamp（复用已持久/派生 ID，绝不新生成），
+                # 与 REST 身份一致、前端据此去重/时间分隔。
                 tool_entry = cast(ClientToolMessage, {
                     "role": "tool",
+                    "message_id": msg.message_id,
+                    "timestamp": msg.timestamp,
                     "tool_call_id": msg.tool_call_id,
                     "name": msg.tool_name,
                     "content": text_content,

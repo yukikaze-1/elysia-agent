@@ -818,6 +818,36 @@ class TestSessionReplayContract:
         assert asst["message_id"] == "asst-1"
         assert asst["timestamp"]
 
+    def test_tool_replay_keeps_message_id_and_timestamp(self):
+        """tool replay 项输出消息自身 message_id/timestamp（spec §5.3.1/5.3.2）。"""
+        from core.memory.session import SessionMemory
+        from core.schema.message import ToolResultMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId, ToolCallId
+        from frontend_contract import SessionMessage
+
+        s = SessionMemory()
+        msg = ToolResultMessage(
+            content=[TextPart(content="tool result")],
+            tool_call_id=ToolCallId("call_tool_1"),
+            tool_name="get_time",
+            success=True,
+            duration_ms=5.0,
+            message_id=MessageId("msg_0123456789abcdef0123456789"),
+        )
+        s.add_message(msg)
+        client_msgs = s.messages_for_client()
+        tool_item = next(m for m in client_msgs if m["role"] == "tool")
+        assert tool_item["message_id"] == "msg_0123456789abcdef0123456789"
+        # 断言与消息对象值一致（非新生成随机 ID/时间，spec §5.1 要求）
+        assert tool_item["timestamp"] == msg.timestamp
+        # 经 SessionMessage.wire_dict() 往返身份不丢（spec §5.3.2）
+        frame = SessionMessage(messages=client_msgs, token_stats=None,
+                               conversationId="conv_tool").wire_dict()
+        tool_wire = next(m for m in frame["messages"] if m["role"] == "tool")
+        assert tool_wire["message_id"] == "msg_0123456789abcdef0123456789"
+        assert tool_wire["timestamp"] == msg.timestamp
+
     def test_build_session_items_drops_invalid_keeps_valid(self):
         """单条无法契约化的消息（content 含未知 type part）仅丢弃该条，其余保留。"""
         from core.input.ws_handler import _build_session_items
