@@ -26,6 +26,8 @@
 | [review/electron-v2-backend-post-hardening-review-2026-08-12.md](review/electron-v2-backend-post-hardening-review-2026-08-12.md) | 加固后复核：BE-P1-06/07（恢复正确性 + 触发条件，2026-08-12 修复）+ BE-P2-04（runbook schemaHash）+ BE-RISK-01（接受风险） |
 | [review/2026-08-13-Windows-Electron-首次真实联调后端问题清单.md](review/2026-08-13-Windows-Electron-首次真实联调后端问题清单.md) | Windows Electron 首次真实联调后端问题：工具消息空 ID、新写入约束、历史稳定回填与回归门禁 |
 | [review/electron-v2-message-id-fix-report-2026-08-13.md](review/electron-v2-message-id-fix-report-2026-08-13.md) | 消息 ID 修复报告：BE-INT-P0-01/02 + P1-01 关闭（D1-D6 + 真实 Mongo 回填 69→0 + 门禁证据） |
+| [review/2026-08-13-Windows-Electron-二次真实联调后端整改清单.md](review/2026-08-13-Windows-Electron-二次真实联调后端整改清单.md) | 二次联调后端整改：WS replay tool 项缺身份 → 前端重复消息（BE-INT2-P0-01/P1-01） |
+| [review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md](review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md) | 二次联调 WS replay 身份修复报告：BE-INT2-P0-01/P1-01 关闭（D1-D4 + 真实 sanity + 门禁） |
 
 ## 子目录
 
