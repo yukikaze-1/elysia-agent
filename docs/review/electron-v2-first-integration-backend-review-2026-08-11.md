@@ -432,7 +432,7 @@ Electron `RealBackend.sendMessage()` 以 `clientRequestId` 等待 `user_message.
 
 1. `docs/electron-backend-security.md:43-45` 仍称非回环无 Token 只告警、不拒绝，且默认 host=0.0.0.0；当前代码已经 `assert_secure_bind()` fail-closed，默认 host=127.0.0.1；
 2. README 的配置示例仍写 `server.host: 0.0.0.0`，与实际默认和安全建议相反；用户照抄会突然触发远程绑定门禁；
-3. `docs/progress/2026-08-10-backend-frontend-progress.md:203-214` 仍把浏览器 WS Bearer/query token 写成当前联调阻塞，而 `todo.md` 和最新提交已经明确：v1 chat 停用，Electron Node `ws` 使用 Authorization header，不做 query token；
+3. `docs/archive/2026-08-10-backend-frontend-progress.md:203-214` 仍把浏览器 WS Bearer/query token 写成当前联调阻塞，而 `todo.md` 和最新提交已经明确：v1 chat 停用，Electron Node `ws` 使用 Authorization header，不做 query token；
 4. 同一 progress 文档仍写 E2/E3、F 等旧状态，不能继续作为当前联调事实源；
 5. `docs/contract-release-2026-08-11.md` 的 commit 是契约生成时快照，不等于本次实际联调 runtime SHA；前端 manifest 也仍固定更旧后端 SHA。两者需要区分 `contractCommit` 与 `runtimeCommit`。
 

@@ -13,11 +13,9 @@
 | [code-style-guide.md](code-style-guide.md) | 代码风格与类型约束（ID NewType 体系 + 权威归属 + StrEnum/coerce + getattr 纪律） |
 | [completed.md](completed.md) | 已完成工作记录（月度归档见 [completed/](completed/)） |
 
-### Electron 后端联调（需求 / 协议 / 安全）
+### Electron 后端联调（协议 / 安全）
 | 文档 | 内容 |
 |------|------|
-| [14-Cyrene-后端配合改造任务清单-v0.1.md](14-Cyrene-后端配合改造任务清单-v0.1.md) | 前端联调需求清单（BE-001~BE-062：目的 + 后端现状 + 验收标准）——联调验收依据（2026-08-09 从 git 历史恢复） |
-| [15-Cyrene-后端改造执行上下文与Prompt-v0.1.md](15-Cyrene-后端改造执行上下文与Prompt-v0.1.md) | 前端改造执行上下文：必须纠正的错误口径（架构纪律）+ 默认产品决策 + 批次实施顺序（2026-08-09 从 git 历史恢复） |
 | [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + 通用附件与媒体契约（§13）+ 错误码目录 41 码（批次 2-9C/9D） |
 | [electron-backend-security.md](electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + 附件签名下载与签发安全（§3.5）+ 公开入口限流/幂等持久化 + 探针分层 /health /ready（§3.7，批次 1-9D + 2026-08-11 加固 + 2026-08-12 补偿门禁） |
 | [electron-v2-first-integration-runbook.md](electron-v2-first-integration-runbook.md) | **Electron v2 首次联调最小 runbook**（runtime SHA / schemaHash 离线门禁 / Token / 探针口径 / WS 三头 / clean-start / ACK 成功标准与负面用例） |
@@ -38,9 +36,9 @@
 | [superpowers/specs/archive/](superpowers/specs/archive/) | 已归档设计规格（按月分目录 `archive/<YYYY-MM>/`） |
 | [superpowers/plans/archive/](superpowers/plans/archive/) | 已归档实施计划（按月分目录 `archive/<YYYY-MM>/`） |
 | [review/](review/) | 代码/文档审查报告（code-review、doc-review、frontend_completed） |
-| [progress/](progress/) | 进度快照（后端+前端适配，历史参考——当前事实源见 runbook + review） |
+| [progress/](progress/) | 进度快照（现仅 2026-08-13 两个已闭环批次状态；历史参考——当前事实源见 runbook + review） |
 | [legacy/](legacy/) | 已废弃文档（companion-*，保留作历史参考） |
-| [archive/](archive/) | 归档历史记录：electron 基线/迁移/进度/审计、经验与同步笔记、数据结构普查、前端交接包（frontend-handoff-v2）、WorkflowEngine 历史设计（architecture/PROGRESS/migration）、frontend_todo |
+| [archive/](archive/) | 归档历史记录：electron 基线/迁移/进度/审计、经验与同步笔记、数据结构普查、前端交接包（frontend-handoff-v2）、WorkflowEngine 历史设计（architecture/PROGRESS/migration）、frontend_todo、Cyrene 后端改造任务清单/执行上下文（v0.1 历史）、2026-08-10 后端+前端适配进度快照 |
 | [completed/](completed/) | 已完成月度归档（2026-05 ~ 2026-08） |
 
 ## 约定
