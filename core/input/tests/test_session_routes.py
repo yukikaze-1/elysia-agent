@@ -1576,3 +1576,44 @@ class TestSessionRoutesAuth:
         client = await aiohttp_client(app)
         resp = await client.get("/api/sessions", headers={"Authorization": "Bearer secret"})
         assert resp.status == 200
+
+
+# ─────────────────── 存量空 ID 工具消息导出回归（spec 6.3/6.8） ───────────────
+
+
+@pytest.mark.unit
+class TestArchiveExportNeverEmitsEmptyMessageId:
+    """存量空 ID 工具文档经 archive→wire→contract 链路产出非空稳定 ID（spec 6.3/6.8）。
+
+    这正是 Electron 阻断链：_doc_to_message（读侧派生）→ _archive_to_client →
+    _archive_msg_to_contract（min_length=1）→ 前端 z.string().min(1)。
+    """
+
+    def test_legacy_empty_id_derived_through_export_chain(self):
+        from core.input.api_routes import _archive_msg_to_contract, _archive_to_client
+        from core.schema.adapters.message_adapter import validate_message_legacy_compat
+
+        doc = {
+            "role": "tool", "message_id": "", "tool_call_id": "call_legacy_1",
+            "timestamp": "2026-08-13T00:00:00Z", "tool_name": "get_time",
+            "content": [{"type": "text", "content": "legacy"}],
+        }
+        msg = validate_message_legacy_compat(doc)          # 读侧派生（Task 3）
+        wire = _archive_to_client([msg])[0]
+        contract = _archive_msg_to_contract(wire)          # min_length=1（Task 6）
+        assert contract is not None
+        assert contract.message_id.startswith("msg_")
+
+    def test_search_export_uses_same_derivation(self):
+        """搜索出口经 _doc_to_message → 适配器派生，与历史同一派生键。"""
+        from core.storage.message_repo import _doc_to_message
+
+        doc = {
+            "_id": "0123456789abcdef01234567", "session_id": "default",
+            "role": "tool", "message_id": "", "tool_call_id": "call_legacy_2",
+            "timestamp": "2026-08-13T00:00:01Z", "tool_name": "web_search",
+            "content": [{"type": "text", "content": "hit"}],
+        }
+        msg = _doc_to_message(doc)
+        assert str(msg.message_id).startswith("msg_")
+        assert msg.metadata.get("_mongo_id") == "0123456789abcdef01234567"

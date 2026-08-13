@@ -73,3 +73,20 @@ def test_broken_message_raises_original_error():
     d["content"] = "not-a-list"  # content 类型错误，剥 token_usage 后仍失败
     with pytest.raises(ValidationError):
         validate_message_legacy_compat(d)
+
+
+@pytest.mark.unit
+class TestJsonlThreeSourceConsistency:
+    def test_jsonl_legacy_empty_id_derives_same_as_archive(self):
+        """同一工具消息经 archive 读侧派生与 JSONL 读侧派生产出同一稳定 ID（spec §4）。"""
+        from core.schema.adapters.message_adapter import validate_message_legacy_compat
+
+        doc = {
+            "role": "tool", "message_id": "", "tool_call_id": "call_3src",
+            "timestamp": "2026-08-13T00:00:00Z", "tool_name": "get_time",
+            "content": [{"type": "text", "content": "ok"}],
+        }
+        archive_msg = validate_message_legacy_compat(doc)
+        jsonl_msg = validate_message_legacy_compat({**doc})  # 同一 dict 经两读路径
+        assert str(archive_msg.message_id) == str(jsonl_msg.message_id)
+        assert str(jsonl_msg.message_id).startswith("msg_")
