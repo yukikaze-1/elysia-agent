@@ -13,7 +13,9 @@ pytestmark = pytest.mark.unit
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run 每测试独立新鲜循环——get_event_loop() 在 pytest-asyncio 先跑后
+    # 返回已关闭/外部循环，run_until_complete 会静默失败（coroutine 不被 await）
+    return asyncio.run(coro)
 
 
 class _FakeDocDB:
