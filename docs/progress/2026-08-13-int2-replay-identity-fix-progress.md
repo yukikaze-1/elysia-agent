@@ -13,7 +13,7 @@
 
 | 门禁 | 结果 |
 |---|---|
-| `make test-quick` | 3544 passed, 2 skipped |
+| `make test-quick` | 3548 passed, 2 skipped |
 | Ruff / Pyright | All checks passed / 0 errors |
 | `frontend_contract --check` | 通过（schemaHash 变化预期） |
 | 真实数据 sanity | `conv_036c872c7c55` tool 消息 REST/WS 同一身份（`msg_7c0c72b0…`，inmem_same=True） |

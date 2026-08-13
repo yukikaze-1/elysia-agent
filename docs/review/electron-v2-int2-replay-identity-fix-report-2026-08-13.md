@@ -16,7 +16,7 @@
 
 - **运行时输出（P0-01）**：`messages_for_client()` tool 分支输出消息自身 `message_id`/`timestamp`（复用已持久/派生的 ID，绝不新生成）；`ClientToolMessage` 类型加必填身份字段。
 - **契约（P1-01）**：`SessionMessageItem.message_id`/`timestamp` 必填非空（`min_length=1`），缺身份项 fail-closed 拒绝；三产物（ts/schema/raw_ts）重生成。
-- **门禁**：`make test-quick` **3544 passed**、Ruff、Pyright 0 errors、`frontend_contract --check`、`check_error_codes` 全绿。
+- **门禁**：`make test-quick` **3548 passed**、Ruff、Pyright 0 errors、`frontend_contract --check`、`check_error_codes` 全绿。
 - **真实数据 sanity**：复现会话 tool 消息持久 `message_id=msg_7c0c72b0a8ef42ad942d4f8237`，REST 与 WS（`messages_for_client`）现读取同一身份（`inmem_same=True`）。
 
 按整改清单 §8，BE-INT2-P0-01 与 BE-INT2-P1-01 一起关闭；真实 Electron 回归（§7）与前端配套清单（Renderer 水合 / replay fallback / 取消码消费）由 `elysia-frontend` 侧验证。
@@ -45,12 +45,13 @@
 |---|---|
 | `2df115c` | D1+D2 `messages_for_client` tool 分支身份 + `ClientToolMessage` 必填 |
 | `fb9f8f1` | D3+D4 `SessionMessageItem` 身份必填非空 + 三产物重生成 + 测试 fixture 修补 |
+| `2c26078` | 补 §5.3.5/5.3.6/5.3.7 + 空身份验收测试（整改清单 §5.3 逐条落实，最终 review Finding 1/2） |
 
 ## 5. 门禁与真实数据验证证据
 
 | 门禁 | 结果 |
 |---|---|
-| `make test-quick` | **3544 passed, 2 skipped, 183 deselected** |
+| `make test-quick` | **3548 passed, 2 skipped, 183 deselected** |
 | Ruff（`core/ Module/ frontend_contract/ scripts/`） | All checks passed |
 | Pyright | 0 errors, 0 warnings |
 | `python -m frontend_contract --check` | 通过（三产物无漂移，schemaHash `45e5390c…` → `e5d4dd2b…`） |
