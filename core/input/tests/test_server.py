@@ -414,7 +414,7 @@ class TestWebSocketHandler:
         import socket as _socket
         from unittest.mock import patch
         from core.input import custom_providers as cp
-        from core.input.ssrf import _SSRFTransport
+        from Module._common.ssrf import _SSRFTransport
         from core.input.server import create_app
         import json as _json
 
@@ -434,7 +434,7 @@ class TestWebSocketHandler:
         public_infos = [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("8.8.8.8", 80))]
         with patch.object(cp, "_DEFAULT_PATH", yaml_path), \
              patch.dict(os.environ, {"MY_LLM_KEY": "test-key"}, clear=True), \
-             patch("core.input.ssrf.socket.getaddrinfo", return_value=public_infos), \
+             patch("Module._common.ssrf.socket.getaddrinfo", return_value=public_infos), \
              patch.object(agent.llm, "switch_model") as mock_switch:
             async with client.session.ws_connect(client.make_url('/ws')) as ws:
                 await ws.send_json({"type": "switch_model", "service": "llm", "model": "custom/myllm"})

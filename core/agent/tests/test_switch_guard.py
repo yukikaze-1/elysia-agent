@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.agent.agent import Agent
-from core.input.ssrf import _SSRFTransport
+from Module._common.ssrf import _SSRFTransport
 from core.schema.service_state import ServiceState
 
 pytestmark = pytest.mark.service
@@ -126,7 +126,7 @@ class TestSwitchOutboundGuard:
         with mock.patch(
             "core.input.custom_providers.resolve_model_params",
             return_value={"base_url": "https://public.example.com", "runtime": "backend"},
-        ), mock.patch("core.input.ssrf.socket.getaddrinfo", return_value=_PUBLIC_INFOS), mock.patch(
+        ), mock.patch("Module._common.ssrf.socket.getaddrinfo", return_value=_PUBLIC_INFOS), mock.patch(
             "core.input.capabilities.broadcast_capabilities", new_callable=AsyncMock
         ) as mock_bcast:
             result = await Agent.switch_llm(agent, "custom/good")
@@ -150,7 +150,7 @@ class TestSwitchOutboundGuard:
         with mock.patch("Module.stt.STTFactory.create") as mc, mock.patch(
             "core.input.custom_providers.resolve_model_params",
             return_value={"base_url": "https://public.example.com", "runtime": "backend"},
-        ), mock.patch("core.input.ssrf.socket.getaddrinfo", return_value=_PUBLIC_INFOS):
+        ), mock.patch("Module._common.ssrf.socket.getaddrinfo", return_value=_PUBLIC_INFOS):
             backend = MagicMock()
             backend.model = "custom/good"
             backend.test = mock.AsyncMock(return_value={"ok": True, "latency_ms": 1})
@@ -176,7 +176,7 @@ class TestSwitchOutboundGuard:
         with mock.patch("Module.tts.TTSFactory.create") as mc, mock.patch(
             "core.input.custom_providers.resolve_model_params",
             return_value={"base_url": "https://public.example.com", "runtime": "backend"},
-        ), mock.patch("core.input.ssrf.socket.getaddrinfo", return_value=_PUBLIC_INFOS):
+        ), mock.patch("Module._common.ssrf.socket.getaddrinfo", return_value=_PUBLIC_INFOS):
             backend = MagicMock()
             backend.model = "custom/good"
             backend.test = mock.AsyncMock(return_value={"ok": True, "latency_ms": 1})

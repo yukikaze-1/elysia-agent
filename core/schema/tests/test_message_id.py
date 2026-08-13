@@ -2,7 +2,7 @@
 import pytest
 
 from core.schema.types import MessageId
-from core.utils.message_id import new_message_id, stable_tool_message_id
+from core.schema.utils import new_message_id, stable_tool_message_id
 
 
 pytestmark = pytest.mark.unit

@@ -139,6 +139,22 @@
 - `Module.system_prompt → core.adapter → core.memory/personality/storage → Module.system_prompt` — ✅ 已消除：`__init__.py` 的 deprecated MessageBuilder lazy import 已删除（无消费方），Module/system_prompt 生产代码现零 core 依赖
 - ✅ `core.schema._utils` 跨包导入已消除：改名 `core.schema.utils`（`now_iso` 被 7 个包共享），私有 helper `_normalize_iso_ts`/`_validate_src` 保持下划线前缀仅 schema 内部使用
 
+### 2026-08-14 复审发现（core 模块化，对照 08-01 基线）
+
+文件级 SCC 全仓扫描：**core/ 内部文件级真实 eager 硬环 = 0 个**（adapter↔memory、schema↔utils、_common↔config 均为包级聚合伪环，文件级为 DAG，运行时 import 顺序实测全通）。确凿问题集中在 Module 层边界 + 近期功能提交引入的包级反向边。审查详见会话记录。
+
+| 优先级 | 位置 | 说明 |
+|--------|------|------|
+| ~~中~~ ✅ | [Module/llm/registry.py:67](Module/llm/registry.py#L67) | lazy `from core.input.ssrf import validate_endpoint`（commit `963d1a8b`，2026-08-06 批次 8a）——**全仓唯一 Module→core 生产反向依赖**，晚于 08-02 分离基线。**已修（2026-08-14）**：`core/input/ssrf.py` 下沉 `Module/_common/ssrf.py`（零 core 依赖纯移动 + 测试随实现 + 4 处 mock 路径），Module 生产反向依赖清零 |
+| ~~中~~ ✅ | [core/storage/idempotency_repo.py:62](core/storage/idempotency_repo.py#L62) | 函数内 lazy `from core.input.idempotency import GRACE_SECONDS`（注释自陈绕环）——storage 层反向依赖 input 层。**已修（2026-08-14）**：`GRACE_SECONDS` 单源下沉 `idempotency_repo.py` 自身，input 经门面反向 import（恢复 input→storage 方向） |
+| ~~低~~ ✅ | [core/schema/adapters/message_adapter.py:21](core/schema/adapters/message_adapter.py#L21) | `from core.utils.message_id import stable_tool_message_id`（2026-08-13 消息 ID 批次 D2 引入）——闭合 schema↔utils 包级环，打破「core.schema 是叶子」文档断言。**已修（2026-08-14）**：ID 生成器迁 `core/schema/utils.py`（返回类型全为 NewType 属类型权威附属），`core/utils/message_id.py` 保留薄重导出 shim，`message_adapter` 改正典导入；`types.py` 对 utils 的 `_normalize_iso_ts` 改 lazy wrapper 打破包内环。schema 恢复叶子、零 core.utils 依赖 |
+| 低 | [core/input/session_routes.py:190-193](core/input/session_routes.py#L190) | `getattr(agent,"cognitive")` + `cognitive._generation_registry` 绕开公开 `agent.generation_registry` property，应改走公开接口 |
+| 低 | [core/input/ws_handler.py:224,452](core/input/ws_handler.py#L224) | 输入层直调组合根私有 `agent._sync_desktop_available()`，应提为公开 `sync_desktop_available()` |
+| 低 | [core/input/tts_profile.py:51,54](core/input/tts_profile.py#L51) | `backend._resolve_voice`/`backend._voice_id` 穿透 TTSBackend 私有，建议后端提供公开 `default_voice()` |
+| 低 | [core/desktop/bridge.py:54](core/desktop/bridge.py#L54) | 顶层 `from core.storage.desktop_call_repo import _ACTIVE_STATES` 私有符号，建议改名公开 `ACTIVE_STATES` |
+| 低 | input 层内聚 | `ws_handler` 1826 行 + `api_routes` 1182 行 = input 层 35%；`handle_json_message` 17 消息 if/elif + `_route_v2_text` 300 行业务逻辑寄生协议层；`server↔api_routes`/`server↔debug_routes` 靠懒导入绕环。归入已知待办 F4 |
+| 低 | [core/adapter/prompt_assembler.py:30-31](core/adapter/prompt_assembler.py#L30) + [core/memory/consolidator.py:25](core/memory/consolidator.py#L25) | 包级伪环（文件级 DAG），两条边均为类型注解 + 构造注入；非近期引入。可选打磨：惰性化注解（TYPE_CHECKING）清除包级告警 |
+
 ## token 统一结构（2026-07-31）遗留可接受项
 
 全链路统一 `TokenUsage` 模型的最终 review（opus）**APPROVE FOR MERGE** 后的可接受 residual，均为低优先级。详见 [docs/superpowers/specs/archive/2026-07/2026-07-31-token-usage-unified-structure-design.md](docs/superpowers/specs/archive/2026-07/2026-07-31-token-usage-unified-structure-design.md)。

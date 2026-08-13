@@ -447,10 +447,10 @@ class VoiceSessionManager:
             try:
                 if params and params.get("base_url"):
                     # SSRF 出站守卫（Q5）：validate_endpoint/build_guarded_http_client 在
-                    # core.input.ssrf。custom+backend 须注入 http_client_factory **工厂**再
+                    # Module._common.ssrf。custom+backend 须注入 http_client_factory **工厂**再
                     # create——对齐 switch_stt（core/agent/server.py:58/65-66 lambda 工厂），
                     # 仅静态 validate_endpoint 不防 OpenAI 系 backend 以默认 client 出站建连。
-                    from core.input.ssrf import build_guarded_http_client, validate_endpoint
+                    from Module._common.ssrf import build_guarded_http_client, validate_endpoint
                     validate_endpoint(params["base_url"])
                     params["http_client_factory"] = (
                         lambda b=params["base_url"]: build_guarded_http_client(b))

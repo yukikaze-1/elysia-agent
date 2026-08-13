@@ -51,15 +51,18 @@ STATUS_CLAIMED = "claimed"
 STATUS_ACCEPTED = "accepted"
 STATUS_REJECTED = "rejected"
 
+# CLAIMED 新鲜窗口（unix 秒）：过期 CLAIMED 才允许接管。单源下沉在本模块（2026-08-14
+# 模块化修复——消除 storage→input 反向依赖）；core.input.idempotency 经门面反向引用，
+# ws_handler 的 IN_PROGRESS retryAfterMs 亦派生自本值。
+GRACE_SECONDS = 30.0
+
 
 def _grace_seconds() -> float:
-    """CLAIMED 新鲜窗口（unix 秒），单源：``core.input.idempotency.GRACE_SECONDS``。
+    """CLAIMED 新鲜窗口（unix 秒），单源本模块常量 :data:`GRACE_SECONDS`。
 
-    函数内延迟 import 绕开循环依赖：core.input 包 __init__ → server → agent →
-    idempotency_repo（agent.agent:97 顶层 import 本模块）。调用时模块图已完整加载，
-    仅 sys.modules 缓存查询，开销可忽略。禁止在本模块重定义该常量（Global Constraint）。
+    原单源在 core.input.idempotency、本函数延迟 import 绕环（storage→input 反向依赖），
+    2026-08-14 下沉到本模块。input 层经 idempotency 门面 import，方向恢复 input → storage。
     """
-    from core.input.idempotency import GRACE_SECONDS
     return GRACE_SECONDS
 
 

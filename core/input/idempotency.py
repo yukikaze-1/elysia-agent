@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 from core.schema.types import MessageId
 from core.storage.base import StorageUnavailableError
 from core.storage.idempotency_repo import (
+    GRACE_SECONDS,
     STATUS_ACCEPTED,
     STATUS_CLAIMED,
     STATUS_REJECTED,
@@ -46,12 +47,10 @@ logger = logging.getLogger(__name__)
 # 默认保留窗口：1 小时（进程内 TTL 与 Mongo TTL 索引同值）
 _DEFAULT_TTL_SECONDS = 3600.0
 
-# CLAIMED 新鲜窗口（unix 秒）：过期 CLAIMED 才允许接管（Task 1 单源；Task 2 扩展）。
-# 全局单源——idempotency_repo._is_stale 惰性 import 本常量，禁止在 repo 层重定义。
-GRACE_SECONDS = 30.0
-
 # 新鲜 CLAIMED 命中的 IN_PROGRESS 拒绝 ACK retryAfterMs（= GRACE_SECONDS 毫秒）。
 # 语义：原请求大概率仍在途，客户端应在此退避后重试；Task 6 golden 帧同值单源。
+# GRACE_SECONDS 单源在 core.storage.idempotency_repo（本文件顶部 import），
+# 此处经门面复用——input → storage 正确方向（2026-08-14 模块化修复）。
 _IN_PROGRESS_RETRY_AFTER_MS = int(GRACE_SECONDS * 1000)
 
 

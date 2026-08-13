@@ -261,7 +261,7 @@ class WebFetchPlugin(ToolPlugin):
         try:
             # D2/P1-15：出站走统一守卫 transport（每跳 SSRF 校验 + 跨源剥敏感头），
             # 替代裸 httpx follow_redirects——重定向逐跳重新校验，防 loopback/私网第二跳
-            from core.input.ssrf import SSRFError, build_guarded_http_client
+            from Module._common.ssrf import SSRFError, build_guarded_http_client
 
             client_kwargs = dict(
                 timeout=self.safety.request_timeout,

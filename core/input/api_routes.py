@@ -272,7 +272,7 @@ def register_api_routes(app: web.Application) -> None:
             web.Response: {"ok": True, "data": 全量 custom 列表（api_key 键已剔除）} 或错误信封。
         """
         from core.input.custom_providers import add_provider
-        from core.input.ssrf import SSRFError, validate_endpoint
+        from Module._common.ssrf import SSRFError, validate_endpoint
         try:
             body = await request.json()
             service = body.get("service", "")
@@ -405,7 +405,7 @@ def register_api_routes(app: web.Application) -> None:
 
         # body base_url 非空时无论 provider 一律 SSRF 校验（空 base_url 跳过——
         # 内置无 body base_url 是空串，不误伤既有 connectivity 测试）。
-        from core.input.ssrf import SSRFError, validate_endpoint
+        from Module._common.ssrf import SSRFError, validate_endpoint
         if base_url:
             try:
                 validate_endpoint(base_url)
@@ -422,7 +422,7 @@ def register_api_routes(app: web.Application) -> None:
         # 内置 provider 同走 OpenAICompatBackend（接受 http_client_factory）——
         # 重定向每跳重新校验，防公开 base_url 302 到 loopback/metadata 的第二跳绕过。
         if base_url:
-            from core.input.ssrf import build_guarded_http_client
+            from Module._common.ssrf import build_guarded_http_client
             create_kwargs["http_client_factory"] = (
                 lambda b=base_url: build_guarded_http_client(b))
 

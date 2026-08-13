@@ -6,7 +6,17 @@ from pydantic import BeforeValidator
 
 from Module.workflow_contract.schema import SessionId
 
-from core.schema.utils import _normalize_iso_ts
+
+def _normalize_iso_ts(v: str | float) -> str:
+    """归一化 ISO 时间戳（lazy wrapper）——打破 core.schema.utils ↔ types 包内环。
+
+    core.schema.utils 顶层 eager import core.schema.types（ID 生成器运行时需 NewType
+    类构造），故 types 侧对本 helper 仅运行时引用（Pydantic BeforeValidator 构造时解析，
+    2026-08-14 模块化修复）。
+    """
+    from core.schema.utils import _normalize_iso_ts as _impl
+
+    return _impl(v)
 
 
 IsoTimestamp = Annotated[str, BeforeValidator(_normalize_iso_ts)]

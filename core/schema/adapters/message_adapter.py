@@ -18,7 +18,7 @@ from pydantic import Discriminator, Tag, TypeAdapter, ValidationError
 from core.schema.adapters import attachment_resolver as _attachment_resolver
 from core.schema.part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart, ImageMime
 from core.schema.message import Message, AssistantMessage, ToolResultMessage, UserMessage
-from core.utils.message_id import stable_tool_message_id
+from core.schema.utils import stable_tool_message_id
 
 
 # ── dict → Part 边界转换 ──────────────────────────────

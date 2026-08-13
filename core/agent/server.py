@@ -56,7 +56,7 @@ def _resolve_switch_params(
         SSRFError: custom+backend 且 base_url 非空但校验失败（内网/解析失败）。
     """
     from core.input.custom_providers import resolve_model_params
-    from core.input.ssrf import build_guarded_http_client, validate_endpoint
+    from Module._common.ssrf import build_guarded_http_client, validate_endpoint
     params = resolve_model_params(svc, model_id)
     runtime = params.pop("runtime", "backend")
     http_client_factory = None
@@ -416,7 +416,7 @@ class AgentServer:
                         # custom+backend → 出站守卫工厂注入
                         _base_url = stt_params.get("base_url", "")
                         if stt_model.startswith("custom/") and _base_url:
-                            from core.input.ssrf import build_guarded_http_client
+                            from Module._common.ssrf import build_guarded_http_client
                             stt_params["http_client_factory"] = (
                                 lambda b=_base_url: build_guarded_http_client(b))
                         stt_backend = STTFactory.create(stt_model, **stt_params)

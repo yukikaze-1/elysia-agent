@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart
 from core.schema.message import ToolResultMessage
-from core.utils.message_id import stable_tool_message_id
+from core.schema.utils import stable_tool_message_id
 from core.schema.adapters.message_adapter import (
     parts_from_dicts, content_text, has_image, has_file, has_video, has_audio,
     content_to_openai, validate_message_legacy_compat,

@@ -104,7 +104,7 @@ class _LifecycleServices:
                     # custom+backend → 出站守卫工厂注入（reconnect 重建全新守卫 client）
                     _base_url = tts_params.get("base_url", "")
                     if model.startswith("custom/") and _base_url:
-                        from core.input.ssrf import build_guarded_http_client
+                        from Module._common.ssrf import build_guarded_http_client
                         tts_params["http_client_factory"] = (
                             lambda b=_base_url: build_guarded_http_client(b))
                     self._tts = TTSFactory.create(
