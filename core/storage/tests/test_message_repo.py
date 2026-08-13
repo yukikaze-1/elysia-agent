@@ -57,6 +57,32 @@ class TestMessageRepository:
         assert call_args[0][0] == "message_archive"  # collection name
         assert call_args[0][1]["session_id"] == "sid"
 
+    def test_append_rejects_empty_message_id(self):
+        """空 message_id → ValueError（守卫在 db-None 分支之前，与存储可用性无关）。
+
+        D4 守卫的真实对象是 UserMessage/AssistantMessage 显式 MessageId("")——
+        ToolResultMessage 已被 Task 2 模型校验器拒绝，构造即抛，到不了 append。
+        """
+        repo = MessageRepository(db=MagicMock())
+        msg = UserMessage(
+            content=[TextPart(content="hi")],
+            message_id=MessageId(""),
+            session_id=SessionId("sid"),
+        )
+        with pytest.raises(ValueError):
+            asyncio.run(repo.append(SessionId("sid"), msg))
+
+    def test_append_guard_before_db_none_branch(self):
+        """Mongo 离线（db=None）且空 ID → 仍抛 ValueError，不被「DB 不可用」warning 掩盖。"""
+        repo = MessageRepository(db=None)
+        msg = UserMessage(
+            content=[TextPart(content="hi")],
+            message_id=MessageId(""),
+            session_id=SessionId("sid"),
+        )
+        with pytest.raises(ValueError):
+            asyncio.run(repo.append(SessionId("sid"), msg))
+
     def test_returns_empty_when_db_none(self):
         repo = MessageRepository(db=None)
         msgs, total = asyncio.run(repo.query_by_session(SessionId("sid")))

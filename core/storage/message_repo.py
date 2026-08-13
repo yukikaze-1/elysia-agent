@@ -159,6 +159,14 @@ class MessageRepository(Repository):
             session_id: 会话 ID。
             msg: 要归档的消息对象。
         """
+        # 归档 ID 非空不变量（spec D4）：数据不变量与存储可用性无关，置于 db-None
+        # 分支之前——否则 Mongo 离线时空 ID 被「DB 不可用」warning 掩盖违规。
+        # append 是 fire-and-forget 归档，此 ValueError 会被 session._archive_done
+        # 降级为 warning；同步 fail-fast 靠模型校验器（Task 2）。
+        if not msg.message_id:
+            raise ValueError(
+                f"消息归档拒绝空 message_id（role={msg.role}，session={session_id}）"
+                "——生产写入路径必须分配非空 ID")
         if self._db is None:
             # 永久归档静默丢失——必须留下可见日志（S1）。消息本体仍在 session
             # deque/JSONL，但 append-only message_archive 不落盘 = 永久丢失。
