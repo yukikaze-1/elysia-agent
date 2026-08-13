@@ -24,6 +24,7 @@
 | [contract-release-2026-08-11.md](contract-release-2026-08-11.md) | Contract 发版记录：transportVersion/protocolVersion/schemaHash/backend commit + 产物清单 |
 | [review/electron-v2-backend-change-list-2026-08-11.md](review/electron-v2-backend-change-list-2026-08-11.md) | Electron 后端契约变更清单（D6b/D6c：idempotency_durable / 幂等 fail-closed / RATE_LIMITED） |
 | [review/electron-v2-backend-post-hardening-review-2026-08-12.md](review/electron-v2-backend-post-hardening-review-2026-08-12.md) | 加固后复核：BE-P1-06/07（恢复正确性 + 触发条件，2026-08-12 修复）+ BE-P2-04（runbook schemaHash）+ BE-RISK-01（接受风险） |
+| [review/2026-08-13-Windows-Electron-首次真实联调后端问题清单.md](review/2026-08-13-Windows-Electron-首次真实联调后端问题清单.md) | Windows Electron 首次真实联调后端问题：工具消息空 ID、新写入约束、历史稳定回填与回归门禁 |
 
 ## 子目录
 
