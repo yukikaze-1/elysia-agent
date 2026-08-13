@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: 45e5390c58221e80
+// schemaHash: e5d4dd2b9296b727
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -170,10 +170,10 @@ export interface TokenTurnStats {
 export interface SessionMessageItem {
   /** 消息角色（user/assistant/tool） */
   role: string
-  /** 消息 ID（前端去重/归档去重），可缺省 */
-  message_id?: string
-  /** ISO 时间戳，可缺省 */
-  timestamp?: string
+  /** 消息 ID（前端去重/归档去重，必填非空） */
+  message_id: string
+  /** ISO 时间戳，必填非空 */
+  timestamp: string
   /** 纯文本 parts 列表，可缺省 */
   parts?: Record<string, string>[]
   /** 消息内容（纯文本或内容块列表），可缺省 */

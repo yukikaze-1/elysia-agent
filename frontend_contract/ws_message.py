@@ -199,8 +199,8 @@ class SessionMessageItem(ContractModel):
     """会话历史中的单条消息（兼容用户/助手/工具结果平铺形状）。"""
 
     role: str = Field(description="消息角色（user/assistant/tool）")
-    message_id: Optional[str] = Field(default=None, description="消息 ID（前端去重/归档去重），可缺省")
-    timestamp: Optional[str] = Field(default=None, description="ISO 时间戳，可缺省")
+    message_id: str = Field(min_length=1, description="消息 ID（前端去重/归档去重，必填非空）")
+    timestamp: str = Field(min_length=1, description="ISO 时间戳，必填非空")
     parts: Optional[list[dict[str, str]]] = Field(default=None, description="纯文本 parts 列表，可缺省")
     content: Optional[str | list[ContentPart]] = Field(
         default=None, description="消息内容（纯文本或内容块列表），可缺省")

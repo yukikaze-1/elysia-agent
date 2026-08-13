@@ -49,7 +49,8 @@ def test_capabilities_model_is_ts_null():
 @pytest.mark.unit
 def test_wire_dict_list_recursive():
     """list[ContractModel] 元素递归 wire_dict（SessionMessage.messages 场景，base.py list 分支守护）。"""
-    item = w.SessionMessageItem(role="assistant", content="hi")
+    item = w.SessionMessageItem(role="assistant", content="hi",
+                                message_id="m1", timestamp="t1")
     msg = w.SessionMessage(messages=[item], token_stats=w.TokenStats(total=1, byModel={}),
                            conversationId="conv_x")
     d = msg.wire_dict()

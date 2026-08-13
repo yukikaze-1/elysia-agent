@@ -166,10 +166,10 @@ export interface TokenTurnStats {
 export interface SessionMessageItem {
   /** 消息角色（user/assistant/tool） */
   role: string
-  /** 消息 ID（前端去重/归档去重），可缺省 */
-  message_id?: string
-  /** ISO 时间戳，可缺省 */
-  timestamp?: string
+  /** 消息 ID（前端去重/归档去重，必填非空） */
+  message_id: string
+  /** ISO 时间戳，必填非空 */
+  timestamp: string
   /** 纯文本 parts 列表，可缺省 */
   parts?: Record<string, string>[]
   /** 消息内容（纯文本或内容块列表），可缺省 */

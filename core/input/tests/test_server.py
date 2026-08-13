@@ -859,11 +859,23 @@ class TestSessionReplayContract:
             {"role": "assistant", "content": [{"type": "unknown"}],
              "message_id": "a1", "timestamp": "t2"},
             {"role": "tool", "tool_call_id": "c1", "name": "web", "content": "ok",
+             "message_id": "t1", "timestamp": "t3",
              "success": True, "duration_ms": 1.0, "truncated": False},
         ]
         items = _build_session_items(msgs)
         assert len(items) == 2
         assert [i.role for i in items] == ["user", "tool"]
+
+    def test_build_session_items_rejects_tool_without_identity(self):
+        """缺 message_id/timestamp 的持久消息按新契约 fail-closed 拒绝（spec §5.3.3）。"""
+        from core.input.ws_handler import _build_session_items
+
+        msgs = [
+            {"role": "tool", "tool_call_id": "c1", "name": "web", "content": "ok",
+             "success": True, "duration_ms": 1.0, "truncated": False},
+        ]
+        items = _build_session_items(msgs)
+        assert len(items) == 0
 
 
 @pytest.mark.service

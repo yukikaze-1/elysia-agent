@@ -10861,17 +10861,10 @@
               "title": "Inner Voice"
             },
             "message_id": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "消息 ID（前端去重/归档去重），可缺省",
-              "title": "Message Id"
+              "description": "消息 ID（前端去重/归档去重，必填非空）",
+              "minLength": 1,
+              "title": "Message Id",
+              "type": "string"
             },
             "mood": {
               "anyOf": [
@@ -10937,17 +10930,10 @@
               "title": "Success"
             },
             "timestamp": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "ISO 时间戳，可缺省",
-              "title": "Timestamp"
+              "description": "ISO 时间戳，必填非空",
+              "minLength": 1,
+              "title": "Timestamp",
+              "type": "string"
             },
             "token_usage": {
               "anyOf": [
@@ -11005,7 +10991,9 @@
             }
           },
           "required": [
-            "role"
+            "role",
+            "message_id",
+            "timestamp"
           ],
           "title": "SessionMessageItem",
           "type": "object"
@@ -13243,17 +13231,10 @@
               "title": "Inner Voice"
             },
             "message_id": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "消息 ID（前端去重/归档去重），可缺省",
-              "title": "Message Id"
+              "description": "消息 ID（前端去重/归档去重，必填非空）",
+              "minLength": 1,
+              "title": "Message Id",
+              "type": "string"
             },
             "mood": {
               "anyOf": [
@@ -13319,17 +13300,10 @@
               "title": "Success"
             },
             "timestamp": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "ISO 时间戳，可缺省",
-              "title": "Timestamp"
+              "description": "ISO 时间戳，必填非空",
+              "minLength": 1,
+              "title": "Timestamp",
+              "type": "string"
             },
             "token_usage": {
               "anyOf": [
@@ -13387,7 +13361,9 @@
             }
           },
           "required": [
-            "role"
+            "role",
+            "message_id",
+            "timestamp"
           ],
           "title": "SessionMessageItem",
           "type": "object"
@@ -14373,17 +14349,10 @@
           "title": "Inner Voice"
         },
         "message_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "消息 ID（前端去重/归档去重），可缺省",
-          "title": "Message Id"
+          "description": "消息 ID（前端去重/归档去重，必填非空）",
+          "minLength": 1,
+          "title": "Message Id",
+          "type": "string"
         },
         "mood": {
           "anyOf": [
@@ -14449,17 +14418,10 @@
           "title": "Success"
         },
         "timestamp": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "ISO 时间戳，可缺省",
-          "title": "Timestamp"
+          "description": "ISO 时间戳，必填非空",
+          "minLength": 1,
+          "title": "Timestamp",
+          "type": "string"
         },
         "token_usage": {
           "anyOf": [
@@ -14517,7 +14479,9 @@
         }
       },
       "required": [
-        "role"
+        "role",
+        "message_id",
+        "timestamp"
       ],
       "title": "SessionMessageItem",
       "type": "object"
@@ -18404,6 +18368,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "45e5390c58221e80",
+  "schemaHash": "e5d4dd2b9296b727",
   "transportVersion": "2"
 }
