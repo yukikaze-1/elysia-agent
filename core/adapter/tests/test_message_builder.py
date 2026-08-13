@@ -61,7 +61,7 @@ class TestBuildMessages:
             ToolResultMessage(
                 content=[TextPart(content="search results here")],
                 tool_call_id="c1", tool_name="web_search",
-                message_id=MessageId(""),
+                message_id=MessageId("msg_test_t1"),
             ),
             _make_assistant_msg("found it"),
         ]
@@ -105,7 +105,7 @@ class TestBuildMessages:
             ToolResultMessage(
                 content=[TextPart(content="result: found")],
                 tool_call_id="c1", tool_name="search",
-                message_id=MessageId(""),
+                message_id=MessageId("msg_test_t2"),
             ),
         ]
         messages = builder.build_messages("system", history, "ok")
@@ -137,7 +137,7 @@ class TestBuildMessages:
             ToolResultMessage(
                 content=[TextPart(content="ok")],
                 tool_call_id="c1", tool_name="test",
-                message_id=MessageId(""),
+                message_id=MessageId("msg_test_t3"),
             ),
         ]
         messages = builder.build_messages("system", history, "done")

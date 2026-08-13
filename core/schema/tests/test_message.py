@@ -170,6 +170,7 @@ class TestToolResultMessage:
             tool_name="web_search",
             success=True,
             duration_ms=1234.5,
+            message_id=MessageId("msg_test_001"),
         )
         assert msg.role == MessageRole.TOOL
         assert msg.success is True
@@ -185,6 +186,7 @@ class TestToolResultMessage:
             success=False,
             error="request timed out",
             error_type=ErrorType.TIMEOUT,
+            message_id=MessageId("msg_test_002"),
         )
         assert msg.success is False
         assert msg.error == "request timed out"
@@ -196,6 +198,7 @@ class TestToolResultMessage:
             content=[TextPart(content="done")],
             tool_call_id=ToolCallId("call_003"),
             tool_name="web_search",
+            message_id=MessageId("msg_test_003"),
         )
         assert msg.session_id == ""
 
@@ -206,6 +209,33 @@ class TestToolResultMessage:
             tool_call_id=ToolCallId("call_004"),
             tool_name="web_search",
             session_id=SessionId("sess-42"),
+            message_id=MessageId("msg_test_004"),
         )
         assert msg.session_id == "sess-42"
         assert isinstance(msg.session_id, str)
+
+    def test_tool_result_message_rejects_empty_message_id(self):
+        with pytest.raises(ValidationError):
+            ToolResultMessage(
+                content=[TextPart(content="ok")],
+                tool_call_id=ToolCallId("call_1"),
+                tool_name="get_time",
+                message_id=MessageId(""),
+            )
+
+    def test_tool_result_message_requires_message_id(self):
+        with pytest.raises(ValidationError):
+            ToolResultMessage(
+                content=[TextPart(content="ok")],
+                tool_call_id=ToolCallId("call_1"),
+                tool_name="get_time",
+            )
+
+    def test_tool_result_message_accepts_real_message_id(self):
+        msg = ToolResultMessage(
+            content=[TextPart(content="ok")],
+            tool_call_id=ToolCallId("call_1"),
+            tool_name="get_time",
+            message_id=MessageId("msg_0123456789abcdef0123456789"),
+        )
+        assert str(msg.message_id).startswith("msg_")

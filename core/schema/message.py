@@ -8,7 +8,7 @@ role 字段 frozen，构造时自动填值。
 from enum import StrEnum
 from typing import Literal, NotRequired, Sequence, TypedDict, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core.schema.error_type import ErrorType
 
@@ -63,11 +63,19 @@ class ToolResultMessage(BaseModel):
     error_type: ErrorType | None = None  # core.schema.error_type.ErrorType
     duration_ms: float = 0
     truncated: bool = False
-    message_id: MessageId = Field(default=MessageId(""))
+    message_id: MessageId
     timestamp: IsoTimestamp = Field(default_factory=now_iso)
     # 批次 3（multi-session）：可选归属会话 ID，空串 = 未归属（对齐 UserMessage）
     session_id: SessionId = SessionId("")
     metadata: dict = Field(default_factory=dict)
+
+    @field_validator("message_id")
+    @classmethod
+    def _message_id_non_empty(cls, v: MessageId) -> MessageId:
+        """归档消息 ID 非空不变量（spec D2）：空串拒绝，防坏记录写入 Mongo。"""
+        if v is None or not str(v).strip():
+            raise ValueError("ToolResultMessage.message_id 不能为空")
+        return v
 
 
 Message = Union[UserMessage, AssistantMessage, ToolResultMessage]
