@@ -4,9 +4,11 @@ import pytest
 from pydantic import ValidationError
 
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart
+from core.schema.message import ToolResultMessage
+from core.utils.message_id import stable_tool_message_id
 from core.schema.adapters.message_adapter import (
     parts_from_dicts, content_text, has_image, has_file, has_video, has_audio,
-    content_to_openai,
+    content_to_openai, validate_message_legacy_compat,
 )
 
 
@@ -109,3 +111,49 @@ class TestContentToOpenai:
         result = content_to_openai(parts_from_dicts(dicts))
         assert result[0]["type"] == "image_url"  # type: ignore[reportIndexIssue]
         assert result[1] == {"type": "text", "text": "看这张图"}
+
+
+@pytest.mark.unit
+class TestLegacyToolMessageIdDerivation:
+    def test_empty_message_id_derives_stable_id(self):
+        doc = {
+            "role": "tool", "tool_call_id": "call_1",
+            "timestamp": "2026-08-13T00:00:00Z", "message_id": "",
+            "content": [{"type": "text", "content": "ok"}],
+            "tool_name": "get_time",
+        }
+        msg = validate_message_legacy_compat(doc)
+        assert isinstance(msg, ToolResultMessage)
+        assert str(msg.message_id) == str(
+            stable_tool_message_id("call_1", "2026-08-13T00:00:00Z"))
+
+    def test_missing_message_id_derives_too(self):
+        doc = {
+            "role": "tool", "tool_call_id": "call_2",
+            "timestamp": "2026-08-13T00:00:01Z",
+            "content": [{"type": "text", "content": "ok"}],
+            "tool_name": "web_search",
+        }
+        msg = validate_message_legacy_compat(doc)
+        assert str(msg.message_id) == str(
+            stable_tool_message_id("call_2", "2026-08-13T00:00:01Z"))
+
+    def test_missing_timestamp_not_derived_raises(self):
+        """缺 timestamp → 不派生、strict 拒绝（畸形文档，spec D2 边界）。"""
+        doc = {
+            "role": "tool", "tool_call_id": "call_3", "message_id": "",
+            "content": [{"type": "text", "content": "ok"}],
+            "tool_name": "get_time",
+        }
+        with pytest.raises(ValidationError):
+            validate_message_legacy_compat(doc)
+
+    def test_existing_non_empty_id_untouched(self):
+        doc = {
+            "role": "tool", "tool_call_id": "call_4",
+            "timestamp": "2026-08-13T00:00:02Z", "message_id": "msg_0123456789abcdef0123456789",
+            "content": [{"type": "text", "content": "ok"}],
+            "tool_name": "get_time",
+        }
+        msg = validate_message_legacy_compat(doc)
+        assert str(msg.message_id) == "msg_0123456789abcdef0123456789"

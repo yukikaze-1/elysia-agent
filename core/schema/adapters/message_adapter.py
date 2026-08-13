@@ -18,6 +18,7 @@ from pydantic import Discriminator, Tag, TypeAdapter, ValidationError
 from core.schema.adapters import attachment_resolver as _attachment_resolver
 from core.schema.part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart, ImageMime
 from core.schema.message import Message, AssistantMessage, ToolResultMessage, UserMessage
+from core.utils.message_id import stable_tool_message_id
 
 
 # ── dict → Part 边界转换 ──────────────────────────────
@@ -55,6 +56,14 @@ def validate_message_legacy_compat(data: dict) -> Message:
     新模型无法校验。剥除 token_usage（置 None）保留消息正文，避免整批加载
     失败导致会话上下文丢失。token_usage 不存在或重试仍失败时抛原异常。
     """
+    # D1/D2（spec）：存量工具消息 message_id 空/缺失 → 用文档自带 tool_call_id+timestamp
+    # 派生稳定 ID（读侧兼容，与回填一致）。tool_call_id/timestamp 缺任一 → 不派生，
+    # 留空交 strict 校验失败（畸形文档，绝不 now_iso 兜底）。
+    if (isinstance(data, dict) and data.get("role") == "tool"
+            and not data.get("message_id")
+            and bool(data.get("tool_call_id")) and bool(data.get("timestamp"))):
+        data = {**data, "message_id": stable_tool_message_id(
+            data["tool_call_id"], data["timestamp"])}
     try:
         return _MESSAGE_ADAPTER.validate_python(data)
     except ValidationError:
