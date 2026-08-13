@@ -359,7 +359,8 @@
               "title": "Inner Voice"
             },
             "message_id": {
-              "description": "消息 ID",
+              "description": "消息 ID（归档消息 ID 非空不变量，spec D5）",
+              "minLength": 1,
               "title": "Message Id",
               "type": "string"
             },
@@ -630,7 +631,8 @@
           "title": "Inner Voice"
         },
         "message_id": {
-          "description": "消息 ID",
+          "description": "消息 ID（归档消息 ID 非空不变量，spec D5）",
+          "minLength": 1,
           "title": "Message Id",
           "type": "string"
         },
@@ -6481,7 +6483,8 @@
           "title": "Inner Voice"
         },
         "message_id": {
-          "description": "消息 ID",
+          "description": "消息 ID（归档消息 ID 非空不变量，spec D5）",
+          "minLength": 1,
           "title": "Message Id",
           "type": "string"
         },
@@ -6717,7 +6720,8 @@
               "title": "Inner Voice"
             },
             "message_id": {
-              "description": "消息 ID",
+              "description": "消息 ID（归档消息 ID 非空不变量，spec D5）",
+              "minLength": 1,
               "title": "Message Id",
               "type": "string"
             },
@@ -7041,7 +7045,8 @@
               "title": "Inner Voice"
             },
             "message_id": {
-              "description": "消息 ID",
+              "description": "消息 ID（归档消息 ID 非空不变量，spec D5）",
+              "minLength": 1,
               "title": "Message Id",
               "type": "string"
             },
@@ -7320,7 +7325,8 @@
               "title": "Inner Voice"
             },
             "message_id": {
-              "description": "消息 ID",
+              "description": "消息 ID（归档消息 ID 非空不变量，spec D5）",
+              "minLength": 1,
               "title": "Message Id",
               "type": "string"
             },
@@ -12327,7 +12333,8 @@
               "title": "Inner Voice"
             },
             "message_id": {
-              "description": "消息 ID",
+              "description": "消息 ID（归档消息 ID 非空不变量，spec D5）",
+              "minLength": 1,
               "title": "Message Id",
               "type": "string"
             },
@@ -18397,6 +18404,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "7a5348a4767a9fc6",
+  "schemaHash": "45e5390c58221e80",
   "transportVersion": "2"
 }

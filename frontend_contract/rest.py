@@ -254,7 +254,7 @@ class Message(ContractModel):
     tool_calls: Optional[list[dict[str, Any]]] = Field(
         default=None, description="工具调用列表，可缺省")
     token_usage: Optional[dict[str, Any]] = Field(default=None, description="token 统计，可缺省")
-    message_id: str = Field(description="消息 ID")
+    message_id: str = Field(min_length=1, description="消息 ID（归档消息 ID 非空不变量，spec D5）")
     timestamp: str = Field(description="ISO 时间戳")
     session_id: str = Field(default="", description="会话 ID")
     metadata: dict[str, Any] = Field(default_factory=dict, description="元数据（_mongo_id 已弹出）")

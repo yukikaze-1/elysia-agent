@@ -1279,7 +1279,7 @@ export interface Message {
   tool_calls?: Record<string, unknown>[]
   /** token 统计，可缺省 */
   token_usage?: Record<string, unknown>
-  /** 消息 ID */
+  /** 消息 ID（归档消息 ID 非空不变量，spec D5） */
   message_id: string
   /** ISO 时间戳 */
   timestamp: string

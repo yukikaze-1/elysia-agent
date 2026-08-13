@@ -192,6 +192,30 @@ def test_message_extra_keys_ignored():
 
 
 @pytest.mark.unit
+def test_message_requires_non_empty_message_id():
+    from frontend_contract.rest import Message
+    from pydantic import ValidationError
+    import pytest
+
+    with pytest.raises(ValidationError):
+        Message.model_validate({
+            "role": "tool", "message_id": "", "timestamp": "2026-08-13T00:00:00Z",
+            "content": [], "parts": [],
+        })
+
+
+@pytest.mark.unit
+def test_message_accepts_real_message_id():
+    from frontend_contract.rest import Message
+
+    m = Message.model_validate({
+        "role": "tool", "message_id": "msg_0123456789abcdef0123456789",
+        "timestamp": "2026-08-13T00:00:00Z", "content": [], "parts": [],
+    })
+    assert m.message_id.startswith("msg_")
+
+
+@pytest.mark.unit
 def test_protocol_error_envelope():
     """统一错误信封：code/message/retryable/requestId/error/details；error=message 兼容别名。"""
     from frontend_contract.rest import ProtocolError
