@@ -7,15 +7,21 @@
 
 ---
 
-## 1. 冻结基线（联调前回填）
+## 1. 冻结基线（2026-08-14 B-01 已回填）
 
 | 项 | 值 | 说明 |
 |---|---|---|
-| **backend runtime SHA** | **`<待联调回填>`** | 联调实际启动/冻结的后端 commit（`git rev-parse HEAD`），与前端 manifest 固定一致（≠ contractCommit） |
-| **schemaHash** | `7a5348a4767a9fc6` | 机器契约身份标识（`frontend_contract/contract.schema.json`，**非 server_info wire 字段**）；联调前 `python -m frontend_contract --check` + `python scripts/gen_contract_frames.py --check` 必须通过，并记录冻结产物 hash |
-| contractCommit | `5690cfc` | 契约生成时 SHA（非运行时，见 `docs/contract-release-2026-08-11.md`） |
-| **frontend SHA** | **`<待联调回填>`** | elysia-frontend 联调 commit（含 raw wire + frame mapper + 负面帧 replay） |
+| **backend runtime SHA** | **`73ac7a32415aa96bbec7687ae0c9e674ab675438`** | 第三次真实联调实际运行 commit，`server_info=0.1.0+73ac7a3` |
+| **schemaHash** | `e5d4dd2b9296b727` | 机器契约身份标识（`frontend_contract/contract.schema.json`，**非 server_info wire 字段**）；跨仓检查 WS v2 `13/13`、字段级帧 `63` 条通过 |
+| contractCommit | `fb9f8f1dc34e06595e6b148c54b1cf844f300966` | 当前契约产物最后重生成 commit（非运行时） |
+| **frontend SHA** | **`6b27e2e1ebf4e6ba3e335352379892e7c2679da2`** | 含 `perMessageDeflate:false` 空闲断连修复与握手回归的第三次联调 commit |
 | transportVersion / protocolVersion | `"2"` / `"2.0"` | 握手头 `X-Protocol-Version: 2`（缺省/`"1"`→v1；`"2.0"`/`"3"`→升级前 400） |
+
+### 1.1 B-01 实际结果
+
+2026-08-14 已在 Windows Electron `43.3.0` / Chrome `150.0.7871.212` + Ubuntu 回环后端上完成 B-01 十项真实复跑。纯文本、两次真实工具、Renderer reload、断开重连/replay、Store/DOM 去重、取消、存量 `default` 与全轮诊断均通过。修复后两轮 `76s` 空闲复验未出现断线或 RSV 错误。
+
+证据见 [2026-08-14 Windows Electron 第三次真实联调结果](review/2026-08-14-Windows-Electron-第三次真实联调结果.md)。该结论表示阶段 2 单机主链已真实联调，不等于多客户端、故障恢复或正式发布门禁全部完成。
 
 ## 2. 启动条件
 
