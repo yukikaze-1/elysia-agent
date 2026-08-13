@@ -7,6 +7,7 @@
 """
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory  # n
 from core.storage.message_repo import COLLECTION as MSG_COLLECTION  # noqa: E402
 from core.storage.session_repo import COLLECTION as SESSION_COLLECTION  # noqa: E402
 from core.utils.message_id import stable_tool_message_id  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 _EMPTY_ID_FILTER = {"message_id": {"$in": ["", None]}}
 
@@ -57,7 +60,11 @@ async def backfill_archive(db: DocumentDBBackend, *, dry_run: bool = False,
         for doc in docs:
             tc, ts = doc.get("tool_call_id"), doc.get("timestamp")
             if not tc or not ts:
+                # spec D6：无法派生跳过，但必须留定位（该文档会使其所在页读侧失败）
                 skipped += 1
+                logger.warning(
+                    "回填跳过无法派生的归档工具消息：_id=%s, tool_call_id=%r, timestamp=%r",
+                    doc["_id"], tc, ts)
                 continue
             mid = stable_tool_message_id(tc, ts)
             if not dry_run:
@@ -90,6 +97,10 @@ async def backfill_sessions(db: DocumentDBBackend, *, dry_run: bool = False,
                 tc, ts = m.get("tool_call_id"), m.get("timestamp")
                 if not tc or not ts:
                     skipped += 1
+                    logger.warning(
+                        "回填跳过无法派生的会话工具消息：session=%s, messages[%d], "
+                        "tool_call_id=%r, timestamp=%r",
+                        doc.get("session_id") or doc["_id"], idx, tc, ts)
                     continue
                 updates[f"messages.{idx}.message_id"] = str(
                     stable_tool_message_id(tc, ts))

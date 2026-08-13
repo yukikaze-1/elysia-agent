@@ -118,12 +118,13 @@ fail-fast 靠 D2 模型校验器（构造即抛），D4 是归档边界的兜底
 （描述注明「归档消息 ID 非空不变量」）。收紧后 D2+D6 保证所有读出的消息 ID 非空，
 校验不会误伤。重新生成 `contract.generated.ts` / `contract.schema.json` / `contract.raw.ts`。
 
-**残余 drop 范围声明（review D）：** `_archive_msg_to_contract`（`api_routes.py:131-146`）
-对校验失败返回 `None` + warning、该条从页内丢弃——D2 使正常 tool/存量消息恒非空，
-此 drop 分支**只可能命中「无法派生」的畸形残余文档**（如缺 timestamp 的 tool、显式空 ID 的
-user/assistant）。实测数据不命中（空 ID 100% 为带 tool_call_id+timestamp 的 tool 消息）；
-对不存在的畸形残余，drop + warning 是现有兜底策略的延续，与问题清单 §5.3「不丢弃坏工具
-消息」在**实际数据面**不冲突（丢弃的是无法修复的畸形文档，非真实工具历史）。
+**残余 drop 范围声明（review D + 最终 review 修正）：** `_archive_msg_to_contract`（`api_routes.py:131-146`）
+对校验失败返回 `None` + warning、该条从页内丢弃——D2 使正常 tool/存量消息恒非空，此 drop 分支**只
+可能命中「过 core 模型但过不了契约」的文档**（如显式空 ID 的 user/assistant）。**修正口径**：缺
+`tool_call_id`/`timestamp` 的畸形 tool 文档**不会**走到契约 drop——它们在 `validate_message_legacy_compat`
+（D2 strict）即抛 `ValidationError`，使所在页**整页 500**（而非单条丢弃）。该残差由 D6 回填将畸形文档
+清零（无法派生 skip + warning 定位）避免触发；实测 69 条空 ID 工具消息全部带 tool_call_id+timestamp，
+真实数据无畸形 tool 文档，与问题清单 §5.3「不丢弃坏工具消息」在**实际数据面**不冲突。
 
 ### D6：回填脚本（持久化迁移，推荐路径）
 
