@@ -30,6 +30,7 @@ from paths import ProjectPath
 from core.input.upload_routes import _sign_url
 from core.schema.adapters import attachment_resolver
 from core.schema.types import AttachmentId
+from core.schema.utils import normalize_attachment_mime
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from frontend_contract import rest as rest_contract
 from frontend_contract.rest import ProtocolError
@@ -156,7 +157,9 @@ async def _download_handler(request: web.Request) -> web.StreamResponse:
 
     kind = doc.get("kind", "")
     stored_name = doc.get("stored_name", "")
-    mime = doc.get("mime", "application/octet-stream")
+    # BE-S3-RUN-P0-02：下载 Content-Type 过规范化（存量 kind=audio+video/webm →
+    # audio/webm、audio/x-wav → audio/wav；新记录已写路径规范化，幂等）（spec §4.2）
+    mime = normalize_attachment_mime(kind, doc.get("mime", "application/octet-stream"))
 
     # 先检查落盘文件存在（记录存在但文件被删——GC M8 场景）再 register：文件缺失 → 404
     # 且不预热进程内映射，避免 register 无效条目（review Minor 10）。

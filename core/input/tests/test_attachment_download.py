@@ -260,6 +260,30 @@ class TestDownloadConfigured:
         # register 前文件检查失败 → 不注册无效映射（preheat 无副作用）
         assert "att_1" not in _ar._registry  # noqa: SLF001
 
+    @pytest.mark.asyncio
+    async def test_download_legacy_audio_wav_normalized_content_type(self, make_app, aiohttp_client, tmp_path):
+        """存量 kind=audio + mime=audio/x-wav → 下载 Content-Type=audio/wav（BE-S3-RUN-P0-02）。"""
+        agent, app = make_app()
+        await _seed(agent, tmp_path, kind="audio", stored_name="a.wav",
+                    mime="audio/x-wav", content=b"RIFF\x24\x08\x00\x00WAVEfmt ")
+        client = await aiohttp_client(app)
+        sig, exp = _fresh_sig()
+        resp = await client.get(_url("att_1", sig, exp))
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        assert resp.headers.get("Content-Type") == "audio/wav"
+
+    @pytest.mark.asyncio
+    async def test_download_legacy_audio_video_webm_normalized_content_type(self, make_app, aiohttp_client, tmp_path):
+        """存量 kind=audio + mime=video/webm → 下载 Content-Type=audio/webm。"""
+        agent, app = make_app()
+        await _seed(agent, tmp_path, kind="audio", stored_name="a.webm",
+                    mime="video/webm", content=b"\x1a\x45\xdf\xa3")
+        client = await aiohttp_client(app)
+        sig, exp = _fresh_sig()
+        resp = await client.get(_url("att_1", sig, exp))
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        assert resp.headers.get("Content-Type") == "audio/webm"
+
 
 class TestSignEndpoint:
     """GET /api/attachments/{id}/sign 签发端点（Bearer 由中间件保证）。"""
