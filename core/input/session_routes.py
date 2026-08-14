@@ -188,9 +188,8 @@ async def _session_exists(agent: "Agent", sid: str) -> bool:
 
 
 def _generation_registry(agent: "Agent"):
-    """取 GenerationRegistry（agent.cognitive._generation_registry），缺失返回 None。"""
-    cognitive = getattr(agent, "cognitive", None)
-    return getattr(cognitive, "_generation_registry", None)  # noqa: SLF001
+    """取 GenerationRegistry（agent.generation_registry 公开 property），缺失返回 None。"""
+    return getattr(agent, "generation_registry", None)
 
 
 # ── 文本/资源提取 helpers（spec §8） ────────────────────────────────────────

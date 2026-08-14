@@ -35,6 +35,10 @@ class _FakeBackend:
     async def list_voices(self):
         return self._voices
 
+    def default_voice(self, character: str = "") -> str:
+        """对齐 TTSBackend.default_voice（假后端无 voice map → 空串）。"""
+        return ""
+
 
 @pytest.mark.service
 @pytest.mark.asyncio

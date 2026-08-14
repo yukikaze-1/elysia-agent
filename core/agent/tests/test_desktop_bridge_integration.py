@@ -296,7 +296,7 @@ class TestStopPersistenceHook:
 
 
 class TestSyncDesktopAvailable:
-    """_sync_desktop_available 同步入口：bridge 可用性写入 ToolManager。"""
+    """sync_desktop_available 同步入口：bridge 可用性写入 ToolManager。"""
 
     def test_sync_writes_manager_available(self, agent):
         """连接后同步 → tool_adapter._manager 的 desktop 可用性被更新。"""
@@ -304,13 +304,13 @@ class TestSyncDesktopAvailable:
         agent.tool_adapter._manager.set_desktop_available(False)
         assert agent.tool_adapter._manager._desktop_available is False  # noqa: SLF001
 
-        agent._sync_desktop_available()
+        agent.sync_desktop_available()
 
         assert agent.tool_adapter._manager._desktop_available is False  # noqa: SLF001
 
     @pytest.mark.asyncio
     async def test_sync_flips_with_connection(self, agent):
-        """连接后 _sync_desktop_available → manager._desktop_available True。"""
+        """连接后 sync_desktop_available → manager._desktop_available True。"""
         await agent.desktop_bridge.on_client_connect("conn_x")
-        agent._sync_desktop_available()
+        agent.sync_desktop_available()
         assert agent.tool_adapter._manager._desktop_available is True  # noqa: SLF001

@@ -96,6 +96,11 @@ class _FakeAgent:
     def cognitive(self) -> _FakeCognitive:
         return self._cognitive
 
+    @property
+    def generation_registry(self):
+        """公开 property（对齐 Agent.generation_registry，2026-08-14 模块化修复）。"""
+        return self.gen_registry
+
     async def switch_session(self, sid) -> None:
         await self.session_manager.switch(sid)
 

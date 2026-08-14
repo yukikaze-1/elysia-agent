@@ -278,6 +278,14 @@ class MiniMaxTTSBackend(TTSBackend):
     def provider_name(self) -> str:
         return "minimax"
 
+    def default_voice(self, character: str = "") -> str:
+        """按 voice_map 返回角色默认音色（未命中 → 构造默认 voice_id）。
+
+        公开化 ``_resolve_voice`` 供 core.input.tts_profile 取 voices current
+        （2026-08-14 模块化修复——tts_profile 不再穿透后端私有方法）。
+        """
+        return self._resolve_voice(character)
+
     @property
     def stream_format(self) -> str:
         return "wav"

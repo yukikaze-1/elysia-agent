@@ -36,8 +36,8 @@ def _backend_default_voice(backend: "TTSBackend", character: str = "") -> str:
     """后端默认音色 ID（service_state.tts_voice 未设置时 voices 响应的 current）。
 
     与 synthesize 无 voice_id 覆盖时的实际默认一致：
-    - MiniMax → _resolve_voice(character)（voice_map 未命中 → 构造 fallback voice_id）；
-    - gpt-sovits / openai → character 即音色键（synthesize 直接把 character 当 voice）。
+    - MiniMax → default_voice(character)（voice_map 未命中 → 构造 fallback voice_id）；
+    - gpt-sovits / openai → character 即音色键（default_voice 默认实现）。
 
     Args:
         backend: 激活的 TTS 后端。
@@ -48,9 +48,6 @@ def _backend_default_voice(backend: "TTSBackend", character: str = "") -> str:
     """
     provider = getattr(backend, "provider_name", "")
     if provider == "minimax":
-        resolve = getattr(backend, "_resolve_voice", None)  # noqa: SLF001 — 默认音色解析
-        if resolve is not None and character:
-            return resolve(character)
-        return getattr(backend, "_voice_id", "")  # noqa: SLF001 — MiniMax 回退 voice_id
+        return backend.default_voice(character)
     # gpt-sovits / openai：character 即音色键
     return character

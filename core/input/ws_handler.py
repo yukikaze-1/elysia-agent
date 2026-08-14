@@ -216,12 +216,11 @@ async def handle_ws(
     agent.output.add_channel(channel)
 
     # 批次 4（spec §5.1）：v2 + electron 握手 → 桥标记 connected + 同步 desktop 可用性
-    # （Task 6 集成：agent._sync_desktop_available 为组合根同步入口，跨模块私有访问豁免）。
     desktop_conn_id: str | None = conn_id if client_platform == "electron" else None
     if desktop_conn_id is not None:
         try:
             await agent.desktop_bridge.on_client_connect(desktop_conn_id)
-            agent._sync_desktop_available()  # noqa: SLF001 — 组合根私有同步入口（Task 6）
+            agent.sync_desktop_available()
             logger.info("WS desktop 客户端已连接: %s (%s)", client_id, desktop_conn_id)
         except Exception:
             logger.debug("Desktop bridge on_client_connect 失败", exc_info=True)
@@ -449,7 +448,7 @@ async def handle_ws(
         if desktop_conn_id is not None:
             try:
                 await agent.desktop_bridge.on_client_disconnect(desktop_conn_id)
-                agent._sync_desktop_available()  # noqa: SLF001 — 组合根私有同步入口（Task 6）
+                agent.sync_desktop_available()
                 logger.info("WS desktop 客户端已断开: %s (%s)", client_id, desktop_conn_id)
             except Exception:
                 logger.debug("Desktop bridge on_client_disconnect 失败", exc_info=True)

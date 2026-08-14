@@ -904,15 +904,17 @@ class Agent(AgentLifecycle, AgentServer):
 
         Task 7/8 经此访问：on_client_connect/on_client_disconnect（ws_handler 握手）、
         get_call/pending_calls（REST 状态查询）、request_and_wait（插件 execute 委托）。
-        连接/断开后调 `agent._sync_desktop_available()` 同步 ToolManager 的
+        连接/断开后调 `agent.sync_desktop_available()` 同步 ToolManager 的
         desktop 可用性（plugin_list/registry_metadata available 数据源）。
         """
         return self._desktop_bridge
 
-    def _sync_desktop_available(self) -> None:
+    def sync_desktop_available(self) -> None:
         """同步 desktop 工具可用性到 ToolManager（bridge 连接/断开时调用）。
 
-        Task 7 ws_handler 在 `bridge.on_client_connect/disconnect` 后调用本入口，
+        公开入口（2026-08-14 模块化修复——原私有 `_sync_desktop_available` 被输入层
+        跨模块直调，违反「走公开接口」纪律，公开化后 ws_handler 正常调用）。
+        ws_handler 在 `bridge.on_client_connect/disconnect` 后调用本入口，
         把 `bridge.is_available()` 经 `tool_adapter._manager.set_desktop_available`
         写入 `_desktop_available`——plugin_list/registry_metadata 中 desktop 工具
         available 字段的数据源（BE-040 §3.2）。

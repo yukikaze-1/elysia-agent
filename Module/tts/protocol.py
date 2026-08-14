@@ -81,6 +81,19 @@ class TTSBackend(ABC):
         """返回 provider 标识：'gpt-sovits' / 'minimax' / 'custom'。"""
         ...
 
+    def default_voice(self, character: str = "") -> str:
+        """返回后端默认音色 ID（无显式 voice_id 覆盖时的合成音色）。
+
+        默认实现返回 ``character``（character 即音色键——gpt-sovits/openai 语义）；
+        按角色映射音色的后端（如 minimax）override：voice_map 未命中回退构造默认
+        voice_id。供 core.input.tts_profile 取 voices 响应 current（批次 5 BE-051，
+        2026-08-14 模块化修复——tts_profile 不再穿透后端私有 _resolve_voice/_voice_id）。
+
+        Returns:
+            后端默认音色 ID；无法判定返回空串。
+        """
+        return character
+
     @property
     def model(self) -> str:
         """返回完整模型标识 ``provider/model``（如 ``minimax/speech-2.8-hd``）。

@@ -202,7 +202,7 @@ class TestLlmExposureFilter:
 
             # 连接：definitions 含 desktop 工具；plugin_list available=True
             await agent.desktop_bridge.on_client_connect("conn_x")
-            agent._sync_desktop_available()  # noqa: SLF001 — 组合根私有同步入口
+            agent.sync_desktop_available()  # noqa: SLF001 — 组合根私有同步入口
             defs = [d["function"]["name"] for d in adapter.definitions()]
             assert all(n in defs for n in LLM_DESKTOP_NAMES)
             plugs = {p["name"]: p for p in manager.plugin_list}
@@ -211,7 +211,7 @@ class TestLlmExposureFilter:
 
             # 断开：definitions 移除 desktop 工具；plugin_list 回到 available=False
             await agent.desktop_bridge.on_client_disconnect("conn_x")
-            agent._sync_desktop_available()  # noqa: SLF001
+            agent.sync_desktop_available()  # noqa: SLF001
             defs = [d["function"]["name"] for d in adapter.definitions()]
             assert not (LLM_DESKTOP_NAMES & set(defs))
             plugs = {p["name"]: p for p in manager.plugin_list}
