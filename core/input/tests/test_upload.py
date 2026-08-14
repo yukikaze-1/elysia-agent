@@ -23,6 +23,11 @@ pytestmark = pytest.mark.service
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
 TEXT = b"this is a plain text file masquerading as a png, nothing more" * 3
 
+# P0-02 新增魔数（Elysia env 实测 filetype 可识别）
+WEBM = bytes.fromhex("1a45dfa39f4286810142f7810142f2810442f381084282847765626d4287810442858102")  # video/webm
+MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 8 + b"mp42isom"  # video/mp4
+PDF = b"%PDF-1.4\n" + b"1 0 obj\n<<>>\nendobj\n"  # application/pdf
+
 
 class _FakeAttachmentRepo:
     """内存 fake AttachmentRepository——离线时 create 抛 StorageUnavailableError。
@@ -101,6 +106,21 @@ async def _post(client, *, filename="photo.png", content=PNG, kind="image",
         form.add_field("files[]", data, filename=name,
                        content_type="application/octet-stream")
     return await client.post("/api/uploads", data=form, headers=headers)
+
+
+async def _post_kinds(client, parts):
+    """构造逐文件 kind 的 multipart（前端 real-backend.ts 同款：每文件一组 kind+files）。
+
+    Args:
+        parts: list[(kind, filename, content)]，kind 为 None 表示该文件无 kind（魔数判定）。
+    """
+    form = FormData()
+    for kind, name, content in parts:
+        if kind is not None:
+            form.add_field("kind", kind)
+        form.add_field("files[]", content, filename=name,
+                       content_type="application/octet-stream")
+    return await client.post("/api/uploads", data=form)
 
 
 class TestUploadEndpoint:
@@ -500,3 +520,146 @@ class TestF13Chunked413Envelope:
                                  headers={"Content-Type": "application/json"})
         assert resp.status == 413
         assert (await resp.json())["code"] == "REQUEST_TOO_LARGE"
+
+
+class TestPerFileKind:
+    """P0-02：/api/uploads 逐文件 kind（spec 阶段 3 联调整改；前端每文件一组 kind+files）。
+
+    覆盖清单 3.3：混合批次逐项 kind、webm 消歧、files/files[] 兼容、单 kind 旧形态、
+    悬空/邻接/未知 400、逐 hint 大小预检、魔数权威、整批回滚。
+    """
+
+    @pytest.mark.asyncio
+    async def test_mixed_kinds_each_correct(self, make_app, aiohttp_client):
+        """image+video+file 混合批次成功且逐项 kind 正确。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [
+            ("image", "a.png", PNG), ("video", "b.mp4", MP4), ("file", "c.pdf", PDF),
+        ])
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert [a["kind"] for a in data["attachments"]] == ["image", "video", "file"]
+        assert [a["mime"] for a in data["attachments"]] == [
+            "image/png", "video/mp4", "application/pdf"]
+
+    @pytest.mark.asyncio
+    async def test_webm_audio_video_disambiguated(self, make_app, aiohttp_client):
+        """audio/webm + video/webm 同批分别归 audio/video（hint tiebreaker）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [
+            ("audio", "voice.webm", WEBM), ("video", "clip.webm", WEBM),
+        ])
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        assert [a["kind"] for a in (await resp.json())["attachments"]] == ["audio", "video"]
+
+    @pytest.mark.asyncio
+    async def test_files_and_files_array_both_work(self, make_app, aiohttp_client):
+        """files 与旧 files[] 字段均可用（现有 _post 用 files[]；本 helper 亦 files[]）。
+        files 单数形态：显式 FormData 用 name='files'。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        form = FormData()
+        form.add_field("kind", "image")
+        form.add_field("files", PNG, filename="single.png",
+                       content_type="application/octet-stream")
+        resp = await client.post("/api/uploads", data=form)
+        assert resp.status == 200
+        assert (await resp.json())["attachments"][0]["kind"] == "image"
+
+    @pytest.mark.asyncio
+    async def test_single_kind_multi_files_legacy(self, make_app, aiohttp_client):
+        """旧形态：单 kind + 多文件 → 全部文件按该 kind 预检/归位（整批统一）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post(client, filename="a.png", content=PNG, kind="image",
+                           extra_files=[("b.png", PNG)])
+        assert resp.status == 200
+        assert [a["kind"] for a in (await resp.json())["attachments"]] == ["image", "image"]
+
+    @pytest.mark.asyncio
+    async def test_dangling_kind_400(self, make_app, aiohttp_client):
+        """尾部悬空 kind（kind 后无文件）→ 400 CONTRACT_VALIDATION。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        form = FormData()
+        form.add_field("kind", "image")
+        form.add_field("files[]", PNG, filename="a.png",
+                       content_type="application/octet-stream")
+        form.add_field("kind", "video")  # 悬空
+        resp = await client.post("/api/uploads", data=form)
+        assert resp.status == 400
+        assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_adjacent_kind_400(self, make_app, aiohttp_client):
+        """kind 未紧邻文件（kind,kind,files 连续）→ 400（顺序歧义，清单 3.3）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        form = FormData()
+        form.add_field("kind", "image")
+        form.add_field("kind", "video")  # 前一 kind 未被文件消费即来新 kind
+        form.add_field("files[]", PNG, filename="a.png",
+                       content_type="application/octet-stream")
+        resp = await client.post("/api/uploads", data=form)
+        assert resp.status == 400
+        assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
+    async def test_unknown_kind_mixed_400(self, make_app, aiohttp_client):
+        """混合批次含非法 kind → 400（sticker 非附件白名单保持）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [
+            ("image", "a.png", PNG), ("sticker", "st.png", PNG)])
+        assert resp.status == 400
+        assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_big_video_not_blocked_by_last_image_limit(self, make_app, aiohttp_client):
+        """逐 hint 预检：前大视频（>10MB 但 <50MB，hint=video）不被最后 image 10MB 误拒。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        big_mp4 = MP4 + b"\x00" * (12 * 1024 * 1024)  # 12MB video/mp4
+        resp = await _post_kinds(client, [
+            ("video", "big.mp4", big_mp4), ("image", "a.png", PNG)])
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        assert [a["kind"] for a in (await resp.json())["attachments"]] == ["video", "image"]
+
+    @pytest.mark.asyncio
+    async def test_magic_beats_hint(self, make_app, aiohttp_client):
+        """魔数与提示冲突时以服务端魔数归位为准（hint=video 的 PNG → image）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [("video", "a.png", PNG)])
+        assert resp.status == 200
+        att = (await resp.json())["attachments"][0]
+        assert att["kind"] == "image"
+        assert att["mime"] == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_no_kind_all_files_magic_detect(self, make_app, aiohttp_client):
+        """全批无 kind（hint=None 合法路径）：全部文件按魔数判定（LOW-3 补洞）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [
+            (None, "a.png", PNG), (None, "b.pdf", PDF)])
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        assert [a["kind"] for a in (await resp.json())["attachments"]] == ["image", "file"]
+
+    @pytest.mark.asyncio
+    async def test_mixed_batch_failure_rolls_back(self, make_app, aiohttp_client, tmp_path):
+        """混合批次中途失败完整回滚：第一文件成功写盘后第二文件记录写入失败。"""
+        agent, app = make_app(fail_on_create=2)  # 第 2 个 create 抛 StorageUnavailableError
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [
+            ("image", "a.png", PNG), ("video", "b.mp4", MP4)])
+        assert resp.status == 503
+        assert (await resp.json())["code"] == "STORAGE_UNAVAILABLE"
+        assert not agent._attachment_repo.records  # noqa: SLF001
+        # 已写盘文件全部清理（不留孤儿）
+        assert not list((tmp_path / "uploads" / "image").glob("*.png"))
+        assert not list((tmp_path / "uploads" / "video").glob("*.mp4"))

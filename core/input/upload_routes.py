@@ -16,6 +16,7 @@ from core.schema.utils import now_iso
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.utils import new_attachment_id
 from frontend_contract import rest as rest_contract
+from frontend_contract.rest import UploadKind
 from core.input._common import _tool_error
 
 logger = logging.getLogger(__name__)
@@ -139,9 +140,10 @@ async def upload_handler(request: web.Request) -> web.Response:
     if cms is None:
         cms = 64 * 1024 * 1024
 
-    # 收集 multipart 字段（kind 文本 + files[] 文件；顺序无关，FormData 不保证）
-    kind = ""
-    files: list[tuple[str, bytes]] = []  # (原始文件名, 内容)
+    # 收集 multipart 字段（kind 文本 + files[] 文件；前端每文件一组 kind+files 邻接配对）
+    pending_kinds: list[str] = []   # 未消费 kind 栈（邻接配对：最近一个 kind 作用于其后首个文件）
+    kind_count = 0                  # 批内 kind part 总数（单 kind 特判判定）
+    files: list[tuple[str, bytes, str | None]] = []   # (原始文件名, 内容, kind_hint | None)
     # 收集阶段 read_chunk 上限取各 kind 上限最大值（50MB）——kind 缺省分类前防 DoS
     max_read = max(_KIND_LIMITS.values())
     total_bytes = 0  # 聚合字节累计（多文件跨 read_chunk 相加，超 cms 即中断）
@@ -170,9 +172,15 @@ async def upload_handler(request: web.Request) -> web.Response:
             if len(raw) > 64:
                 return _protocol_error_response("INVALID_REQUEST", "kind 字段超长", 400)
             if isinstance(raw, (bytes, bytearray)):
-                kind = bytes(raw).decode("utf-8", errors="replace").strip()
+                decoded = bytes(raw).decode("utf-8", errors="replace").strip()
             else:
-                kind = str(raw or "").strip()
+                decoded = str(raw or "").strip()
+            # 邻接判定（MED-2）：前一 kind 未被文件消费即来新 kind → 顺序歧义 400
+            if pending_kinds:
+                return _protocol_error_response(
+                    "CONTRACT_VALIDATION", "kind 未紧邻文件", 400)
+            pending_kinds.append(decoded)
+            kind_count += 1
         elif name.startswith("files"):
             # read_chunk 逐块读取自限内存（每文件 ≤50MB，整体由 total_bytes 累计兜底）
             data = bytearray()
@@ -188,25 +196,41 @@ async def upload_handler(request: web.Request) -> web.Response:
                 # 时中间件拦不住，这里才是整体上限的强制点）
                 return _protocol_error_response(
                     "REQUEST_TOO_LARGE", "整体上传超过聚合上限", 413)
-            files.append((getattr(field, "filename", "") or "attachment", bytes(data)))
+            hint = pending_kinds.pop() if pending_kinds else None
+            files.append((getattr(field, "filename", "") or "attachment",
+                          bytes(data), hint))
         # 其他字段忽略
 
-    # 步骤 0：kind 枚举预检（缺省通过；sticker 与任意未知 kind 一视同仁）
-    if kind and kind not in _ALLOWED_KINDS:
-        return _protocol_error_response(
-            "CONTRACT_VALIDATION", f"未知 kind: {kind}", 400)
-    # 步骤 1：数量 ≤10
+    # 步骤 0：数量 ≤10（保留现有，MED-1）
     if len(files) > 10:
         return _protocol_error_response("TOO_MANY_FILES", "单次上传文件数超限（≤10）", 400)
+    # 步骤 0.5：kind part 总数防御上限（D6，defense-in-depth）。
+    # 实际不可达：邻接判定（kind 未紧邻文件即 400）+ 悬空 400 + ≤10 文件上限使
+    # kind_count ≤ 11；保留兜底防未来放宽邻接判定时回归，不单测（LOW-2）。
+    if kind_count > 100:
+        return _protocol_error_response("CONTRACT_VALIDATION", "kind 字段数量超限", 400)
+    # 步骤 0.6：尾部悬空 kind（kind 后无文件被消费）→ 400（D5）
+    if pending_kinds:
+        return _protocol_error_response(
+            "CONTRACT_VALIDATION", "kind 后缺少对应文件", 400)
+    # 步骤 0.7：单 kind 特判（D1-A）——旧形态「单 kind + 多文件」整批统一；
+    # 此分支下 hint=None 不可达（单 kind 一律视为整批共同提示）
+    if kind_count == 1 and files:
+        single_kind = next(h for h in (f[2] for f in files) if h is not None)
+        files = [(name, data, single_kind) for name, data, _ in files]
+    # 步骤 0.8：每 hint 枚举校验（未知 kind → 400；sticker 非附件白名单）
+    for _, _, hint in files:
+        if hint is not None and hint not in _UPLOAD_KIND_VALUES:
+            return _protocol_error_response("CONTRACT_VALIDATION", f"未知 kind: {hint}", 400)
 
     # ---- 阶段 A：先全部校验（步骤 2-5：尺寸/魔数/扩展名/kind 归位）——
     # 任一失败立即 4xx，此时未写盘、未建记录，无需清理（Task 14 两阶段）。
     validated: list[dict] = []
-    for filename_raw, data in files:
-        # 步骤 2：初步大小（kind 缺省跳过此步，仅以归位 kind 复核）
-        if kind and len(data) > _KIND_LIMITS[kind]:
+    for filename_raw, data, hint in files:
+        # 步骤 2：初步大小（hint 缺省跳过此步，仅以归位 kind 复核）
+        if hint and len(data) > _KIND_LIMITS[hint]:
             return _protocol_error_response(
-                "REQUEST_TOO_LARGE", f"文件过大，超过 {kind} 上限", 413)
+                "REQUEST_TOO_LARGE", f"文件过大，超过 {hint} 上限", 413)
         # 文件扩展名（步骤 3/4 复用；带点形式供文本白名单查表）
         ext_raw = os.path.splitext(filename_raw)[1].lower()
         ext = ext_raw.lstrip(".")
@@ -234,7 +258,7 @@ async def upload_handler(request: web.Request) -> web.Response:
                 "UNSUPPORTED_MEDIA_TYPE", "扩展名与文件内容不一致", 415)
         # 步骤 5：kind 归位 + 归位后大小复核（webm tiebreaker）
         if mime == "video/webm":
-            final_kind = "audio" if kind == "audio" else "video"
+            final_kind = "audio" if hint == "audio" else "video"
         else:
             final_kind = _MIME_KIND[mime]
         if len(data) > _KIND_LIMITS[final_kind]:
@@ -377,7 +401,8 @@ import re
 from typing import Any, TYPE_CHECKING, cast
 from core.schema.types import AttachmentId
 
-_ALLOWED_KINDS = ("image", "video", "audio", "file")
+# kind 白名单单源（D3-B 枚举派生）：值集合（wire str 成员判断，跨 3.11/3.12 无差异）。
+_UPLOAD_KIND_VALUES = frozenset(m.value for m in UploadKind)
 
 _KIND_LIMITS = {
     "image": 10 * 1024 * 1024,
