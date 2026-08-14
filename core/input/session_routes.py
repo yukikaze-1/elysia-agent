@@ -31,7 +31,7 @@ from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.storage.message_repo import MessageRepository
 from core.storage.session_repo import SessionSummary
 from frontend_contract import rest as rest_contract
-from frontend_contract.rest import FinishReason, ProtocolError, Role
+from frontend_contract.rest import FinishReason, ProtocolError, Role, SearchCategory
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,10 @@ logger = logging.getLogger(__name__)
 _LINK_URL_RE = re.compile(r"https?://[^\s<>\"'（）()]+")
 
 _MAX_LIMIT = 100
-_RESOURCE_CATEGORIES = {"image", "link", "video", "audio", "file", "sticker"}
+# search/资源 category 白名单单源（D3-B）：值集合（wire str 成员判断，跨 3.11/3.12 无差异）。
+_SEARCH_CATEGORY_VALUES = frozenset(m.value for m in SearchCategory)
+# 资源索引类别 = search 白名单 - {text（走搜索）, tool（role 特判）}
+_RESOURCE_CATEGORIES = _SEARCH_CATEGORY_VALUES - {"text", "tool"}
 
 # 资源扫描每批消息数（消息级扫描，非命中直接跳过；批次足够大避免过多往返）。
 _RESOURCE_SCAN_BATCH = 200
@@ -650,8 +653,7 @@ async def search_messages_handler(request: web.Request) -> web.Response:
 
     # category 白名单校验：非空且不在已知取值 → 400 CONTRACT_VALIDATION
     # （D4/BE-031：未知 category 不能静默放行——query_search 只会恒空，掩盖请求错误）
-    if category is not None and category not in (
-            "text", "image", "video", "audio", "file", "link", "tool"):
+    if category is not None and category not in _SEARCH_CATEGORY_VALUES:
         return _error_response("CONTRACT_VALIDATION", f"不支持的 category: {category}")
 
     # 时区校验：仅日期过滤时 zoneinfo 参与；未知时区 → 400 INVALID_TIMEZONE

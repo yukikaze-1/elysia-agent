@@ -24,7 +24,7 @@ import pytest
 from core.cognitive.generation_registry import GenerationRegistry
 from core.memory.session_manager import SessionManager
 from core.schema.message import MessageId, UserMessage, AssistantMessage
-from core.schema.part import TextPart, ImagePart, VideoPart, FilePart, AudioPart
+from core.schema.part import TextPart, ImagePart, VideoPart, FilePart, AudioPart, StickerPart
 from core.schema.types import RequestId, SessionId
 from core.storage.generation_repo import GenerationRepository
 from core.storage.message_repo import MessageRepository
@@ -1622,3 +1622,131 @@ class TestArchiveExportNeverEmitsEmptyMessageId:
         msg = _doc_to_message(doc)
         assert str(msg.message_id).startswith("msg_")
         assert msg.metadata.get("_mongo_id") == "0123456789abcdef01234567"
+
+
+@pytest.mark.service
+class TestSearchSticker:
+    """P0-01：/api/search/messages?category=sticker（spec 阶段 3 联调整改）。
+
+    前端 HistoryCategory.sticker 已冻结 → category=sticker；后端白名单 + repo 集合补
+    sticker，走 {"type": "sticker"} $elemMatch。纯贴图消息 snippet 空串合法。
+    """
+
+    @staticmethod
+    async def _seed_stickers(agent, sid: str, sticker_ids: list[str]) -> None:
+        """按序播种纯贴图 user 消息（StickerPart）。
+
+        src 对齐生产构造（ws_v2.py：/static/stickers/{id}.png）——StickerPart 的
+        src 字段读回时经 _validate_src 非空校验（schema/utils.py）。
+        """
+        for i, st_id in enumerate(sticker_ids):
+            await _append(agent, sid, UserMessage(
+                content=[StickerPart(sticker_id=st_id,
+                                     src=f"/static/stickers/{st_id}.png")],
+                message_id=MessageId(f"msg_stk_{sid}_{i}"),
+                timestamp=f"2026-08-01T09:{i:02d}:00+00:00",
+            ))
+
+    @pytest.mark.asyncio
+    async def test_sticker_category_200(self, aiohttp_client):
+        """category=sticker 返回 200（不再 400）且命中贴图消息。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_stk1")
+        await self._seed_stickers(agent, "conv_stk1", ["st_001", "st_002"])
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={"category": "sticker"})
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        data = await resp.json()
+        assert len(data["items"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_sticker_snippet_empty(self, aiohttp_client):
+        """纯贴图消息 snippet 空串（前端按文本行 + category chip 展示，spec 2.2.5）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_stk2")
+        await self._seed_stickers(agent, "conv_stk2", ["st_001"])
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        data = await (await client.get(
+            "/api/search/messages", params={"category": "sticker"})).json()
+        assert data["items"][0]["snippet"] == ""
+
+    @pytest.mark.asyncio
+    async def test_sticker_conversation_scope(self, aiohttp_client):
+        """当前会话范围只返回该会话贴图消息。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_stk_a")
+        await _create_session(agent, "conv_stk_b")
+        await self._seed_stickers(agent, "conv_stk_a", ["st_001"])
+        await self._seed_stickers(agent, "conv_stk_b", ["st_002"])
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        data = await (await client.get("/api/search/messages", params={
+            "category": "sticker", "conversationId": "conv_stk_a"})).json()
+        assert [i["conversationId"] for i in data["items"]] == ["conv_stk_a"]
+
+    @pytest.mark.asyncio
+    async def test_sticker_cross_session_paginate(self, aiohttp_client):
+        """全部会话跨会话 + cursor 第二页无重复无遗漏。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_stk_c1")
+        await _create_session(agent, "conv_stk_c2")
+        await self._seed_stickers(agent, "conv_stk_c1", ["st_001", "st_002"])
+        await self._seed_stickers(agent, "conv_stk_c2", ["st_003", "st_004"])
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        p1 = await (await client.get("/api/search/messages", params={
+            "category": "sticker", "limit": "2"})).json()
+        assert len(p1["items"]) == 2 and p1["has_more"] is True
+        p2 = await (await client.get("/api/search/messages", params={
+            "category": "sticker", "limit": "2", "cursor": p1["cursor"]})).json()
+        ids = [i["messageId"] for i in p1["items"]] + [i["messageId"] for i in p2["items"]]
+        assert len(set(ids)) == 4, f"cursor 分页重复或遗漏: {ids}"
+
+    @pytest.mark.asyncio
+    async def test_sticker_text_plus_sticker_matches(self, aiohttp_client):
+        """文字+贴图消息命中；纯贴图 + 关键词 query 不命中（无 text part）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_stk_mix")
+        await _append(agent, "conv_stk_mix", UserMessage(
+            content=[TextPart(content="看看这个"),
+                     StickerPart(sticker_id="st_001",
+                                 src="/static/stickers/st_001.png")],
+            message_id=MessageId("msg_stk_mix0"),
+            timestamp="2026-08-01T09:00:00+00:00",
+        ))
+        await self._seed_stickers(agent, "conv_stk_mix", ["st_002"])
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        # 无 query：文字+贴图 与 纯贴图 都命中
+        data = await (await client.get(
+            "/api/search/messages", params={"category": "sticker"})).json()
+        assert len(data["items"]) == 2
+        # 有 query：纯贴图不命中，文字+贴图命中（text part 命中关键词）
+        data2 = await (await client.get("/api/search/messages", params={
+            "category": "sticker", "query": "看看"})).json()
+        assert [i["messageId"] for i in data2["items"]] == ["msg_stk_mix0"]
+
+    @pytest.mark.asyncio
+    async def test_sticker_items_locatable(self, aiohttp_client):
+        """返回项非空 conversationId/messageId/timestamp（可跳转来源/context）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_stk_loc")
+        await self._seed_stickers(agent, "conv_stk_loc", ["st_001"])
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        item = (await (await client.get(
+            "/api/search/messages", params={"category": "sticker"})).json())["items"][0]
+        assert item["conversationId"] and item["messageId"] and item["timestamp"]
+
+    @pytest.mark.asyncio
+    async def test_sticker_unknown_category_still_400(self, aiohttp_client):
+        """未知 category 仍 400——加入 sticker 不放宽为任意字符串。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_stk_unk")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={"category": "bogus"})
+        assert resp.status == 400
+        assert (await resp.json())["code"] == "CONTRACT_VALIDATION"

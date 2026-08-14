@@ -13,14 +13,15 @@ from core.storage.base import Repository, StorageUnavailableError
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.types import MessageId, SessionId
 from core.schema.message import Message, MessageRole
+from frontend_contract.rest import SearchCategory
 
 logger = logging.getLogger(__name__)
 
 COLLECTION = "message_archive"
 
-# query_search 支持的 category 取值 → content part 类型 / role 映射。
-# link 特殊：archive 无独立 link part，链接在 TextPart 内，category=link 走 URL 内容正则特判。
-_CATEGORY_PART_TYPES = {"text", "image", "link", "video", "audio", "file"}
+# query_search 支持的 category 取值 → content part 类型 / role 映射（D3-B 枚举派生单源）。
+# tool 特殊：无 part type，走 role=tool；link 特殊：archive 无独立 link part，URL 正则特判。
+_CATEGORY_PART_TYPES = frozenset(m.value for m in SearchCategory) - {"tool"}
 
 
 def _oid(value: str) -> object:
@@ -380,7 +381,7 @@ class MessageRepository(Repository):
             date_from: 起始自然日 YYYY-MM-DD（含当天）。
             date_to: 结束自然日 YYYY-MM-DD（含当天）。
             timezone: IANA 时区名，默认 "UTC"。非法时区不抛异常，返回空结果。
-            category: text|image|link|video|audio|file|tool。
+            category: text|image|link|video|audio|file|tool|sticker。
             cursor: keyset 游标。
             limit: 每页条数，默认 20。
 
@@ -404,12 +405,12 @@ class MessageRepository(Repository):
                 return [], False, None
             elem_text = {"type": "text",
                          "content": {"$regex": re.escape(query), "$options": "i"}}
-        if category == "link":
+        if category == SearchCategory.LINK:
             elem_type = {"type": "text",
                          "content": {"$regex": r"(https?://|www\.)", "$options": "i"}}
         elif category in _CATEGORY_PART_TYPES - {"text", "link"}:
             elem_type = {"type": category}
-        elif category == "text" and not query:
+        elif category == SearchCategory.TEXT and not query:
             elem_type = {"type": "text"}
         elem = []
         if elem_text:
@@ -420,7 +421,7 @@ class MessageRepository(Repository):
             filter_expr["content"] = elem[0]
         elif len(elem) == 2:
             filter_expr["$and"] = [{"content": e} for e in elem]
-        if category == "tool":
+        if category == SearchCategory.TOOL:
             filter_expr["role"] = "tool"
 
         # 自然日 → 半开 UTC 区间 [dayStart(date_from), nextDayStart(date_to))
