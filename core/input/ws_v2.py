@@ -24,7 +24,7 @@ from core.input.voice_sessions import VoiceSessionError
 from core.memory.session_manager import SessionNotFoundError
 from core.schema.event import UserInputData
 from core.schema.part import AudioPart, FilePart, ImagePart, StickerPart, TextPart, VideoPart
-from core.schema.utils import now_iso
+from core.schema.utils import normalize_attachment_mime, now_iso
 from core.schema.types import AttachmentId, SessionId
 from core.storage.attachment_repo import StorageUnavailableError
 from core.storage.idempotency_repo import STATUS_ACCEPTED, STATUS_REJECTED
@@ -205,13 +205,18 @@ def _attachment_part(kind: str, attachment_id: str, doc: dict):
         logger.warning("未知附件 kind=%s，跳过构造 Part", kind)
         return None
     data: dict = {"src": f"/api/attachments/{attachment_id}", "attachment_id": attachment_id}
-    mime = doc.get("mime") or ""
+    # BE-S3-RUN-P0-02：读路径规范化——存量 kind=audio+video/webm → audio/webm、
+    # audio/x-wav → audio/wav（spec §4.2 约束 3）；规范化后仍非法（未知/脏存量）→
+    # 响亮 warning 回退默认 mime，不静默伪装（spec §4.2 约束 4，不炸消息页）。
+    mime = normalize_attachment_mime(kind, doc.get("mime") or "")
     if mime:
         try:
             cls(**{**data, "mime": mime})
             data["mime"] = mime
         except Exception:
-            pass  # mime 非枚举值 → 用 Part 默认 mime
+            logger.warning(
+                "附件 kind=%s attachment_id=%s mime=%r 非契约值，回退默认 mime",
+                kind, attachment_id, mime)
     if kind == "file":
         filename = doc.get("filename")
         if filename:

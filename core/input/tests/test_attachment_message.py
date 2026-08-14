@@ -24,7 +24,9 @@ from aiohttp import WSMsgType
 
 from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
 from core.input.idempotency import get_store, reset_store
+from core.input.ws_v2 import _attachment_part
 from core.schema.adapters import attachment_resolver as _ar
+from core.schema.part import AudioPart
 from core.storage.attachment_repo import StorageUnavailableError
 
 pytestmark = pytest.mark.service
@@ -694,3 +696,28 @@ class TestResourceIndex:
             assert all(it["url"] != "/api/attachments/att_x" for it in data["items"])
         finally:
             await agent.stop()
+
+
+class TestAttachmentPartMimeNormalize:
+    """BE-S3-RUN-P0-02 读路径：存量记录 mime 规范化 + 未知 mime 响亮回退（spec §4.2/§4.3）。"""
+
+    def test_legacy_wav_x_wav_normalized(self):
+        """存量 kind=audio + mime=audio/x-wav → AudioPart.mime=audio/wav。"""
+        part = _attachment_part("audio", "att_legacy_wav", {"kind": "audio", "mime": "audio/x-wav"})
+        assert isinstance(part, AudioPart)
+        assert part.mime == "audio/wav"
+
+    def test_legacy_audio_video_webm_normalized(self):
+        """存量 kind=audio + mime=video/webm → AudioPart.mime=audio/webm（不炸消息页）。"""
+        part = _attachment_part("audio", "att_legacy_webm", {"kind": "audio", "mime": "video/webm"})
+        assert isinstance(part, AudioPart)
+        assert part.mime == "audio/webm"
+
+    def test_unknown_mime_falls_back_with_warning(self, caplog):
+        """未知 mime（规范化后仍非法）→ 回退默认 audio/wav + 可诊断 warning（不静默伪装）。"""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="core.input.ws_v2"):
+            part = _attachment_part("audio", "att_weird", {"kind": "audio", "mime": "application/octet-stream"})
+        assert isinstance(part, AudioPart)
+        assert part.mime == "audio/wav"
+        assert any("附件" in r.message and "mime" in r.message for r in caplog.records)
