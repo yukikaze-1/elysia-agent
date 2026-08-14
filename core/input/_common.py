@@ -5,6 +5,7 @@ _find_channel / _send_ack 原在 ws_handler.py，被 v2 深业务（ws_v2）与�
 """
 
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
 from aiohttp import web
@@ -15,6 +16,7 @@ from frontend_contract import (
     AckError,
     RejectedUserAckMessage,
 )
+from frontend_contract import rest as rest_contract
 from Module.output import WebSocketChannel
 
 if TYPE_CHECKING:
@@ -71,3 +73,24 @@ async def _send_ack(ws: "web.WebSocketResponse | None", message_id: str,
         await ws.send_json(ack.wire_dict())
     except Exception:
         logger.debug("发送 user_message.ack 失败", exc_info=True)
+
+
+def _tool_error(code: str, message: str, status: int) -> web.Response:
+    """统一错误信封（ProtocolError 形状，与 session_routes._error_response 同款）。
+
+    原 api_routes.register_api_routes 内闭包（provider + tools 共用），2026-08-14
+    批次 C 下沉 _common.py（跨业务共享，Q3）。
+
+    Args:
+        code: 稳定错误码（CALL_NOT_FOUND / INVALID_REQUEST / INTERNAL）。
+        message: 公开说明（禁本地路径/参数值，敏感纪律 D-p）。
+        status: HTTP 状态码。
+
+    Returns:
+        web.Response: ProtocolError 信封 JSON。
+    """
+    env = rest_contract.ProtocolError(
+        code=code, message=message, retryable=False,
+        requestId=f"req_{uuid.uuid4().hex[:24]}", error=message,
+    ).wire_dict()
+    return web.json_response(env, status=status)

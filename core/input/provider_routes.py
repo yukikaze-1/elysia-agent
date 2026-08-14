@@ -1,0 +1,331 @@
+"""Provider 管理 REST 路由（2026-08-14 批次 C 从 api_routes 拆出）。
+
+providers list/save/delete/test + 私有 helper。模块级 handler（对齐 session_routes 模式）。
+"""
+
+import asyncio
+import logging
+import time
+from typing import TYPE_CHECKING, Any
+
+from aiohttp import web
+
+from core.input._common import _tool_error
+from core.input.custom_providers import add_provider, load as load_custom
+from core.input.errors import _protocol_error_response
+from core.input.provider_registry import build_providers_response
+from frontend_contract import rest as rest_contract
+
+if TYPE_CHECKING:
+    from core.agent import Agent
+
+logger = logging.getLogger(__name__)
+
+
+def _custom_profile_in_use(agent: "Agent", service: str, name: str) -> bool:
+    """判定 custom/{name} Profile 是否正被使用（活动会话 service_state / config / vision）。
+
+    批次 5（Task 6）删除激活约束：活动会话 service_state.{svc}_model、config.{svc}.model、
+    vision.model（LLM 场景——vision 工具走 LLM provider）任一以 custom/{name} 开头 →
+    该 Profile 正被使用 → 409 PROFILE_IN_USE 拒绝删除。
+
+    Args:
+        agent: Agent 组合根（读 agent.session.service_state + agent.config）。
+        service: "llm"/"stt"/"tts"。
+        name: 自定义 provider 名（无 custom/ 前缀）。
+
+    Returns:
+        bool: True = 正在使用。
+    """
+    prefix = f"custom/{name}"
+    if service == "llm":
+        candidates = (
+            agent.session.service_state.llm_model,
+            agent.config.llm.model,
+            agent.config.vision.model,
+        )
+    elif service == "stt":
+        candidates = (agent.session.service_state.stt_model, agent.config.stt.model)
+    else:  # tts
+        candidates = (agent.session.service_state.tts_model, agent.config.tts.model)
+    return any(c.startswith(prefix) for c in candidates if c)
+
+
+async def _run_usable_test(backend: Any, service: str, request: web.Request,
+                           body: dict) -> dict:
+    """usable 级真实产出验证。LLM 发文本、TTS 合成音频、STT 转写样例。超时 30s。
+
+    STT 成功标准为"transcribe 调用无异常"——内置 tone 样例未必产生非空文本，
+    但能证明服务接受并处理音频（真实语音样本会返回文本，detail 报告实际识别结果）。
+    """
+    start = time.perf_counter()
+
+    if service == "llm":
+        text = await asyncio.wait_for(
+            backend.chat([{"role": "user", "content": "你好，请回一句话"}]),
+            timeout=30.0,
+        )
+        ok = bool(text.strip())
+        return {
+            "ok": ok,
+            "latency_ms": int((time.perf_counter() - start) * 1000),
+            "detail": text.strip()[:20] if ok else "",
+        }
+
+    if service == "tts":
+        # character 缺省 → agent 角色名（agent.character.name，注意不是 config.agent.character——
+        # 那是角色配置路径 "character/elysia/config.yaml"，传给 synthesize 当音色名必然失败）。
+        # 该角色在 provider 无对应音色时后端抛"未知发音人"，detail 带出（spec 允许）。
+        character = body.get("character", "")
+        if not character:
+            agent = request.app.get("agent")
+            if agent is not None:
+                character = getattr(getattr(agent, "character", None), "name", "") or ""
+        audio = await asyncio.wait_for(
+            backend.synthesize("你好，测试", character=character),
+            timeout=30.0,
+        )
+        ok = bool(audio)
+        return {
+            "ok": ok,
+            "latency_ms": int((time.perf_counter() - start) * 1000),
+            "detail": f"audio {len(audio)} bytes" if ok else "",
+        }
+
+    # stt — 内置样例。路径走 ProjectPath（全项目路径唯一定义点，不用 Path(__file__) 硬编码跨目录）
+    from paths import ProjectPath
+    sample_path = ProjectPath.STT_SAMPLE_WAV.resolve()
+    audio_bytes = sample_path.read_bytes()
+    text = await asyncio.wait_for(backend.transcribe(audio_bytes), timeout=30.0)
+    return {
+        "ok": True,
+        "latency_ms": int((time.perf_counter() - start) * 1000),
+        "detail": text.strip()[:20],
+    }
+
+def _strip_secret_keys(data: dict) -> dict:
+    """响应数据剔除 api_key 键（验收 LOW#1 加固）。
+
+    save/delete 响应的 data 是 load() 原始 custom 列表（裸 dict，不经契约白名单），
+    防遗留条目（批次 5 前误存过 api_key 字段）回显密钥——与 GET 经 model_validate
+    白名单丢弃的行为同口径。只处理 llm/stt/tts 三个已知 service 键，其余透传。
+    """
+    for svc in ("llm", "stt", "tts"):
+        for entry in data.get(svc, []):
+            if isinstance(entry, dict):
+                entry.pop("api_key", None)
+    return data
+async def providers_list_handler(request: web.Request) -> web.Response:
+    """返回过滤后的 provider 列表（providers.yaml 单一来源 + env 过滤 + custom）。"""
+    from core.input.custom_providers import load as load_custom
+    from core.input.provider_registry import build_providers_response
+    return web.json_response(
+        rest_contract.ProvidersResponse.model_validate(
+            build_providers_response(load_custom())).wire_dict())
+
+async def providers_save_handler(request: web.Request) -> web.Response:
+    """保存一个新的自定义 provider（批次 5：runtime 门控 + SSRF + 密钥入 Store）。
+
+    body: {service, entry:{name, base_url?, api_key?, api_key_env?, models?,
+           runtime?, capabilities?}}。
+    - runtime 非法枚举 → 400 PROFILE_INVALID_RUNTIME（ProtocolError）。
+    - base_url 门控按 runtime：backend 缺 → v1 ApiFail（既有检查）；desktop/local
+      缺 → 放行（D13）；backend → validate_endpoint（非空时，SSRF）。
+    - 非 backend 带 api_key → 400 PROFILE_INVALID_RUNTIME（密钥仅 backend 后端执行可收）。
+    - api_key → add_provider 内部直存 Secret Store（不入 YAML）；D18 清理。
+    - 响应 = 全量 custom 列表（spec §3.3 步骤 8，前批次 wire 形状）；credentialConfigured
+      经 GET /api/providers 获取（验收 F2：save 响应不含该布尔，避免偏离既有契约）。
+
+    Returns:
+        web.Response: {"ok": True, "data": 全量 custom 列表（api_key 键已剔除）} 或错误信封。
+    """
+    from core.input.custom_providers import add_provider
+    from Module._common.ssrf import SSRFError, validate_endpoint
+    try:
+        body = await request.json()
+        service = body.get("service", "")
+        entry = body.get("entry", {})
+    except web.HTTPRequestEntityTooLarge:
+        raise  # chunked 超限放行——交中间件统一 413 信封（F13）
+    except Exception:
+        return web.json_response(rest_contract.ApiFail(error="无效的请求体").wire_dict(), status=400)
+    if service not in ("llm", "stt", "tts"):
+        return web.json_response(rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
+    if not entry.get("name"):
+        return web.json_response(rest_contract.ApiFail(error="缺少 name 或 base_url").wire_dict(), status=400)
+    # runtime 解析：非法枚举 → PROFILE_INVALID_RUNTIME（新错误码走 ProtocolError 信封）
+    runtime = entry.get("runtime", "backend")
+    if runtime not in ("backend", "desktop", "local_worker"):
+        return _tool_error("PROFILE_INVALID_RUNTIME", f"非法 runtime: {runtime}", 400)
+    base_url = entry.get("base_url", "")
+    if runtime == "backend":
+        # backend 缺 base_url → v1 ApiFail（既有检查）；非空时 SSRF 校验
+        if not base_url:
+            return web.json_response(rest_contract.ApiFail(error="缺少 name 或 base_url").wire_dict(), status=400)
+        try:
+            validate_endpoint(base_url)
+        except SSRFError as e:
+            return _tool_error("SSRF_BLOCKED", str(e), 400)
+    elif entry.get("api_key"):
+        # desktop/local 由 Electron 执行，后端不收密钥（D18）
+        return _tool_error("PROFILE_INVALID_RUNTIME", "非 backend runtime 不接受 api_key", 400)
+    try:
+        data = add_provider(service, entry)
+    except Exception as e:
+        # Task 9（批次 8a）：信封只给通用文案，str(e) 只进日志——防绝对路径/内部细节泄漏
+        logger.warning("保存 provider 失败: %s", e)
+        return web.json_response(rest_contract.ApiFail(error="保存失败，请稍后重试").wire_dict(), status=500)
+    # review 修正：响应恢复全量 custom 列表（spec §3.3 步骤 8 + 前批次 wire 形状），
+    # 不再返回单条目——避免偏离既有契约；credentialConfigured 经 GET /api/providers 获取。
+    # 验收 LOW#1 加固：响应数据剔除 api_key 键——防遗留条目（批次 5 前误存过 api_key
+    # 字段）回显密钥（GET 经契约白名单丢弃、save/delete 是裸 dict，须同口径）。
+    return web.json_response(rest_contract.ApiOk(data=_strip_secret_keys(data)).wire_dict())
+
+async def providers_delete_handler(request: web.Request) -> web.Response:
+    """删除一个自定义 provider（批次 5：激活约束——活动会话/配置正在使用的不可删）。
+
+    URL 路径参数包含 service 和 name。激活判定（_custom_profile_in_use）：活动会话
+    service_state.{svc}_model / config.{svc}.model / vision.model 任一以 custom/{name}
+    开头 → 409 PROFILE_IN_USE（ProtocolError）；非激活 → remove_provider（条目 +
+    Secret Store 密钥一并清理）。
+
+    Returns:
+        web.Response: {"ok": True, "data": ...}、409 或 v1 ApiFail。
+    """
+    from core.input.custom_providers import remove_provider
+    service = request.match_info.get("service", "")
+    name = request.match_info.get("name", "")
+    if service not in ("llm", "stt", "tts"):
+        return web.json_response(rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
+    agent = request.app.get("agent")
+    if agent is not None and _custom_profile_in_use(agent, service, name):
+        return _tool_error("PROFILE_IN_USE", f"custom/{name} 正在使用，无法删除", 409)
+    try:
+        data = remove_provider(service, name)
+        # 验收 LOW#1：同 save，响应剔除 api_key 键（防遗留条目回显密钥）
+        return web.json_response(rest_contract.ApiOk(data=_strip_secret_keys(data)).wire_dict())
+    except Exception as e:
+        # Task 9（批次 8a）：信封只给通用文案，str(e) 只进日志——防绝对路径/内部细节泄漏
+        logger.warning("删除 provider 失败: %s", e)
+        return web.json_response(rest_contract.ApiFail(error="删除失败，请稍后重试").wire_dict(), status=500)
+
+async def providers_test_handler(request: web.Request) -> web.Response:
+    """测试 provider 连通性（level=connectivity）或可使用性（level=usable）。
+
+    body: {service, provider, model, level, base_url?, api_key?, character?}
+    参数解析顺序见 spec「/api/providers/test 扩展」：provider+model 均缺省 → 回退配置模型；
+    仅 provider 缺省 → "custom"；level 缺省 → "connectivity"。
+    base_url/api_key 优先级：请求体非空 > custom_providers.yaml > env。
+    """
+    try:
+        body = await request.json()
+    except web.HTTPRequestEntityTooLarge:
+        raise  # chunked 超限放行——交中间件统一 413 信封（F13）
+    except Exception:
+        return web.json_response(rest_contract.ApiFail(error="无效的请求体").wire_dict(), status=400)
+
+    service = body.get("service", "")
+    if service not in ("llm", "stt", "tts"):
+        return web.json_response(rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
+
+    level = body.get("level", "connectivity")
+    provider = body.get("provider", "")
+    model = body.get("model", "")
+    base_url = body.get("base_url", "")
+    api_key = body.get("api_key", "")
+
+    # provider+model 均缺省 → 回退该服务当前模型（完整 provider/model，直接 split）
+    if not provider and not model:
+        agent = request.app.get("agent")
+        if agent is None:
+            return web.json_response(rest_contract.ApiFail(error="agent 未注入").wire_dict(), status=500)
+        if service == "llm":
+            model_id = agent.llm.model
+        elif service == "tts":
+            # disabled 态即 agent.tts is None——必须守卫，否则在 Factory.create 前抛 AttributeError
+            tts = agent.tts
+            model_id = tts.model if tts is not None else agent.config.tts.model
+        else:  # stt
+            model_id = agent.config.stt.model
+        try:
+            provider, model = model_id.split("/", 1)
+        except ValueError:
+            return web.json_response(rest_contract.ApiFail(error=f"当前模型格式无效: {model_id}").wire_dict())
+    elif not provider:
+        provider = "custom"
+
+    # base_url/api_key：请求体非空 > custom_providers.yaml（resolve_model_params）
+    # runtime 仅 custom 条目有（内置 resolve 返回 {} → 缺省 backend，容错）。
+    runtime = "backend"
+    if provider == "custom":
+        from core.input.custom_providers import resolve_model_params
+        params = resolve_model_params(service, f"custom/{model}")
+        runtime = params.get("runtime", "backend")
+        if not base_url:
+            base_url = params.get("base_url", "")
+        if not api_key:
+            api_key = params.get("api_key", "")
+
+    # runtime 守卫（review 修正：先于 SSRF——desktop/local 允许本地 base_url，
+    # 若先 SSRF 会误报 SSRF_BLOCKED；后端不代理本机 Profile，直接 400）
+    if runtime != "backend":
+        return _tool_error("PROFILE_RUNTIME_NOT_BACKEND", "该 Profile 由 Electron 执行，后端不发起测试", 400)
+
+    # body base_url 非空时无论 provider 一律 SSRF 校验（空 base_url 跳过——
+    # 内置无 body base_url 是空串，不误伤既有 connectivity 测试）。
+    from Module._common.ssrf import SSRFError, validate_endpoint
+    if base_url:
+        try:
+            validate_endpoint(base_url)
+        except SSRFError as e:
+            return _tool_error("SSRF_BLOCKED", str(e), 400)
+
+    create_kwargs = {}
+    if base_url:
+        create_kwargs["base_url"] = base_url
+    if api_key:
+        create_kwargs["api_key"] = api_key
+
+    # D2/P1-15：base_url 覆盖（无论 custom/内置）→ 注入统一守卫 transport 工厂。
+    # 内置 provider 同走 OpenAICompatBackend（接受 http_client_factory）——
+    # 重定向每跳重新校验，防公开 base_url 302 到 loopback/metadata 的第二跳绕过。
+    if base_url:
+        from Module._common.ssrf import build_guarded_http_client
+        create_kwargs["http_client_factory"] = (
+            lambda b=base_url: build_guarded_http_client(b))
+
+    try:
+        if service == "llm":
+            from Module.llm import LLMFactory
+            backend = LLMFactory.create(f"{provider}/{model}", **create_kwargs)
+        elif service == "stt":
+            from Module.stt import STTFactory
+            backend = STTFactory.create(f"{provider}/{model}", **create_kwargs)
+        else:
+            from Module.tts import TTSFactory
+            backend = TTSFactory.create(f"{provider}/{model}", **create_kwargs)
+    except Exception as e:
+        return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict())
+
+    try:
+        if level == "usable":
+            result = await _run_usable_test(backend, service, request, body)
+        else:
+            result = await asyncio.wait_for(backend.test(), timeout=5.0)
+        return web.json_response(rest_contract.ProviderTestResult(**result).wire_dict())
+    except asyncio.TimeoutError:
+        return web.json_response(rest_contract.ProviderTestResult(ok=False, error="测试超时").wire_dict())
+    except Exception as e:
+        return web.json_response(rest_contract.ProviderTestResult(ok=False, error=str(e)).wire_dict())
+    finally:
+        try:
+            await backend.close()
+        except Exception:
+            pass
+
+def register_provider_routes(app: web.Application) -> None:
+    """注册 Provider 管理路由（4 端点）。"""
+    app.router.add_get("/api/providers", providers_list_handler)
+    app.router.add_post("/api/providers", providers_save_handler)
+    app.router.add_delete("/api/providers/{service}/{name}", providers_delete_handler)
+    app.router.add_post("/api/providers/test", providers_test_handler)
