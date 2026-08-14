@@ -514,10 +514,11 @@ multipart 字段：`files[]`（一个或多个文件字段）+ `kind`（可选�
 |---|---|---|---|
 | `image` | image/png / image/jpeg / image/gif / image/webp | png / jpg·jpeg / gif / webp | 10MB |
 | `video` | video/mp4 / video/webm | mp4 / webm | 50MB |
-| `audio` | audio/x-wav / audio/mpeg / audio/ogg | wav / mp3 / ogg | 20MB |
+| `audio` | audio/wav / audio/mpeg / audio/ogg / audio/webm | wav / mp3 / ogg / webm | 20MB |
 | `file` | application/pdf / application/zip / text/plain / text/markdown / application/json | pdf / zip / txt / md / json | 20MB |
 
-- **webm 歧义**：mime=video/webm 时以客户端 kind 提示作 tiebreaker（kind=audio → audio，其余 → video），归位后按最终 kind 复核上限。
+- **webm 歧义**：mime=video/webm 时以客户端 kind 提示作 tiebreaker（kind=audio → kind=audio + **mime 规范化为 audio/webm**，其余 → video/webm），归位后按最终 kind 复核上限。
+- **MIME 规范化**：`kind` 确定后，探测/历史别名收敛到契约权威值——`kind=audio + video/webm → audio/webm`、WAV 探测别名 → `audio/wav`（`core/schema/utils.py::normalize_attachment_mime` 单源，写/读/下载三路径同值）；探测别名仅作校验内部值，不对外输出。
 - **编码收敛**：仅限上表扩展名（不接受其他编码）；二进制以**魔数判定为权威**并校验扩展名一致性；txt/md/json 因无稳定魔数，按扩展名白名单并要求内容可解码为 UTF-8，客户端 Content-Type 均不作为信任依据。
 
 ### 13.6 引用计数 / 软删 / GC 语义
