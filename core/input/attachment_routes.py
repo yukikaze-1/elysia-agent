@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from core.agent import Agent
 
 from paths import ProjectPath
-from core.input.api_routes import _sign_url
+from core.input.upload_routes import _sign_url
 from core.schema.adapters import attachment_resolver
 from core.schema.types import AttachmentId
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError

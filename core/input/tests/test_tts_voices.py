@@ -197,7 +197,7 @@ class _FakePreviewBackend:
 @pytest.mark.asyncio
 async def test_tts_preview_ok_fixed_text_and_voice_id(aiohttp_client):
     """激活后端 synthesize 返回 bytes → 200 {ok: True, mime, audio_base64}；收固定文本（非聊天）+ voice_id。"""
-    from core.input.api_routes import _PREVIEW_TEXT
+    from core.input.tts_routes import _PREVIEW_TEXT
 
     agent = _make_app_agent()
     audio = b"\x00\x01\x02fake-wav-bytes"
@@ -227,7 +227,7 @@ async def test_tts_preview_ok_fixed_text_and_voice_id(aiohttp_client):
 @pytest.mark.asyncio
 async def test_tts_preview_no_voice_id_default(aiohttp_client):
     """body 缺省 voice_id → synthesize 不带 voice_id（None）。"""
-    from core.input.api_routes import _PREVIEW_TEXT
+    from core.input.tts_routes import _PREVIEW_TEXT
 
     agent = _make_app_agent()
     backend = _FakePreviewBackend()
@@ -250,7 +250,7 @@ async def test_tts_preview_no_voice_id_default(aiohttp_client):
 async def test_tts_preview_no_voice_falls_back_to_current(aiohttp_client):
     """review 修正：body 缺省 voice_id 且活动会话 tts_voice 已设置 → synthesize 收到该 voice
     （与 /api/tts/voices 的 current 一致，试听听到的是 bot 实际会用的声音）。"""
-    from core.input.api_routes import _PREVIEW_TEXT
+    from core.input.tts_routes import _PREVIEW_TEXT
 
     agent = _make_app_agent()
     backend = _FakePreviewBackend()

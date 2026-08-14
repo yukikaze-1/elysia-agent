@@ -916,7 +916,7 @@ class TestSessionReplayContract:
     def test_rest_and_ws_replay_share_identity(self):
         """同一工具消息经 REST（_archive_msg_to_contract）与 WS（messages_for_client）
         返回 message_id/timestamp/tool_call_id 完全一致（spec §5.3.6）。"""
-        from core.input.api_routes import _archive_msg_to_contract, _archive_to_client
+        from core.input._common import _archive_msg_to_contract, _archive_to_client
         from core.memory.session import SessionMemory
         from core.schema.adapters.message_adapter import validate_message_legacy_compat
         from core.storage.message_repo import _doc_to_message

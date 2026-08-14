@@ -1595,7 +1595,7 @@ class TestArchiveExportNeverEmitsEmptyMessageId:
     """
 
     def test_legacy_empty_id_derived_through_export_chain(self):
-        from core.input.api_routes import _archive_msg_to_contract, _archive_to_client
+        from core.input._common import _archive_msg_to_contract, _archive_to_client
         from core.schema.adapters.message_adapter import validate_message_legacy_compat
 
         doc = {

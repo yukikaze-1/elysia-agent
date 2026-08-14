@@ -19,7 +19,11 @@ from aiohttp import web
 from core.agent import Agent
 
 from core.input.ws_handler import handle_ws, resolve_protocol_version
-from core.input.api_routes import register_api_routes
+from core.input.provider_routes import register_provider_routes
+from core.input.tts_routes import register_tts_routes
+from core.input.upload_routes import register_upload_routes
+from core.input.tools_routes import register_tools_routes
+from core.input.chat_routes import register_chat_routes
 from core.input.attachment_routes import register_attachment_routes
 from core.input.session_routes import register_session_routes
 from core.input.debug_routes import register_debug_routes
@@ -723,8 +727,12 @@ def create_app(
     from core.input.sticker_registry import load_stickers
     load_stickers()
 
-    # 子模块路由
-    register_api_routes(app)
+    # 子模块路由（批次 C：api_routes 拆 5 域）
+    register_provider_routes(app)
+    register_tts_routes(app)
+    register_upload_routes(app)
+    register_tools_routes(app)
+    register_chat_routes(app)
     register_attachment_routes(app)
     register_session_routes(app)
     register_debug_routes(app, _check_auth)
