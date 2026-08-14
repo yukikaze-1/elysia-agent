@@ -8,6 +8,8 @@ from collections.abc import Callable
 
 from aiohttp import web
 
+from core.input.errors import _protocol_error_response
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +34,6 @@ def register_debug_routes(
                 code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
                 msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
                 logger.warning("认证失败 code=%s path=%s", code, request.path)
-                from core.input.server import _protocol_error_response  # 懒导入绕环
                 return _protocol_error_response(code, msg, 401)
             return await handler(request)
         app.middlewares.append(_debug_auth_middleware)

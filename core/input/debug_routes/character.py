@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from core.input.errors import _protocol_error_response
 from core.schema.utils import now_iso
 from core.schema.compression import CompressionTrigger
 from frontend_contract import debug as contract
@@ -118,16 +119,13 @@ async def l2_versions_handler(request: web.Request) -> web.Response:
         before = request.query.get("before")
         before_version = int(before) if before else None
     except ValueError:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "limit/before 必须是整数", 400)
     result, error, code, status = await _list_character_versions(
         agent, "l2", limit, before_version)
     if error:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response(code, error, status,
                             retryable=(code == "STORAGE_UNAVAILABLE"))
     if result is None:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("INTERNAL", "内部错误", 500)
     return web.json_response(result.wire_dict())
 
@@ -148,16 +146,13 @@ async def l2_rollback_handler(request: web.Request) -> web.Response:
     except web.HTTPRequestEntityTooLarge:
         raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except (ValueError, KeyError, TypeError):
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "缺少 version 或格式错误", 400)
     result, error, code, status = await _character_rollback(
         agent, "l2", target_version)
     if error:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response(code, error, status,
                             retryable=(code == "STORAGE_UNAVAILABLE"))
     if result is None:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("INTERNAL", "内部错误", 500)
     logger.warning("DEBUG API: l2_rollback version=%d, new_version=%s",
                   target_version, result.new_version)
@@ -176,23 +171,19 @@ async def character_versions_handler(request: web.Request) -> web.Response:
     agent = request.app["agent"]
     content_type = request.query.get("type", "l2")
     if content_type not in ("l2", "c6"):
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "type 必须为 l2 或 c6", 400)
     try:
         limit = int(request.query.get("limit", "20"))
         before = request.query.get("before")
         before_version = int(before) if before else None
     except ValueError:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "limit/before 必须是整数", 400)
     result, error, code, status = await _list_character_versions(
         agent, content_type, limit, before_version)
     if error:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response(code, error, status,
                             retryable=(code == "STORAGE_UNAVAILABLE"))
     if result is None:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("INTERNAL", "内部错误", 500)
     return web.json_response(result.wire_dict())
 
@@ -214,19 +205,15 @@ async def character_rollback_handler(request: web.Request) -> web.Response:
     except web.HTTPRequestEntityTooLarge:
         raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except (ValueError, KeyError, TypeError):
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "缺少 type/version 或格式错误", 400)
     if content_type not in ("l2", "c6"):
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("CONTRACT_VALIDATION", "type 必须为 l2 或 c6", 400)
     result, error, code, status = await _character_rollback(
         agent, content_type, target_version)
     if error:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response(code, error, status,
                             retryable=(code == "STORAGE_UNAVAILABLE"))
     if result is None:
-        from core.input.server import _protocol_error_response  # 懒导入绕环
         return _protocol_error_response("INTERNAL", "内部错误", 500)
     logger.warning("DEBUG API: character_rollback type=%s, version=%d, new_version=%s",
                   content_type, target_version, result.new_version)
