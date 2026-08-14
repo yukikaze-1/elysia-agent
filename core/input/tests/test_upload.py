@@ -651,6 +651,21 @@ class TestPerFileKind:
         assert [a["kind"] for a in (await resp.json())["attachments"]] == ["image", "file"]
 
     @pytest.mark.asyncio
+    async def test_multi_kind_no_hint_file_magic_detected(self, make_app, aiohttp_client):
+        """kind_count ≥ 2 时未紧邻 kind 的文件（hint=None）按魔数判定（spec D1 路径）。
+
+        multipart：kind=image, files=a, files=b, kind=video, files=c——b 无紧邻 kind
+        → hint=None → 魔数 PNG → image；a/c 各自 hint 归位。锁定 D1 合法路径（最终
+        review low-2 补洞）。
+        """
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [
+            ("image", "a.png", PNG), (None, "b.png", PNG), ("video", "c.mp4", MP4)])
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        assert [a["kind"] for a in (await resp.json())["attachments"]] == ["image", "image", "video"]
+
+    @pytest.mark.asyncio
     async def test_mixed_batch_failure_rolls_back(self, make_app, aiohttp_client, tmp_path):
         """混合批次中途失败完整回滚：第一文件成功写盘后第二文件记录写入失败。"""
         agent, app = make_app(fail_on_create=2)  # 第 2 个 create 抛 StorageUnavailableError

@@ -29,7 +29,11 @@
 
 - **spec**：code-review 1 轮（general-purpose agent）10 条 issue 全部消化——HIGH-1 前端日期当前发 ISO 半开区间（非自然日）→ §1/§2/§9 补 P1-01 与 FE-S3-INT-P0-01 同步放行时序；MED-1 文件数检查保留；MED-2 邻接判定补「顺序歧义 400」；MED-3 单 kind 特判与 hint=None 语义明确；LOW×4 表述修正。
 - **plan**：code-review 1 轮 7 条 issue 全部消化——MED-1 补 DST 边界测试；MED-2 Task 2 回归并入 repo 测试 + 新增 Task 5 全量门禁；LOW×5（失败预期/defense-in-depth/无 kind 测试/魔数落位/D2 回归）。
-- **最终 commit review**：见 `docs/review/`（Phase 8，≤5 轮）。
+- **最终 commit review**（Phase 8，1 轮）：general-purpose agent 审 `dc84415c^..6287c05d`，结论 **yes 可验收**（无 high/medium）。两处 low 处理：
+  - **low-1** 空 `kind=` 值行为变化——旧代码 falsy 跳过走魔数判定，新代码单 kind 特判统一为 `""` → 400 `CONTRACT_VALIDATION`「未知 kind」。spec 预期（§4.4 步骤 5 非法 kind 400），前端 `uploadBatch` 经 `sniffKind` 恒填非空 kind，无生产回归——**接受不改码**（已核实空串非 None 故合法路径）。
+  - **low-2** D1 文档化的「kind_count ≥ 2 时未紧邻 kind 的文件 → hint=None 魔数判定」路径无测试锁定——补 `test_multi_kind_no_hint_file_magic_detected`（`kind,files,files,kind,files` 混合批 → `[image,image,video]`），TestPerFileKind **12 passed**。
+  - agent 实证：406 回归 + 32 新测试 + `make check-types` 零漂移 + 既有 4 个关键测试（sticker_400/always_empty/text_400/tz_400）语义未变 + DST 测试有区分力（若日期不做时区换算会误纳入 04:30Z 消息）。
+  - **外部约束**：HIGH-1 放行时序——P1-01 日期 fail-fast 须与前端 FE-S3-INT-P0-01 同步上线（后端先行会使当前发 ISO 时间戳的既有日期查询 200→400），属部署顺序非代码缺陷，见 §后续衔接。
 
 ## 执行偏差（已解决，非 spec 语义变更）
 
