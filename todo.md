@@ -152,7 +152,7 @@
 | ~~低~~ ✅ | [core/input/ws_handler.py:224,452](core/input/ws_handler.py#L224) | 输入层直调组合根私有 `agent._sync_desktop_available()`。**已修（2026-08-14）**：公开化为 `agent.sync_desktop_available()`，ws_handler 走公开接口 + noqa 清除 |
 | ~~低~~ ✅ | [core/input/tts_profile.py:51,54](core/input/tts_profile.py#L51) | `backend._resolve_voice`/`backend._voice_id` 穿透 TTSBackend 私有。**已修（2026-08-14）**：`TTSBackend.default_voice()` 公开方法（默认返回 character），MiniMax override 复用 `_resolve_voice`，tts_profile 走公开接口 |
 | 低 | [core/desktop/bridge.py:54](core/desktop/bridge.py#L54) | 顶层 `from core.storage.desktop_call_repo import _ACTIVE_STATES` 私有符号，建议改名公开 `ACTIVE_STATES` |
-| ~~低~~ 🔄 | input 层内聚拆分 | 原问题：`ws_handler` 1825 行 + `api_routes` 1182 行 = input 层 35%；`server↔api_routes`/`server↔debug_routes` 懒导入绕环。**2026-08-14 批次拆分进行中**：批次 A（errors.py 下沉解绕环）✅ 完成；批次 B（ws_handler 拆分）/ C（api_routes 拆 5 文件）/ D（server 纯装配）spec 初稿已写、进行中 |
+| ~~低~~ 🔄 | input 层内聚拆分 | 原问题：`ws_handler` 1825 行 + `api_routes` 1182 行 = input 层 35%；`server↔api_routes`/`server↔debug_routes` 懒导入绕环。**2026-08-14 批次拆分**：批次 A（errors.py 下沉解绕环）✅、批次 B（ws_handler 拆分：深业务下移 ws_v2.py + `_WS_HANDLERS` 注册表分发，ws_handler 1825→1166 行）✅；批次 C（api_routes 拆 5 文件）/ D（server 纯装配）spec 初稿已写、进行中 |
 | 低 | [core/adapter/prompt_assembler.py:30-31](core/adapter/prompt_assembler.py#L30) + [core/memory/consolidator.py:25](core/memory/consolidator.py#L25) | 包级伪环（文件级 DAG），两条边均为类型注解 + 构造注入；非近期引入。可选打磨：惰性化注解（TYPE_CHECKING）清除包级告警 |
 
 ## token 统一结构（2026-07-31）遗留可接受项
