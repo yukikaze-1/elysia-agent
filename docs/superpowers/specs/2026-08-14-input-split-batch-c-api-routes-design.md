@@ -61,7 +61,8 @@
 | `_archive_to_client`/`_archive_msg_to_contract` | `chat_routes.py` 或 `_common.py`（被 session_routes + debug_routes 共享 → 视跨组引用定） | 归档转换跨组共享 |
 | `_PREVIEW_TEXT` | `tts_routes.py`（测试 import 路径更新） | TTS 域 |
 | `_strip_secret_keys`/`_custom_profile_in_use`/`_run_usable_test` | `provider_routes.py` | Provider 私有 |
-| `_tool_error`/`_tool_metadata_to_contract`/`_desktop_call_to_status` | `tools_routes.py` | Desktop 私有 |
+| `_tool_error` | `_common.py`（**provider + tools 共用**——跨组共享，Q3） | 统一错误信封 |
+| `_tool_metadata_to_contract`/`_desktop_call_to_status` | `tools_routes.py` | Desktop 私有 |
 
 ### 4.3 退役 `api_routes.py`
 
