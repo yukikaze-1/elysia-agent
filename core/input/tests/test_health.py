@@ -210,7 +210,7 @@ class TestHealthEndpoints:
         for name in ("session", "message_repo", "attachment_repo"):
             getattr(agent, name).health_check = AsyncMock(side_effect=_hang)
         client = await aiohttp_client(app)
-        with patch("core.input.server._HEALTH_TIMEOUT", 0.2):
+        with patch("core.input.health._HEALTH_TIMEOUT", 0.2):
             start = time.monotonic()
             resp = await client.get("/ready")
             elapsed = time.monotonic() - start

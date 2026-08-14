@@ -116,6 +116,7 @@ def _make_rate_limit_middleware(limiter: RateLimiter, valid_tokens: frozenset[st
     return _rate
 
 
+@web.middleware
 async def _nosniff_uploads(request: web.Request,
                            handler: Callable[[web.Request], Awaitable[web.StreamResponse]]):
     resp = await handler(request)
