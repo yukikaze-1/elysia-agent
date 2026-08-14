@@ -13,7 +13,9 @@ import hashlib
 import pytest
 from aiohttp import FormData
 
+from core.input.ws_v2 import _attachment_part
 from core.schema.adapters import attachment_resolver as _ar
+from core.schema.utils import normalize_attachment_mime
 from core.storage.attachment_repo import StorageUnavailableError
 
 pytestmark = pytest.mark.service
@@ -27,6 +29,7 @@ TEXT = b"this is a plain text file masquerading as a png, nothing more" * 3
 WEBM = bytes.fromhex("1a45dfa39f4286810142f7810142f2810442f381084282847765626d4287810442858102")  # video/webm
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 8 + b"mp42isom"  # video/mp4
 PDF = b"%PDF-1.4\n" + b"1 0 obj\n<<>>\nendobj\n"  # application/pdf
+WAV = b"RIFF\x24\x08\x00\x00WAVEfmt \x10\x00\x00\x00"  # audio/x-wav（filetype 探测）
 
 
 class _FakeAttachmentRepo:
@@ -545,14 +548,55 @@ class TestPerFileKind:
 
     @pytest.mark.asyncio
     async def test_webm_audio_video_disambiguated(self, make_app, aiohttp_client):
-        """audio/webm + video/webm 同批分别归 audio/video（hint tiebreaker）。"""
+        """audio/webm + video/webm 同批分别归 audio/video（hint tiebreaker）+ mime 各归其位。"""
         agent, app = make_app()
         client = await aiohttp_client(app)
         resp = await _post_kinds(client, [
             ("audio", "voice.webm", WEBM), ("video", "clip.webm", WEBM),
         ])
         assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
-        assert [a["kind"] for a in (await resp.json())["attachments"]] == ["audio", "video"]
+        atts = (await resp.json())["attachments"]
+        assert [a["kind"] for a in atts] == ["audio", "video"]
+        assert [a["mime"] for a in atts] == ["audio/webm", "video/webm"]  # 新增：audio 不再 video/webm
+
+    @pytest.mark.asyncio
+    async def test_webm_audio_mime_normalized(self, make_app, aiohttp_client):
+        """kind=audio + webm → 响应/记录 mime=audio/webm（BE-S3-RUN-P0-02）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [("audio", "voice.webm", WEBM)])
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        att = (await resp.json())["attachments"][0]
+        assert att["kind"] == "audio"
+        assert att["mime"] == "audio/webm"
+        record = agent._attachment_repo.records[0]  # noqa: SLF001
+        assert record["mime"] == "audio/webm"
+
+    @pytest.mark.asyncio
+    async def test_wav_audio_mime_normalized(self, make_app, aiohttp_client):
+        """WAV → 响应/记录 mime=audio/wav（探测 audio/x-wav → 权威 audio/wav）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [("audio", "voice.wav", WAV)])
+        assert resp.status == 200, f"expected 200, got {resp.status}: {await resp.text()}"
+        att = (await resp.json())["attachments"][0]
+        assert att["kind"] == "audio"
+        assert att["mime"] == "audio/wav"
+        record = agent._attachment_repo.records[0]  # noqa: SLF001
+        assert record["mime"] == "audio/wav"
+
+    @pytest.mark.asyncio
+    async def test_new_record_replay_mime_consistent(self, make_app, aiohttp_client):
+        """新上传 WAV → _attachment_part 恢复 mime 与上传响应 AttachmentInfo.mime 一致（spec §4.3 case 3）。"""
+        agent, app = make_app()
+        client = await aiohttp_client(app)
+        resp = await _post_kinds(client, [("audio", "voice.wav", WAV)])
+        assert resp.status == 200
+        att = (await resp.json())["attachments"][0]
+        assert att["mime"] == "audio/wav"
+        record = agent._attachment_repo.records[0]  # noqa: SLF001
+        part = _attachment_part("audio", att["attachmentId"], record)
+        assert part.mime == att["mime"]  # 恢复 mime == 上传响应 mime
 
     @pytest.mark.asyncio
     async def test_files_and_files_array_both_work(self, make_app, aiohttp_client):
@@ -678,3 +722,19 @@ class TestPerFileKind:
         # 已写盘文件全部清理（不留孤儿）
         assert not list((tmp_path / "uploads" / "image").glob("*.png"))
         assert not list((tmp_path / "uploads" / "video").glob("*.mp4"))
+
+
+class TestNormalizeAttachmentMime:
+    """规范化表直测（spec §4.2 冻结三行，M1——audio/x-wav 经写路径/读路径同源锁定）。"""
+
+    def test_audio_video_webm_to_audio_webm(self):
+        assert normalize_attachment_mime("audio", "video/webm") == "audio/webm"
+
+    def test_audio_x_wav_to_audio_wav(self):
+        assert normalize_attachment_mime("audio", "audio/x-wav") == "audio/wav"
+
+    def test_video_webm_unchanged(self):
+        assert normalize_attachment_mime("video", "video/webm") == "video/webm"
+
+    def test_untable_alias_returns_as_is(self):
+        assert normalize_attachment_mime("audio", "audio/mpeg") == "audio/mpeg"

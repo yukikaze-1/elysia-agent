@@ -121,3 +121,27 @@ def stable_tool_message_id(tool_call_id: str, timestamp: str) -> MessageId:
     """
     digest = hashlib.sha256(f"{tool_call_id}:{timestamp}".encode("utf-8")).hexdigest()
     return MessageId("msg_" + digest[:26])
+
+
+# 附件 MIME 规范化表（复验清单 §4.2 冻结）：(kind, 探测/历史别名) → 契约权威值。
+# 探测值（filetype 容器判定）可作校验内部值，但 wire/持久化/下载必须与 kind 一致。
+_ATTACHMENT_MIME_ALIASES = {
+    ("audio", "video/webm"): "audio/webm",   # kind=audio 消歧后的容器探测值
+    ("audio", "audio/x-wav"): "audio/wav",   # filetype 探测别名 → AudioMime 权威值
+}
+
+
+def normalize_attachment_mime(kind: str, mime: str) -> str:
+    """附件记录 MIME 规范化：kind 确定后，探测/历史别名 → 契约权威值。
+
+    写路径（上传）与读路径（消息恢复 / 下载 Content-Type）共用，保证同一附件
+    各视角 mime 一致；未知别名原样返回（调用方决定回退/告警）。
+
+    Args:
+        kind: 附件最终 kind（image/video/audio/file）。
+        mime: 待规范化的 MIME（探测值或历史记录值）。
+
+    Returns:
+        规范化后的 MIME；表中无匹配别名时原样返回。
+    """
+    return _ATTACHMENT_MIME_ALIASES.get((kind, mime), mime)

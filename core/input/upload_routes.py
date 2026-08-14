@@ -12,7 +12,7 @@ from paths import ProjectPath
 
 from core.input.errors import _protocol_error_response
 from core.schema.adapters import attachment_resolver
-from core.schema.utils import now_iso
+from core.schema.utils import normalize_attachment_mime, now_iso
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.utils import new_attachment_id
 from frontend_contract import rest as rest_contract
@@ -264,6 +264,9 @@ async def upload_handler(request: web.Request) -> web.Response:
         if len(data) > _KIND_LIMITS[final_kind]:
             return _protocol_error_response(
                 "REQUEST_TOO_LARGE", f"文件过大，超过 {final_kind} 上限", 413)
+        # BE-S3-RUN-P0-02：kind 确定后规范探测 MIME（audio+video/webm→audio/webm、
+        # audio+x-wav→audio/wav），doc/响应/下载/恢复同值（spec §4.2）
+        mime = normalize_attachment_mime(final_kind, mime)
         # filename 脱敏（Minor 9）：去路径分隔符、截断 255、剥控制字符；仅展示用
         filename = re.sub(r"[\\/]", "", filename_raw)
         filename = re.sub(r"[\x00-\x1f\x7f]", "", filename)
