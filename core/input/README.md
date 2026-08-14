@@ -86,9 +86,9 @@ web.run_app(app, port=8000)
 
 ### REST API
 
-**批次 3 多会话 REST**（`session_routes.py`）：`/api/sessions`（CRUD/activate）、`/api/sessions/{id}/messages`（before/after 分页）、`/api/messages/{id}/context`、`/api/search/messages`、`/api/sessions/{id}/resources`（sticker 分类 + 附件软删过滤）、`/api/sessions/{id}/generations`、`/api/generations/{gid}`、`/api/sessions/{id}/pending`。
+**批次 3 多会话 REST**（`session_routes.py`）：`/api/sessions`（CRUD/activate）、`/api/sessions/{id}/messages`（before/after 分页）、`/api/messages/{id}/context`、`/api/search/messages`（category 白名单 8 值 text/image/link/video/audio/file/tool/sticker——阶段 3 联调补 sticker 贴图历史；`date_from/date_to` 严格 `YYYY-MM-DD` 自然日 fail-fast，非格式 400 `CONTRACT_VALIDATION`，未知时区 400 `INVALID_TIMEZONE`）、`/api/sessions/{id}/resources`（sticker 分类 + 附件软删过滤）、`/api/sessions/{id}/generations`、`/api/generations/{gid}`、`/api/sessions/{id}/pending`。
 
-**批次 7 附件/表情**：`POST /api/uploads`（通用附件上传，filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载，免 Bearer，Range/206）、`GET /api/attachments/{id}/sign`（签发，Bearer）、`GET /api/stickers`（内置表情包）。附件元数据存 `attachments` 集合（BE-070 fail-closed：refs/ref_count + 软删 status/deleted_at，TTL 由 AttachmentGC 管理）。
+**批次 7 附件/表情**：`POST /api/uploads`（通用附件上传，filetype 魔数校验 + 签名 URL；阶段 3 起逐文件 `kind`——每文件一组 `kind+files` 邻接配对，兼容旧「单 kind + 多文件」整批提示，悬空/邻接歧义/未知 kind → 400）、`GET /api/attachments/{id}`（HMAC 短签下载，免 Bearer，Range/206）、`GET /api/attachments/{id}/sign`（签发，Bearer）、`GET /api/stickers`（内置表情包）。附件元数据存 `attachments` 集合（BE-070 fail-closed：refs/ref_count + 软删 status/deleted_at，TTL 由 AttachmentGC 管理）。
 
 ## 测试
 

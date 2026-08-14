@@ -743,7 +743,7 @@ aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂�
 | POST | `/api/tts/preview` | TTS 固定短文本试听（批次 5，不读聊天） |
 | GET | `/api/tools` | 工具元数据导出（批次 4，runtime 过滤） |
 | GET | `/api/tools/calls/{callId}` | 桌面调用状态查询（批次 4） |
-| POST | `/api/uploads` | 通用附件上传（批次 7，filetype 魔数校验 + 签名 URL + 64MB） |
+| POST | `/api/uploads` | 通用附件上传（批次 7，filetype 魔数校验 + 签名 URL + 64MB；阶段 3 逐文件 kind——每文件一组 `kind+files` 邻接配对，兼容旧单 kind 整批提示） |
 | GET | `/api/stickers` | 内置表情包列表（批次 7，sticker_registry） |
 | POST | `/api/uploads/desktop/{callId}` | 桌面附件上传（批次 4，持有者校验） |
 
@@ -759,7 +759,7 @@ aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂�
 | GET | `/api/sessions/{conversationId}/generations` | 会话 generation 列表（BE-024） |
 | GET | `/api/sessions/{conversationId}/pending` | 会话 pending 消息 |
 | GET | `/api/messages/{messageId}/context` | 消息上下文窗口 |
-| GET | `/api/search/messages` | 全库消息搜索 |
+| GET | `/api/search/messages` | 全库消息搜索（category 支持 sticker，阶段 3；date_from/date_to 严格 YYYY-MM-DD fail-fast） |
 | GET | `/api/generations/{generationId}` | generation 详情（BE-024） |
 
 **attachment_routes.py（2，批次 7 BE-070）：**
