@@ -23,9 +23,9 @@ from core.input.api_routes import register_api_routes
 from core.input.attachment_routes import register_attachment_routes
 from core.input.session_routes import register_session_routes
 from core.input.debug_routes import register_debug_routes
+from core.input.errors import _protocol_error_response
 from core.input.rate_limiter import RateLimiter, rate_key_for_request
 from core.version import build_server_version, get_build_sha
-from frontend_contract.rest import ProtocolError
 
 if TYPE_CHECKING:
     from Module.workflow_engine.workflow_engine import WorkflowEngine
@@ -145,23 +145,6 @@ def warn_if_attachment_signature_disabled(sig_secret: str, access_token: str) ->
         "  远程部署请设置环境变量 ATTACHMENT_SIG_SECRET（配合 AGENT_ACCESS_TOKEN）。\n"
         "==================================================================",
     )
-
-
-def _protocol_error_response(code: str, message: str, status: int = 401,
-                             retryable: bool = False) -> web.Response:
-    """构造统一错误信封响应（code/message/retryable/requestId/error/details）。
-
-    Args:
-        code: 稳定错误码。
-        message: 公开说明。
-        status: HTTP 状态码。
-        retryable: 是否可重试（错误码目录定义；CONNECTION_LIMITED=true，AUTH/REQUEST 等 false）。
-    """
-    env = ProtocolError(
-        code=code, message=message, retryable=retryable,
-        requestId=f"req_{uuid.uuid4().hex[:24]}", error=message,
-    ).wire_dict()
-    return web.json_response(env, status=status)
 
 
 def _make_access_auth_middleware(access_token: str):
