@@ -418,6 +418,7 @@ class CognitiveLoop:
 - **TTS 绑定发送**: 文字和音频在服务端绑在一起发送，前端无需同步逻辑
 - **Action Gate**: `_gate_tool_calls()` 在 LLM 产出 tool_calls 后、dispatch 前校验工具名是否在注册表。任一未知工具 → 整轮 abort 注入 `GATE_REJECTED` failure messages，LLM 自行修正
 - **并行工具调用**: `asyncio.gather` + `return_exceptions=True`，单工具失败不影响其他
+- **ToolContext 会话换绑**: `process()` 每轮目标会话解析后原子更新 `tool_context.services["session"]`/`["_session_msg_count"]`——`clone_for_call` 浅拷贝 services，本 turn 所有工具调用副本（含 describe_image/self_state）读到目标会话当前图片/计数；切换/失败/取消由下一轮换绑覆盖（BE-S3-RUN-P0-01）
 - **VAD 状态保护**: THINKING/EXECUTING 时 VAD 不打断，STT 文本和显式按钮始终生效
 - **inner_voice 流式分流**: StreamProcessor 纯状态机检测 `<inner_voice>` 标签，通过 `_dispatch_stream_event()` 事件→副作用翻译。详见 `docs/superpowers/specs/archive/2026-06-24-inner-voice-design.md`
 
@@ -743,7 +744,7 @@ aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂�
 | POST | `/api/tts/preview` | TTS 固定短文本试听（批次 5，不读聊天） |
 | GET | `/api/tools` | 工具元数据导出（批次 4，runtime 过滤） |
 | GET | `/api/tools/calls/{callId}` | 桌面调用状态查询（批次 4） |
-| POST | `/api/uploads` | 通用附件上传（批次 7，filetype 魔数校验 + 签名 URL + 64MB；阶段 3 逐文件 kind——每文件一组 `kind+files` 邻接配对，兼容旧单 kind 整批提示） |
+| POST | `/api/uploads` | 通用附件上传（批次 7，filetype 魔数校验 + 签名 URL + 64MB；阶段 3 逐文件 kind——每文件一组 `kind+files` 邻接配对，兼容旧单 kind 整批提示；复验批次起 kind 确定后 MIME 规范化单源——audio+video/webm→audio/webm、WAV 探测别名→audio/wav，写/读/下载三路径同值） |
 | GET | `/api/stickers` | 内置表情包列表（批次 7，sticker_registry） |
 | POST | `/api/uploads/desktop/{callId}` | 桌面附件上传（批次 4，持有者校验） |
 
@@ -766,7 +767,7 @@ aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂�
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
-| GET | `/api/attachments/{attachment_id}` | 附件签名下载（HMAC 短签，Range/206） |
+| GET | `/api/attachments/{attachment_id}` | 附件签名下载（HMAC 短签，Range/206；Content-Type 过 `normalize_attachment_mime`，存量 audio 别名兼容） |
 | GET | `/api/attachments/{attachment_id}/sign` | 签发下载签名（Bearer） |
 
 **debug_routes/（25）：**
