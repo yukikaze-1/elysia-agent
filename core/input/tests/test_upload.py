@@ -586,14 +586,19 @@ class TestPerFileKind:
         assert record["mime"] == "audio/wav"
 
     @pytest.mark.asyncio
-    async def test_new_record_replay_mime_consistent(self, make_app, aiohttp_client):
-        """新上传 WAV → _attachment_part 恢复 mime 与上传响应 AttachmentInfo.mime 一致（spec §4.3 case 3）。"""
+    @pytest.mark.parametrize("filename,content,expected_mime", [
+        ("voice.wav", WAV, "audio/wav"),
+        ("voice.webm", WEBM, "audio/webm"),  # L5：WebM audio 也直接断言 replay 一致
+    ])
+    async def test_new_record_replay_mime_consistent(self, make_app, aiohttp_client,
+                                                     filename, content, expected_mime):
+        """新上传 audio → _attachment_part 恢复 mime 与上传响应 AttachmentInfo.mime 一致（spec §4.3 case 3）。"""
         agent, app = make_app()
         client = await aiohttp_client(app)
-        resp = await _post_kinds(client, [("audio", "voice.wav", WAV)])
+        resp = await _post_kinds(client, [("audio", filename, content)])
         assert resp.status == 200
         att = (await resp.json())["attachments"][0]
-        assert att["mime"] == "audio/wav"
+        assert att["mime"] == expected_mime
         record = agent._attachment_repo.records[0]  # noqa: SLF001
         part = _attachment_part("audio", att["attachmentId"], record)
         assert part.mime == att["mime"]  # 恢复 mime == 上传响应 mime

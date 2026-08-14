@@ -492,7 +492,7 @@ multipart 字段：`files[]`（一个或多个文件字段）+ `kind`（可选�
 | ④ 记录存在且 active | 前三步通过后查 `attachments` 集合 status=active；软删/不存在 | 404 `ATTACHMENT_NOT_FOUND`；Mongo 离线 → 503 `STORAGE_UNAVAILABLE`（retryable） |
 
 - **fail-open**（access_token 空 = 本地开发）→ 跳过 ①②③，仅执行 ④ status=active 校验。
-- 成功 → aiohttp `FileResponse`（**原生 Range/206**，视频/音频拖动播放）；`Content-Type` = 记录 mime；落盘文件缺失 → 404 `ATTACHMENT_NOT_FOUND`。
+- 成功 → aiohttp `FileResponse`（**原生 Range/206**，视频/音频拖动播放）；`Content-Type` = 规范化后 mime（经 `normalize_attachment_mime`，存量 audio 别名兼容，L6）；落盘文件缺失 → 404 `ATTACHMENT_NOT_FOUND`。
 - **批次 8a 已闭合存在性 oracle**：有鉴权模式先验签、后查记录；无效签名恒 403，不能再借 404/403 差异判断 attachment_id 是否存在。
 
 ### 13.3 签发端点（GET /api/attachments/{attachment_id}/sign）
