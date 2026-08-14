@@ -450,6 +450,14 @@ class CognitiveLoop(CognitiveTools):
             self._session = target
             # D-n：prompt 各 session 依赖 section（Emotion/Memory/OwnLife）换绑 target
             self._prompt.set_session(target)
+            # BE-S3-RUN-P0-01（复验清单 §3）：ToolContext 会话换绑——describe_image/self_state
+            # 经 ctx.services["session"]/["_session_msg_count"] 读会话，启动注入后从不更新；
+            # 每轮目标会话解析后必须原子换绑（clone_for_call 浅拷贝 services，本 turn 内
+            # 所有工具调用副本立即看到新 session；失败/取消/切换会话由下一轮换绑覆盖，不残留）。
+            if self._tool_adapter is not None:
+                svc = self._tool_adapter.tool_context.services
+                svc["session"] = target
+                svc["_session_msg_count"] = len(target.messages)
 
             rid = get_request_id()
             if rid == "-":
