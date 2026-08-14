@@ -158,7 +158,7 @@ async def _download_handler(request: web.Request) -> web.StreamResponse:
     kind = doc.get("kind", "")
     stored_name = doc.get("stored_name", "")
     # BE-S3-RUN-P0-02：下载 Content-Type 过规范化（存量 kind=audio+video/webm →
-    # audio/webm、audio/x-wav → audio/wav；新记录已写路径规范化，幂等）（spec §4.2）
+    # audio/webm、WAV 探测别名 → audio/wav；新记录已写路径规范化，幂等）（spec §4.2）
     mime = normalize_attachment_mime(kind, doc.get("mime", "application/octet-stream"))
 
     # 先检查落盘文件存在（记录存在但文件被删——GC M8 场景）再 register：文件缺失 → 404

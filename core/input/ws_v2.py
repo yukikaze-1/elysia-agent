@@ -206,7 +206,7 @@ def _attachment_part(kind: str, attachment_id: str, doc: dict):
         return None
     data: dict = {"src": f"/api/attachments/{attachment_id}", "attachment_id": attachment_id}
     # BE-S3-RUN-P0-02：读路径规范化——存量 kind=audio+video/webm → audio/webm、
-    # audio/x-wav → audio/wav（spec §4.2 约束 3）；规范化后仍非法（未知/脏存量）→
+    # WAV 探测别名 → audio/wav（spec §4.2 约束 3）；规范化后仍非法（未知/脏存量）→
     # 响亮 warning 回退默认 mime，不静默伪装（spec §4.2 约束 4，不炸消息页）。
     mime = normalize_attachment_mime(kind, doc.get("mime") or "")
     if mime:
