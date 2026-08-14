@@ -63,6 +63,26 @@ class Role(StrEnum):
     TOOL = "tool"
 
 
+class SearchCategory(StrEnum):
+    """GET /api/search/messages category 白名单（wire 值，8 取值）。"""
+    TEXT = "text"
+    IMAGE = "image"
+    LINK = "link"
+    VIDEO = "video"
+    AUDIO = "audio"
+    FILE = "file"
+    TOOL = "tool"
+    STICKER = "sticker"
+
+
+class UploadKind(StrEnum):
+    """POST /api/uploads kind 字段合法值（4 取值；sticker 贴图走 /api/stickers，不落附件）。"""
+    IMAGE = "image"
+    VIDEO = "video"
+    AUDIO = "audio"
+    FILE = "file"
+
+
 
 # ────────────────────── Provider 管理（/api/providers） ──────────────────────
 
