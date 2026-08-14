@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from core.schema.message import Message
 from core.schema.utils import now_iso
 from frontend_contract import (
     AcceptedUserAckMessage,
@@ -94,3 +95,54 @@ def _tool_error(code: str, message: str, status: int) -> web.Response:
         requestId=f"req_{uuid.uuid4().hex[:24]}", error=message,
     ).wire_dict()
     return web.json_response(env, status=status)
+
+
+def _archive_to_client(msgs: list[Message]) -> list[dict]:
+    """将 Message 列表转为前端兼容格式（补 parts + _id 字段）。
+
+    原 api_routes 模块级函数，2026-08-14 批次 C 迁 _common（session_routes/debug_routes/archive
+    跨组共享，Q3）。
+
+    Args:
+        msgs: Message 对象列表。
+
+    Returns:
+        list[dict]: 前端兼容的消息字典列表，每项包含 _id、parts 等字段。
+    """
+    result = []
+    for msg in msgs:
+        entry = msg.model_dump(mode="json")
+        mongo_id = entry.get("metadata", {}).pop("_mongo_id", None)
+        if mongo_id:
+            entry["_id"] = mongo_id
+        content = entry.get("content", [])
+        if isinstance(content, list):
+            entry["parts"] = [
+                {"content": p["content"]}
+                for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            ]
+        elif isinstance(content, str):
+            entry["parts"] = [{"content": content}]
+        else:
+            entry["parts"] = [{"content": ""}]
+        result.append(entry)
+    return result
+
+
+def _archive_msg_to_contract(d: dict) -> rest_contract.Message | None:
+    """客户端归档消息 dict → 契约 Message 视图（block_index → content_type 归一化）。
+
+    保留 _archive_to_client 的全部输出键（parts/_id/timestamp 等，前端分页游标与渲染依赖），
+    仅重命名 block_index 键对齐 session 回放 wire（SessionMessageItem.content_type）。
+    单条校验失败返回 None（调用方丢弃该条并告警，避免整页归档加载失败——与 Task 3 M2
+    逐条契约化兜底同一策略）。
+    """
+    wire = dict(d)
+    if "block_index" in wire:
+        wire["content_type"] = wire.pop("block_index")
+    try:
+        return rest_contract.Message.model_validate(wire)
+    except Exception:
+        logger.warning("Failed to contract-validate archive message: %s", d.get("message_id", "?"))
+        return None

@@ -20,7 +20,7 @@ from bson.errors import InvalidId
 if TYPE_CHECKING:
     from core.agent import Agent
 
-from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
+from core.input._common import _archive_to_client, _archive_msg_to_contract
 from core.memory.session_manager import SessionBusyError
 from core.schema.message import Message, MessageRole
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart

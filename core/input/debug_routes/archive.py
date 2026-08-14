@@ -13,7 +13,7 @@ from aiohttp import web
 from core.schema.message import MessageRole
 from core.schema.types import SessionId
 from core.input.errors import _protocol_error_response
-from core.input.api_routes import _archive_to_client, _archive_msg_to_contract
+from core.input._common import _archive_to_client, _archive_msg_to_contract
 from core.input.debug_routes._common import sessions_to_client
 from core.storage.attachment_release import (
     release_all_attachments,
