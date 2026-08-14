@@ -1750,3 +1750,141 @@ class TestSearchSticker:
         resp = await client.get("/api/search/messages", params={"category": "bogus"})
         assert resp.status == 400
         assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+
+
+@pytest.mark.service
+class TestSearchDateFailFast:
+    """P1-01：日期参数 handler 层 fail-fast（spec 阶段 3 联调整改）。
+
+    非 YYYY-MM-DD → 400 CONTRACT_VALIDATION（不再吞 200 空结果）；未知时区仍
+    INVALID_TIMEZONE。与前端 FE-S3-INT-P0-01（改发自然日）同步放行。
+    """
+
+    @pytest.mark.asyncio
+    async def test_date_iso_datetime_400(self, aiohttp_client):
+        """ISO datetime 负例（前端当前错误形态）→ 400 CONTRACT_VALIDATION。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_date_iso")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={
+            "query": "x", "date_from": "2026-08-13T16:00:00.000Z"})
+        assert resp.status == 400
+        assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
+    async def test_date_compact_400(self, aiohttp_client):
+        """紧凑日期 20260814 → 400（fromisoformat 接受但契约要求 YYYY-MM-DD）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_date_cpt")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={
+            "query": "x", "date_to": "20260814"})
+        assert resp.status == 400
+        assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
+    async def test_date_week_calendar_400(self, aiohttp_client):
+        """ISO 周历 2026-W33-4 → 400。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_date_wk")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={
+            "query": "x", "date_from": "2026-W33-4"})
+        assert resp.status == 400
+        assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
+    async def test_date_invalid_calendar_400(self, aiohttp_client):
+        """非法日历 2026-13-99 → 400（正则过、fromisoformat 拒）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_date_bad")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={
+            "query": "x", "date_from": "2026-13-99"})
+        assert resp.status == 400
+        assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
+    async def test_date_valid_range_still_200(self, aiohttp_client):
+        """合法自然日 range 仍 200 且命中（UTC 当天）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_date_ok")
+        await _seed_text_messages(agent, "conv_date_ok", 2, prefix="day")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={
+            "date_from": "2026-08-01", "date_to": "2026-08-01",
+            "timezone": "UTC"})
+        assert resp.status == 200
+        assert len((await resp.json())["items"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_date_from_only_and_to_only(self, aiohttp_client):
+        """仅 from / 仅 to 均 200 且半开区间命中。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_date_ft")
+        await _seed_text_messages(agent, "conv_date_ft", 1, prefix="edge")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        r1 = await client.get("/api/search/messages", params={
+            "date_from": "2026-08-01", "timezone": "UTC"})
+        r2 = await client.get("/api/search/messages", params={
+            "date_to": "2026-08-01", "timezone": "UTC"})
+        assert r1.status == r2.status == 200
+
+    @pytest.mark.asyncio
+    async def test_date_unknown_timezone_still_400(self, aiohttp_client):
+        """未知时区保持 400 INVALID_TIMEZONE（不与日期格式校验混淆）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_date_tz")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={
+            "date_from": "2026-08-01", "timezone": "Mars/Olympus"})
+        assert resp.status == 400
+        assert (await resp.json())["code"] == "INVALID_TIMEZONE"
+
+    @pytest.mark.asyncio
+    async def test_date_dst_boundary(self, aiohttp_client):
+        """DST 切换日自然日 → 23h 半开 UTC 区间命中（America/New_York 2026-03-08）。
+
+        3/8 美东 = [2026-03-08T05:00:00Z, 2026-03-09T04:00:00Z)（凌晨跳 1 小时）：
+        当天 12:00Z 命中；3/7 美东 23:30（= 3/8 04:30Z）不命中。
+        """
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_date_dst")
+        await _append(agent, "conv_date_dst", UserMessage(
+            content=[TextPart(content="dst")],
+            message_id=MessageId("msg_dst1"),
+            timestamp="2026-03-08T12:00:00+00:00",  # 区间内
+        ))
+        await _append(agent, "conv_date_dst", UserMessage(
+            content=[TextPart(content="dst-eve")],
+            message_id=MessageId("msg_dst0"),
+            timestamp="2026-03-08T04:30:00+00:00",  # 3/7 美东 23:30，区间外
+        ))
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={
+            "date_from": "2026-03-08", "date_to": "2026-03-08",
+            "timezone": "America/New_York"})
+        assert resp.status == 200
+        items = (await resp.json())["items"]
+        assert [i["messageId"] for i in items] == ["msg_dst1"]
+
+    @pytest.mark.asyncio
+    async def test_date_from_gt_to_returns_empty_200(self, aiohttp_client):
+        """date_from > date_to（倒置）保持 200 空结果（D2，不扩大范围，回归保险）。"""
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_date_inv")
+        await _seed_text_messages(agent, "conv_date_inv", 1, prefix="inv")
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        resp = await client.get("/api/search/messages", params={
+            "date_from": "2026-08-02", "date_to": "2026-08-01", "timezone": "UTC"})
+        assert resp.status == 200
+        assert (await resp.json())["items"] == []

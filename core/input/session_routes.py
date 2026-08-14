@@ -10,6 +10,7 @@ import base64
 import logging
 import re
 import uuid
+from datetime import date
 from zoneinfo import ZoneInfo
 from typing import TYPE_CHECKING
 
@@ -94,6 +95,22 @@ def _parse_int_param(request: web.Request, name: str, default: int) -> int:
     except ValueError:
         value = default
     return max(0, min(value, 100))
+
+
+def _validate_date_param(name: str, value: str) -> str | None:
+    """严格校验 date_from/date_to。合法返回 None，非法返回公开错误消息。
+
+    双重校验：正则拒非 YYYY-MM-DD 形态（紧凑 20260814 / ISO 周历 2026-W33-4 /
+    ISO datetime），fromisoformat 拒非法日历（2026-13-99）。放于 handler 层（进入
+    repository 前）fail-fast，不再吞 200 空结果（spec P1-01）。
+    """
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return f"{name} 必须为 YYYY-MM-DD（收到 {value!r}）"
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return f"{name} 不是有效日期（收到 {value!r}）"
+    return None
 
 
 def _encode_resource_cursor(doc_id: str, offset: int) -> str:
@@ -655,6 +672,14 @@ async def search_messages_handler(request: web.Request) -> web.Response:
     # （D4/BE-031：未知 category 不能静默放行——query_search 只会恒空，掩盖请求错误）
     if category is not None and category not in _SEARCH_CATEGORY_VALUES:
         return _error_response("CONTRACT_VALIDATION", f"不支持的 category: {category}")
+
+    # 日期格式校验（P1-01 fail-fast）：进入 repository 前显式拒非 YYYY-MM-DD，
+    # 不再被 query_search 吞成 200 空结果（spec P1-01，前端 FE-S3-INT-P0-01 同步放行）。
+    for _name, _value in (("date_from", date_from), ("date_to", date_to)):
+        if _value:
+            _err = _validate_date_param(_name, _value)
+            if _err:
+                return _error_response("CONTRACT_VALIDATION", _err, 400)
 
     # 时区校验：仅日期过滤时 zoneinfo 参与；未知时区 → 400 INVALID_TIMEZONE
     # （query_search 内部吞掉异常返回空，故在调用前显式校验）。
