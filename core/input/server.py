@@ -9,7 +9,6 @@ import hmac
 import json
 import logging
 import os
-import time
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TYPE_CHECKING
@@ -31,10 +30,9 @@ from core.input.errors import _protocol_error_response
 from core.input.health import health_handler, ready_handler
 from core.input.middleware import (
     _make_access_auth_middleware, _make_payload_middleware, _make_rate_limit_middleware,
-    _rest_rate_category, _nosniff_uploads,
+    _nosniff_uploads,
 )
 from core.input.rate_limiter import RateLimiter, rate_key_for_request
-from core.version import build_server_version, get_build_sha
 
 if TYPE_CHECKING:
     from Module.workflow_engine.workflow_engine import WorkflowEngine
@@ -43,12 +41,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 from paths import ProjectPath
-
-# Readiness 依赖探针超时（秒）——/ready 各依赖 wait_for，挂起/慢依赖视为 down；
-# /health 纯 liveness 零探针，不用本常量
-_HEALTH_TIMEOUT = 2.0
-# 进程启动时刻（monotonic），/health uptime 用
-_PROCESS_START = time.monotonic()
 
 _STATIC_DIR = ProjectPath.STATIC.resolve()
 _LIVE2D_DIR = ProjectPath.LIVE2D_ASSETS.resolve()

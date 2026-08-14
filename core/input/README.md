@@ -10,17 +10,25 @@
 input/
 ├── __init__.py              # 导出
 ├── __main__.py              # 集成测试 (python -m core.input)
-├── server.py                # 胶水组装 + create_app + 基础路由
-├── ws_handler.py            # WebSocket 处理（set_service 路由 + BINARY 防御）
+├── server.py                # 纯装配（启动守卫 + create_app + 管理端点，2026-08-14 批次 D）
+├── middleware.py            # 认证/payload/限流中间件工厂 + _nosniff_uploads（批次 D）
+├── health.py                # health/ready 探针（批次 D）
+├── ws_handler.py            # WebSocket 协议层（22 消息类型 _WS_HANDLERS 注册表分发，批次 B）
+├── ws_v2.py                 # v2 深业务（_route_v2_text/_handle_voice_commit + 幂等/ACK helper，批次 B）
+├── _common.py               # 跨业务共享（_send_ack/_find_channel/_tool_error/_archive_*）
+├── errors.py                # 统一错误信封（批次 A）
 ├── capabilities.py          # build_capabilities — 嵌套 per-service 能力声明 + 全量重播
-├── api_routes.py            # 业务 API 路由（/api/uploads 上传、/api/stickers 表情等）
+├── provider_routes.py       # Provider 管理 REST（批次 C）
+├── tts_routes.py            # TTS 声音 REST（批次 C）
+├── upload_routes.py         # 上传/表情 REST（批次 C）
+├── tools_routes.py          # Desktop 工具 REST（批次 C）
+├── chat_routes.py           # Chat API + 消息归档 REST（批次 C）
 ├── session_routes.py        # 多会话 REST（/api/sessions CRUD/activate/messages/resources/generations/pending、/api/messages/{id}/context、/api/search/messages，批次 3）
 ├── attachment_routes.py     # 附件 HMAC 短签下载 + 签发（GET /api/attachments/{id} + /sign，BE-070）
 ├── voice_sessions.py        # 三模式语音状态机（普通录音/实时语音/输入法转写，BE-060~062）
 ├── audio_buffer.py          # AudioBuffer — VAD 分帧 + 音频缓冲 + PCM/WAV 转换 + 唤醒词并行检测
 ├── wakeword.py              # WakeWordDetector — openWakeWord 流式唤醒词检测
 ├── sticker_registry.py      # 内置表情包注册表（扫描 static/stickers/*.png，BE-071）
-├── ssrf.py                  # SSRFGuard — 自定义 Endpoint 防 SSRF（静态校验 + 出站守卫传输层，批次 5）
 ├── idempotency.py           # v2 幂等存储 — clientRequestId → 用户消息记录（进程内 dict + TTL，批次 2）
 ├── tts_profile.py           # TTS profile 共享 helper — 活动会话激活 TTS 后端 + 默认音色解析
 ├── custom_providers.py      # 自定义 provider 持久化（JSON 文件读写）

@@ -14,6 +14,7 @@ Module/ 内部共享的零依赖工具函数，供各子模块的 registry、con
 | `config_test_helpers.py` | Config 测试工厂——`make_config_test_classes()` 参数化生成 `TestDefaults` + `TestFromConfig` 两个 test class |
 | `main_runner.py` | 统一 `__main__` 入口——`ensure_dotenv()` + `asyncio.run()`，一行启动集成烟雾测试 |
 | `error_type.py` | `ErrorType` 工具错误分类枚举（纯 enum，零依赖）——Module.tool 与 core.schema 共用，`core.schema.error_type` 为此处的重导出壳 |
+| `ssrf.py` | SSRFGuard——`validate_endpoint()`（自定义 Endpoint 静态校验）+ `build_guarded_http_client()`（出站守卫传输层 + 跨源剥头）。2026-08-14 从 `core/input/ssrf.py` 下沉（消除 Module→core 唯一反向依赖），被 core 侧 6 处消费方与 `Module/llm/registry.py` 共用 |
 
 ## 使用
 
