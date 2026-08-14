@@ -1235,7 +1235,7 @@ class TestV2IdempotencyStateMachine:
         store 返回 winner 的新鲜 CLAIMED（acquired=False）；winner 在 process 中被 gate
         阻塞，确保 loser claim 时 entry 仍为 CLAIMED（不是 ACCEPTED 重放）。
         """
-        import core.input.ws_handler as _m
+        import core.input.ws_v2 as _m
         from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
@@ -1303,7 +1303,7 @@ class TestV2IdempotencyStateMachine:
     async def test_text_store_loser_takeover_reclaim_processes(self, fresh_idempotency):
         """text store loser = stale CLAIMED + 无证据 → TAKEOVER → 二次 claim 接管
         （acquired=True）→ 进入业务流（process 一次，accepted）。"""
-        import core.input.ws_handler as _m
+        import core.input.ws_v2 as _m
         from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
@@ -1348,7 +1348,7 @@ class TestV2IdempotencyStateMachine:
     async def test_text_store_loser_reclaim_fails_in_progress_fallback(self, fresh_idempotency):
         """text store loser = stale CLAIMED + 无证据 → TAKEOVER → 二次 claim 仍
         acquired=False（纯内存不可接管/竞态输家）→ 兜底 IN_PROGRESS（不静默无 ACK）。"""
-        import core.input.ws_handler as _m
+        import core.input.ws_v2 as _m
         from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
@@ -1390,7 +1390,7 @@ class TestV2IdempotencyStateMachine:
     async def test_text_takeover_reclaim_storage_unavailable(self, fresh_idempotency):
         """TAKEOVER 二次 claim 期间 Mongo 断连（StorageUnavailableError）→ 幂等感知
         rejected STORAGE_UNAVAILABLE（D3 durable）+ 不进入业务处理（接管未取得所有权）。"""
-        import core.input.ws_handler as _m
+        import core.input.ws_v2 as _m
         from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult, get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs

@@ -1307,7 +1307,7 @@ class TestVoiceCommitOrder:
     async def test_acquired_false_releases_work_no_consume(self, fresh_store):
         """并发 loser（store 返回 acquired=False）→ release_work + IN_PROGRESS 拒绝，
         不消费录音（claim 未获取不进入 commit）。"""
-        import core.input.ws_handler as _m
+        import core.input.ws_v2 as _m
         from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
@@ -1374,7 +1374,7 @@ class TestVoiceCommitOrder:
     async def test_takeover_keeps_existing_reserve_work(self, fresh_store):
         """TAKEOVER（stale CLAIMED + 无证据，经 store 路径）→ 保持既有 reserve_work，
         从 commit_recording 续跑（不重复 reserve、不释放 work）。"""
-        import core.input.ws_handler as _m
+        import core.input.ws_v2 as _m
         from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
@@ -1425,7 +1425,7 @@ class TestVoiceCommitOrder:
     async def test_takeover_reclaim_storage_unavailable_releases_work(self, fresh_store):
         """TAKEOVER 二次 claim 抛 StorageUnavailableError → release_work + rejected
         STORAGE_UNAVAILABLE（不泄漏会话 busy 计数、不消费录音）。"""
-        import core.input.ws_handler as _m
+        import core.input.ws_v2 as _m
         from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult, get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
