@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 from core.schema.message import Message
 from core.schema.types import AttachmentId
+from core.input.errors import _protocol_error_response
 from core.input.tts_profile import _active_tts_profile, _backend_default_voice
 from frontend_contract import rest as rest_contract
 from frontend_contract.rest import RepoCallStatus
@@ -647,7 +648,6 @@ def register_api_routes(app: web.Application) -> None:
         _make_payload_middleware），chunked（无 Content-Length）由本 handler 的
         total_bytes 累计强制（Critical #4）。
         """
-        from core.input.server import _protocol_error_response
         from core.schema.adapters import attachment_resolver
         from core.schema.utils import now_iso
         from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
