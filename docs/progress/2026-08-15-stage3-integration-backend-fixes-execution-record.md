@@ -9,7 +9,7 @@
 | plan | `docs/superpowers/plans/2026-08-15-stage3-integration-backend-fixes.md`（commit `63f63d94`） |
 | 执行 | subagent（general-purpose）执行 Task 1-5 |
 | feature commits | `dc84415c`（契约枚举）、`183818f1`（sticker 搜索）、`ade71a23`（日期 fail-fast）、`6287c05d`（逐文件 kind） |
-| 门禁 | test-quick **3580 passed** / test-normal **3688 passed**（基线 3548/3656 + 32 新增）/ ruff All passed / pyright **0 errors** / check-types 全绿 |
+| 门禁 | test-quick **3581 passed** / test-normal **3689 passed**（基线 3548/3656 + 33 新增，含 final review low-2 补丁）/ ruff All passed / pyright **0 errors** / check-types 全绿 |
 
 ## 决策点定案（D1-D9）
 
@@ -39,7 +39,13 @@
 
 - **StickerPart 播种需带 `src`**（执行中发现）：plan 测试播种 `StickerPart(sticker_id=...)` 未带 `src`——构造时 pydantic v2 默认 `validate_default=False` 不校验，读回时 `_doc_to_message` 的 `validate_message_legacy_compat` 对显式存在的空 `src` 触发 `_validate_src` 校验失败（`core/schema/utils.py:67`）。修复：测试播种对齐生产构造 `ws_v2.py:243-244`（`src=f"/static/stickers/{id}.png"`），改两处测试种子，不改变任何 spec 语义（sticker 搜索行为/白名单/契约形状均未动）。
 - **subagent 可靠**：本批执行 agent（general-purpose）顺畅完成 Task 1-5，未卡住——不同于 2026-08-14 批次 review agents 卡住的记录；spec/plan 两轮 review agent 均按时返回。
-- **门禁范围**：执行 agent 跑 test-quick（3580）+ ruff/pyright/check-types；主审查追加 test-normal（3688）确认无 slow/external 意外。
+- **门禁范围**：执行 agent 跑 test-quick（3580）+ ruff/pyright/check-types；主审查追加 test-normal（3688）确认无 slow/external 意外；验收 agent 复跑 test-quick **3581** / test-normal **3689**（含 final review low-2 补丁后全量计数）。
+
+## 验收结论（Phase 10，subagent 独立验收）
+
+- **结论：本批可标记「已开发/已验证」**（清单 §6 定义）；**不得标记「已真实联调」**——B-02/B-03 真实联调报告与前端跨仓 Stage 3 门禁待前端配套（FE-S3-INT-P0-01/DEP-01/02）落地后另行完成。
+- 6 个维度全通过：功能符合性（P0-01/P0-02/P1-01 全部目标行为 + 33 测试）、契约零漂移（枚举不被字段引用，`make check-types` 全绿 + 生成产物零变化）、四门禁（test-quick **3581** / test-normal **3689** / ruff / pyright 0 errors）、文档同步（CLAUDE.md/README/architecture/todo/执行记录）、决策点 D1-D9 可追溯、完成定义逐条核对。
+- 验收发现唯一小文档不准（测试计数差 1，low-2 补丁在门禁记录后加入）——已在本节前同步修正（3580→3581、3688→3689、32→33 新增）。
 
 ## 后续衔接
 
