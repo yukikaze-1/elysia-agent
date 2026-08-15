@@ -84,7 +84,7 @@ class TestSwitchServiceState:
         agent.session.service_state = ServiceState() # 必须——auto-mock 会建不同对象，写读不一致
         orig_cfg_model = agent.config.stt.model
         with mock.patch("Module.stt.STTFactory.create") as mc, \
-             mock.patch("core.input.custom_providers.resolve_model_params", return_value={}):
+             mock.patch("core.providers.custom_providers.resolve_model_params", return_value={}):
             backend = mock.MagicMock(); backend.model = "sensevoice/sense-voice"
             backend.test = mock.AsyncMock(return_value={"ok": True, "latency_ms": 1})
             mc.return_value = backend

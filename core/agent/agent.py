@@ -71,7 +71,7 @@ from core.utils import set_request_id, get_request_id
 from core.config import CharacterConfig
 from core.memory.session_manager import SessionManager
 from core.memory.long_term import LongTermMemory
-from core.adapter.prompt_assembler import PromptAssembler
+from core.prompt.prompt_assembler import PromptAssembler
 from core.adapter import ToolAdapter
 from core.tools import ALL_PLUGINS
 from core.monitoring.idle_monitor import IdleMonitor

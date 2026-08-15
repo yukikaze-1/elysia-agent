@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.input import custom_providers as cp
+from core.providers import custom_providers as cp
 from core.storage.secret_store import get_secret, set_secret
 
 

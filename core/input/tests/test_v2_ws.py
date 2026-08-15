@@ -16,7 +16,7 @@ import pytest
 from aiohttp import WSMsgType
 
 from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
-from core.input.idempotency import reset_store
+from core.storage.idempotency import reset_store
 
 
 async def _noop_ref(self, aid, mid):
@@ -539,7 +539,7 @@ class TestQueueFullAck:
     async def test_plain_text_queue_full_rejected(self, fresh_idempotency):
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.storage.idempotency_repo import STATUS_REJECTED
         ws = FakeWs()
         agent = self._QueueFullAgent(ws)
@@ -567,7 +567,7 @@ class TestQueueFullAck:
     async def test_plain_text_exception_rejected_and_entry_rejected(self, fresh_idempotency):
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.storage.idempotency_repo import STATUS_REJECTED
         ws = FakeWs()
         agent = self._RaisingAgent(ws)
@@ -603,7 +603,7 @@ class TestQueueFullAck:
         """#12：附件消息 process_message 抛异常 → rejected INTERNAL + reject 持久化。"""
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.storage.idempotency_repo import STATUS_REJECTED
         ws = FakeWs()
         agent = self._RaisingAgent(ws)
@@ -1236,7 +1236,7 @@ class TestV2IdempotencyStateMachine:
         阻塞，确保 loser claim 时 entry 仍为 CLAIMED（不是 ACCEPTED 重放）。
         """
         import core.input.ws_v2 as _m
-        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.storage.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
 
@@ -1304,7 +1304,7 @@ class TestV2IdempotencyStateMachine:
         """text store loser = stale CLAIMED + 无证据 → TAKEOVER → 二次 claim 接管
         （acquired=True）→ 进入业务流（process 一次，accepted）。"""
         import core.input.ws_v2 as _m
-        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.storage.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
 
@@ -1349,7 +1349,7 @@ class TestV2IdempotencyStateMachine:
         """text store loser = stale CLAIMED + 无证据 → TAKEOVER → 二次 claim 仍
         acquired=False（纯内存不可接管/竞态输家）→ 兜底 IN_PROGRESS（不静默无 ACK）。"""
         import core.input.ws_v2 as _m
-        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.storage.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
 
@@ -1391,7 +1391,7 @@ class TestV2IdempotencyStateMachine:
         """TAKEOVER 二次 claim 期间 Mongo 断连（StorageUnavailableError）→ 幂等感知
         rejected STORAGE_UNAVAILABLE（D3 durable）+ 不进入业务处理（接管未取得所有权）。"""
         import core.input.ws_v2 as _m
-        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult, get_store
+        from core.storage.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult, get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.storage.attachment_repo import StorageUnavailableError
@@ -1438,7 +1438,7 @@ class TestV2IdempotencyStateMachine:
     async def test_claimed_fresh_rejects_in_progress(self, fresh_idempotency):
         """同键 CLAIMED 新鲜 → rejected IN_PROGRESS（retryable + retryAfterMs=30000）。"""
         import hashlib as _hl
-        from core.input.idempotency import (
+        from core.storage.idempotency import (
             _IN_PROGRESS_RETRY_AFTER_MS, IdempotencyEntry, get_store,
         )
         from core.input.ws_handler import handle_json_message
@@ -1466,7 +1466,7 @@ class TestV2IdempotencyStateMachine:
     async def test_claimed_stale_with_evidence_replays_accepted(self, fresh_idempotency):
         """同键 CLAIMED 过期 + 证据（generation 存在）→ 重放 accepted + complete。"""
         import hashlib as _hl
-        from core.input.idempotency import IdempotencyEntry, get_store
+        from core.storage.idempotency import IdempotencyEntry, get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         store = get_store()
@@ -1496,7 +1496,7 @@ class TestV2IdempotencyStateMachine:
         纯内存路径内存优先去重不可接管，故用 fake repo 预置 stale CLAIMED 文档。
         """
         import hashlib as _hl
-        from core.input.idempotency import configure_store, get_store
+        from core.storage.idempotency import configure_store, get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.storage.idempotency_repo import IdempotencyRepository, STATUS_CLAIMED
@@ -1521,7 +1521,7 @@ class TestV2IdempotencyStateMachine:
     @pytest.mark.asyncio
     async def test_rejected_replay_byte_identical(self, fresh_idempotency):
         """rejected 路径（QUEUE_FULL）→ store.reject；同键重试重放原 rejected（receivedAt 原值）。"""
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         ws = FakeWs()
@@ -1549,7 +1549,7 @@ class TestV2IdempotencyStateMachine:
     @pytest.mark.asyncio
     async def test_process_exception_rejects_internal(self, fresh_idempotency):
         """process_message 抛异常 → store.reject INTERNAL；重试重放原 rejected。"""
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         ws = FakeWs()
@@ -1566,7 +1566,7 @@ class TestV2IdempotencyStateMachine:
     @pytest.mark.asyncio
     async def test_attachment_refs_failure_reject_and_rollback(self, fresh_idempotency):
         """附件 refs 失败 → store.reject STORAGE_UNAVAILABLE + 附件预留回滚。"""
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         ws = FakeWs()
@@ -1590,7 +1590,7 @@ class TestV2IdempotencyStateMachine:
     @pytest.mark.asyncio
     async def test_storage_unavailable_ack_carries_idempotency_durable(self, fresh_idempotency):
         """D3：STORAGE_UNAVAILABLE rejected ACK 的 error.details 含 idempotency_durable。"""
-        from core.input.idempotency import configure_store, get_store
+        from core.storage.idempotency import configure_store, get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.storage.attachment_repo import StorageUnavailableError

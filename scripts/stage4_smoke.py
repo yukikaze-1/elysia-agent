@@ -46,7 +46,7 @@ class _SmokeSTTBackend:
     def __init__(self, text: str = "你好，这是阶段4 smoke 转写。"):
         self._text = text
         self.transcribed = 0
-        # capabilities 广播读 backend.model（core/input/capabilities.py:54）——桩补 model
+        # capabilities 广播读 backend.model（core/services/capabilities.py:54）——桩补 model
         # 属性，消除 WS 建连后 traceback
         self.model = "sensevoice/sense-voice"
 
@@ -134,7 +134,7 @@ async def _profile_scenarios(smoke: _Smoke, agent: Any, client: TestClient) -> N
     # custom_providers.yaml/secret_store 隔离到 tmp（smoke 不写真实配置）；base_url 用公网
     # IP 字面量（SSRF 免 DNS 放行）；PROFILE_IN_USE 经 config.llm.model 标记"正在使用"→ 409。
     import tempfile
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     from core.storage import secret_store
     with tempfile.TemporaryDirectory() as _tmp:
         _tmp_yaml = Path(_tmp) / "custom_providers.yaml"

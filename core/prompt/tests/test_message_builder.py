@@ -1,6 +1,6 @@
 """MessageBuilder 集成测试。"""
 import pytest
-from core.adapter.message_builder import MessageBuilder
+from core.prompt.message_builder import MessageBuilder
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage, MessageId
 from core.schema.part import TextPart, ImagePart
 from core.schema.tool import ToolCall, ToolCallFunction

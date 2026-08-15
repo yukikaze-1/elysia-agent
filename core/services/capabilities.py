@@ -1,5 +1,7 @@
 """capabilities 构建与广播 — 服务运行时状态下发前端。
 
+CORE-MOD-P1-01 从 core/input/capabilities.py 迁入 core/services。
+
 嵌套 per-service 形状：available=false 时 model 为 null（不读 None.model，
 避免 AttributeError 与"显示选中不可用模型"）。契约单源：构造
 `CapabilitiesMessage` 模型 + `wire_dict()` 序列化（ts_null 补显式 null）。
@@ -76,7 +78,7 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
         ``ServerInfoMessage``（type=server_info + protocol_version + features + services）。
     """
     from core.version import build_server_version, get_build_sha
-    from core.input.idempotency import get_store
+    from core.storage.idempotency import get_store
 
     def svc(available: bool, enabled: bool, model: str | None, default: str) -> ServiceCapability:
         return ServiceCapability(

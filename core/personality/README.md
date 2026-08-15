@@ -155,7 +155,7 @@ core/
 │   ├── AwarenessJudge.j2              — C9 觉察判定模板
 │   └── SpeakingStyleEdit.j2           — C6 编辑模板
 ├── agent/agent.py                  — 创建并接线 CharacterEngine
-├── adapter/prompt_assembler.py     — 数据注入 section
+├── prompt/prompt_assembler.py       — 数据注入 section
 ├── schema/character.py            — CharacterState 定义（Pydantic 模型，合并 mood + reflector 字段）
 ├── schema/mood.py                 — STT emoji 工具函数（Mood 已迁为 str）
 ├── schema/compression.py          — CompressionTrigger + VersionEntry 类型

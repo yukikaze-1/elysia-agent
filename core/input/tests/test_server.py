@@ -413,7 +413,7 @@ class TestWebSocketHandler:
         """switch_llm 切到 custom 时 resolve 解析 base_url/api_key、剥离 runtime 并注入守卫 http_client。"""
         import socket as _socket
         from unittest.mock import patch
-        from core.input import custom_providers as cp
+        from core.providers import custom_providers as cp
         from Module._common.ssrf import _SSRFTransport
         from core.input.server import create_app
         import json as _json
@@ -1299,7 +1299,7 @@ class TestErrorEnvelopeNoExceptionText:
     async def test_provider_save_error_envelope_no_exception_text(
             self, aiohttp_client, monkeypatch):
         """add_provider 抛 OSError（含绝对路径）→ 500 ApiFail 信封不含路径/异常原文。"""
-        from core.input import custom_providers as cp
+        from core.providers import custom_providers as cp
         from core.input.server import create_app
 
         def boom(*args, **kwargs):
@@ -1322,7 +1322,7 @@ class TestErrorEnvelopeNoExceptionText:
     async def test_provider_delete_error_envelope_no_exception_text(
             self, aiohttp_client, monkeypatch):
         """remove_provider 抛 OSError（含绝对路径）→ 500 ApiFail 信封不含路径/异常原文。"""
-        from core.input import custom_providers as cp
+        from core.providers import custom_providers as cp
         from core.input.server import create_app
 
         def boom(*args, **kwargs):

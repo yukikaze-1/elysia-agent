@@ -136,7 +136,7 @@ class TestCognitiveLoopMethods:
     def loop(self):
         """为所有依赖创建带 mock 的最小 CognitiveLoop。"""
         from Module.output import OutputManager, ChannelCapability
-        from core.adapter.prompt_assembler import PromptAssembler
+        from core.prompt.prompt_assembler import PromptAssembler
         from core.adapter import ToolAdapter
         from core.memory.session import SessionMemory
         from core.config import CharacterConfig
@@ -307,7 +307,7 @@ class TestCognitiveLoopTTS:
         from core.monitoring.event_bus import EventBus
         from core.status.agent_fsm import AgentFSM
         from Module.output import OutputManager
-        from core.adapter.prompt_assembler import PromptAssembler
+        from core.prompt.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
         from core.adapter import ToolAdapter
         from core.adapter.llm_adapter import LLMAdapter
@@ -417,7 +417,7 @@ class TestCognitiveLoopSync:
         from core.monitoring.event_bus import EventBus
         from core.status.agent_fsm import AgentFSM
         from Module.output import OutputManager
-        from core.adapter.prompt_assembler import PromptAssembler
+        from core.prompt.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
         from core.adapter import ToolAdapter
         from core.adapter.llm_adapter import LLMAdapter
@@ -684,7 +684,7 @@ class TestPromptAssemblerUnit:
         """Section provider 路径正常渲染 system prompt。"""
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-        from core.adapter.prompt_assembler import PromptAssembler
+        from core.prompt.prompt_assembler import PromptAssembler
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory

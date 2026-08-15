@@ -81,7 +81,7 @@ async def test_test_endpoint_builtin_connectivity(aiohttp_client):
 async def test_test_endpoint_custom_resolves_from_yaml(aiohttp_client, tmp_path):
     """custom 缺 body base_url → resolve_model_params 从 custom_providers.yaml 解析，出站走 guarded client。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     from core.storage import secret_store
     yaml_path = tmp_path / "custom_providers.yaml"
     yaml_path.write_text(
@@ -122,7 +122,7 @@ async def test_test_endpoint_custom_resolves_from_yaml(aiohttp_client, tmp_path)
 async def test_save_backend_with_api_key_stores_secret(aiohttp_client, tmp_path):
     """保存 backend + api_key → 200 + credentialConfigured=True + 密钥入 Secret Store 且响应无密钥。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     from core.storage import secret_store
     yaml_path = tmp_path / "custom_providers.yaml"
     agent = _make_app_agent()
@@ -163,7 +163,7 @@ async def test_save_backend_with_api_key_stores_secret(aiohttp_client, tmp_path)
 async def test_save_desktop_with_api_key_rejected(aiohttp_client, tmp_path):
     """desktop runtime 带 api_key → 400 PROFILE_INVALID_RUNTIME（ProtocolError 信封）。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     yaml_path = tmp_path / "custom_providers.yaml"
     agent = _make_app_agent()
     app = create_app(agent, serve_static=False)
@@ -186,7 +186,7 @@ async def test_save_desktop_with_api_key_rejected(aiohttp_client, tmp_path):
 async def test_save_desktop_without_base_url_allowed(aiohttp_client, tmp_path):
     """desktop 缺 base_url → 200 放行（base_url 门控按 runtime，D13）。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     from core.storage import secret_store
     yaml_path = tmp_path / "custom_providers.yaml"
     agent = _make_app_agent()
@@ -211,7 +211,7 @@ async def test_save_desktop_without_base_url_allowed(aiohttp_client, tmp_path):
 async def test_save_backend_blocked_ssrf(aiohttp_client, tmp_path):
     """保存 backend base_url=127.0.0.1 → 400 SSRF_BLOCKED（ProtocolError 信封）。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     yaml_path = tmp_path / "custom_providers.yaml"
     agent = _make_app_agent()
     app = create_app(agent, serve_static=False)
@@ -232,7 +232,7 @@ async def test_save_backend_blocked_ssrf(aiohttp_client, tmp_path):
 async def test_save_missing_base_url_backend_fail(aiohttp_client, tmp_path):
     """保存缺 base_url（无 runtime → backend）→ 400 v1 ApiFail（{ok:false, error}）。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     yaml_path = tmp_path / "custom_providers.yaml"
     agent = _make_app_agent()
     app = create_app(agent, serve_static=False)
@@ -254,7 +254,7 @@ async def test_save_missing_base_url_backend_fail(aiohttp_client, tmp_path):
 async def test_delete_active_provider_conflict(aiohttp_client, tmp_path):
     """删除激活 provider（活动会话 service_state 指向 custom/x）→ 409 PROFILE_IN_USE。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     from core.storage import secret_store
     yaml_path = tmp_path / "custom_providers.yaml"
     agent = _make_app_agent()
@@ -275,7 +275,7 @@ async def test_delete_active_provider_conflict(aiohttp_client, tmp_path):
 async def test_delete_inactive_provider_cleans_secret(aiohttp_client, tmp_path):
     """删除非激活 provider → 200 + Secret Store 密钥清理。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     from core.storage import secret_store
     yaml_path = tmp_path / "custom_providers.yaml"
     yaml_path.write_text(
@@ -342,7 +342,7 @@ async def test_test_endpoint_builtin_localhost_body_url_blocked(aiohttp_client):
 async def test_test_endpoint_desktop_runtime_blocked(aiohttp_client, tmp_path):
     """custom 条目 runtime=desktop → 400 PROFILE_RUNTIME_NOT_BACKEND。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     from core.storage import secret_store
     yaml_path = tmp_path / "custom_providers.yaml"
     yaml_path.write_text(
@@ -372,7 +372,7 @@ async def test_test_endpoint_desktop_local_base_url_not_ssrf(aiohttp_client, tmp
     """review 修正：desktop 条目带本地 base_url（D13 允许）→ 必须 400 PROFILE_RUNTIME_NOT_BACKEND，
     而非 SSRF_BLOCKED——runtime 守卫先于 SSRF 校验（否则本地地址误报 SSRF）。"""
     from core.input.server import create_app
-    from core.input import custom_providers as cp
+    from core.providers import custom_providers as cp
     from core.storage import secret_store
     yaml_path = tmp_path / "custom_providers.yaml"
     yaml_path.write_text(

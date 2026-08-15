@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.input.provider_registry import build_providers_response
+from core.providers.provider_registry import build_providers_response
 
 
 @pytest.mark.unit

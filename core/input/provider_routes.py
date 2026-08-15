@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from core.input._common import _tool_error
-from core.input.custom_providers import add_provider, load as load_custom
+from core.providers.custom_providers import add_provider, load as load_custom
 from core.input.errors import _protocol_error_response
-from core.input.provider_registry import build_providers_response
+from core.providers.provider_registry import build_providers_response
 from frontend_contract import rest as rest_contract
 
 if TYPE_CHECKING:
@@ -117,8 +117,8 @@ def _strip_secret_keys(data: dict) -> dict:
     return data
 async def providers_list_handler(request: web.Request) -> web.Response:
     """返回过滤后的 provider 列表（providers.yaml 单一来源 + env 过滤 + custom）。"""
-    from core.input.custom_providers import load as load_custom
-    from core.input.provider_registry import build_providers_response
+    from core.providers.custom_providers import load as load_custom
+    from core.providers.provider_registry import build_providers_response
     return web.json_response(
         rest_contract.ProvidersResponse.model_validate(
             build_providers_response(load_custom())).wire_dict())
@@ -139,7 +139,7 @@ async def providers_save_handler(request: web.Request) -> web.Response:
     Returns:
         web.Response: {"ok": True, "data": 全量 custom 列表（api_key 键已剔除）} 或错误信封。
     """
-    from core.input.custom_providers import add_provider
+    from core.providers.custom_providers import add_provider
     from Module._common.ssrf import SSRFError, validate_endpoint
     try:
         body = await request.json()
@@ -192,7 +192,7 @@ async def providers_delete_handler(request: web.Request) -> web.Response:
     Returns:
         web.Response: {"ok": True, "data": ...}、409 或 v1 ApiFail。
     """
-    from core.input.custom_providers import remove_provider
+    from core.providers.custom_providers import remove_provider
     service = request.match_info.get("service", "")
     name = request.match_info.get("name", "")
     if service not in ("llm", "stt", "tts"):
@@ -258,7 +258,7 @@ async def providers_test_handler(request: web.Request) -> web.Response:
     # runtime 仅 custom 条目有（内置 resolve 返回 {} → 缺省 backend，容错）。
     runtime = "backend"
     if provider == "custom":
-        from core.input.custom_providers import resolve_model_params
+        from core.providers.custom_providers import resolve_model_params
         params = resolve_model_params(service, f"custom/{model}")
         runtime = params.get("runtime", "backend")
         if not base_url:

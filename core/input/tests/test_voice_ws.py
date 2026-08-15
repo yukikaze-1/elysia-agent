@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from core.input.idempotency import reset_store
+from core.storage.idempotency import reset_store
 from core.input.ws_handler import handle_json_message
 from core.memory.session_manager import SessionNotFoundError
 
@@ -308,7 +308,7 @@ async def test_realtime_cancel_unknown_session():
 
 def test_server_info_features_true_after_batch6():
     """批次 6 落地后 features 如实声明三种语音能力（spec §9.3，严禁超前）。"""
-    from core.input.capabilities import build_server_info
+    from core.services.capabilities import build_server_info
 
     class Cfg:
         live2d = type("L", (), {"static_image": "/img.png"})()

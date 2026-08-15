@@ -125,7 +125,7 @@ async def _readiness_payload(
     if idempotency_repo is not None:
         idempotency_ok = await _probe(idempotency_repo.health_check)
         if product_mode:
-            from core.input.idempotency import get_store
+            from core.storage.idempotency import get_store
             idempotency_ok = idempotency_ok and not get_store().needs_recovery
 
     chat_ready = mongo_ok and (not product_mode or idempotency_ok)

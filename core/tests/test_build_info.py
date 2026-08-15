@@ -8,7 +8,7 @@ import subprocess
 import pytest
 
 import core.version as version_mod
-from core.input.capabilities import build_server_info
+from core.services.capabilities import build_server_info
 from core.version import __version__, get_build_sha
 
 

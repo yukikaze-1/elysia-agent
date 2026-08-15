@@ -32,7 +32,7 @@ import pytest
 from aiohttp import WSMsgType
 
 from core.cognitive.tests.test_v2_generation import _ToolCallingLLM, _make_agent_with
-from core.input.idempotency import reset_store
+from core.storage.idempotency import reset_store
 from core.schema.message import ToolResultMessage
 from core.schema.part import ImagePart
 from Module.tool.protocol import ErrorType
@@ -551,7 +551,7 @@ async def test_broadcast_capabilities_skips_v2():
     WebSocketChannel._send_json 只调 self._ws.send_json，假 ws 可捕获。
     """
     from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
-    from core.input.capabilities import broadcast_capabilities
+    from core.services.capabilities import broadcast_capabilities
     from Module.output import WebSocketChannel
 
     class _FakeWS:

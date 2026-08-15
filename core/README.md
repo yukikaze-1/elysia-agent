@@ -118,7 +118,7 @@ ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的�
 
 关键方法：`consolidate()`, `flush()`
 
-#### PromptAssembler (`adapter/prompt_assembler.py`)
+#### PromptAssembler (`prompt/prompt_assembler.py`)
 
 胶水层：创建 12 个 PromptSection 实例，注入 `SystemPromptManager`，委托 `MessageBuilder` 组装最终 `messages[]`。Section 顺序固定：F1 ConflictRules → F2 OutputFormat → F3 TTSMarkup → C2 Relationship → C7 Proactive → C6 SpeakingStyle → C1 Personality → C9 SelfPerception → C8 OwnLife → C3 Emotion → C4 Memory → C5 Sensory。`_refresh_personality_data()` 从 CharacterEngine 拉取 C1/C9 数据，支持多模态 content 数组和 TTS provider 注入。
 
@@ -162,9 +162,12 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `core/cognitive/` | 认知循环：ReAct 调度器 + 工具执行 + 计时（流式解析协调器在 core/text）。批次 3 增 `generation.py`（GenerationContext）+ `generation_registry.py`（generation 生命周期持久化） | [cognitive/README.md](cognitive/README.md) |
 | `core/config/` | 配置子包：`character_config.py`（CharacterConfig，从 YAML 加载角色配置）+ `app_config.py`（AgentConfig，应用配置 dataclass） | [config/README.md](config/README.md) |
 | `core/adapter/` | 适配器层：LLMAdapter + TTSStreamManager + ToolAdapter + tool_call_parser，封装 Module/ 后端供 core/ 层使用 | [adapter/README.md](adapter/README.md) |
+| `core/prompt/` | System prompt 组装层：MessageBuilder + PromptAssembler（CORE-MOD-P1-02 从 adapter 迁入） | [prompt/README.md](prompt/README.md) |
 | `core/memory/` | 记忆子系统：`SessionManager`（会话缓存池 + 活动指针 + resolve/switch/CRUD，批次 3 多会话）、`SessionMemory`（对话窗口）、`LongTermMemory`（向量检索）、`MemoryConsolidator`（提取+比对+写入）、`MemoryReflector`（定期去重） | [memory/README.md](memory/README.md) |
 | `core/storage/` | 存储仓库层：`SessionRepository`/`MessageRepository`/`TokenRepository`/`MemoryRepository`/`CharacterVersionRepository`/`GenerationRepository`（MongoDB + Milvus） | -- |
-| `core/input/` | 输入层：WebSocket + HTTP server（`server.py`/`ws_handler.py`/`capabilities.py`/`api_routes.py`/`session_routes.py`/`attachment_routes.py`/`voice_sessions.py`/`audio_buffer.py`/`sticker_registry.py`/`ssrf.py`/`idempotency.py`/`provider_registry.py`/`custom_providers.py`/`wakeword.py`/`tts_profile.py`/`debug_routes/`） | -- |
+| `core/providers/` | Provider 元数据与自定义 provider 持久化（`custom_providers.py` + `provider_registry.py`，CORE-MOD-P1-01 从 input 迁入） | [providers/README.md](providers/README.md) |
+| `core/services/` | 服务运行时能力声明与广播（`capabilities.py`，CORE-MOD-P1-01 从 input 迁入） | [services/README.md](services/README.md) |
+| `core/input/` | 输入层：WebSocket + HTTP server（`server.py`/`ws_handler.py`/`ws_v2.py`/`session_routes.py`/`attachment_routes.py`/`voice_sessions.py`/`audio_buffer.py`/`sticker_registry.py`/`wakeword.py`/`tts_profile.py`/`rate_limiter.py`/`debug_routes/`） | [input/README.md](input/README.md) |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/task/` | 任务子包：`task.py`（Task 数据模型 + TaskType/TaskStatus 枚举 + Future 绑定）+ `scheduler.py`（TaskScheduler Worker Pool） | [task/README.md](task/README.md) |
 | `core/text/` | 文本流处理管线：`tags`（标签注册表）+ `tokenizer`（结构感知切分）+ `splitter`（分句保护）+ `parts`（TextPart 构建）+ `stream_processor`（协调器） | [text/README.md](text/README.md) |
@@ -235,7 +238,7 @@ core/tools/<name>/
 
 1. 在 `Module/system_prompt/templates/<section>.j2` 创建 Jinja2 模板
 2. 在 `Module/system_prompt/sections/<section>.py` 创建 `PromptSection` 子类，实现 `render()` 方法
-3. 在 `core/adapter/prompt_assembler.py` 的 `sections` 列表中按序插入新 section
+3. 在 `core/prompt/prompt_assembler.py` 的 `sections` 列表中按序插入新 section
 4. 如需动态数据，在 `_refresh_personality_data()` 中注入
 
 模板格式见 `Module/system_prompt/templates/README.md`。
@@ -267,7 +270,7 @@ Agent 生命周期中的关键扩展点：
 | `cognitive/loop.py` | 1478 | 核心组件 |
 | `personality/engine.py` | 469 | 核心组件 |
 | `memory/consolidator.py` | 366 | 核心组件 |
-| `adapter/prompt_assembler.py` | 186 | 核心组件 |
+| `prompt/prompt_assembler.py` | 186 | 核心组件 |
 | `monitoring/idle_monitor.py` | 133 | 核心组件 |
 | `task/scheduler.py` | 510 | 核心组件 |
 | `config/character_config.py` | 157 | 支撑模块 |

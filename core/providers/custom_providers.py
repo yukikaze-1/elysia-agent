@@ -1,4 +1,7 @@
-"""自定义 provider 持久化 — 读写 custom_providers.yaml + Secret Store 密钥（api_key 不入 YAML）。"""
+"""自定义 provider 持久化 — 读写 custom_providers.yaml + Secret Store 密钥（api_key 不入 YAML）。
+
+CORE-MOD-P1-01 从 core/input/custom_providers.py 迁入 core/providers。
+"""
 
 import logging
 import os

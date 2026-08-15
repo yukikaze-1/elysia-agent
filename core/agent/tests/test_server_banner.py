@@ -62,3 +62,12 @@ class TestSttBannerStatus:
         fake_agent._stt = None
         status = AgentServer._stt_banner_status(fake_agent)
         assert status == "未连接"
+
+
+class TestRunServerAppFactory:
+    """run_server 必须由装配入口注入 app_factory，AgentServer 不反向依赖 core.input。"""
+
+    @pytest.mark.asyncio
+    async def test_missing_app_factory_fails_fast(self, fake_agent):
+        with pytest.raises(RuntimeError, match="app_factory"):
+            await AgentServer.run_server(fake_agent)

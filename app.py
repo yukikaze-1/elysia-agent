@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from core.utils import setup as setup_logging
 from core.agent import Agent
+from core.input.server import create_app
 
 
 async def run_interactive(config) -> None:
@@ -130,7 +131,7 @@ def main():
         asyncio.run(run_interactive(config))
     else:
         agent = Agent(config=config, config_path=args.config)
-        asyncio.run(agent.run_server())
+        asyncio.run(agent.run_server(app_factory=create_app))
 
 
 if __name__ == "__main__":

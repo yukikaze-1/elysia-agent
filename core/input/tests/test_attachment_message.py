@@ -23,7 +23,7 @@ import pytest
 from aiohttp import WSMsgType
 
 from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
-from core.input.idempotency import get_store, reset_store
+from core.storage.idempotency import get_store, reset_store
 from core.input.ws_v2 import _attachment_part
 from core.schema.adapters import attachment_resolver as _ar
 from core.schema.part import AudioPart

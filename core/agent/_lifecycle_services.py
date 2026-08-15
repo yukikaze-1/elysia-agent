@@ -88,7 +88,7 @@ class _LifecycleServices:
         gate = ss.tts_enabled if ss.tts_enabled is not None else self._config.tts.enabled  # 有效 enabled
         if gate:
             from Module.tts import TTSFactory
-            from core.input.custom_providers import resolve_model_params
+            from core.providers.custom_providers import resolve_model_params
             # 批次 5（D16）：desktop/local Profile 由 Electron 执行，后端启动不代理——
             # 跳过建 TTS（纯文本模式），否则空 base_url 的 custom 条目会让启动 fail-fast。
             tts_params = resolve_model_params("tts", model)

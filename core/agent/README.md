@@ -45,6 +45,7 @@ RUNNING → /restart → STOPPING → RESTARTING → start() → RUNNING
 
 - `STOPPING` 阶段有序关闭所有子系统
 - `RESTARTING` 阶段重新加载配置（`config.yaml` + `character/` + providers）
+- `run_server(app_factory=...)`：HTTP 应用工厂由装配入口注入（`app.py` 传 `core.input.server.create_app`），AgentServer 只负责生命周期循环；未注入时 fail-fast，保证 `core.agent` 不反向依赖 `core.input`（CORE-MOD-P1-01）。
 - 热切换 LLM/STT/TTS 无需重启：`switch_llm()` / `switch_stt()` / `switch_tts()`（先建后关，失败保留旧后端；`switch_stt` 真正建后端，不再只改 config）
 - STT/TTS 后端模式开关：`set_service(service, enabled)`——TTS off 回落逐字文本流、STT off 停喂音频；当前模型 + 模式经 `session.service_state` 持久化（30d TTL），重启后由 `_apply_service_state` 启动步骤应用（三态：显式值 or config 回退）
 
@@ -73,7 +74,7 @@ core/agent/
 ├── __init__.py                  — 重导出 Agent, RunState
 ├── agent.py                     — Agent.__init__ + process_message + 后台任务
 ├── lifecycle.py                 — AgentLifecycle: start/stop 编排
-├── server.py                    — AgentServer: run_server/repl + switch_*/set_service + banner
+├── server.py                    — AgentServer: run_server（app_factory 注入，不再 import core.input）/run_repl + switch_*/set_service + banner
 ├── _types.py                    — RunState, _PendingMessage, _BackgroundTaskEntry
 ├── _lifecycle_persistence.py    — 持久化层启停 (MongoDB/Milvus/session/repos)
 ├── _lifecycle_services.py       — LLM/TTS/STT/Output/TokenTracker 启停 + _apply_service_state

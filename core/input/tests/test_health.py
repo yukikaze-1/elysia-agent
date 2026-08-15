@@ -96,7 +96,7 @@ class TestHealthEndpoints:
     @pytest.mark.asyncio
     async def test_ready_product_idempotency_down_503(self, aiohttp_client):
         """product 模式 + idempotency down → /ready 503（fail-closed），chatReady=false。"""
-        from core.input.idempotency import reset_store
+        from core.storage.idempotency import reset_store
         reset_store()  # 防跨用例 _needs_recovery 泄漏（BE-P1-07 D4）
         from core.input.server import create_app
         app = create_app(_make_mock_agent(), serve_static=False, product_mode=True,
@@ -112,7 +112,7 @@ class TestHealthEndpoints:
     @pytest.mark.asyncio
     async def test_ready_dev_idempotency_down_200(self, aiohttp_client):
         """dev 模式 + idempotency down → /ready 200（内存降级不门禁），chatReady=true。"""
-        from core.input.idempotency import reset_store
+        from core.storage.idempotency import reset_store
         reset_store()  # 防跨用例 _needs_recovery 泄漏（BE-P1-07 D4）
         from core.input.server import create_app
         app = create_app(_make_mock_agent(), serve_static=False, product_mode=False,
@@ -226,7 +226,7 @@ class TestReadyIdempotencyNeedsRecovery:
 
     @pytest.fixture
     def _clean_store(self):
-        from core.input.idempotency import reset_store
+        from core.storage.idempotency import reset_store
         reset_store()
         yield
         reset_store()
@@ -255,8 +255,8 @@ class TestReadyIdempotencyNeedsRecovery:
 
     @pytest.mark.asyncio
     async def test_ready_503_until_recover_then_200(self, _clean_store, aiohttp_client):
-        from core.input.capabilities import build_server_info
-        from core.input.idempotency import configure_store, get_store
+        from core.services.capabilities import build_server_info
+        from core.storage.idempotency import configure_store, get_store
         from core.input.tests.test_idempotency_durable import _FlipRepo
         from core.input.tests.test_idempotency_durable import _entry as _make_entry
         from core.input.server import create_app
@@ -293,7 +293,7 @@ class TestReadyIdempotencyNeedsRecovery:
     @pytest.mark.asyncio
     async def test_ready_dev_mode_unaffected(self, _clean_store, aiohttp_client):
         """dev 模式：needs_recovery 不门禁（内存降级允许），仍 200。"""
-        from core.input.idempotency import configure_store, get_store
+        from core.storage.idempotency import configure_store, get_store
         from core.input.tests.test_idempotency_durable import _FlipRepo
         from core.input.tests.test_idempotency_durable import _entry as _make_entry
         from core.input.server import create_app

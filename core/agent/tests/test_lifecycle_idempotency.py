@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.agent._lifecycle_persistence import _LifecyclePersistence
-from core.input.idempotency import (
+from core.storage.idempotency import (
     IdempotencyEntry,
     configure_store,
     get_store,

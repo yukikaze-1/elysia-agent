@@ -34,7 +34,7 @@ class TestSwitchRuntimeGuard:
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()
         with mock.patch(
-            "core.input.custom_providers.resolve_model_params",
+            "core.providers.custom_providers.resolve_model_params",
             return_value={"base_url": "https://public.example.com", "runtime": "desktop"},
         ):
             result = await Agent.switch_llm(agent, "custom/desktop_prof")
@@ -51,7 +51,7 @@ class TestSwitchRuntimeGuard:
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()
         with mock.patch(
-            "core.input.custom_providers.resolve_model_params",
+            "core.providers.custom_providers.resolve_model_params",
             return_value={"base_url": "https://public.example.com", "runtime": "local"},
         ):
             result = await Agent.switch_stt(agent, "custom/desktop_prof")
@@ -68,7 +68,7 @@ class TestSwitchRuntimeGuard:
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()
         with mock.patch(
-            "core.input.custom_providers.resolve_model_params",
+            "core.providers.custom_providers.resolve_model_params",
             return_value={"base_url": "https://public.example.com", "runtime": "desktop"},
         ):
             result = await Agent.switch_tts(agent, "custom/desktop_prof")
@@ -88,7 +88,7 @@ class TestSwitchSSRF:
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()
         with mock.patch(
-            "core.input.custom_providers.resolve_model_params",
+            "core.providers.custom_providers.resolve_model_params",
             return_value={"base_url": "http://127.0.0.1", "runtime": "backend"},
         ):
             result = await Agent.switch_llm(agent, "custom/bad")
@@ -104,7 +104,7 @@ class TestSwitchSSRF:
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()
         with mock.patch("Module.stt.STTFactory.create") as mc, mock.patch(
-            "core.input.custom_providers.resolve_model_params",
+            "core.providers.custom_providers.resolve_model_params",
             return_value={"base_url": "http://169.254.169.254", "runtime": "backend"},
         ):
             result = await Agent.switch_stt(agent, "custom/bad")
@@ -124,10 +124,10 @@ class TestSwitchOutboundGuard:
         agent.session.service_state = ServiceState()
         agent._llm.switch_model = mock.MagicMock()
         with mock.patch(
-            "core.input.custom_providers.resolve_model_params",
+            "core.providers.custom_providers.resolve_model_params",
             return_value={"base_url": "https://public.example.com", "runtime": "backend"},
         ), mock.patch("Module._common.ssrf.socket.getaddrinfo", return_value=_PUBLIC_INFOS), mock.patch(
-            "core.input.capabilities.broadcast_capabilities", new_callable=AsyncMock
+            "core.agent.server.broadcast_capabilities", new_callable=AsyncMock
         ) as mock_bcast:
             result = await Agent.switch_llm(agent, "custom/good")
         assert result["ok"] is True
@@ -148,7 +148,7 @@ class TestSwitchOutboundGuard:
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()
         with mock.patch("Module.stt.STTFactory.create") as mc, mock.patch(
-            "core.input.custom_providers.resolve_model_params",
+            "core.providers.custom_providers.resolve_model_params",
             return_value={"base_url": "https://public.example.com", "runtime": "backend"},
         ), mock.patch("Module._common.ssrf.socket.getaddrinfo", return_value=_PUBLIC_INFOS):
             backend = MagicMock()
@@ -174,7 +174,7 @@ class TestSwitchOutboundGuard:
         agent.session.service_state = ServiceState()
         agent._config.tts.rate_limit_rpm = 10
         with mock.patch("Module.tts.TTSFactory.create") as mc, mock.patch(
-            "core.input.custom_providers.resolve_model_params",
+            "core.providers.custom_providers.resolve_model_params",
             return_value={"base_url": "https://public.example.com", "runtime": "backend"},
         ), mock.patch("Module._common.ssrf.socket.getaddrinfo", return_value=_PUBLIC_INFOS):
             backend = MagicMock()
@@ -202,7 +202,7 @@ class TestSwitchBuiltin:
         agent.session.save = mock.AsyncMock()
         agent.session.service_state = ServiceState()
         agent._llm.switch_model = mock.MagicMock()
-        with mock.patch("core.input.custom_providers.resolve_model_params", return_value={}):
+        with mock.patch("core.providers.custom_providers.resolve_model_params", return_value={}):
             result = await Agent.switch_llm(agent, "deepseek/deepseek-v4-flash")
         assert result["ok"] is True
         agent._llm.switch_model.assert_called_once_with("deepseek/deepseek-v4-flash")

@@ -455,7 +455,7 @@ class TestMultiTurnConversation:
         """验证角色配置（base_personality）出现在 LLM 请求中。"""
         from dotenv import load_dotenv
         load_dotenv()
-        from core.adapter.prompt_assembler import PromptAssembler
+        from core.prompt.prompt_assembler import PromptAssembler
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory

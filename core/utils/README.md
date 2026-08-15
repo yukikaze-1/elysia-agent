@@ -25,7 +25,7 @@ ID 生成 helper 族（core ID NewType 权威生成处）：
 
 ### text_utils.py（42 行）
 
-`content_text_from_content(content)` — 从多模态 content 数组提取纯文本（None → ""、str → 原样、list[dict] → 提取 text 类型）；`MessageObj` — 轻量 assistant 消息对象（role + content + to_dict）。由 `cognitive/loop.py`、`adapter/prompt_assembler.py` 使用。2026-08-01 自 `core/text/` 迁入（与流式解析解耦）。
+`content_text_from_content(content)` — 从多模态 content 数组提取纯文本（None → ""、str → 原样、list[dict] → 提取 text 类型）；`MessageObj` — 轻量 assistant 消息对象（role + content + to_dict）。由 `cognitive/loop.py`、`core/prompt/prompt_assembler.py` 使用。2026-08-01 自 `core/text/` 迁入（与流式解析解耦）。
 
 ### log_setup.py（215 行）
 

@@ -22,7 +22,7 @@ from core.schema.memory import (
 
 from paths import ProjectPath
 from core.memory.long_term import LongTermMemory
-from core.adapter.llm_adapter import LLMAdapter
+from core.memory.llm_protocol import MemoryLLM
 
 logger = logging.getLogger(__name__)
 
@@ -172,12 +172,12 @@ class MemoryConsolidator:
 
     BUFFER_THRESHOLD = 6  # 攒够 N 条消息再调 LLM 提取
 
-    def __init__(self, llm: LLMAdapter, memory: LongTermMemory, character_name: str = "Elysia",
+    def __init__(self, llm: MemoryLLM, memory: LongTermMemory, character_name: str = "Elysia",
                  user_name: str = "用户", buffer_threshold: int | None = None):
         """初始化记忆整合器。
 
         Args:
-            llm: LLM 适配器，用于提取和比对记忆。
+            llm: 记忆域 LLM 窄接口（MemoryLLM），用于提取和比对记忆。
             memory: 长期记忆后端。
             character_name: 角色名，用于格式化对话文本。
             user_name: 用户名，用于格式化对话文本。

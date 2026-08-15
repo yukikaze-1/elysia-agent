@@ -16,7 +16,7 @@ import pytest
 from aiohttp import FormData
 
 from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
-from core.input.idempotency import reset_store
+from core.storage.idempotency import reset_store
 from Module.tool.protocol import to_llm_name
 
 

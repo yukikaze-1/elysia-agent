@@ -13,12 +13,8 @@ core/adapter/
 ├── tts_adapter.py           # TTS 流式管理器
 ├── tool_adapter.py          # 工具子系统适配器
 ├── tool_call_parser.py      # 流式 tool_call 合并/归一化
-├── message_builder.py       # 提示词 → LLM API messages[]
-├── prompt_assembler.py      # 12 PromptSection → SystemPromptManager → MessageBuilder
 └── tests/
     ├── test_llm_adapter.py
-    ├── test_message_builder.py
-    ├── test_prompt_assembler.py
     ├── test_tool_adapter.py
     ├── test_tts_adapter.py
     └── test_tts_adapter_control.py
@@ -62,16 +58,12 @@ core/adapter/
 - `merge_stream_tool_calls()` — 增量合并流式 tool_call delta
 - `normalize_tool_calls()` — 过滤不完整调用 → `ToolCall` Pydantic 模型
 
-### MessageBuilder（`message_builder.py`，141 行）
+## 已迁出（CORE-MOD-P1-02）
 
-提示词组装：
+- `MessageBuilder` → `core/prompt/message_builder.py`
+- `PromptAssembler` → `core/prompt/prompt_assembler.py`
 
-- `build_messages()` — 系统提示词 + 历史 + 用户输入 → OpenAI `messages[]`
-- 多模态 content 处理、图片 fallback 提示、tool-call 摘要注入
-
-### PromptAssembler（`prompt_assembler.py`，186 行）
-
-胶水层：创建 12 个 PromptSection 实例 → 注入 SystemPromptManager → 委托 MessageBuilder 组装最终 `messages[]`。`_refresh_personality_data()` 从 CharacterEngine 拉取 C1/C9 数据。
+适配器层只保留对 `Module/` 后端的封装。
 
 ---
 

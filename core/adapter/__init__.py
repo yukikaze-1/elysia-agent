@@ -3,12 +3,10 @@
 LLM: LLMAdapter + tool_call 解析（重试、热切换、streaming）
 TTS: TTSStreamManager（句队列、emoji 同步、门控播放）
 Tool: ToolAdapter（工具子系统生命周期）+ ToolResult / ErrorType / ToolContext 重导出
-Message: MessageBuilder（系统 prompt + 历史 → LLM API messages[]）
 """
 
 from .llm_adapter import LLMAdapter, ThoughtResult
 from .tts_adapter import TTSStreamManager, is_emoji_only
-from .message_builder import MessageBuilder
 from .tool_adapter import ToolAdapter
 
 # 重导出 ToolResult、ErrorType、ToolContext，方便消费方统一导入
@@ -21,7 +19,6 @@ __all__ = [
     "ThoughtResult",
     "TTSStreamManager",
     "is_emoji_only",
-    "MessageBuilder",
     "ToolAdapter",
     "ToolResult",
     "ErrorType",

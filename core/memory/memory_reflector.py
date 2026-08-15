@@ -19,11 +19,11 @@ from pydantic import ValidationError
 
 from paths import ProjectPath
 from core.schema.memory_reflector import MemoryReflectorState, ReflectorActions
+from core.memory.llm_protocol import MemoryLLM
 
 if TYPE_CHECKING:
     from core.memory.long_term import LongTermMemory
     from core.memory.session import SessionMemory
-    from core.adapter.llm_adapter import LLMAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -68,14 +68,14 @@ class MemoryReflector:
 
     def __init__(
         self,
-        llm: "LLMAdapter",
+        llm: MemoryLLM,
         memory: "LongTermMemory",
         session: "SessionMemory",
     ):
         """初始化记忆反射器。
 
         Args:
-            llm: LLM 适配器，用于审查记忆。
+            llm: 记忆域 LLM 窄接口（MemoryLLM），用于审查记忆。
             memory: 长期记忆后端。
             session: 会话记忆，用于访问 character_state 等。
         """

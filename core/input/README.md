@@ -10,14 +10,13 @@
 input/
 ├── __init__.py              # 导出
 ├── __main__.py              # 集成测试 (python -m core.input)
-├── server.py                # 纯装配（启动守卫 + create_app + 管理端点，2026-08-14 批次 D）
+├── server.py                # 纯装配（create_app + 管理端点；bind 守卫在 core/utils/server_guard.py）
 ├── middleware.py            # 认证/payload/限流中间件工厂 + _nosniff_uploads（批次 D）
 ├── health.py                # health/ready 探针（批次 D）
 ├── ws_handler.py            # WebSocket 协议层（22 消息类型 _WS_HANDLERS 注册表分发，批次 B）
 ├── ws_v2.py                 # v2 深业务（_route_v2_text/_handle_voice_commit + 幂等/ACK helper，批次 B）
 ├── _common.py               # 跨业务共享（_send_ack/_find_channel/_tool_error/_archive_*）
 ├── errors.py                # 统一错误信封（批次 A）
-├── capabilities.py          # build_capabilities — 嵌套 per-service 能力声明 + 全量重播
 ├── provider_routes.py       # Provider 管理 REST（批次 C）
 ├── tts_routes.py            # TTS 声音 REST（批次 C）
 ├── upload_routes.py         # 上传/表情 REST（批次 C）
@@ -29,10 +28,7 @@ input/
 ├── audio_buffer.py          # AudioBuffer — VAD 分帧 + 音频缓冲 + PCM/WAV 转换 + 唤醒词并行检测
 ├── wakeword.py              # WakeWordDetector — openWakeWord 流式唤醒词检测
 ├── sticker_registry.py      # 内置表情包注册表（扫描 static/stickers/*.png，BE-071）
-├── idempotency.py           # v2 幂等存储 — clientRequestId → 用户消息记录（进程内 dict + TTL，批次 2）
 ├── tts_profile.py           # TTS profile 共享 helper — 活动会话激活 TTS 后端 + 默认音色解析
-├── custom_providers.py      # 自定义 provider 持久化（JSON 文件读写）
-├── provider_registry.py     # /api/providers 响应组装（已配置/未配置区分）
 ├── debug_routes/            # Debug API 路由 (package: 7 modules)
 ├── tests/                   # 单元测试
 └── README.md
@@ -66,7 +62,7 @@ web.run_app(app, port=8000)
 
 - `access_token`（`AGENT_ACCESS_TOKEN`，显式参数默认 `""`）非空时，`/ws`、业务 `/api/*`、`/uploads/*` 要求 `Authorization: Bearer <access_token>`；匿名 → 401 `AUTH_REQUIRED`/`AUTH_INVALID` 统一错误信封。无 token 环境全匿名（v1 兼容）。与 `auth_token`（`SERVER_AUTH_TOKEN`，admin/debug）权限域分离。
 - `max_ws_connections`：并发 WS 上限，超出拒绝 503 `CONNECTION_LIMITED`；`max_request_bytes`：业务请求体上限（app 级 `client_max_size`），超出 413 `REQUEST_TOO_LARGE`。
-- 启动守卫：`warn_if_unsecured(host, access_token)` 非回环绑定 + 无产品认证 → ERROR 显著阻塞告警（`run_server` 每轮调用）。
+- 启动守卫：`core/utils/server_guard.py` 提供 `assert_secure_bind` / `warn_if_unsecured`（AgentServer 每轮调用）。
 
 ### 开发期远程测试（SERVER_HOST）
 
@@ -97,6 +93,15 @@ python -m pytest core/input/ -v
 python -m core.input
 ```
 
+## 已迁出模块（CORE-MOD-P1-01）
+
+| 原路径 | 新路径 | 原因 |
+|---|---|---|
+| `core/input/idempotency.py` | `core/storage/idempotency.py` | 幂等存储是运行时基础设施，agent 生命周期也消费 |
+| `core/input/custom_providers.py` | `core/providers/custom_providers.py` | provider 元数据被 agent 生命周期/热切换消费 |
+| `core/input/provider_registry.py` | `core/providers/provider_registry.py` | 与 custom provider 同域 |
+| `core/input/capabilities.py` | `core/services/capabilities.py` | 服务能力声明 + 广播是运行时能力，agent 与 input 共用 |
+
 ---
 
 ## 相关文档
@@ -106,4 +111,6 @@ python -m core.input
 | [Core 文档](../README.md) | Core 层总览 |
 | [Module/stt/README.md](../../Module/stt/README.md) | STT（音频输入消费者） |
 | [Module/output/README.md](../../Module/output/README.md) | 输出通道（WebSocket 方向） |
+| [core/providers/README.md](../providers/README.md) | Provider 元数据与自定义 provider |
+| [core/services/README.md](../services/README.md) | 服务能力声明与广播 |
 | [docs/architecture.md](../../docs/architecture.md) | 输入输出系统架构 |

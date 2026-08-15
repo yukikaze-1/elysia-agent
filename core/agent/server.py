@@ -6,7 +6,14 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
+from aiohttp import web
 from core.agent._types import RunState
+from core.services.capabilities import broadcast_capabilities
+from core.utils.server_guard import (
+    assert_secure_bind,
+    is_loopback_host,
+    warn_if_unsecured,
+)
 from core.schema.types import RequestId
 from core.utils import set_request_id
 
@@ -55,7 +62,7 @@ def _resolve_switch_params(
     Raises:
         SSRFError: custom+backend 且 base_url 非空但校验失败（内网/解析失败）。
     """
-    from core.input.custom_providers import resolve_model_params
+    from core.providers.custom_providers import resolve_model_params
     from Module._common.ssrf import build_guarded_http_client, validate_endpoint
     params = resolve_model_params(svc, model_id)
     runtime = params.pop("runtime", "backend")
@@ -188,7 +195,6 @@ class AgentServer:
                 # 持久化失败不回滚已生效的切换——运行中后端是权威，仅告警
                 logger.warning("LLM switch 已生效但持久化失败: %s", e)
             logger.info("LLM switched to: %s", model_id)
-            from core.input.capabilities import broadcast_capabilities
             await broadcast_capabilities(self)
             return {"ok": True}
         except Exception as e:
@@ -239,7 +245,6 @@ class AgentServer:
                 # 持久化失败不回滚已生效的切换——运行中后端是权威，仅告警
                 logger.warning("STT switch 已生效但持久化失败: %s", e)
             logger.info("STT switched to: %s", model_id)
-            from core.input.capabilities import broadcast_capabilities
             await broadcast_capabilities(self)
             return {"ok": True}
         except Exception as e:
@@ -298,7 +303,6 @@ class AgentServer:
                 # 持久化失败不回滚已生效的切换——运行中后端是权威，仅告警
                 logger.warning("TTS switch 已生效但持久化失败: %s", e)
             logger.info("TTS switched to: %s", model_id)
-            from core.input.capabilities import broadcast_capabilities
             await broadcast_capabilities(self)
             return {"ok": True}
         except Exception as e:
@@ -356,7 +360,6 @@ class AgentServer:
         setattr(self.session.service_state, f"{service}_enabled", persist)
         await self.session.save()
         # 重播 capabilities——向所有 WebSocket 客户端广播（switch_* 补建路径自身也会播，幂等无害）
-        from core.input.capabilities import broadcast_capabilities
         await broadcast_capabilities(self)
         return {"ok": True, "enabled": enabled}
 
@@ -369,13 +372,24 @@ class AgentServer:
         # _character 由 Agent.__init__ 恒加载（CharacterConfig），wake_words 字段恒存在
         return self._character.wake_words
 
-    async def run_server(self) -> None:
+    async def run_server(
+        self,
+        *,
+        app_factory: Callable[..., web.Application] | None = None,
+    ) -> None:
         """以 WebSocket 服务模式运行 agent。阻塞直至 Ctrl+C 或关闭。
 
         支持通过 /restart 端点在停止后重新加载配置并重启服务。
+
+        Args:
+            app_factory: aiohttp Application 工厂（通常为
+                ``core.input.server.create_app``），由装配入口 app.py 注入。
+                为 None 时拒绝启动——Agent 层不再反向依赖 core.input。
         """
-        from core.input.server import create_app
-        from aiohttp import web
+        if app_factory is None:
+            raise RuntimeError(
+                "run_server 需要 app_factory（app.py 应注入 core.input.server.create_app）"
+            )
 
         await self.start()
 
@@ -386,7 +400,6 @@ class AgentServer:
 
             # 启动安全守卫（批次 1 + D6a）：非回环绑定 + 无产品认证 → fail-closed 拒绝启动
             # （显式 ALLOW_INSECURE_REMOTE=1 才放行）；否则显著告警
-            from core.input.server import assert_secure_bind, warn_if_unsecured, is_loopback_host
             assert_secure_bind(host, self._config.server.access_token,
                                self._config.server.auth_token)
             warn_if_unsecured(host, self._config.server.access_token,
@@ -400,7 +413,7 @@ class AgentServer:
             if stt_gate:
                 try:
                     from Module.stt import STTFactory
-                    from core.input.custom_providers import resolve_model_params
+                    from core.providers.custom_providers import resolve_model_params
                     # 关键：custom/<name> 必须经 resolve_model_params 补 base_url（registry
                     # 对 custom 无 base_url 抛 ValueError，裸 create 会让运行时切好的 custom
                     # STT 重启后 available=false）
@@ -434,7 +447,7 @@ class AgentServer:
                     self._stt_ok = False
                     logger.info("STT not available — text-only mode", exc_info=False)
 
-            app = create_app(cast(Any, self), serve_static=True,
+            app = app_factory(cast(Any, self), serve_static=True,
                             serve_chat=self._config.server.serve_chat,
                             wake_word_enabled=wake_word_enabled,
                             task_system=self._task_system,

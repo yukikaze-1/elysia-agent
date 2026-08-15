@@ -2,7 +2,7 @@
 from unittest.mock import MagicMock
 import pytest
 
-from core.adapter.prompt_assembler import PromptAssembler
+from core.prompt.prompt_assembler import PromptAssembler
 from core.config import CharacterConfig
 from core.memory.session import SessionMemory
 from Module.system_prompt.sections.emotion import EmotionSection

@@ -145,7 +145,7 @@ class TestStartTTSGate:
         backend = mock.MagicMock()
         backend.test = mock.AsyncMock(return_value={"ok": True})
         with mock.patch("Module.tts.TTSFactory.create", return_value=backend) as mc, \
-             mock.patch("core.input.custom_providers.resolve_model_params",
+             mock.patch("core.providers.custom_providers.resolve_model_params",
                         return_value={"base_url": "http://tts.local"}):
             await _LifecycleServices._start_tts(agent)
 
@@ -165,7 +165,7 @@ class TestStartTTSGate:
         self._setup_tts_agent(
             agent, ServiceState(tts_model="custom/desk", tts_enabled=True), cfg_enabled=False)
         with mock.patch("Module.tts.TTSFactory.create") as mc, \
-             mock.patch("core.input.custom_providers.resolve_model_params",
+             mock.patch("core.providers.custom_providers.resolve_model_params",
                         return_value={"base_url": "", "runtime": "desktop"}):
             await _LifecycleServices._start_tts(agent)
         # 不建后端、不测连通性、不崩
@@ -216,7 +216,7 @@ class TestStartTTSGate:
         self._setup_tts_agent(agent, ServiceState(), cfg_enabled=True)
         with mock.patch("Module.tts.TTSFactory.create", side_effect=ValueError(
                 "MiniMax TTS 需要 api_key，请设置 MINIMAX_API_KEY 环境变量或显式传入")) as mc, \
-             mock.patch("core.input.custom_providers.resolve_model_params",
+             mock.patch("core.providers.custom_providers.resolve_model_params",
                         return_value={"base_url": "https://api.minimaxi.com"}):
             with caplog.at_level(logging.WARNING, logger="core.agent._lifecycle_services"):
                 await _LifecycleServices._start_tts(agent)
@@ -232,7 +232,7 @@ class TestStartTTSGate:
         self._setup_tts_agent(agent, ServiceState(), cfg_enabled=True)
         with mock.patch("Module.tts.TTSFactory.create", side_effect=ValueError(
                 "Unknown provider 'foo'. Known: ...")) as mc, \
-             mock.patch("core.input.custom_providers.resolve_model_params",
+             mock.patch("core.providers.custom_providers.resolve_model_params",
                         return_value={"base_url": "http://x"}):
             with pytest.raises(ValueError):
                 await _LifecycleServices._start_tts(agent)

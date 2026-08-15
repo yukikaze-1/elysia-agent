@@ -7,6 +7,7 @@
 #   token_repo           — TokenRepository（MongoDB token_usage 集合）
 #   memory_repo          — MemoryRepository（Milvus long_term_memory 集合）
 #   character_version_repo — CharacterVersionRepository（MongoDB character_l2_versions 集合）
+#   idempotency           — IdempotencyStore 门面（v2 幂等内存 overlay + Mongo 写穿；CORE-MOD-P1-01 从 input 迁入）
 
 from core.storage.base import Repository  # noqa: F401
 from core.storage.session_repo import SessionRepository, SessionSummary  # noqa: F401

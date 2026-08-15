@@ -1,7 +1,7 @@
 """WS v2 深业务模块（2026-08-14 批次 B 拆分）。
 
 _route_v2_text / _handle_voice_commit 及专属业务 helper 自 ws_handler.py 下移（函数体零改动）。
-ws_v2 只依赖 core.schema / core.input.idempotency / core.input._common 等，**不 import
+ws_v2 只依赖 core.schema / core.storage.idempotency / core.input._common 等，**不 import
 ws_handler**（ws_handler 会 import ws_v2，反向 import 制造循环）。
 """
 
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from core.input._common import _find_channel, _send_ack
-from core.input.idempotency import (
+from core.storage.idempotency import (
     GRACE_SECONDS,
     _IN_PROGRESS_RETRY_AFTER_MS,
     IdempotencyEntry,

@@ -40,7 +40,7 @@ from core.memory.session_manager import SessionNotFoundError
 from core.utils import set_request_id, get_request_id, log_conversation
 from Module.tool.protocol import ToolResult
 from core.storage.desktop_call_repo import STATUS_OFFLINE
-from core.adapter.prompt_assembler import PromptAssembler
+from core.prompt.prompt_assembler import PromptAssembler
 from core.memory.session import SessionMemory
 from core.text.stream_processor import StreamProcessor, StreamEvent, StreamEventType
 from core.adapter.llm_adapter import LLMAdapter

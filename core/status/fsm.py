@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from core.status.agent_fsm import AgentFSM, AgentState
 from core.status.protocol import AgentStatus, CognitivePhaseController
+from core.schema.agent import EventPriority
 from core.schema.types import RequestId
 
 if TYPE_CHECKING:
@@ -113,7 +114,6 @@ class FSMBackedPhaseController(CognitivePhaseController):
     # ── phase 入口 ──
 
     async def enter_thinking(self) -> None:
-        from core.monitoring.event_bus import EventPriority
         from core.schema.event import StateChangeData
         from core.utils import get_request_id
 
@@ -125,7 +125,6 @@ class FSMBackedPhaseController(CognitivePhaseController):
         await self._status._notify("thinking")
 
     async def enter_executing(self) -> None:
-        from core.monitoring.event_bus import EventPriority
         from core.schema.event import StateChangeData
         from core.utils import get_request_id
 
@@ -139,7 +138,6 @@ class FSMBackedPhaseController(CognitivePhaseController):
         await self._status._notify("executing")
 
     async def return_to_thinking(self) -> None:
-        from core.monitoring.event_bus import EventPriority
         from core.schema.event import StateChangeData
         from core.utils import get_request_id
 
@@ -152,7 +150,6 @@ class FSMBackedPhaseController(CognitivePhaseController):
         await self._status._notify("thinking")
 
     async def enter_speaking(self) -> None:
-        from core.monitoring.event_bus import EventPriority
         from core.schema.event import StateChangeData
         from core.utils import get_request_id
 
@@ -165,7 +162,6 @@ class FSMBackedPhaseController(CognitivePhaseController):
         await self._status._notify("speaking")
 
     async def finish_turn(self, *, has_background_tasks: bool) -> None:
-        from core.monitoring.event_bus import EventPriority
         from core.schema.event import StateChangeData
         from core.utils import get_request_id
 
@@ -200,7 +196,6 @@ class FSMBackedPhaseController(CognitivePhaseController):
             await self._status._notify("idle")
 
     async def handle_interrupt(self) -> None:
-        from core.monitoring.event_bus import EventPriority
         from core.schema.event import StateChangeData
         from core.utils import get_request_id
 

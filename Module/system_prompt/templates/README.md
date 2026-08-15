@@ -139,7 +139,7 @@ C5 Sensory          → 感官输入（当前环境上下文）
 1. 在 `templates/` 新建 `.j2` 文件，按命名规则命名
 2. 在 `sections/` 新建 section 类，继承 `Jinja2Section`，设置 `name`/`version`/`description`
 3. 在 `system_prompt_manager.py` 的 `_RENDER_ORDER` 中添加 section name
-4. 在 `core/adapter/prompt_assembler.py` 中创建 section 实例并传入模板路径
+4. 在 `core/prompt/prompt_assembler.py` 中创建 section 实例并传入模板路径
 5. 在 `tests/` 中添加对应的单元测试
 
 ---

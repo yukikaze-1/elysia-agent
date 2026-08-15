@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 from Module.stt import STTFactory
 from core.input.audio_buffer import AudioBuffer, Callback, pcm_to_wav, _FRAME_BYTES
-from core.input.custom_providers import resolve_model_params
+from core.providers.custom_providers import resolve_model_params
 from core.memory.session_manager import SessionNotFoundError
 from core.schema.types import MessageId, SessionId
 from core.utils import get_request_id, new_message_id

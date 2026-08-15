@@ -376,7 +376,7 @@ class TestPromptAssembler:
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
-        from core.adapter.prompt_assembler import PromptAssembler
+        from core.prompt.prompt_assembler import PromptAssembler
 
         char = CharacterConfig(name="TestBot")
         session = SessionMemory()
@@ -396,7 +396,7 @@ class TestPromptAssembler:
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory
         from core.memory.long_term import LongTermMemory
-        from core.adapter.prompt_assembler import PromptAssembler
+        from core.prompt.prompt_assembler import PromptAssembler
 
         char = CharacterConfig(name="TestBot")
         session = SessionMemory()

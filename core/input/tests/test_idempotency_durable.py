@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from core.input.idempotency import (
+from core.storage.idempotency import (
     _IN_PROGRESS_RETRY_AFTER_MS,
     IdempotencyEntry,
     StoreResult,
@@ -65,7 +65,7 @@ def _up_repo() -> IdempotencyRepository:
 
 def _entry(message_id: str = "msg_1", digest: str = "abc") -> dict:
     import time
-    from core.input.idempotency import IdempotencyEntry
+    from core.storage.idempotency import IdempotencyEntry
     # created_at 是 monotonic 基准（内存 TTL 依据）——不能用远古固定值，否则立即过期
     return IdempotencyEntry(user_message_id=message_id, content_digest=digest,
                             created_at=time.monotonic())
@@ -196,7 +196,7 @@ class TestServerInfoExposure:
 
     @pytest.mark.asyncio
     async def test_features_reflect_durability(self, fresh_store):
-        from core.input.capabilities import build_server_info
+        from core.services.capabilities import build_server_info
         from core.input.tests.test_server import _make_agent
 
         agent = _make_agent()
@@ -1278,7 +1278,7 @@ class TestVoiceCommitOrder:
     async def test_claim_failure_releases_work_no_consume(self, fresh_store):
         """claim 失败（产品模式 fail-closed）→ 先 reserve_work、后 release_work；
         不调 commit_recording（不消费录音）。"""
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.storage.idempotency_repo import IdempotencyRepository
@@ -1308,7 +1308,7 @@ class TestVoiceCommitOrder:
         """并发 loser（store 返回 acquired=False）→ release_work + IN_PROGRESS 拒绝，
         不消费录音（claim 未获取不进入 commit）。"""
         import core.input.ws_v2 as _m
-        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.storage.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
 
@@ -1349,7 +1349,7 @@ class TestVoiceCommitOrder:
     @pytest.mark.asyncio
     async def test_recording_failure_rejects_and_releases(self, fresh_store):
         """commit_recording 抛 VoiceSessionError → store.reject + release_work + rejected ACK。"""
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.input.voice_sessions import VoiceSessionError
@@ -1375,7 +1375,7 @@ class TestVoiceCommitOrder:
         """TAKEOVER（stale CLAIMED + 无证据，经 store 路径）→ 保持既有 reserve_work，
         从 commit_recording 续跑（不重复 reserve、不释放 work）。"""
         import core.input.ws_v2 as _m
-        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+        from core.storage.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
 
@@ -1426,7 +1426,7 @@ class TestVoiceCommitOrder:
         """TAKEOVER 二次 claim 抛 StorageUnavailableError → release_work + rejected
         STORAGE_UNAVAILABLE（不泄漏会话 busy 计数、不消费录音）。"""
         import core.input.ws_v2 as _m
-        from core.input.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult, get_store
+        from core.storage.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult, get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.storage.attachment_repo import StorageUnavailableError
@@ -1476,7 +1476,7 @@ class TestVoiceCommitOrder:
     @pytest.mark.asyncio
     async def test_voice_accepted_completes_before_ack(self, fresh_store):
         """voice 正常路径：complete 在 accepted ACK 前（complete-before-ack 不变量）。"""
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
         from core.storage.idempotency_repo import STATUS_ACCEPTED
@@ -1511,7 +1511,7 @@ class TestD3DurableInDetails:
     @pytest.mark.asyncio
     async def test_voice_storage_unavailable_ack_carries_durable(self, fresh_store):
         """voice.commit 的 STORAGE_UNAVAILABLE rejected ACK error.details 含 durable。"""
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
 

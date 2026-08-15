@@ -12,7 +12,7 @@ import time
 
 import pytest
 from aiohttp import WSMsgType
-from core.input.idempotency import reset_store
+from core.storage.idempotency import reset_store
 
 
 @pytest.fixture(autouse=True)

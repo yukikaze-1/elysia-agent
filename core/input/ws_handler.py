@@ -21,9 +21,9 @@ from core.storage.attachment_repo import StorageUnavailableError
 from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
 from core.input._common import _find_channel, _send_ack
-from core.input.capabilities import build_capabilities
+from core.services.capabilities import build_capabilities
 from core.input.ws_v2 import _handle_voice_commit, _route_v2_text
-from core.input.idempotency import (
+from core.storage.idempotency import (
     GRACE_SECONDS,
     _IN_PROGRESS_RETRY_AFTER_MS,
     IdempotencyEntry,
@@ -243,7 +243,7 @@ async def handle_ws(
     # 非 electron 的 desktop_conn_id 恒 None → wire 缺省省略（v1 类型字节不变）。
     try:
         if protocol_version >= 2:
-            from core.input.capabilities import build_server_info
+            from core.services.capabilities import build_server_info
             await ws.send_json(
                 build_server_info(agent, connection_id=desktop_conn_id).wire_dict())
         else:

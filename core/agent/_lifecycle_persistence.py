@@ -312,11 +312,11 @@ class _LifecyclePersistence:
             elif name == "idempotency":
                 # 幂等恢复（D6c）：重连 repo → store.recover() reconcile（内存→Mongo
                 # 对齐，durable 翻回）。connect 失败返回 False——协调器保留 prev=False
-                # 下轮重试。get_store 惰性 import：core.agent → core.input 循环导入规避
-                # （先例：capabilities.py:79 函数内 import）。
+                # 下轮重试。get_store 惰性 import：恢复边界避免启动顺序依赖
+                # （先例：core/services/capabilities.py:79 函数内 import）。
                 if not await self.idempotency_repo.connect():
                     return False
-                from core.input.idempotency import get_store
+                from core.storage.idempotency import get_store
                 await get_store().recover()
                 logger.info("IdempotencyRepository 恢复，幂等表 reconcile 完成")
             # 其余 repo：health_check 内部已重连，无需额外补偿
@@ -336,7 +336,7 @@ class _LifecyclePersistence:
         """
         if name != "idempotency":
             return False
-        from core.input.idempotency import get_store
+        from core.storage.idempotency import get_store
         return get_store().configured and not get_store().durable
 
     async def _stop_db_health(self) -> None:

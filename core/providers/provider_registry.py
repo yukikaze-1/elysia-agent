@@ -1,5 +1,7 @@
 """Provider 注册表过滤 — 读 providers.yaml，组装 /api/providers 响应。
 
+CORE-MOD-P1-01 从 core/input/provider_registry.py 迁入 core/providers。
+
 env 过滤规则（spec「env 过滤规则」）：
 1. custom（meta-provider）与 models 为空的 provider → 跳过（不进下拉、不进 unconfigured）。
 2. local: true → 恒显示（内置默认地址，无需配置）。

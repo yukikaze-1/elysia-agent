@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from core.personality.engine import CharacterEngine
 
-from core.adapter.message_builder import MessageBuilder
+from core.prompt.message_builder import MessageBuilder
 from Module.system_prompt.system_prompt_manager import SystemPromptManager
 from Module.system_prompt.sections.conflict_rules import ConflictRulesSection
 from Module.system_prompt.sections.output_format import OutputFormatSection
