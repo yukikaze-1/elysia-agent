@@ -252,11 +252,11 @@
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
 | **高** | `.env` 仍含真实 API Key | DeepSeek、MiMo、Tavily、MiniMax 的真实 key 仍在 `.env` 文件中。已有 `.env.example` + `setup.sh` + `app.py --check`，但 `.env` 不应提交真实密钥。建议：将 `.env` 中 key 替换为占位符，真实 key 通过 shell 环境变量或密钥管理器注入 |
-| 低 | 单 Session 多客户端共享 | `session_id = "default"` 硬编码 |
-| 低 | 会话管理 | 无法新建/切换/列出对话。SessionMemory 的 MongoDB 持久化已为此做好准备，需前后端联动 |
+| ✅ | 单 Session 多客户端共享 | 批次 3 多会话已实现：`SessionManager` 会话缓存池 + `/api/sessions` CRUD/activate；`"default"` 仅作缺省活动会话，非硬编码 |
+| ✅ | 会话管理 | `/api/sessions` 提供新建/切换/列出/历史/搜索/删除（`session_routes.py`）；WS `activate_session` 切 active + 重发回放 |
 | **高** | **无数据库迁移机制** | MongoDB 索引在 `connect()` 时 ad-hoc 创建，Milvus collection 硬编码创建。若字段/索引/维度需变更，无 upgrade path。`memory_repo.clear_all()` 是破坏性操作无安全守卫 |
 | 低 | **`character/cyrene/` 不可用** | 缺少 `config.yaml` 和 `personality.md`，仅含 GPT 参考材料，无法作为角色加载 |
-| 低 | **依赖无版本上限** | `requirements.txt` 中 pydantic、openai、torch 等均无上限约束，上游 breaking change 可导致不可预期问题。`torch` 是 2GB+ 重依赖 |
+| 低 | **依赖声明宽范围 vs 实际精确锁** | `requirements*.txt` 声明文件仍允许宽范围（pydantic/openai/torch 等无上限），但实际部署边界已由 `environment.lock.yml` 收敛（conda 30 + pip 133，全部 `==` 精确锁定，未启用逐包 hash；`make lock-env` 重生成 / `make audit` 漏洞扫描）。风险措辞：声明文件宽范围 + 锁文件精确边界，两者并存；上游 breaking change 需 `make lock-env` 重锁后验证 |
 | 低 | **未来项：依赖管理迁移 uv** | **2026-08-11 记录（F2 拍板）**：当前统一 conda（环境锁 + 可复现），暂不迁移。后续熟悉 uv 后评估迁移（uv 锁文件更轻、安装更快、CI 更干净）；迁移前提：uv lock 覆盖全部 runtime+dev 依赖 + CI 切 uv clean-room + 对比 conda 环境差异，迁移后再删 conda 锁文件 |
 | 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。测试文件 IDE 类型错误已批量修复 ~155 处（2026-07-29/30：NewType 包装、ToolAdapter 替换、type: ignore 补充）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed/2026-07.md` 2026-07-29 第一、三条 + 2026-07-30 第一条。 |
 
@@ -266,10 +266,10 @@
 
 | 优先级 | 事项 | 说明 |
 |--------|------|------|
-| 低 | **协议契约语言中立化** | 契约目前只存在于 `frontend/src/types/protocol.ts`（TS 类型），需产出 JSON Schema / OpenAPI / protocol.md 供非 TS 客户端实现 |
-| 低 | **协议版本化** | WS/HTTP 消息加 `protocol_version` 字段，服务端升级协议时不静默破坏旧客户端 |
-| 低 | **多 session / 身份** | 关联上表「单 Session 多客户端共享」——新前端需要独立 session 身份 |
-| 低 | **公开契约文档** | 20+ WS 服务端消息 + 5 入站类型 + HTTP/Debug 路由写为 protocol.md |
+| ✅ | **协议契约语言中立化** | `frontend_contract` 可执行 Pydantic 模型 → 生成 `contract.schema.json`（JSON Schema）+ `contract.raw.ts`（raw wire 快照）+ `contract.generated.ts`；零依赖，语言中立，`make check-types` 漂移门禁（CI 强制） |
+| ✅ | **协议版本化** | 协议 v2：`frontend_contract/version.py` 单源 `TRANSPORT_VERSION="2"` / `PROTOCOL_VERSION="2.0"`，握手头携带；服务端升级不静默破坏旧客户端 |
+| ✅ | **多 session / 身份** | 批次 3 多会话 + v2 显式 `conversationId`（`resolve_session` 校验存在，禁止懒创建幽灵会话） |
+| ✅ | **公开契约文档** | `docs/electron-backend-protocol-v2.md`（WS 消息 + REST + 错误码 + 错误信封）+ `docs/archive/frontend-handoff-v2/traces/`（契约源 golden frames） |
 
 > 触发条件：确定做 Qt 客户端（或任一第二前端）时再动，现仅记录评估结论。
 
