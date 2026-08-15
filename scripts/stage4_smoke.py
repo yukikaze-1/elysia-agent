@@ -46,6 +46,9 @@ class _SmokeSTTBackend:
     def __init__(self, text: str = "你好，这是阶段4 smoke 转写。"):
         self._text = text
         self.transcribed = 0
+        # capabilities 广播读 backend.model（core/input/capabilities.py:54）——桩补 model
+        # 属性，消除 WS 建连后 traceback
+        self.model = "sensevoice/sense-voice"
 
     async def transcribe(self, audio: bytes, **kw: Any):
         self.transcribed += 1
@@ -166,6 +169,8 @@ class _SmokeTTSBackend:
     provider_name = ""
 
     def __init__(self):
+        # capabilities 广播读 backend.model（capabilities.py:56）——桩补 model 消除 traceback
+        self.model = "gpt-sovits/default"
         self.offline = False
 
     async def list_voices(self) -> list[dict]:
