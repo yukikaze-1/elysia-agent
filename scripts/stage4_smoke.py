@@ -352,7 +352,9 @@ async def _tts_playback_scenarios(smoke: _Smoke) -> None:
 
     # ── 完成序列：audio_start → chunk×N → audio_end ──
     rec = _Recorder()
-    mgr = TTSStreamManager(tts=_StubTTS(), output=rec, character_name="elysia")
+    # smoke 桩为最小面（_StubTTS/_Recorder 仅实现被调用方法），与 TTSBackend/OutputManager
+    # 协议结构不匹配——确定性契约 smoke 专用桩，`# type: ignore[arg-type]` 显式豁免
+    mgr = TTSStreamManager(tts=_StubTTS(), output=rec, character_name="elysia")  # type: ignore[arg-type]
     mgr.reset_for_turn()          # 必需：预置 seq=1 门控
     mgr.stream_sentence("你好")
     await mgr.wait_all()
@@ -366,7 +368,7 @@ async def _tts_playback_scenarios(smoke: _Smoke) -> None:
     # ── 取消：gate 停在转发段 → cancel_all → audio_cancelled（无孤儿 chunk 续发）──
     rec2 = _Recorder()
     rec2.gate = asyncio.Event()
-    mgr2 = TTSStreamManager(tts=_StubTTS(), output=rec2, character_name="elysia")
+    mgr2 = TTSStreamManager(tts=_StubTTS(), output=rec2, character_name="elysia")  # type: ignore[arg-type]
     mgr2.reset_for_turn()
     mgr2.stream_sentence("你好")
     deadline = time.monotonic() + 3
