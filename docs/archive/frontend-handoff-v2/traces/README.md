@@ -35,6 +35,15 @@
 | `ws-v2-tool.jsonl` | 契约源 golden | 桌面工具（tool.request→tool_approval→tool_calls 完成） | 4 |
 | `ws-v2-voice.jsonl` | 契约源 golden | 实时语音（started→partial→turn→ack→audio→ended） | 7 |
 | `ws-v2-rejected.jsonl` | 契约源 golden | 7 负面 rejected ACK（CONTRACT_VALIDATION/SESSION_NOT_FOUND/ATTACHMENT_NOT_FOUND/QUEUE_FULL/STORAGE_UNAVAILABLE/RATE_LIMITED/IN_PROGRESS，Task 6） | 7 |
+| `ws-v2-recording.jsonl` | 契约源 golden | 普通录音（stop→voice.transcript 字幕演进 ×2，commit 前待确认，阶段 4） | 2 |
+| `ws-v2-dictation.jsonl` | 契约源 golden | 听写（partial 演进→final 成功 + partial→cancelled 取消，零消息副作用，阶段 4） | 5 |
+| `ws-v2-audio.jsonl` | 契约源 golden | TTS 播放控制（audio_start→chunk→end 完成 + audio_start→chunk→audio_cancelled 取消，stream_id/seq 稳定，阶段 4） | 7 |
+| `ws-v2-service.jsonl` | 契约源 golden | 服务切换结果（switch_model/service_mode/set_tts_voice 成功+失败，键形状对齐模型注释，阶段 4） | 6 |
+| `rest-providers.jsonl` | 契约源 golden | GET /api/providers 响应（llm/stt/tts/custom/unconfigured，ProvidersResponse，阶段 4） | 1 |
+| `rest-provider-test.jsonl` | 契约源 golden | POST /api/providers/test 响应（成功+失败，ProviderTestResult，阶段 4） | 2 |
+| `rest-tts-voices.jsonl` | 契约源 golden | GET /api/tts/voices 响应（正常+未启用，TtsVoicesResponse，阶段 4） | 2 |
+| `rest-tts-preview.jsonl` | 契约源 golden | POST /api/tts/preview 响应（成功+失败，TtsPreviewResult，阶段 4） | 2 |
+| `rest-envelopes.jsonl` | 契约源 golden | 通用成功/失败信封（ApiOk/ApiFail/ProtocolError 三模型，行→模型按 ok/code 判别，阶段 4） | 3 |
 | `ws-chat.jsonl` | 历史真实 | v1 完整聊天 | 16 |
 | `ws-cancel.jsonl` | 历史真实 | v1 取消 | 15 |
 | `ws-tool-approval.jsonl` | 历史真实 | v1 工具审批 | 24 |
@@ -45,7 +54,7 @@
 ## 再生成 / 漂移检测
 
 ```bash
-python scripts/gen_contract_frames.py          # 重写 8 个 golden frames
+python scripts/gen_contract_frames.py          # 重写 17 个 golden frames
 python scripts/gen_contract_frames.py --check  # 漂移检测（CI，make check-types）
 ```
 
@@ -54,3 +63,5 @@ python scripts/gen_contract_frames.py --check  # 漂移检测（CI，make check-
 - 全部内容为测试占位文本/测试 ID（`msg_/gen_/seg_/call_/vs_/req_` 前缀），
   session_id="default" 或隔离测试会话，无真实聊天正文、密钥、Token 或个人路径。
 - golden frames 无网络、不连 Mongo，纯契约模型构造（确定性）。
+- 阶段 4 REST/WS 样例含成功+失败正反例；`rest-envelopes` 混合 ApiOk/ApiFail/ProtocolError
+  三模型，行→模型按 `ok`/`code` 判别。

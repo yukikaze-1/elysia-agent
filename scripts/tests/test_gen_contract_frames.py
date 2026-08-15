@@ -58,7 +58,7 @@ def test_all_generation_frames_have_conversation_id():
     """所有 golden 的 generation.* 都携带非空实际会话，含 tool_calls 终态。"""
     for name in _ARTIFACTS:
         for frame in _frames(name):
-            if frame["type"].startswith("generation."):
+            if frame.get("type", "").startswith("generation."):
                 assert frame.get("conversationId"), \
                     f"{name} 的 {frame['type']} 缺 conversationId: {frame}"
 
@@ -92,3 +92,116 @@ def test_cancel_and_fail_error_semantics():
                   if f["type"] == "generation.failed")
     assert failed["code"] == "GENERATION_PROVIDER_UNAVAILABLE"
     assert failed["retryable"] is True
+
+
+_MISSING_FRAMES = {
+    "voice.transcript", "dictation.partial", "dictation.final", "dictation.cancelled",
+    "audio", "audio_cancelled", "switch_model_result", "service_mode_result",
+    "set_tts_voice_result",
+}
+
+
+def test_stage4_frames_present_in_goldens():
+    """9 类阶段4缺帧必须在 golden 中至少出现一次（BE-S4-INT-P0-02）。
+
+    仅统计带 `type` 判别键的 WS ServerMessage 帧——REST 样例文件（rest-*.jsonl）
+    是无判别键的裸 wire 响应对象，不计入。
+    """
+    present: set[str] = set()
+    for name in _ARTIFACTS:
+        for frame in _frames(name):
+            if "type" in frame:
+                present.add(frame["type"])
+    missing = _MISSING_FRAMES - present
+    assert not missing, f"golden 缺帧: {sorted(missing)}"
+
+
+def test_stage4_ws_frames_parse_as_server_message():
+    """每个阶段4 WS 帧可被 ServerMessage 判别联合解析（spec §4.3 P2）。
+
+    ServerMessage 是 Annotated[Union[...]] 类型别名，无 model_validate——
+    用 TypeAdapter(ServerMessage).validate_python(wire_dict)（对齐既有
+    frontend_contract/tests/test_batch5_contract.py 的 pydantic 等价机制与
+    ws_handler.py:1023 同法）。
+    """
+    from pydantic import TypeAdapter
+    from frontend_contract.ws_message import ServerMessage
+    adapter = TypeAdapter(ServerMessage)
+    for name in ("ws-v2-recording.jsonl", "ws-v2-dictation.jsonl",
+                 "ws-v2-audio.jsonl", "ws-v2-service.jsonl"):
+        for line in _frames(name):
+            parsed = adapter.validate_python(line)
+            assert parsed.type == line["type"], f"{name} {line['type']} 解析不一致"
+
+
+def test_stage4_rest_frames_parse_as_named_models():
+    """阶段4 REST 样例按文档化映射解析（spec §4.3 P3）。"""
+    from frontend_contract import rest
+    mapping = {
+        "rest-providers.jsonl": rest.ProvidersResponse,
+        "rest-provider-test.jsonl": rest.ProviderTestResult,
+        "rest-tts-voices.jsonl": rest.TtsVoicesResponse,
+        "rest-tts-preview.jsonl": rest.TtsPreviewResult,
+        "rest-envelopes.jsonl": None,  # 混合 3 模型，逐行按 ok/code 判别（下方 P3b）
+    }
+    for name, model in mapping.items():
+        if model is None:
+            continue
+        for line in _frames(name):
+            parsed = model.model_validate(line)
+            assert parsed is not None
+
+
+def test_stage4_envelopes_parse():
+    """rest-envelopes 行按 ok/code 判别：ApiOk(ok=true) / ApiFail(ok=false) / ProtocolError(code)。"""
+    from frontend_contract import rest
+    for line in _frames("rest-envelopes.jsonl"):
+        if line.get("code"):
+            parsed = rest.ProtocolError.model_validate(line)
+            assert parsed.error == parsed.message
+        elif line.get("ok") is True:
+            rest.ApiOk.model_validate(line)
+        else:
+            rest.ApiFail.model_validate(line)
+
+
+def test_stage4_result_frames_key_shapes():
+    """结果帧正反例键存在性对齐模型注释/TS 生成（spec §4.3 P4）。"""
+    svc_frames = _frames("ws-v2-service.jsonl")
+    ok_sw = [f for f in svc_frames if f["type"] == "switch_model_result" and f["ok"]][0]
+    assert ok_sw["ok"] is True and "error" not in ok_sw          # 成功无 error 键
+    fail_sw = [f for f in svc_frames
+               if f["type"] == "switch_model_result" and f["ok"] is False][0]
+    assert "error" in fail_sw
+    ok_mode = [f for f in _frames("ws-v2-service.jsonl")
+               if f["type"] == "service_mode_result" and f["ok"] is True][0]
+    assert ok_mode["error"] is None                              # 成功 error 显式 null（TsNull）
+    ok_voice = [f for f in _frames("ws-v2-service.jsonl")
+                if f["type"] == "set_tts_voice_result" and f["ok"] is True][0]
+    assert ok_voice.get("voice") and "error" not in ok_voice
+    # REST 成功/失败
+    test_ok = [f for f in _frames("rest-provider-test.jsonl") if f["ok"]][0]
+    assert "error" not in test_ok and test_ok["latency_ms"] == 12
+    preview_ok = [f for f in _frames("rest-tts-preview.jsonl") if f["ok"]][0]
+    assert preview_ok.get("mime") and preview_ok.get("audio_base64")
+
+
+def test_stage4_audio_frames_stable_seq():
+    """audio 帧 stream_id/seq/is_final 稳定、seq 从 0 递增、data 固定短值（spec §4.3 P5）。"""
+    frames = _frames("ws-v2-audio.jsonl")
+    audios = [f for f in frames if f["type"] == "audio"]
+    assert [f["seq"] for f in audios] == [0, 1, 0]
+    assert all(f["stream_id"] in (2, 3) for f in audios)
+    assert all(len(f["data"]) <= 64 for f in audios)
+    assert audios[1]["is_final"] is True and audios[0]["is_final"] is False
+    assert all(f["is_final"] is False for f in audios if f["seq"] == 0)
+
+
+def test_stage4_no_sensitive_data():
+    """样例无真实音频/转写/密钥/绝对路径（spec §4.3 P6 + 验收 §7.5）。"""
+    for name in ("ws-v2-recording.jsonl", "ws-v2-dictation.jsonl", "ws-v2-audio.jsonl",
+                 "ws-v2-service.jsonl", "rest-providers.jsonl", "rest-provider-test.jsonl",
+                 "rest-tts-voices.jsonl", "rest-tts-preview.jsonl", "rest-envelopes.jsonl"):
+        blob = _ARTIFACTS[name]
+        for banned in ("sk-", "Bearer ", "/home/", "BEGIN ", "http://127.0.0.1"):
+            assert banned not in blob, f"{name} 含敏感内容 {banned!r}"

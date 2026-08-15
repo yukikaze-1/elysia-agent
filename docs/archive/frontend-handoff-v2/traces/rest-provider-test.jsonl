@@ -1,0 +1,2 @@
+{"ok": true, "latency_ms": 12}
+{"ok": false, "error": "无法连接 SenseVoice 服务 (http://localhost:20042): connection refused"}

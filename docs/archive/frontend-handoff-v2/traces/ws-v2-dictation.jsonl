@@ -1,0 +1,5 @@
+{"type": "dictation.partial", "text": "你"}
+{"type": "dictation.partial", "text": "你好"}
+{"type": "dictation.final", "clientRequestId": "req_frame_dict1", "text": "你好"}
+{"type": "dictation.partial", "text": "取消"}
+{"type": "dictation.cancelled", "clientRequestId": "req_frame_dict2"}

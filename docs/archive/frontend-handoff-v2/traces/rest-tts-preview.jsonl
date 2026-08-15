@@ -1,0 +1,2 @@
+{"ok": true, "mime": "audio/wav", "duration_ms": 1200, "audio_base64": "UklGRgQAAABXQVZFZm10IA=="}
+{"ok": false, "error": "voice 不存在"}

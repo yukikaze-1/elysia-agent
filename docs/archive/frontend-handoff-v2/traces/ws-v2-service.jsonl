@@ -1,0 +1,6 @@
+{"type": "switch_model_result", "service": "llm", "model": "deepseek/deepseek-v4-flash", "ok": true}
+{"type": "switch_model_result", "service": "stt", "model": "sensevoice/sense-voice", "ok": false, "error": "模型不可用"}
+{"type": "service_mode_result", "service": "stt", "enabled": true, "ok": true, "error": null}
+{"type": "service_mode_result", "service": "tts", "enabled": false, "ok": false, "error": "后端不可用"}
+{"type": "set_tts_voice_result", "ok": true, "voice": "elysia_test_001"}
+{"type": "set_tts_voice_result", "ok": false, "error": "声音不存在"}

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""契约层 golden frames 生成（Task 4，9B-1）。
+"""契约层 golden frames 生成（Task 4，9B-1；阶段 4 P0-02 扩 9 类）。
 
 无网络：构造 `ServerMessage` 契约模型 → `wire_dict()` → 标准 JSONL（每个非空行
 都是 JSON 对象）写
-`docs/archive/frontend-handoff-v2/traces/ws-v2-{handshake,session,chat,cancel,fail,tool,voice,rejected}.jsonl`
-（前 7 个 accepted 场景 + `rejected` 含 7 个负面 rejected ACK 帧）。
+`docs/archive/frontend-handoff-v2/traces/ws-v2-{handshake,session,chat,cancel,fail,tool,voice,rejected,recording,dictation,audio,service}.jsonl`
+（8 个既有 accepted/负面 rejected 场景 + 阶段 4 四 WS 流程）与
+`rest-{providers,provider-test,tts-voices,tts-preview,envelopes}.jsonl`（阶段 4 REST 契约样例，
+rest-envelopes 行→模型按 ok/code 判别，见 traces/README）。
 
 帧序列为固定测试数据（确定性——漂移门禁要求字节稳定，不取 datetime.now），
 由 frontend_contract 契约源生成，**非事实源**：真实捕获已停用
@@ -12,7 +14,7 @@
 真实 wire 形状/事件序列以 `frontend_contract/` 契约 + `docs/electron-backend-protocol-v2.md` 为准。
 
 模式：
-  python scripts/gen_contract_frames.py         # 写 8 个 frames 到 traces 归档
+  python scripts/gen_contract_frames.py         # 写 17 个 frames 到 traces 归档
   python scripts/gen_contract_frames.py --check # 生成到 tempfile 后 git diff 比对（漂移返回 1）
 """
 import json
@@ -267,6 +269,107 @@ def _voice() -> list[str]:
     return _f(started, partial, turn, ack, audio_start, audio_end, ended)
 
 
+_RECORDING_TEXT = "你好，这是普通录音字幕。"
+
+
+def _recording() -> list[str]:
+    """普通录音：stop 后待确认字幕（voice.transcript ×2 字幕演进，BE-S4-INT-P0-02）。"""
+    return _f(
+        wm.VoiceTranscriptMessage(recordingId="rec_frame_1", text=_RECORDING_TEXT, emotion="开心"),
+        wm.VoiceTranscriptMessage(recordingId="rec_frame_1", text=_RECORDING_TEXT + "（已补充）"),
+    )
+
+
+def _dictation() -> list[str]:
+    """听写：partial 演进 → final（成功）+ partial → cancelled（取消），零消息副作用。"""
+    return _f(
+        wm.DictationPartialMessage(text="你"),
+        wm.DictationPartialMessage(text="你好"),
+        wm.DictationFinalMessage(clientRequestId="req_frame_dict1", text="你好"),
+        wm.DictationPartialMessage(text="取消"),
+        wm.DictationCancelledMessage(clientRequestId="req_frame_dict2"),
+    )
+
+
+# 固定短占位音频 base64（16 字节合成 PCM，非真实音频——spec §4.2 要点 1）
+_AUDIO_CHUNK_B64 = "UklGRgQAAABXQVZFZm10IA=="
+
+
+def _audio() -> list[str]:
+    """TTS 播放控制：完成序列 + 取消序列（stream_id/seq 稳定，seq 从 0 递增）。"""
+    return _f(
+        wm.AudioStartMessage(stream_id=2, format=wm.AudioFormat.WAV, sampleRate=24000, durationMs=1600),
+        wm.AudioMessage(stream_id=2, seq=0, data=_AUDIO_CHUNK_B64, is_final=False),
+        wm.AudioMessage(stream_id=2, seq=1, data=_AUDIO_CHUNK_B64, is_final=True),
+        wm.AudioEndMessage(stream_id=2, format=wm.AudioFormat.WAV),
+        wm.AudioStartMessage(stream_id=3, format=wm.AudioFormat.WAV, sampleRate=24000, durationMs=800),
+        wm.AudioMessage(stream_id=3, seq=0, data=_AUDIO_CHUNK_B64, is_final=False),
+        wm.AudioCancelledMessage(stream_id=3),
+    )
+
+
+def _service() -> list[str]:
+    """服务切换结果：模型切换/服务模式/TTS 声音 成功+失败（键形状对齐模型注释）。"""
+    return _f(
+        wm.SwitchModelResultMessage(service="llm", model="deepseek/deepseek-v4-flash", ok=True),
+        wm.SwitchModelResultMessage(service="stt", model="sensevoice/sense-voice", ok=False, error="模型不可用"),
+        wm.ServiceModeResultMessage(service=wm.ServiceName.STT, enabled=True, ok=True, error=None),
+        wm.ServiceModeResultMessage(service=wm.ServiceName.TTS, enabled=False, ok=False, error="后端不可用"),
+        wm.SetTtsVoiceResultMessage(ok=True, voice="elysia_test_001"),
+        wm.SetTtsVoiceResultMessage(ok=False, error="声音不存在"),
+    )
+
+
+def _rest_profile() -> dict[str, list[str]]:
+    """Profile REST 契约样例（两文件：providers + provider-test）。"""
+    providers = rest.ProvidersResponse(
+        llm={"deepseek": rest.ProviderEntry(
+            models=["deepseek-v4-flash", "deepseek-v4-pro"], credentialConfigured=True)},
+        stt={"sensevoice": rest.ProviderEntry(models=["sense-voice"])},
+        tts={"gpt-sovits": rest.ProviderEntry(models=["default"])},
+        custom={"llm": [rest.CustomProvider(
+            name="myllm", base_url="http://myllm.local", api_key_env="MY_LLM_KEY",
+            models=["m1"], credentialConfigured=True)]},
+        unconfigured={"stt": [rest.UnconfiguredEntry(
+            name="openai", env_vars=["OPENAI_STT_URL", "OPENAI_API_KEY"])]},
+    )
+    test_ok = rest.ProviderTestResult(ok=True, latency_ms=12)
+    test_fail = rest.ProviderTestResult(
+        ok=False, error="无法连接 SenseVoice 服务 (http://localhost:20042): connection refused")
+    return {
+        "rest-providers.jsonl": _f(providers),
+        "rest-provider-test.jsonl": _f(test_ok, test_fail),
+    }
+
+
+def _rest_tts() -> dict[str, list[str]]:
+    """TTS REST 契约样例（两文件：voices + preview）。"""
+    voices_ok = rest.TtsVoicesResponse(
+        voices=[rest.TtsVoiceEntry(id="elysia_test_001", name="Elysia 测试音")],
+        current="elysia_test_001", source="api")
+    voices_off = rest.TtsVoicesResponse(voices=[], source="static", error="TTS 未启用")
+    preview_ok = rest.TtsPreviewResult(
+        ok=True, mime="audio/wav", duration_ms=1200, audio_base64=_AUDIO_CHUNK_B64)
+    preview_fail = rest.TtsPreviewResult(ok=False, error="voice 不存在")
+    return {
+        "rest-tts-voices.jsonl": _f(voices_ok, voices_off),
+        "rest-tts-preview.jsonl": _f(preview_ok, preview_fail),
+    }
+
+
+def _rest_envelopes() -> dict[str, list[str]]:
+    """通用成功/失败信封（rest-envelopes.jsonl，行→模型映射见 README 表 + 生成器 docstring）。"""
+    return {
+        "rest-envelopes.jsonl": _f(
+            rest.ApiOk(ok=True, data={"saved": True}),
+            rest.ApiFail(ok=False, error="删除失败，请稍后重试"),
+            rest.ProtocolError(
+                code="SSRF_BLOCKED", message="地址不被允许", retryable=False,
+                requestId="req_frame_ssrf", error="地址不被允许", details={}),
+        ),
+    }
+
+
 def _rejected_acks() -> list[wm.RejectedUserAckMessage]:
     """7 个负面 rejected ACK 帧（Task 6，BE-P1-04：handler 产生的每一种 rejected ACK 都有 golden 基线）。
 
@@ -328,6 +431,13 @@ _ARTIFACTS = {
     "ws-v2-tool.jsonl": "\n".join(_tool()) + "\n",
     "ws-v2-voice.jsonl": "\n".join(_voice()) + "\n",
     "ws-v2-rejected.jsonl": "\n".join(_f(*_rejected_acks())) + "\n",
+    "ws-v2-recording.jsonl": "\n".join(_recording()) + "\n",
+    "ws-v2-dictation.jsonl": "\n".join(_dictation()) + "\n",
+    "ws-v2-audio.jsonl": "\n".join(_audio()) + "\n",
+    "ws-v2-service.jsonl": "\n".join(_service()) + "\n",
+    **{name: "\n".join(frames) + "\n" for name, frames in _rest_profile().items()},
+    **{name: "\n".join(frames) + "\n" for name, frames in _rest_tts().items()},
+    **{name: "\n".join(frames) + "\n" for name, frames in _rest_envelopes().items()},
 }
 
 

@@ -1,0 +1,3 @@
+{"ok": true, "data": {"saved": true}}
+{"ok": false, "error": "删除失败，请稍后重试"}
+{"code": "SSRF_BLOCKED", "message": "地址不被允许", "retryable": false, "requestId": "req_frame_ssrf", "error": "地址不被允许", "details": {}}
