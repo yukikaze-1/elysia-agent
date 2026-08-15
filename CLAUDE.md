@@ -204,7 +204,11 @@ frontend_contract/
 前后端契约唯一类型来源：可执行 Pydantic 模型 → `gen_ts` 生成 `frontend/src/types/contract.generated.ts`
 （TS 只读快照）+ `gen_schema` 生成 `contract.schema.json` + `gen_ts.generate_raw_ts` 生成 `contract.raw.ts`。
 后端发送点构造契约模型 + `wire_dict()` 序列化；`make gen-types` 重新生成、`make check-types` 漂移门禁
-（CI 强制，覆盖 ts/schema/raw_ts + `scripts/gen_contract_frames.py --check` golden frames）。零依赖（仅 pydantic + stdlib），不 import core/ Module/。
+（CI 强制，覆盖 ts/schema/raw_ts + `scripts/gen_contract_frames.py --check` **17 个 golden frames**——含阶段 4
+普通录音/听写/音频播放/服务切换 WS 流程与 Profile/TTS REST 样例）。零依赖（仅 pydantic + stdlib），不 import core/ Module/。
+**阶段 4 确定性 smoke**：`conda run -n Elysia python scripts/stage4_smoke.py`——进程内 `create_app` + 真 agent(fake LLM) +
+STT/TTS 桩，覆盖 Profile/三语音模式/TTS 播放 5 场景（默认 stub 确定性、失败非零退出；`STAGE4_SMOKE_LIVE=1` 才接真实
+provider，不进 CI）；`scripts/tests/test_stage4_smoke.py` 为 slow pytest 包装。
 
 ### Character config (`character/`)
 

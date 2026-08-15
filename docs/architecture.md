@@ -204,6 +204,9 @@ llm = LLMFactory.create("deepseek/deepseek-chat")
 # Registry 使用 Module/_common/registry_helpers 共享函数:
 #   resolve_api_key(env_key, cfg, explicit) → api_key
 #   resolve_base_url(env_key, cfg, explicit) → base_url
+#   （阶段4 P0-01 D1=B：内置 local provider（sensevoice）base_url 解析为空时由 STTFactory
+#    兜底回填 `DEFAULT_BASE_URL` 单源常量——一处修复覆盖启动/切换/听写快照/Profile 测试 4 调用点；
+#    custom 仍必须显式 base_url）
 #   inject_logger(__name__, explicit) → logger
 
 # Registry 注册
