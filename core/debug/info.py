@@ -138,38 +138,27 @@ def _truncate(text: str, n: int = 80) -> str:
     return text if len(text) <= n else text[:n] + "…"
 
 
-async def collect(agent: "Agent") -> DebugInfo:
-    """收集 Agent 实例的所有调试数据。
-
-    Args:
-        agent: 要收集调试数据的 Agent 实例。
-
-    Returns:
-        包含完整调试数据的 DebugInfo 对象。
-    """
-    info = DebugInfo()
-
-    # ---- System ----
+def _collect_system(agent: "Agent", info: DebugInfo) -> None:
+    """收集 System / IdleMonitor 面板数据。"""
     info.fsm_state = agent.status.current_name()
     info.fsm_previous = agent.status.previous_name()
     phase = agent.cognitive._phase  # noqa: SLF001
     info.turn_phase = phase.value if phase else None
     ct = agent.cognitive._current_task  # noqa: SLF001
     info.processing = ct is not None and not ct.done()
-    # 运行时长
     info.uptime_seconds = time.monotonic() - agent.started_at
 
-    # ---- IdleMonitor ----
     im = agent.idle
     info.proactive_enabled = im._character.proactive.enabled  # noqa: SLF001
     info.proactive_interval = im._character.proactive.interval  # noqa: SLF001
     if im._last_interaction:  # noqa: SLF001
         info.last_interaction_ago = time.monotonic() - im._last_interaction  # noqa: SLF001
 
-    # ---- Session ----
+
+async def _collect_session_and_memory(agent: "Agent", info: DebugInfo) -> None:
+    """收集 Session / 长期记忆 / 数据库健康面板数据。"""
     msgs = agent.session.messages_for_client()
     info.session_messages = len(msgs)
-    # archive count — 直调 message_repo
     try:
         info.archive_msg_count = await agent.message_repo.count()
     except Exception:
@@ -185,7 +174,6 @@ async def collect(agent: "Agent") -> DebugInfo:
     ]
     info.character_state_raw = agent.session.character_state.model_dump(mode="json")
 
-    # ---- Long-term memory ----
     info.lt_count = agent.long_term.count
     info.lt_recent = [
         {
@@ -197,27 +185,27 @@ async def collect(agent: "Agent") -> DebugInfo:
         }
         for e in agent.long_term._entries[-5:]  # noqa: SLF001
     ]
-    repo = agent.long_term._repo  # noqa: SLF001
     info.milvus_ok = await agent.memory_repo.health_check()
     info.embedding_ok = agent.long_term._embedding_provider._backend is not None  # noqa: SLF001
     info.mongodb_ok = await agent.session_repo.health_check()
 
-    # ---- Tools ----
+
+def _collect_tools_and_consolidation(agent: "Agent", info: DebugInfo) -> None:
+    """收集 Tools / Consolidation 面板数据。"""
     tm = agent.tool_adapter._manager  # noqa: SLF001
     info.currently_executing = list(tm.executing_now)
     info.tools = tm.plugin_list
     info.tool_history = list(tm.history)[-5:]
 
-    # ---- Consolidation ----
     info.consolidation_history = list(agent.consolidator._history)[-5:]  # noqa: SLF001
 
-    # ---- Character ----
+
+async def _collect_character_and_reflector(agent: "Agent", info: DebugInfo) -> None:
+    """收集 Character / CharacterEngine / Reflector 面板数据。"""
     info.character_name = agent.character.name
     bp = agent.character.base_personality
     info.base_personality_summary = bp[:120] + "..." if len(bp) > 120 else bp
 
-    # ---- CharacterEngine ----
-    # ---- CharacterEngine ----
     pe = agent.character_engine
     info.character_engine_exists = True
     c1 = pe.render_c1()
@@ -227,7 +215,6 @@ async def collect(agent: "Agent") -> DebugInfo:
     info.state_history = [dict(e) for e in pe.state.state_history[-5:]]
     info.last_awareness_time = pe.state.last_awareness_time or 0.0
 
-    # ---- L2/C6 Version History ----
     try:
         info.l2_version_count = 0
         engine = getattr(agent, "character_engine", None)
@@ -247,7 +234,6 @@ async def collect(agent: "Agent") -> DebugInfo:
     except Exception:
         info.c6_version_count = 0
 
-    # ---- Character Reflector ----
     ref = agent.character_reflector
     info.reflector_exists = True
     info.reflector_buffer_size = ref.buffer_size
@@ -262,7 +248,9 @@ async def collect(agent: "Agent") -> DebugInfo:
     history = pe.state.self_perception_history
     info.self_perception_history = list(history[-5:])
 
-    # ---- Connections ----
+
+def _collect_runtime_stats(agent: "Agent", info: DebugInfo) -> None:
+    """收集 Connections/LLM/Latency/Scheduler/MemoryReflector/Token/Recorder 面板数据。"""
     info.tts_ok = agent.tts is not None
     info.stt_ok = agent.stt_ok
     info.ws_clients = sum(
@@ -270,10 +258,8 @@ async def collect(agent: "Agent") -> DebugInfo:
         if type(ch).__name__ == "WebSocketChannel"
     )
 
-    # ---- LLM ----
     info.llm_model = agent.llm.model or "?"
 
-    # ---- Latency ----
     info.timing_history = list(agent.cognitive._timing_history)  # noqa: SLF001
     if info.timing_history:
         totals = sorted(h["total_ms"] for h in info.timing_history)
@@ -287,13 +273,11 @@ async def collect(agent: "Agent") -> DebugInfo:
             "last_ms": totals[-1],
         }
 
-    # ---- Scheduler ----
     try:
         sched = agent.scheduler
         info.scheduler_pending = sched.pending_count
         info.scheduler_running = sched.running_count
         info.scheduler_total = sched.total_count
-        # 找第一个活跃的工具子任务展示 task tree
         for t in sched.all_tasks():
             if t.type.value == "tool_call" and t.status.value in ("pending", "dispatched"):
                 info.task_tree = sched.get_tree(t.id)
@@ -301,7 +285,6 @@ async def collect(agent: "Agent") -> DebugInfo:
     except Exception:
         pass
 
-    # ---- MemoryReflector ----
     mr = agent.memory_reflector
     info.mreflector_exists = True
     info.mreflector_round_count = mr._round_count  # noqa: SLF001
@@ -311,18 +294,15 @@ async def collect(agent: "Agent") -> DebugInfo:
     info.mreflector_locked = mr._lock.locked()  # noqa: SLF001
     info.mreflector_last_summary = dict(mr._last_summary) if mr._last_summary else {}  # noqa: SLF001
 
-    # ---- Consolidator buffer ----
     cons = agent.consolidator
     info.consolidator_buffer_size = len(cons._buffer)  # noqa: SLF001
     info.consolidator_threshold = cons._threshold  # noqa: SLF001
 
-    # ---- Mood (L4 Emotion) ----
     try:
         info.mood = agent.session.character_state.mood
     except Exception:
         pass
 
-    # ---- Process Memory ----
     proc = psutil.Process(os.getpid())
     mem = proc.memory_info()
     info.memory = {
@@ -332,7 +312,6 @@ async def collect(agent: "Agent") -> DebugInfo:
         "num_threads": proc.num_threads(),
     }
 
-    # ---- Token 统计 ----
     tracker = agent.token_tracker
     if tracker is not None:
         info.token_stats = {
@@ -343,21 +322,34 @@ async def collect(agent: "Agent") -> DebugInfo:
                 for u in tracker.current_turn_usages[-10:]
             ],
         }
-        # Pending 文件状态
         token_pending = str(ProjectPath.TOKEN_PENDING.resolve())
         if os.path.exists(token_pending):
             with open(token_pending) as f:
                 info.pending_token_count = sum(1 for _ in f)
         info.pending_session_exists = os.path.exists(str(ProjectPath.SESSION_PENDING_CHECK.resolve()))
 
-    # ---- Prompt 记录 ----
     recorder = agent.prompt_recorder
     if recorder is not None:
         info.prompt_summary = recorder.list_summaries()
 
-    # ---- Response 记录 ----
     resp_recorder = agent.response_recorder
     if resp_recorder is not None:
         info.response_summary = resp_recorder.list_summaries()
 
+
+async def collect(agent: "Agent") -> DebugInfo:
+    """收集 Agent 实例的所有调试数据。
+
+    Args:
+        agent: 要收集调试数据的 Agent 实例。
+
+    Returns:
+        包含完整调试数据的 DebugInfo 对象。
+    """
+    info = DebugInfo()
+    _collect_system(agent, info)
+    await _collect_session_and_memory(agent, info)
+    _collect_tools_and_consolidation(agent, info)
+    await _collect_character_and_reflector(agent, info)
+    _collect_runtime_stats(agent, info)
     return info

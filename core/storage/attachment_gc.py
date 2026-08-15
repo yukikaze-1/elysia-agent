@@ -103,6 +103,191 @@ def _unregister_matching(kind: str, stored_name: str) -> None:
             attachment_resolver.unregister(aid)
 
 
+async def _run_rule1_deleted(
+    repo: Any,
+    deleted: list[dict],
+    deleted_cutoff: datetime,
+    dry_run: bool,
+    stats: dict[str, Any],
+) -> None:
+    """规则 1：软删超保留期 → 隔离文件 + 删记录。"""
+    for doc in deleted:
+        aid = doc.get("attachment_id")
+        kind = doc.get("kind")
+        deleted_at = doc.get("deleted_at")
+        if not aid or not deleted_at:
+            continue
+        try:
+            if _parse_iso(deleted_at) >= deleted_cutoff:
+                continue  # 未超保留期——保留
+        except ValueError:
+            continue  # 无法解析的时间戳不处理
+        path = _file_path(doc)
+        if path is not None and path.is_file():
+            if dry_run:
+                stats["deleted_files"] += 1
+                continue
+            try:
+                dest = _quarantine_dest(doc.get("kind") or "", path.name)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                path.replace(dest)
+                logger.info("附件 GC：隔离软删超期文件 aid=%s kind=%s",
+                            aid, kind)
+            except OSError:
+                logger.warning("附件 GC：隔离文件失败 aid=%s，保留记录待重试", aid)
+                continue   # 不删记录，下次 GC 重试
+        await repo.delete_record(aid)
+        attachment_resolver.unregister(aid)
+        stats["deleted_files"] += 1
+
+
+async def _run_rule2_missing_files(
+    repo: Any,
+    active: list[dict],
+    soft_deleted_ids: set[str],
+    dry_run: bool,
+    stats: dict[str, Any],
+) -> None:
+    """规则 2：active 记录磁盘文件缺失 → 条件软删 + warning。"""
+    for doc in active:
+        aid = doc.get("attachment_id")
+        if not aid or aid in soft_deleted_ids:
+            continue
+        path = _file_path(doc)
+        if path is None or path.is_file():
+            continue  # 文件在盘——正常
+        if dry_run:
+            stats["soft_deleted"] += 1
+            continue
+        # review 复核 #7：条件软删（ref_count==0 且 active 原子判定）——查询与
+        # 删除之间 add_ref 竞入则 no-op，防「消息已 accepted 但附件被标记删除」
+        if not await repo.soft_delete_if_unreferenced(aid):
+            continue  # 竞态内已被引用/已删——不计数不注销
+        attachment_resolver.unregister(aid)
+        soft_deleted_ids.add(aid)
+        stats["soft_deleted"] += 1
+        logger.warning("附件 GC：active 记录磁盘文件缺失，软删 aid=%s kind=%s",
+                       aid, doc.get("kind"))
+
+
+async def _run_rule3_unreferenced(
+    repo: Any,
+    unref_candidates: list[dict],
+    soft_deleted_ids: set[str],
+    unreferenced_retention_days: int,
+    dry_run: bool,
+    stats: dict[str, Any],
+) -> None:
+    """规则 3：未关联（ref_count=0）超保留期 → 条件软删。"""
+    for doc in unref_candidates:
+        aid = doc.get("attachment_id")
+        if not aid or aid in soft_deleted_ids:
+            continue
+        if doc.get("status") != STATUS_ACTIVE:
+            continue  # 仅处理仍 active 的未关联记录
+        if dry_run:
+            stats["soft_deleted"] += 1
+            continue
+        # review 复核 #7：条件软删（ref_count==0 且 active 原子判定）——查询与
+        # 删除之间 add_ref 竞入则 no-op，防「消息已 accepted 但附件被标记删除」
+        if not await repo.soft_delete_if_unreferenced(aid):
+            continue  # 竞态内已被引用/已删——不计数不注销
+        attachment_resolver.unregister(aid)
+        soft_deleted_ids.add(aid)
+        stats["soft_deleted"] += 1
+        logger.info("附件 GC：未关联超 %s 天软删 %s", unreferenced_retention_days, aid)
+
+
+async def _run_rule4_orphans(
+    repo: Any,
+    active: list[dict],
+    deleted: list[dict],
+    dry_run: bool,
+    stats: dict[str, Any],
+) -> bool:
+    """规则 4：磁盘孤儿（四 kind 目录有文件但无记录）→ 复核后隔离。
+
+    Returns:
+        True=完成；False=复核时 Mongo 离线，已置 skipped 并中止。
+    """
+    known: set[tuple[str, str]] = {
+        (str(d.get("kind")), str(d.get("stored_name")))
+        for d in [*active, *deleted]
+        if d.get("kind") and d.get("stored_name")
+    }
+    for kind in KINDS:
+        directory = _uploads_dir(kind)
+        if not directory.is_dir():
+            continue
+        for f in directory.iterdir():
+            if not f.is_file():
+                continue
+            if (kind, f.name) in known:
+                continue  # 有记录对应——非孤儿
+            # 逐文件复核数据库：闭合扫描期间新建引用/记录窗口（P0-01）。
+            # 复核失败 → fail-closed 中止孤儿清理，不冒险隔离。
+            try:
+                existing = await repo.find_by_stored_name(kind, f.name)
+            except StorageUnavailableError:
+                logger.warning("附件 GC 中断：复核 DB 时离线，中止孤儿清理")
+                stats["skipped"] = True
+                return False
+            if existing is not None:
+                continue  # 扫描期间刚被登记——不是孤儿，保留
+            if dry_run:
+                stats["orphans_removed"] += 1
+                continue
+            try:
+                dest = _quarantine_dest(kind, f.name)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                f.replace(dest)
+                stats["orphans_removed"] += 1
+                _unregister_matching(kind, f.name)
+                logger.info("附件 GC：隔离磁盘孤儿文件 kind=%s name=%s",
+                            kind, f.name)
+            except OSError:
+                # 不带 exc_info：OSError 消息含绝对路径，会重新泄漏（review Minor）
+                logger.warning("附件 GC：隔离孤儿文件失败 kind=%s name=%s",
+                               kind, f.name)
+    return True
+
+
+def _run_rule5_quarantine(
+    now: datetime,
+    quarantine_retention_hours: int,
+    dry_run: bool,
+    stats: dict[str, Any],
+) -> None:
+    """规则 5：quarantine 区内超保留期文件 → 物理删除（两阶段第二步）。"""
+    qroot = _quarantine_root()
+    if not qroot.is_dir():
+        return
+    q_cutoff = now - timedelta(hours=quarantine_retention_hours)
+    for kind_dir in qroot.iterdir():
+        if not kind_dir.is_dir():
+            continue
+        for f in kind_dir.iterdir():
+            if not f.is_file():
+                continue
+            try:
+                mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+            if mtime >= q_cutoff:
+                continue  # 仍在保留期内
+            if dry_run:
+                stats["quarantine_purged"] += 1
+                continue
+            try:
+                f.unlink()
+                stats["quarantine_purged"] += 1
+                logger.info("附件 GC：物理删除超期 quarantine 文件 kind=%s name=%s",
+                            kind_dir.name, f.name)
+            except OSError:
+                logger.warning("附件 GC：删除 quarantine 文件失败 kind=%s name=%s",
+                               kind_dir.name, f.name)
+
+
 async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
                             unreferenced_retention_days: int = 7,
                             quarantine_retention_hours: int = 168,
@@ -147,148 +332,18 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
         return stats
 
     try:
-        # ---- 规则 1：软删超保留期 → 隔离文件 + 删记录 ----
-        for doc in deleted:
-            aid = doc.get("attachment_id")
-            kind = doc.get("kind")
-            deleted_at = doc.get("deleted_at")
-            if not aid or not deleted_at:
-                continue
-            try:
-                if _parse_iso(deleted_at) >= deleted_cutoff:
-                    continue  # 未超保留期——保留
-            except ValueError:
-                continue  # 无法解析的时间戳不处理
-            path = _file_path(doc)
-            if path is not None and path.is_file():
-                if dry_run:
-                    stats["deleted_files"] += 1
-                    continue
-                try:
-                    dest = _quarantine_dest(doc.get("kind") or "", path.name)
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    path.replace(dest)
-                    logger.info("附件 GC：隔离软删超期文件 aid=%s kind=%s",
-                                aid, kind)
-                except OSError:
-                    logger.warning("附件 GC：隔离文件失败 aid=%s，保留记录待重试", aid)
-                    continue   # 不删记录，下次 GC 重试
-            await repo.delete_record(aid)
-            attachment_resolver.unregister(aid)
-            stats["deleted_files"] += 1
+        await _run_rule1_deleted(repo, deleted, deleted_cutoff, dry_run, stats)
 
         # 已软删记录集合——避免规则 2/3 重复计数同一条
         soft_deleted_ids: set[str] = set()
-
-        # ---- 规则 2：active 记录磁盘文件缺失 → 软删 + warning ----
-        for doc in active:
-            aid = doc.get("attachment_id")
-            if not aid or aid in soft_deleted_ids:
-                continue
-            path = _file_path(doc)
-            if path is None or path.is_file():
-                continue  # 文件在盘——正常
-            if dry_run:
-                stats["soft_deleted"] += 1
-                continue
-            # review 复核 #7：条件软删（ref_count==0 且 active 原子判定）——查询与
-            # 删除之间 add_ref 竞入则 no-op，防「消息已 accepted 但附件被标记删除」
-            if not await repo.soft_delete_if_unreferenced(aid):
-                continue  # 竞态内已被引用/已删——不计数不注销
-            attachment_resolver.unregister(aid)
-            soft_deleted_ids.add(aid)
-            stats["soft_deleted"] += 1
-            logger.warning("附件 GC：active 记录磁盘文件缺失，软删 aid=%s kind=%s",
-                           aid, doc.get("kind"))
-
-        # ---- 规则 3：未关联（ref_count=0）超保留期 → 软删 ----
-        for doc in unref_candidates:
-            aid = doc.get("attachment_id")
-            if not aid or aid in soft_deleted_ids:
-                continue
-            if doc.get("status") != STATUS_ACTIVE:
-                continue  # 仅处理仍 active 的未关联记录
-            if dry_run:
-                stats["soft_deleted"] += 1
-                continue
-            # review 复核 #7：条件软删（ref_count==0 且 active 原子判定）——查询与
-            # 删除之间 add_ref 竞入则 no-op，防「消息已 accepted 但附件被标记删除」
-            if not await repo.soft_delete_if_unreferenced(aid):
-                continue  # 竞态内已被引用/已删——不计数不注销
-            attachment_resolver.unregister(aid)
-            soft_deleted_ids.add(aid)
-            stats["soft_deleted"] += 1
-            logger.info("附件 GC：未关联超 %s 天软删 %s", unreferenced_retention_days, aid)
-
-        # ---- 规则 4：磁盘孤儿（四 kind 目录有文件但无记录）→ 复核后隔离 ----
-        known: set[tuple[str, str]] = {
-            (d.get("kind"), d.get("stored_name"))
-            for d in [*active, *deleted]
-            if d.get("kind") and d.get("stored_name")
-        }
-        for kind in KINDS:
-            directory = _uploads_dir(kind)
-            if not directory.is_dir():
-                continue
-            for f in directory.iterdir():
-                if not f.is_file():
-                    continue
-                if (kind, f.name) in known:
-                    continue  # 有记录对应——非孤儿
-                # 逐文件复核数据库：闭合扫描期间新建引用/记录窗口（P0-01）。
-                # 复核失败 → fail-closed 中止孤儿清理，不冒险隔离。
-                try:
-                    existing = await repo.find_by_stored_name(kind, f.name)
-                except StorageUnavailableError:
-                    logger.warning("附件 GC 中断：复核 DB 时离线，中止孤儿清理")
-                    stats["skipped"] = True
-                    return stats
-                if existing is not None:
-                    continue  # 扫描期间刚被登记——不是孤儿，保留
-                if dry_run:
-                    stats["orphans_removed"] += 1
-                    continue
-                try:
-                    dest = _quarantine_dest(kind, f.name)
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    f.replace(dest)
-                    stats["orphans_removed"] += 1
-                    _unregister_matching(kind, f.name)
-                    logger.info("附件 GC：隔离磁盘孤儿文件 kind=%s name=%s",
-                                kind, f.name)
-                except OSError:
-                    # 不带 exc_info：OSError 消息含绝对路径，会重新泄漏（review Minor）
-                    logger.warning("附件 GC：隔离孤儿文件失败 kind=%s name=%s",
-                                   kind, f.name)
-
-        # ---- 规则 5：quarantine 区内超保留期文件 → 物理删除（两阶段第二步） ----
-        qroot = _quarantine_root()
-        if qroot.is_dir():
-            q_cutoff = now - timedelta(hours=quarantine_retention_hours)
-            for kind_dir in qroot.iterdir():
-                if not kind_dir.is_dir():
-                    continue
-                for f in kind_dir.iterdir():
-                    if not f.is_file():
-                        continue
-                    try:
-                        mtime = datetime.fromtimestamp(
-                            f.stat().st_mtime, tz=timezone.utc)
-                    except OSError:
-                        continue
-                    if mtime >= q_cutoff:
-                        continue  # 仍在保留期内
-                    if dry_run:
-                        stats["quarantine_purged"] += 1
-                        continue
-                    try:
-                        f.unlink()
-                        stats["quarantine_purged"] += 1
-                        logger.info("附件 GC：物理删除超期 quarantine 文件 kind=%s name=%s",
-                                    kind_dir.name, f.name)
-                    except OSError:
-                        logger.warning("附件 GC：删除 quarantine 文件失败 kind=%s name=%s",
-                                       kind_dir.name, f.name)
+        await _run_rule2_missing_files(repo, active, soft_deleted_ids, dry_run, stats)
+        await _run_rule3_unreferenced(
+            repo, unref_candidates, soft_deleted_ids,
+            unreferenced_retention_days, dry_run, stats,
+        )
+        if not await _run_rule4_orphans(repo, active, deleted, dry_run, stats):
+            return stats
+        _run_rule5_quarantine(now, quarantine_retention_hours, dry_run, stats)
     except StorageUnavailableError:
         logger.warning("附件 GC 中断：MongoDB 中途离线", exc_info=True)
         stats["skipped"] = True

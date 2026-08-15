@@ -8,6 +8,7 @@ ws_handler**（ws_handler 会 import ws_v2，反向 import 制造循环）。
 import hashlib
 import logging
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
@@ -250,59 +251,50 @@ def _build_media_parts(text: str, attachment_records: dict[str, dict],
     return parts
 
 
-async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
-                         model: V2TextMessage,
-                         sent_message_ids: set | None = None) -> bool:
-    """v2 文本消息路由：ACK + 幂等 + 预分配 messageId（批次 7：附件/表情）。
+@dataclass
+class _V2TextContext:
+    """v2 文本消息的会话/媒体/digest 上下文（校验后字段）。"""
 
-    纯文本/附件：校验先于幂等 lookup、ACK 延后到 process 后——accepted 才 ACK +
-    refs+1（media）；rejected（QUEUE_FULL/INTERNAL/附件失败）走 ``store.reject``
-    （持久化完整 ACK 负载 + error，重试重放原 rejected，不重复生成）。Task 4：
-    幂等命中经统一 ``_handle_idempotency_hit``（§1.1/§1.2）；accepted 路径
-    ``store.complete`` 移至 process 返回 True 后、ACK 之前（complete-before-ack）；
-    附件 refs 失败 → reject + 预留回滚；STORAGE_UNAVAILABLE rejected ACK 携带
-    ``idempotency_durable``（D3）。批次 8b（§3.7）：process_message 抛异常 →
-    reject + rejected INTERNAL（不 crash 连接）；accepted 时
-    ``sent_message_ids.add(message_id)``（D1 归属，Task 9 消费）。
+    text: str
+    client_request_id: str
+    client_message_id: str | None
+    ack_conversation_id: str
+    received_at: str
+    digest: str
+    has_media: bool
+    attachment_records: dict[str, dict]
+    sticker_id: str
 
-    9abc P1-3：接收已完整校验的 ``V2TextMessage`` 模型（handle_json_message 已
-    ``model_validate``），内部只用 ``model.clientRequestId/content/conversationId/
-    attachments/stickerId`` 等校验后安全字段——attachments 为 ``list[AttachmentRef]``，
-    不再对未校验原始 ``data`` 做加法/索引（消除 TypeError 断连源）。
 
-    返回 True 表示已按 v2 处理（含 rejected），False 表示走 v1 路径（非 v2 连接）。
+async def _prepare_v2_text_context(
+    agent: "Agent",
+    ws: "web.WebSocketResponse | None",
+    model: V2TextMessage,
+) -> tuple[_V2TextContext | None, bool]:
+    """v2 文本消息的版本/会话/媒体校验与 digest 计算。
 
-    Args:
-        agent: Agent 实例。
-        ws: 发送方连接（用于回 ACK 与协议版本判定）。
-        model: 已校验的 v2 文本消息模型。
-        sent_message_ids: 可选接收集合——accepted 时登记 messageId（D1 接线）。
+    Returns:
+        (context, handled)：context=None 且 handled=True 表示已发送 ACK（或非 v2
+        连接，调用方直接返回）；否则返回后续 claim 所需上下文。
     """
     if ws is None:
-        return False
+        return None, True
     channel = _find_channel(agent, ws)
     if channel is None or channel.protocol_version < 2:
-        return False
+        return None, True
     text = model.content.strip()
     client_request_id = model.clientRequestId
     client_message_id = model.clientMessageId
     conversation_id = model.conversationId
 
     if not client_request_id:
-        # 缺 clientRequestId → 契约错误拒绝（spec §4.2）。拒绝无目标会话，conversationId 回显原始值。
         await _send_ack(ws, "", "", client_message_id, conversation_id, "rejected",
                         error={"code": "CONTRACT_VALIDATION",
                                "message": "缺少 clientRequestId", "retryable": False})
-        return True
+        return None, True
 
-    # 接收时刻在 handler 一次性生成（now_iso）——complete/reject 与 ACK 用同一值，
-    # 重放逐字一致（spec §1.1；Task 4 complete-before-ack）。
     received_at = now_iso()
 
-    # 批次 3/9a3：解析实际目标会话——ACK 的 conversationId 填目标会话
-    # （v2 缺省 → 当前活动会话，显式 → 该会话），非仅回显原始字段。
-    # 9a3：显式 ID 先 has_session 验证存在——未知会话 rejected SESSION_NOT_FOUND
-    # （禁止懒创建幽灵会话）；外层 try/except 保留（ensure_loaded 失败降级回显，不杀连接）。
     try:
         target = await _session_or_none(agent, conversation_id)
         if target is None:
@@ -311,21 +303,17 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                                                "message": f"会话不存在: {conversation_id}",
                                                "retryable": False},
                             received_at=received_at)
-            return True
+            return None, True
         ack_conversation_id = str(target.session_id)
     except Exception:
         logger.warning("_route_v2_text: 会话解析失败，回退回显 conversationId", exc_info=True)
         ack_conversation_id = conversation_id
     if not ack_conversation_id:
-        # fallback 回显可能是 None（缺省 conversationId）→ 归一到默认会话（幂等键维度）
         ack_conversation_id = "default"
 
     attachments = model.attachments or []
     sticker_id = model.stickerId or ""
     has_media = bool(attachments) or bool(sticker_id)
-
-    # 附件/表情消息：校验先于幂等 lookup（spec §4.2 扩展，批次 7）。
-    # 纯文本保持原 digest 语义 sha256(text)；附件/表情摘要含附件 ID 排序 + stickerId。
     attachment_records: dict[str, dict] = {}
     if has_media:
         try:
@@ -338,7 +326,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                                            "message": "attachments 缺 attachmentId",
                                            "retryable": False},
                                     received_at=received_at)
-                    return True
+                    return None, True
                 doc = await agent.attachment_repo.get(AttachmentId(aid))
                 if doc is None or (doc.get("status") or "") != "active":
                     await _send_ack(ws, "", client_request_id, client_message_id,
@@ -347,14 +335,14 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                                            "message": f"附件不存在或已删除: {aid}",
                                            "retryable": False},
                                     received_at=received_at)
-                    return True
+                    return None, True
                 attachment_records[aid] = doc
         except StorageUnavailableError:
             await _send_ack(ws, "", client_request_id, client_message_id,
                             ack_conversation_id, "rejected",
                             error=_storage_unavailable_error("附件存储不可用（MongoDB 离线）"),
                             received_at=received_at)
-            return True
+            return None, True
         if sticker_id and get_sticker(sticker_id) is None:
             await _send_ack(ws, "", client_request_id, client_message_id,
                             ack_conversation_id, "rejected",
@@ -362,7 +350,7 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
                                    "message": f"未知 stickerId: {sticker_id}",
                                    "retryable": False},
                             received_at=received_at)
-            return True
+            return None, True
         ids = ",".join(sorted(attachment_records))
         digest = hashlib.sha256(
             text.encode("utf-8") + b"\x00" + ids.encode("utf-8")
@@ -370,184 +358,213 @@ async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
     else:
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+    return _V2TextContext(
+        text=text,
+        client_request_id=client_request_id,
+        client_message_id=client_message_id,
+        ack_conversation_id=ack_conversation_id,
+        received_at=received_at,
+        digest=digest,
+        has_media=has_media,
+        attachment_records=attachment_records,
+        sticker_id=sticker_id,
+    ), False
+
+
+async def _claim_v2_text_id(
+    agent: "Agent",
+    ws: "web.WebSocketResponse | None",
+    ctx: _V2TextContext,
+) -> tuple[str | None, bool]:
+    """幂等 lookup/claim 与 TAKEOVER 接管；返回实际生效的 message_id。
+
+    Returns:
+        (message_id, handled)：handled=True 表示已发送 ACK（调用方直接返回）。
+    """
     store = get_store()
-    # D6c：幂等 lookup——产品模式 + Mongo 离线 → fail-closed（ACK rejected
-    # STORAGE_UNAVAILABLE retryable + D3 durable，不生成 messageId/不重复 generation）。
     entry: IdempotencyEntry | None = None
     try:
-        entry = await store.lookup(ack_conversation_id, client_request_id)
+        entry = await store.lookup(ctx.ack_conversation_id, ctx.client_request_id)
     except StorageUnavailableError:
-        await _send_ack(ws, "", client_request_id, client_message_id,
-                        ack_conversation_id, "rejected",
+        await _send_ack(ws, "", ctx.client_request_id, ctx.client_message_id,
+                        ctx.ack_conversation_id, "rejected",
                         error=_idempotency_unavailable_error(),
-                        received_at=received_at)
-        return True
+                        received_at=ctx.received_at)
+        return None, True
     if entry is not None:
         action = await _handle_idempotency_hit(
-            agent, ws, ack_conversation_id, client_request_id, entry, digest,
-            client_message_id, received_at)
+            agent, ws, ctx.ack_conversation_id, ctx.client_request_id, entry, ctx.digest,
+            ctx.client_message_id, ctx.received_at)
         if action != "TAKEOVER":
-            return True  # REPLAYED/REJECT 已发 ACK
-        # TAKEOVER：过期 CLAIMED 无证据 → 重新 claim 接管（repo 对 stale CLAIMED 接管）
+            return None, True
         message_id = entry.user_message_id
     else:
-        # 新请求：预分配用户消息 ID → claim store → 按所有权分支
         from core.utils import new_message_id
         message_id = new_message_id()
 
     try:
         result = await store.store(
-            ack_conversation_id, client_request_id,
-            IdempotencyEntry(user_message_id=message_id, content_digest=digest,
+            ctx.ack_conversation_id, ctx.client_request_id,
+            IdempotencyEntry(user_message_id=message_id, content_digest=ctx.digest,
                              created_at=time.monotonic(),
-                             conversation_id=ack_conversation_id))
+                             conversation_id=ctx.ack_conversation_id))
     except StorageUnavailableError:
-        # D6c：产品模式 + Mongo 离线 → fail-closed（claim 未建立，拒绝可安全重试）
-        await _send_ack(ws, "", client_request_id, client_message_id,
-                        ack_conversation_id, "rejected",
+        await _send_ack(ws, "", ctx.client_request_id, ctx.client_message_id,
+                        ctx.ack_conversation_id, "rejected",
                         error=_idempotency_unavailable_error(),
-                        received_at=received_at)
-        return True
+                        received_at=ctx.received_at)
+        return None, True
     if not result.acquired:
-        # 并发同键 → 恒不进入业务处理，按 entry 状态分支（重放/拒绝/接管）
         action = await _handle_idempotency_hit(
-            agent, ws, ack_conversation_id, client_request_id, result.entry, digest,
-            client_message_id, received_at)
+            agent, ws, ctx.ack_conversation_id, ctx.client_request_id, result.entry,
+            ctx.digest, ctx.client_message_id, ctx.received_at)
         if action != "TAKEOVER":
-            return True
-        # TAKEOVER：再次 claim 接管（并发窗口内输家读到 stale CLAIMED → 重新取得所有权）
+            return None, True
         try:
             result = await store.store(
-                ack_conversation_id, client_request_id,
+                ctx.ack_conversation_id, ctx.client_request_id,
                 IdempotencyEntry(user_message_id=result.entry.user_message_id,
-                                 content_digest=digest,
+                                 content_digest=ctx.digest,
                                  created_at=time.monotonic(),
-                                 conversation_id=ack_conversation_id))
+                                 conversation_id=ctx.ack_conversation_id))
         except StorageUnavailableError:
-            # 接管期间 Mongo 断连（产品模式 fail-closed）→ 幂等感知 rejected ACK
-            # （与首次 store 一致的错误处理；claim 未建立，拒绝可安全重试）
-            await _send_ack(ws, "", client_request_id, client_message_id,
-                            ack_conversation_id, "rejected",
+            await _send_ack(ws, "", ctx.client_request_id, ctx.client_message_id,
+                            ctx.ack_conversation_id, "rejected",
                             error=_idempotency_unavailable_error(),
-                            received_at=received_at)
-            return True
+                            received_at=ctx.received_at)
+            return None, True
         if not result.acquired:
-            # 防御：接管竞态输家（另一并发方刚接管）→ 发对应 ACK 后返回；纯内存不可接管
-            # （内存优先去重恒 acquired=False）→ 兜底 IN_PROGRESS（retryable，不静默无 ACK）
             action = await _handle_idempotency_hit(
-                agent, ws, ack_conversation_id, client_request_id, result.entry, digest,
-                client_message_id, received_at)
+                agent, ws, ctx.ack_conversation_id, ctx.client_request_id, result.entry,
+                ctx.digest, ctx.client_message_id, ctx.received_at)
             if action == "TAKEOVER":
-                await _send_ack(ws, "", client_request_id, client_message_id,
-                                ack_conversation_id, "rejected",
-                                error=_in_progress_error(), received_at=received_at)
-            return True
-    # 并发同键时 claim 返回既有记录 → 用实际生效的 message_id（不重复 generation）
-    message_id = result.entry.user_message_id
+                await _send_ack(ws, "", ctx.client_request_id, ctx.client_message_id,
+                                ctx.ack_conversation_id, "rejected",
+                                error=_in_progress_error(), received_at=ctx.received_at)
+            return None, True
+    return result.entry.user_message_id, False
 
-    if has_media:
-        # 附件/表情消息：ACK 延后到 process 后（需 process 结果判定 accepted / QUEUE_FULL）
-        parts = _build_media_parts(text, attachment_records, sticker_id)
+
+async def _finish_v2_text(
+    agent: "Agent",
+    ws: "web.WebSocketResponse | None",
+    ctx: _V2TextContext,
+    message_id: str,
+    sent_message_ids: set | None,
+) -> None:
+    """claim 成功后的 process / ACK / refs 预留与回滚。"""
+    store = get_store()
+    if ctx.has_media:
+        parts = _build_media_parts(ctx.text, ctx.attachment_records, ctx.sticker_id)
         content = [p.model_dump() for p in parts]
-        # B4/P1-04：accepted ACK 前先持久建立附件引用（幂等 add_ref）。全部成功后才
-        # process_message；任一步失败 → reject 已预留（绝不部分成功 ACK，历史媒体
-        # 不被未引用 GC 误删）。预留后崩溃的悬挂引用为安全方向（附件保留），由
-        # reconciler/消息删除释放（剩余风险）。
         reserved: list[str] = []
         try:
-            for aid in attachment_records:
+            for aid in ctx.attachment_records:
                 await agent.attachment_repo.add_ref(AttachmentId(aid), message_id)
                 reserved.append(aid)
         except Exception:
             logger.warning("附件 refs 预留失败——释放已预留并拒绝", exc_info=True)
             await _release_attachment_reservations(agent, reserved, message_id)
-            await _send_rejected(ws, ack_conversation_id, client_request_id,
-                                 client_message_id,
+            await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
+                                 ctx.client_message_id,
                                  _storage_unavailable_error("附件引用持久化失败"),
-                                 received_at=received_at)
-            return True
+                                 received_at=ctx.received_at)
+            return
         try:
             accepted = await agent.process_message(
-                text=text, content=content, message_id=message_id,
-                protocol_version=2, conversation_id=ack_conversation_id)
+                text=ctx.text, content=content, message_id=message_id,
+                protocol_version=2, conversation_id=ctx.ack_conversation_id)
         except SessionNotFoundError:
             await _release_attachment_reservations(agent, reserved, message_id)
-            await _send_rejected(ws, ack_conversation_id, client_request_id,
-                                 client_message_id,
+            await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
+                                 ctx.client_message_id,
                                  {"code": "SESSION_NOT_FOUND",
-                                  "message": f"会话不存在: {ack_conversation_id}",
+                                  "message": f"会话不存在: {ctx.ack_conversation_id}",
                                   "retryable": False},
-                                 received_at=received_at)
-            return True
+                                 received_at=ctx.received_at)
+            return
         except Exception:
             logger.warning("附件消息 process_message 抛异常——reject 幂等 entry", exc_info=True)
             await _release_attachment_reservations(agent, reserved, message_id)
-            await _send_rejected(ws, ack_conversation_id, client_request_id,
-                                 client_message_id,
+            await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
+                                 ctx.client_message_id,
                                  {"code": "INTERNAL", "message": "消息处理失败",
                                   "retryable": False},
-                                 received_at=received_at)
-            return True
+                                 received_at=ctx.received_at)
+            return
         if accepted:
-            # complete-before-ack：process 返回 True 后立即标记 ACCEPTED（终态确定，
-            # 「process 后 ACK 前 kill」⇒ 重放 accepted 不重复生成），再发 accepted ACK。
-            await store.complete(ack_conversation_id, client_request_id,
-                                 received_at=received_at,
-                                 client_message_id=client_message_id,
-                                 conversation_id_wire=ack_conversation_id)
-            await _send_ack(ws, message_id, client_request_id, client_message_id,
-                            ack_conversation_id, "accepted", received_at=received_at)
+            await store.complete(ctx.ack_conversation_id, ctx.client_request_id,
+                                 received_at=ctx.received_at,
+                                 client_message_id=ctx.client_message_id,
+                                 conversation_id_wire=ctx.ack_conversation_id)
+            await _send_ack(ws, message_id, ctx.client_request_id, ctx.client_message_id,
+                            ctx.ack_conversation_id, "accepted", received_at=ctx.received_at)
             if sent_message_ids is not None:
-                sent_message_ids.add(message_id)   # D1 归属（media 路径同样登记）
-            # refs 已在 process 前预留持久化——无需重复 add_ref
+                sent_message_ids.add(message_id)
         else:
-            # 队列满 → reject 幂等 entry（重试重放原 rejected）+ QUEUE_FULL；
-            # 释放已预留 refs（附件回到未关联 active，不软删）
             await _release_attachment_reservations(agent, reserved, message_id)
-            await _send_rejected(ws, ack_conversation_id, client_request_id,
-                                 client_message_id,
+            await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
+                                 ctx.client_message_id,
                                  {"code": "QUEUE_FULL",
                                   "message": "Agent 忙，消息队列已满", "retryable": True},
-                                 received_at=received_at)
-        return True
+                                 received_at=ctx.received_at)
+        return
 
     try:
         accepted = await agent.process_message(
-            text=text, message_id=message_id, protocol_version=2,
-            conversation_id=ack_conversation_id)
+            text=ctx.text, message_id=message_id, protocol_version=2,
+            conversation_id=ctx.ack_conversation_id)
     except SessionNotFoundError:
-        await _send_rejected(ws, ack_conversation_id, client_request_id,
-                             client_message_id,
+        await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
+                             ctx.client_message_id,
                              {"code": "SESSION_NOT_FOUND",
-                              "message": f"会话不存在: {ack_conversation_id}",
+                              "message": f"会话不存在: {ctx.ack_conversation_id}",
                               "retryable": False},
-                             received_at=received_at)
-        return True
+                             received_at=ctx.received_at)
+        return
     except Exception:
         logger.warning("process_message 抛异常——reject 幂等 entry，rejected", exc_info=True)
-        await _send_rejected(ws, ack_conversation_id, client_request_id,
-                             client_message_id,
+        await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
+                             ctx.client_message_id,
                              {"code": "INTERNAL", "message": "消息处理失败",
                               "retryable": False},
-                             received_at=received_at)
-        return True
+                             received_at=ctx.received_at)
+        return
     if accepted:
-        # complete-before-ack（D7-b）：process 返回 True 后立即 complete → accepted ACK
-        await store.complete(ack_conversation_id, client_request_id,
-                             received_at=received_at,
-                             client_message_id=client_message_id,
-                             conversation_id_wire=ack_conversation_id)
-        await _send_ack(ws, message_id, client_request_id, client_message_id,
-                        ack_conversation_id, "accepted", received_at=received_at)
+        await store.complete(ctx.ack_conversation_id, ctx.client_request_id,
+                             received_at=ctx.received_at,
+                             client_message_id=ctx.client_message_id,
+                             conversation_id_wire=ctx.ack_conversation_id)
+        await _send_ack(ws, message_id, ctx.client_request_id, ctx.client_message_id,
+                        ctx.ack_conversation_id, "accepted", received_at=ctx.received_at)
         if sent_message_ids is not None:
-            sent_message_ids.add(message_id)   # D1 归属
+            sent_message_ids.add(message_id)
     else:
-        # 队列满 → reject 幂等 entry（重试重放原 rejected）+ rejected QUEUE_FULL
-        await _send_rejected(ws, ack_conversation_id, client_request_id,
-                             client_message_id,
+        await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
+                             ctx.client_message_id,
                              {"code": "QUEUE_FULL",
                               "message": "Agent 忙，消息队列已满", "retryable": True},
-                             received_at=received_at)
+                             received_at=ctx.received_at)
+
+
+async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",
+                         model: V2TextMessage,
+                         sent_message_ids: set | None = None) -> bool:
+    """v2 文本消息路由：ACK + 幂等 + 预分配 messageId（批次 7：附件/表情）。
+
+    返回 True 表示已按 v2 处理（含 rejected），False 表示走 v1 路径（非 v2 连接）。
+    """
+    ctx, handled = await _prepare_v2_text_context(agent, ws, model)
+    if handled or ctx is None:
+        return True
+
+    message_id, handled = await _claim_v2_text_id(agent, ws, ctx)
+    if handled:
+        return True
+    if message_id is None:
+        return True  # 防御：claim helper 返回 success 但缺 ID 不应发生
+
+    await _finish_v2_text(agent, ws, ctx, message_id, sent_message_ids)
     return True
 
 

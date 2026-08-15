@@ -209,53 +209,43 @@ async def providers_delete_handler(request: web.Request) -> web.Response:
         logger.warning("删除 provider 失败: %s", e)
         return web.json_response(rest_contract.ApiFail(error="删除失败，请稍后重试").wire_dict(), status=500)
 
-async def providers_test_handler(request: web.Request) -> web.Response:
-    """测试 provider 连通性（level=connectivity）或可使用性（level=usable）。
-
-    body: {service, provider, model, level, base_url?, api_key?, character?}
-    参数解析顺序见 spec「/api/providers/test 扩展」：provider+model 均缺省 → 回退配置模型；
-    仅 provider 缺省 → "custom"；level 缺省 → "connectivity"。
-    base_url/api_key 优先级：请求体非空 > custom_providers.yaml > env。
-    """
-    try:
-        body = await request.json()
-    except web.HTTPRequestEntityTooLarge:
-        raise  # chunked 超限放行——交中间件统一 413 信封（F13）
-    except Exception:
-        return web.json_response(rest_contract.ApiFail(error="无效的请求体").wire_dict(), status=400)
-
-    service = body.get("service", "")
-    if service not in ("llm", "stt", "tts"):
-        return web.json_response(rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
-
-    level = body.get("level", "connectivity")
-    provider = body.get("provider", "")
-    model = body.get("model", "")
-    base_url = body.get("base_url", "")
-    api_key = body.get("api_key", "")
-
-    # provider+model 均缺省 → 回退该服务当前模型（完整 provider/model，直接 split）
+def _resolve_test_model(
+    request: web.Request,
+    service: str,
+    provider: str,
+    model: str,
+) -> tuple[tuple[str, str], web.Response | None]:
+    """provider/model 缺省回退：均缺省用当前配置模型，仅 provider 缺省取 custom。"""
     if not provider and not model:
         agent = request.app.get("agent")
         if agent is None:
-            return web.json_response(rest_contract.ApiFail(error="agent 未注入").wire_dict(), status=500)
+            return ("", ""), web.json_response(
+                rest_contract.ApiFail(error="agent 未注入").wire_dict(), status=500)
         if service == "llm":
             model_id = agent.llm.model
         elif service == "tts":
-            # disabled 态即 agent.tts is None——必须守卫，否则在 Factory.create 前抛 AttributeError
             tts = agent.tts
             model_id = tts.model if tts is not None else agent.config.tts.model
-        else:  # stt
+        else:
             model_id = agent.config.stt.model
         try:
             provider, model = model_id.split("/", 1)
         except ValueError:
-            return web.json_response(rest_contract.ApiFail(error=f"当前模型格式无效: {model_id}").wire_dict())
+            return ("", ""), web.json_response(
+                rest_contract.ApiFail(error=f"当前模型格式无效: {model_id}").wire_dict())
     elif not provider:
         provider = "custom"
+    return (provider, model), None
 
-    # base_url/api_key：请求体非空 > custom_providers.yaml（resolve_model_params）
-    # runtime 仅 custom 条目有（内置 resolve 返回 {} → 缺省 backend，容错）。
+
+def _create_test_backend(
+    service: str,
+    provider: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+) -> tuple[Any | None, web.Response | None]:
+    """解析 custom 参数 + runtime/SSRF 守卫 + 创建待测后端。"""
     runtime = "backend"
     if provider == "custom":
         from core.providers.custom_providers import resolve_model_params
@@ -266,29 +256,23 @@ async def providers_test_handler(request: web.Request) -> web.Response:
         if not api_key:
             api_key = params.get("api_key", "")
 
-    # runtime 守卫（review 修正：先于 SSRF——desktop/local 允许本地 base_url，
-    # 若先 SSRF 会误报 SSRF_BLOCKED；后端不代理本机 Profile，直接 400）
     if runtime != "backend":
-        return _tool_error("PROFILE_RUNTIME_NOT_BACKEND", "该 Profile 由 Electron 执行，后端不发起测试", 400)
+        return None, _tool_error(
+            "PROFILE_RUNTIME_NOT_BACKEND",
+            "该 Profile 由 Electron 执行，后端不发起测试", 400)
 
-    # body base_url 非空时无论 provider 一律 SSRF 校验（空 base_url 跳过——
-    # 内置无 body base_url 是空串，不误伤既有 connectivity 测试）。
     from Module._common.ssrf import SSRFError, validate_endpoint
     if base_url:
         try:
             validate_endpoint(base_url)
         except SSRFError as e:
-            return _tool_error("SSRF_BLOCKED", str(e), 400)
+            return None, _tool_error("SSRF_BLOCKED", str(e), 400)
 
-    create_kwargs = {}
+    create_kwargs: dict[str, Any] = {}
     if base_url:
         create_kwargs["base_url"] = base_url
     if api_key:
         create_kwargs["api_key"] = api_key
-
-    # D2/P1-15：base_url 覆盖（无论 custom/内置）→ 注入统一守卫 transport 工厂。
-    # 内置 provider 同走 OpenAICompatBackend（接受 http_client_factory）——
-    # 重定向每跳重新校验，防公开 base_url 302 到 loopback/metadata 的第二跳绕过。
     if base_url:
         from Module._common.ssrf import build_guarded_http_client
         create_kwargs["http_client_factory"] = (
@@ -305,8 +289,13 @@ async def providers_test_handler(request: web.Request) -> web.Response:
             from Module.tts import TTSFactory
             backend = TTSFactory.create(f"{provider}/{model}", **create_kwargs)
     except Exception as e:
-        return web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict())
+        return None, web.json_response(rest_contract.ApiFail(error=str(e)).wire_dict())
+    return backend, None
 
+
+async def _run_test_backend(backend: Any, level: str, service: str,
+                            request: web.Request, body: dict) -> web.Response:
+    """执行 connectivity/usable 测试并统一超时/异常响应。"""
     try:
         if level == "usable":
             result = await _run_usable_test(backend, service, request, body)
@@ -314,14 +303,48 @@ async def providers_test_handler(request: web.Request) -> web.Response:
             result = await asyncio.wait_for(backend.test(), timeout=5.0)
         return web.json_response(rest_contract.ProviderTestResult(**result).wire_dict())
     except asyncio.TimeoutError:
-        return web.json_response(rest_contract.ProviderTestResult(ok=False, error="测试超时").wire_dict())
+        return web.json_response(
+            rest_contract.ProviderTestResult(ok=False, error="测试超时").wire_dict())
     except Exception as e:
-        return web.json_response(rest_contract.ProviderTestResult(ok=False, error=str(e)).wire_dict())
+        return web.json_response(
+            rest_contract.ProviderTestResult(ok=False, error=str(e)).wire_dict())
     finally:
         try:
             await backend.close()
         except Exception:
             pass
+
+
+async def providers_test_handler(request: web.Request) -> web.Response:
+    """测试 provider 连通性（level=connectivity）或可使用性（level=usable）。
+
+    body: {service, provider, model, level, base_url?, api_key?, character?}
+    """
+    try:
+        body = await request.json()
+    except web.HTTPRequestEntityTooLarge:
+        raise
+    except Exception:
+        return web.json_response(
+            rest_contract.ApiFail(error="无效的请求体").wire_dict(), status=400)
+
+    service = body.get("service", "")
+    if service not in ("llm", "stt", "tts"):
+        return web.json_response(
+            rest_contract.ApiFail(error=f"未知 service: {service}").wire_dict(), status=400)
+
+    level = body.get("level", "connectivity")
+    (provider, model), response = _resolve_test_model(
+        request, service, body.get("provider", ""), body.get("model", ""))
+    if response is not None:
+        return response
+
+    backend, response = _create_test_backend(
+        service, provider, model, body.get("base_url", ""), body.get("api_key", ""))
+    if response is not None:
+        return response
+    return await _run_test_backend(backend, level, service, request, body)
+
 
 def register_provider_routes(app: web.Application) -> None:
     """注册 Provider 管理路由（4 端点）。"""

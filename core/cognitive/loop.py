@@ -18,7 +18,7 @@ import datetime
 import json
 import logging
 import time
-from dataclasses import asdict
+from dataclasses import dataclass
 from enum import Enum
 from typing import Awaitable, Any, Callable, TYPE_CHECKING
 
@@ -29,20 +29,16 @@ from core.cognitive.generation import GenerationContext
 from core.cognitive.generation_registry import GenerationRegistry
 from core.cognitive.timing import TimingClock
 
-from Module.output import OutputManager, ChannelCapability
+from Module.output import OutputManager
 from Module.tts import TTSBackend
-
-from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 from core.status.agent_fsm import AgentFSM
 from core.monitoring.event_bus import EventBus
 from core.memory.session_manager import SessionNotFoundError
 from core.utils import set_request_id, get_request_id, log_conversation
-from Module.tool.protocol import ToolResult
 from core.storage.desktop_call_repo import STATUS_OFFLINE
 from core.prompt.prompt_assembler import PromptAssembler
 from core.memory.session import SessionMemory
-from core.text.stream_processor import StreamProcessor, StreamEvent, StreamEventType
 from core.adapter.llm_adapter import LLMAdapter
 from core.memory.consolidator import MemoryConsolidator
 from Module.llm.registry import LLMFactory
@@ -59,16 +55,10 @@ if TYPE_CHECKING:
     from core.adapter.tool_adapter import ToolAdapter
     from core.memory.memory_reflector import MemoryReflector
 
-from core.text.parts import BlockRef, build_parts
 from core.adapter.tts_adapter import TTSStreamManager
-from core.adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
-from Module.workflow_contract import WorkflowId
-from core.utils.text_utils import content_text_from_content, MessageObj
-from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
-from core.schema.token import TokenUsageSummary
-from core.schema.tool import ToolCall, ToolCallId
+from core.utils.text_utils import content_text_from_content
+from core.schema.message import UserMessage
 
-from core.schema.part import ImageMime, ImagePart, Part, TextPart
 from core.schema.adapters.message_adapter import parts_from_dicts
 from core.schema.utils import now_iso as _now_iso
 
@@ -103,34 +93,9 @@ def _is_llm_layer_error(exc: BaseException) -> bool:
     return mod.startswith("httpx") or mod.startswith("openai")
 
 
-def _build_tool_result_parts(tool_result: ToolResult) -> list[Part]:
-    """组装 ToolResultMessage.content：文本摘要 + 图片 ImagePart（mime 白名单过滤）。
-
-    批次 4（spec §5.4）：工具返回图片附件（如 desktop.screen.capture 截图）经落盘
-    成为消息 ImagePart——回放/搜索/资源索引自动吃到，前端渲染属联调范围。文本部分
-    llm_summary 优先（非 text 结果给 LLM 看的描述），fallback content——text 结果
-    llm_summary 恒空，行为与既有 `[TextPart(content)]` 一致（wire 不变）。
-
-    ImagePart.mime 兜底（review 修正）：mime_type 命中 ImageMime 枚举
-    （image/png/jpeg/gif/webp）→ 原样；空（MediaItem 默认）/非图片（如 Task 8 附件
-    白名单的 application/octet-stream）→ 过滤不落 ImagePart——否则 ImagePart 构造抛
-    ValidationError 拖垮整轮工具结果。
-    """
-    parts: list[Part] = [
-        TextPart(content=tool_result.llm_summary or tool_result.content or ""),
-    ]
-    for item in tool_result.images:
-        if not item.url:  # 无 URL 无法渲染（且 _validate_src 拒绝空串）
-            continue
-        try:
-            mime = ImageMime(item.mime_type)
-        except ValueError:
-            continue  # 空/非图片 mime → 过滤
-        parts.append(ImagePart(src=item.url, mime=mime))
-    return parts
-
-
-from core.cognitive.tools import CognitiveTools
+from core.cognitive.tool_phase import CognitiveToolPhase
+from core.cognitive.finalize import CognitiveFinalize
+from core.cognitive.streaming import CognitiveStreaming, _apply_mood  # noqa: F401
 
 
 class TurnPhase(str, Enum):
@@ -141,55 +106,18 @@ class TurnPhase(str, Enum):
     FINALIZING = "finalizing"
 
 
-async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamManager,
-                      output: OutputManager, target_session: SessionMemory | None = None) -> None:
-    """解析 <mood> 标签内容，更新 CharacterState + 统一心情发射 + TTS emotion。
+@dataclass
+class _TurnSetup:
+    """process() 准备阶段产物：目标会话 / generation 会话 / request / clock / 日志文本。"""
 
-    支持格式: "情绪文本" 或 "情绪文本|强度"（强度 0.1–1.0）。
-    更新目标会话 character_state 的 mood / mood_intensity（而非 engine.state），
-    经 output.mood() 统一发射（v1 发 expression、v2 捕获不发——mood 由 turn_completed 落位），
-    设置 TTS 情绪参数。
-
-    批次 3 review 修复（F1-b）：target_session 捕获发起会话的 character_state——
-    engine 全局单例 state 随 attach_session 换绑，in-flight 生成延续若写 engine.state
-    mood/L3 会跨会话污染；写 target_session.character_state 使 mood 落在发起会话。
-
-    Args:
-        raw: <mood> 标签内的原始文本
-        engine: CharacterEngine 实例（仅作调用点守卫/兜底，状态写 target）
-        tts_mgr: TTSStreamManager 实例
-        output: OutputManager（统一心情发射）
-        target_session: 发起会话（本轮 target）；None 时回退 engine.state（兼容旧调用）
-    """
-    if "|" in raw:
-        mood_text, intensity_str = raw.rsplit("|", 1)
-        try:
-            intensity = float(intensity_str.strip())
-            intensity = min(1.0, max(0.1, intensity))
-        except ValueError:
-            intensity = 0.5
-    else:
-        mood_text = raw.strip()
-        intensity = 0.5
-
-    if not mood_text:
-        logger.debug("心情: <mood> 标签为空，跳过")
-        return
-
-    # 状态目标：target 会话的 character_state（防换绑竞态跨会话污染）
-    state = target_session.character_state if target_session is not None else engine.state
-    prev = state.mood
-    state.mood = mood_text
-    state.mood_intensity = intensity
-    await output.mood(mood_text, intensity)
-    tts_mgr.set_emotion(mood_text)
-    if prev != mood_text:
-        logger.info("心情: %s → %s (%.0f%%)", prev, mood_text, intensity * 100)
-    else:
-        logger.info("心情: %s (%.0f%%)", mood_text, intensity * 100)
+    target: SessionMemory
+    gen_conversation_id: SessionId
+    rid: str
+    clock: TimingClock
+    log_text: str
 
 
-class CognitiveLoop(CognitiveTools):
+class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
     """ReAct 认知循环：流式投递 + 工具调用检测。"""
 
     MAX_TOOL_ROUNDS = 5
@@ -386,6 +314,129 @@ class CognitiveLoop(CognitiveTools):
 
     # ---- Main entry ----
 
+    async def _prepare_turn(
+        self,
+        user_message: str,
+        user_name: str,
+        stt_emotion: str,
+        content: list[dict] | None,
+        message_id: MessageId | None,
+        conversation_id: SessionId | None,
+        protocol_version: int,
+    ) -> _TurnSetup | None:
+        """process 的同步准备阶段：会话解析、context 换绑、日志、generation 建档。"""
+        self._generation_ctx = None
+        self._generation_completed = False
+        self._turn_failed_emitted = False
+
+        try:
+            target = await self._session_resolver(conversation_id, protocol_version)
+        except SessionNotFoundError:
+            logger.warning("会话已删除，拒绝在途消息 conversation_id=%s", conversation_id)
+            return None
+
+        gen_conversation_id = conversation_id or target.session_id
+        if self._character_engine is not None:
+            self._character_engine.attach_session(target)
+        self._session = target
+        self._prompt.set_session(target)
+        if self._tool_adapter is not None:
+            svc = self._tool_adapter.tool_context.services
+            svc["session"] = target
+            svc["_session_msg_count"] = len(target.messages)
+
+        rid = get_request_id()
+        if rid == "-":
+            self._req_counter += 1
+            rid = f"P{self._req_counter:03d}"
+            set_request_id(rid)
+
+        if self._tool_adapter is not None:
+            self._tool_adapter.tool_context.trace_id = new_message_id()
+
+        self._tts_mgr.reset_for_turn()
+        _svc_state = getattr(target, "service_state", None)
+        self._tts_mgr.set_voice(
+            getattr(_svc_state, "tts_voice", None) if _svc_state is not None else None)
+        clock = TimingClock()
+        clock.start()
+        self._clock = clock
+
+        log_text = user_message
+        if content:
+            log_text = content_text_from_content(content)
+            if not log_text:
+                log_text = "[多模态消息]"
+
+        emo_tag = f" [{stt_emotion}]" if stt_emotion and stt_emotion != "NEUTRAL" else ""
+        logger.info(">>> 用户输入 (%s)%s: len=%d message_id=%s",
+                    user_name, emo_tag, len(log_text), message_id or "")
+        log_conversation("user", user_name, log_text)
+
+        await self.phases.enter_thinking()
+
+        self._generation_ctx = GenerationContext(
+            generation_id=new_generation_id(),
+            user_message_id=MessageId(message_id or ""),
+            assistant_message_id=new_message_id(),
+            conversation_id=gen_conversation_id,
+            model_id=self._llm.model,
+            request_id=RequestId(rid),
+            protocol_version=protocol_version,
+        )
+        self._turn_failed_emitted = False
+        if self._generation_registry is not None:
+            try:
+                await self._generation_registry.register(
+                    generation_id=self._generation_ctx.generation_id,
+                    session_id=target.session_id,
+                    user_message_id=self._generation_ctx.user_message_id,
+                    message_id=self._generation_ctx.assistant_message_id,
+                    model=self._llm.model,
+                    request_id=self._generation_ctx.request_id,
+                )
+            except Exception:
+                logger.debug("generation register 失败（Mongo 离线）", exc_info=True)
+
+        return _TurnSetup(
+            target=target,
+            gen_conversation_id=gen_conversation_id,
+            rid=rid,
+            clock=clock,
+            log_text=log_text,
+        )
+
+    async def _handle_turn_exception(self, e: BaseException) -> None:
+        """process 异常收口：区分 LLM 层错误 / 内部错误并发射 generation.failed。"""
+        if _is_llm_layer_error(e):
+            logger.exception("<<< LLM 调用异常，回退到 IDLE")
+            label = "LLM 调用失败"
+            code = "GENERATION_TIMEOUT" if isinstance(e, asyncio.TimeoutError) \
+                else "GENERATION_PROVIDER_UNAVAILABLE"
+            retryable = True
+        else:
+            logger.exception("<<< 处理回复时内部错误，回退到 IDLE")
+            label = "内部错误"
+            code = "INTERNAL"
+            retryable = False
+        err_msg = str(e)[:200]
+        if self._generation_ctx is not None:
+            try:
+                await self._output.turn_failed(
+                    code, err_msg, retryable, label, self._generation_ctx)
+            except Exception:
+                logger.debug("turn_failed 发射失败", exc_info=True)
+            self._turn_failed_emitted = True
+            if self._generation_registry is not None:
+                try:
+                    await self._generation_registry.mark(
+                        self._generation_ctx.generation_id,
+                        status="failed", finish_reason="error",
+                        error={"code": code, "message": err_msg, "retryable": retryable})
+                except Exception:
+                    logger.debug("generation mark failed 失败", exc_info=True)
+        await self._handle_interrupt()
+
     async def process(self, user_message: str = "", user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None,
                        _on_tool_calls: Callable | None = None,
@@ -396,139 +447,17 @@ class CognitiveLoop(CognitiveTools):
                        conversation_id: SessionId | None = None,
                        protocol_version: int = 1,
                        ) -> None:
-        """处理用户消息，驱动一轮完整的 ReAct 认知循环。
-
-        Args:
-            user_message: 纯文本输入（STT 识别结果或键盘输入），兼容旧调用
-            user_name: 用户名，注入系统提示词
-            stt_emotion: STT 语音情绪标签（如 "HAPPY", "SAD", "NEUTRAL"）
-            stt_events: STT 语音事件列表（如 ["laughter", "sigh"]）
-            _on_tool_calls: 外部工具回调（测试/自定义 dispatch），None 时走 _execute_tools_directly
-            content: 多模态内容数组（ChatMessageV2 content），优先级高于 user_message
-            is_task_result: 是否为后台任务结果触发的唤醒
-            task_result_context: 后台任务结果上下文，含 original_intent / result 等字段
-            message_id: v2 预分配用户消息 ID（MessageId NewType，落库优先用，ACK 一致）；v1 无则 None
-            conversation_id: 批次 3（multi-session）目标会话 ID（SessionId NewType）；
-                None = 未归属（v2 缺省 → active）
-            protocol_version: 来源协议版本（1=v1，2=v2），默认 1
-        """
+        """处理用户消息，驱动一轮完整的 ReAct 认知循环。"""
         async with self._process_lock:
             if not self.status.is_accepting_input:
                 logger.warning("Agent not accepting input — skipping turn")
                 return
 
-            # F5（review 修复）：process 开头（resolve 前）清掉上一轮残留的 generation ctx
-            # 与终态标志。上一轮完成（agent 已 idle）后 ctx 仍指向已完成 generation；若在
-            # 本轮 resolve / enter_thinking 与 ctx 重建之间被打断，_handle_interrupt 看到
-            # None 就不会把上一轮已 completed 的 generation 重标 cancelled。
-            self._generation_ctx = None
-            self._generation_completed = False
-            self._turn_failed_emitted = False
-
-            # 批次 3（multi-session，D-m）：每轮开头按协议版本 + conversation_id
-            # 解析目标会话。
-            #   - protocol_version < 2 → 恒 "default"（v1 行为与批次 0-2 一致）
-            #   - >=2 且 conversation_id → 该会话（v2 显式覆盖 active）
-            #   - >=2 且 None → 当前活动会话
-            # 9abc P2-1：最终 resolver 严格化——显式 v2 会话已删除/未知 → 抛
-            # SessionNotFoundError，捕获后丢弃该消息（入口 has_session 通过后删除的
-            # 在途消息不复活幽灵会话，logger.warning 记录）。
-            try:
-                target = await self._session_resolver(conversation_id, protocol_version)
-            except SessionNotFoundError:
-                logger.warning("会话已删除，拒绝在途消息 conversation_id=%s", conversation_id)
+            setup = await self._prepare_turn(
+                user_message, user_name, stt_emotion, content,
+                message_id, conversation_id, protocol_version)
+            if setup is None:
                 return
-            # 批次 3（Task 13 回归收敛）：generation wire 的 conversationId = 实际目标会话
-            # ID。v2 显式 conversationId → 该会话；v2 缺省 → 活动会话（resolve 已返回）；
-            # v1 恒 default。与 user_message.ack 的解析规则一致（spec §6.3）。
-            gen_conversation_id = conversation_id or target.session_id
-            if self._character_engine is not None:
-                # D-o 换绑：engine 的 state 视图切到 target 的 character_state，
-                # 防 v2 显式 conversationId 覆盖 active 时性格/心情/觉察串会话
-                self._character_engine.attach_session(target)
-            # 动态属性：self._session 指向本轮目标，CognitiveTools mixin 自动跟随
-            self._session = target
-            # D-n：prompt 各 session 依赖 section（Emotion/Memory/OwnLife）换绑 target
-            self._prompt.set_session(target)
-            # BE-S3-RUN-P0-01（复验清单 §3）：ToolContext 会话换绑——describe_image/self_state
-            # 经 ctx.services["session"]/["_session_msg_count"] 读会话，启动注入后从不更新；
-            # 每轮目标会话解析后必须原子换绑（clone_for_call 浅拷贝 services，本 turn 内
-            # 所有工具调用副本立即看到新 session；失败/取消/切换会话由下一轮换绑覆盖，不残留）。
-            if self._tool_adapter is not None:
-                svc = self._tool_adapter.tool_context.services
-                svc["session"] = target
-                svc["_session_msg_count"] = len(target.messages)
-
-            rid = get_request_id()
-            if rid == "-":
-                # 兜底：空闲监听主动消息还没有 request_id
-                self._req_counter += 1
-                rid = f"P{self._req_counter:03d}"
-                set_request_id(rid)
-
-            # 生成 trace_id（跨 Agent、跨工具串联）
-            if self._tool_adapter is not None:
-                self._tool_adapter.tool_context.trace_id = new_message_id()
-
-            self._tts_mgr.reset_for_turn()
-            # 批次 5（Task 11，BE-051）：每 turn 注入发起会话的 TTS 声音覆盖。
-            # 发起会话 = resolve_session 目标会话（非全局活动会话）——v2 显式
-            # conversationId 指向非活动会话时，声音随发起会话而非活动会话。
-            # voice 是 per-turn 可变状态，set_voice 幂等（None 走后端默认）。
-            # 防御：target 可能无 service_state（如测试 Mock 会话），两步 getattr。
-            _svc_state = getattr(target, "service_state", None)
-            self._tts_mgr.set_voice(
-                getattr(_svc_state, "tts_voice", None) if _svc_state is not None else None)
-            clock = TimingClock()
-            clock.start()
-            self._clock = clock  # 供 _think_loop / _after_response 使用
-
-            # 提取纯文本给日志
-            log_text = user_message
-            if content:
-                log_text = content_text_from_content(content)
-                if not log_text:
-                    log_text = "[多模态消息]"
-
-            # 用户输入到达 — 只记长度与 message_id，不记正文（BE-081 敏感纪律）
-            emo_tag = f" [{stt_emotion}]" if stt_emotion and stt_emotion != "NEUTRAL" else ""
-            logger.info(">>> 用户输入 (%s)%s: len=%d message_id=%s",
-                        user_name, emo_tag, len(log_text), message_id or "")
-            log_conversation("user", user_name, log_text)
-
-            await self.phases.enter_thinking()
-
-            # 批次 2：每回合创建 GenerationContext——generation_id / assistant_message_id 预分配，
-            # 供统一回合事件与 _finalize_turn 落库（assistant 父消息 ID 贯通）。
-            # 批次 3：conversation_id 贯通（generation.* wire 的 conversationId 数据源）。
-            # 批次 5（D8）：model_id 捕获 llm.model 快照——统一回合事件 Started/Completed/
-            # Failed 的 model 数据源，替代 completed 时即时读取（保证同一次快照）。
-            # 批次 8b（D5）：protocol_version 贯通——空响应兜底按版本分支（v2 发 segment）。
-            self._generation_ctx = GenerationContext(
-                generation_id=new_generation_id(),
-                user_message_id=MessageId(message_id or ""),      # 收口点 B：message_id 为 NewType，缺省产 MessageId("")
-                assistant_message_id=new_message_id(),
-                conversation_id=gen_conversation_id,              # gen_conversation_id = conversation_id or target.session_id，已 SessionId
-                model_id=self._llm.model,
-                request_id=RequestId(rid),                        # 收口点 B：rid 来自 get_request_id()（str）或 P 兜底
-                protocol_version=protocol_version,
-            )
-            self._turn_failed_emitted = False
-            # 批次 3（BE-024）：generation 建档（status=running）。只在 process 开头
-            # 注册一次——严禁放 _dispatch_stream_event（逐帧分发，每 delta 都会重复
-            # upsert）。同步 await + try/except（Mongo 离线不阻塞 generation）。
-            if self._generation_registry is not None:
-                try:
-                    await self._generation_registry.register(
-                        generation_id=self._generation_ctx.generation_id,
-                        session_id=target.session_id,
-                        user_message_id=self._generation_ctx.user_message_id,
-                        message_id=self._generation_ctx.assistant_message_id,
-                        model=self._llm.model,
-                        request_id=self._generation_ctx.request_id,
-                    )
-                except Exception:
-                    logger.debug("generation register 失败（Mongo 离线）", exc_info=True)
 
             self._current_task = asyncio.current_task()
             try:
@@ -539,14 +468,13 @@ class CognitiveLoop(CognitiveTools):
                                        task_result_context=task_result_context,
                                        message_id=message_id,
                                        conversation_id=conversation_id,
-                                       session=target,
+                                       session=setup.target,
                                        protocol_version=protocol_version)
-                clock.stop()
-                logger.info("<<< 回复生成完成 — %s", clock.summary())
-                # 存入 ring buffer 供 /debug 面板
+                setup.clock.stop()
+                logger.info("<<< 回复生成完成 — %s", setup.clock.summary())
                 self._timing_history.append({
-                    "total_ms": clock.total_ms,
-                    "spans": dict(clock._spans),
+                    "total_ms": setup.clock.total_ms,
+                    "spans": dict(setup.clock._spans),
                 })
                 if len(self._timing_history) > 100:
                     self._timing_history = self._timing_history[-100:]
@@ -554,40 +482,7 @@ class CognitiveLoop(CognitiveTools):
                 logger.info("<<< 用户打断")
                 await self._handle_interrupt()
             except Exception as e:
-                # 区分 LLM 层失败与代码 bug——代码 bug 不应误导用户为「LLM 调用失败」（O7）
-                if _is_llm_layer_error(e):
-                    logger.exception("<<< LLM 调用异常，回退到 IDLE")
-                    label = "LLM 调用失败"
-                    code = "GENERATION_TIMEOUT" if isinstance(e, asyncio.TimeoutError) \
-                        else "GENERATION_PROVIDER_UNAVAILABLE"
-                    retryable = True
-                else:
-                    logger.exception("<<< 处理回复时内部错误，回退到 IDLE")
-                    label = "内部错误"
-                    code = "INTERNAL"
-                    retryable = False
-                # 通知前端错误信息：统一回合事件（v1 复刻 ❌ delta + send("")；v2 发 generation.failed）
-                err_msg = str(e)[:200]
-                if self._generation_ctx is not None:
-                    try:
-                        await self._output.turn_failed(
-                            code, err_msg, retryable, label, self._generation_ctx)
-                    except Exception:
-                        logger.debug("turn_failed 发射失败", exc_info=True)
-                    # 终态唯一：打断不重发 CANCELLED——flag 语义 = 错误路径已达（发射成败都置位）
-                    self._turn_failed_emitted = True
-                    # 批次 3（BE-024）：错误路径 generation 终态 → failed（随后
-                    # _handle_interrupt 的 mark 经 _turn_failed_emitted 守卫不覆盖）
-                    # 批次 8c（F6）：error 结构化 {code,message,retryable} 落库（dict 原样存）
-                    if self._generation_registry is not None:
-                        try:
-                            await self._generation_registry.mark(
-                                self._generation_ctx.generation_id,
-                                status="failed", finish_reason="error",
-                                error={"code": code, "message": err_msg, "retryable": retryable})
-                        except Exception:
-                            logger.debug("generation mark failed 失败", exc_info=True)
-                await self._handle_interrupt()
+                await self._handle_turn_exception(e)
             finally:
                 self._clock = None
 
@@ -649,481 +544,68 @@ class CognitiveLoop(CognitiveTools):
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs))
         return messages, tool_defs
 
-    # ---- Core loop: LLM streaming ----
-
-    async def _stream_llm_response(
-        self, messages: list[dict], tool_defs: list[dict], round_num: int,
-        session_id: SessionId | None = None,
-        session: SessionMemory | None = None,
-    ) -> tuple[str, list[dict], bool, list[str], str, list[BlockRef], str]:
-        """流式调用 LLM，逐 chunk 分发 StreamProcessor 事件。
-
-        驱动 StreamProcessor 状态机，将解析出的文本增量转为 TTS/UI 副作用。
-        同时累积 tool_call delta 供后续 normalize。flush() 后在本方法内重建
-        blocks 与 public_text（proc 是局部变量，`_finalize_turn` 只收返回值）。
-
-        Args:
-            messages: 已构建的 LLM 消息列表（含 system + history + user）
-            tool_defs: 工具定义列表（OpenAI function calling 格式）
-            round_num: 当前工具调用轮次（0 = 首轮）
-            session_id: 本轮目标会话 ID（token record 归属）
-            session: 本轮目标会话（F1-b 捕获——_apply_mood 写 target.character_state）
-
-        Returns:
-            (acc_text, raw_tool_calls, speaking_started, all_sentences,
-             inner_voice, blocks, public_text):
-            - acc_text: LLM 原始输出全文（含标签）
-            - raw_tool_calls: 合并后的 streaming tool_call delta 列表
-            - speaking_started: 是否已开始语音/文本输出
-            - all_sentences: 所有分句文本列表
-            - inner_voice: 内心独白文本（多个 <inner_voice> 以换行合并）
-            - blocks: BlockRef 列表 —— (kind, content, lang, after_sentence_idx)
-            - public_text: 按 token 流重建的公开文本（去 META，保留 PAUSE/STAGE_CN/块内容）
-        """
-        acc_text = ""
-        raw_tool_calls: list[dict] = []
-        speaking_started = False
-        all_sentences: list[str] = []
-        iv_think_buf_holder: list[str] = []
-        t_think_start = time.perf_counter()
-        self._ttft_start = t_think_start
-
-        # 工具循环的后续轮次也捕获 prompt
-        if round_num > 0 and self._prompt_recorder is not None:
-            self._prompt_recorder.record(
-                messages=list(messages),
-                tools=tool_defs,
-                round_num=round_num,
-                model=self._llm.model,
-            )
-
-        self._mood_applied = False
-        proc = StreamProcessor()
-
-        stream = self._llm.stream_think(messages, tools=tool_defs,
-            extra_body={"thinking": {"type": "disabled"}})
-        try:
-            async for chunk in stream:
-                delta: str = chunk.get("content", "")
-                tc_deltas = chunk.get("tool_calls")
-
-                if delta:
-                    acc_text += delta
-                    for event in proc.feed(delta):
-                        speaking_started, all_sentences = (
-                            await self._dispatch_stream_event(
-                                event,
-                                speaking_started=speaking_started,
-                                all_sentences=all_sentences,
-                                iv_think_buf_holder=iv_think_buf_holder,
-                                session=session,
-                            )
-                        )
-
-                if tc_deltas:
-                    merge_stream_tool_calls(raw_tool_calls, tc_deltas)
-
-                if "usage" in chunk:
-                    if self._token_tracker is not None:
-                        # 批次 3：record 归属本轮目标会话（conversationUsage 数据源）
-                        await self._token_tracker.record(
-                            usage=chunk["usage"],
-                            model=self._llm.model,
-                            round_num=round_num,
-                            session_id=session_id,
-                        )
-        except asyncio.CancelledError:
-            raise
-
-        # Flush StreamProcessor（冲刷流处理器剩余事件）
-        for event in proc.flush():
-            speaking_started, all_sentences = (
-                await self._dispatch_stream_event(
-                    event,
-                    speaking_started=speaking_started,
-                    all_sentences=all_sentences,
-                    iv_think_buf_holder=iv_think_buf_holder,
-                    session=session,
-                )
-            )
-
-        # flush 后收集结构化块与公开文本（proc 是局部变量，只能在此重建）
-        blocks = proc.get_blocks()
-        public_text = proc.rebuild_public_text()
-        # 多个 <inner_voice> 累积合并（见 _dispatch_stream_event）
-        iv_think = "\n".join(iv_think_buf_holder)
-
-        return acc_text, raw_tool_calls, speaking_started, all_sentences, iv_think, blocks, public_text
+    # 流式消费/事件分发已迁至 CognitiveStreaming mixin（CORE-MOD-P1-04）。
 
     # ---- Core loop: tool execution ----
 
-    async def _execute_tool_round(
-        self, messages: list[dict], acc_text: str,
-        raw_tool_calls: list[dict], _on_tool_calls: Callable | None,
-        conversation_id: SessionId | None = None,
-    ) -> None:
-        """执行一轮工具调用：submit_task 拦截 → Gate 校验 → dispatch → 结果注入。
+    # 工具轮执行已迁至 CognitiveToolPhase mixin（CORE-MOD-P1-04）。
 
-        副作用（全部就地修改）：
-        - messages 追加 assistant entry + tool result messages
-        - session 写入 AssistantMessage + ToolResultMessage
-        - output 推送 tool_executing / tool_done action
-        - fsm 切换 EXECUTING → THINKING
-
-        Args:
-            messages: LLM 消息列表（in-place 修改，追加 assistant + tool results）
-            acc_text: LLM 原始输出全文
-            raw_tool_calls: streaming 累积的 tool_call delta（合并后未归一化）
-            _on_tool_calls: 外部工具回调（测试/自定义 dispatch），None 时走 _execute_tools_directly
-            conversation_id: 批次 3 目标会话 ID（SessionId NewType，贯通，供日志/归属追踪）
-        """
-        # 切断气泡 — TTS tasks 独立运行，不 cancel
-        await self.phases.enter_executing()
-
-        normalized = normalize_tool_calls(raw_tool_calls)
-
-        # 分离 submit_task 和其他工具——submit_task 走专用路径
-        if self._delegation_preparer is not None:
-            submit_tcs = [tc for tc in normalized if tc.function.name == "submit_task"]
-            other_tcs  = [tc for tc in normalized if tc.function.name != "submit_task"]
-        else:
-            submit_tcs = []
-            other_tcs  = normalized
-
-        # 构建 assistant_entry（先于 tool results，OpenAI 协议要求）
-        assistant_entry: dict = {"role": "assistant", "content": acc_text or None}
-        if normalized:
-            assistant_entry["tool_calls"] = [tc.model_dump(mode="json") for tc in normalized]
-        messages.append(assistant_entry)
-
-        # LLM 函数名反查回运行时名：definitions() 暴露脱点名（OpenAI/Anthropic/Gemini
-        # 禁点号，desktop.* → desktop_*），LLM 原样回传脱点名；gate/执行/落库/前端
-        # 事件需要运行时名（desktop.file.read）。assistant_entry 已快照脱点名（与 LLM
-        # 看到的历史一致），此处只修正后续消费；未知/合成名（submit_task）原样透传。
-        if self._tool_adapter is not None:
-            resolver = getattr(self._tool_adapter, "resolve_llm_name", None)
-            if resolver is not None:
-                for tc in normalized:
-                    runtime_name = resolver(tc.function.name)
-                    if isinstance(runtime_name, str) and runtime_name:
-                        tc.function.name = runtime_name
-
-        # Gate: 校验 tool_calls 合法性，拦截未知工具名
-        if not self._gate_tool_calls(normalized, messages):
-            await self.phases.return_to_thinking()  # 恢复 THINKING，避免 FSM 卡在 EXECUTING 触发非法转换
-            return  # gate 已注入 failure messages，跳过 dispatch
-
-        # submit_task 工具调用——拦截处理
-        if submit_tcs:
-            for tc in submit_tcs:
-                result = await self._handle_submit_task(tc)
-                tc_id = tc.id
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "content": result.llm_content,
-                })
-                await self._output.action("tool_done", params={
-                    "tool": "submit_task",
-                    "call_id": tc_id,
-                    "success": result.success,
-                    "content": result.content or "",
-                    "error": result.error,
-                    "error_type": None,
-                    "duration_ms": result.duration_ms,
-                    "truncated": result.truncated,
-                })
-                self._session.add_message(ToolResultMessage(
-                    message_id=new_message_id(),
-                    content=[TextPart(content=result.content or "")],
-                    tool_call_id=tc.id,
-                    tool_name="submit_task",
-                    success=result.success,
-                    error=result.error,
-                    error_type=None,
-                    duration_ms=result.duration_ms,
-                    truncated=result.truncated,
-                ))
-                # 注册后台任务
-                if result.success and result.async_task_id and self._on_background_task and self._task_system:
-                    mailbox = self._task_system.get_task_mailbox(WorkflowId(result.async_task_id))
-                    if mailbox:
-                        dispatched_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                        self._on_background_task(
-                            result.async_task_id, mailbox, intent=(
-                                tc.function.parsed.get("intent", "")
-                            ), dispatched_at=dispatched_now,
-                        )
-
-            dispatch_tcs = other_tcs
-        else:
-            dispatch_tcs = normalized
-
-        # 工具调用消息写入 Session
-        self._session.add_message(AssistantMessage(
-            content=[TextPart(content=acc_text)] if acc_text else [],
-            message_id=new_message_id(),
-            tool_calls=normalized if normalized else None,
-        ))
-
-        # 为 UI 发射 tool_executing 动作（在分发前）
-        for tc in dispatch_tcs:
-            func_name = tc.function.name
-            call_id = tc.id
-            args = tc.function.parsed
-            # arguments 可能是合法 JSON 但非 dict（list/str/int），跳过避免 AttributeError
-            if not isinstance(args, dict):
-                args = {}
-            self._executing_tools.append(func_name)
-            await self._output.action("tool_executing", params={
-                "tool": func_name,
-                "call_id": call_id,
-                "args": {k: str(v) for k, v in args.items()},
-            })
-
-        if self._clock is None:
-            raise RuntimeError("TimingClock 未初始化")
-        with self._clock.span("tools"):
-            if _on_tool_calls is not None:
-                results = await _on_tool_calls(dispatch_tcs)
-            else:
-                results = await self._execute_tools_directly(dispatch_tcs)
-
-        for item in results:
-            if isinstance(item, BaseException):
-                # gather(return_exceptions=True) 捕获的非 Exception 级异常
-                #（KeyboardInterrupt/SystemExit 等）——工具结果被丢弃意味着
-                # 该 tool_call 不会得到对应的 tool response，记录日志便于诊断。
-                logger.warning("工具执行返回异常，跳过该工具结果: %r", item)
-                continue
-            tc, tool_result = item
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": tool_result.llm_content,
-            })
-            error_type_str = tool_result.error_type.value if tool_result.error_type else None
-            await self._output.action("tool_done", params={
-                "tool": tc.function.name,
-                "call_id": tc.id,
-                "success": tool_result.success,
-                "content": tool_result.content or "",
-                "error": tool_result.error,
-                "error_type": error_type_str,
-                "duration_ms": tool_result.duration_ms,
-                "truncated": tool_result.truncated,
-            })
-            self._session.add_message(ToolResultMessage(
-                message_id=new_message_id(),
-                content=_build_tool_result_parts(tool_result),
-                tool_call_id=tc.id,
-                tool_name=tc.function.name,
-                success=tool_result.success,
-                error=tool_result.error,
-                error_type=tool_result.error_type,
-                duration_ms=tool_result.duration_ms,
-                truncated=tool_result.truncated,
-            ))
-
-        # 清理执行中的工具追踪
-        for tc in dispatch_tcs:
-            func_name = tc.function.name
-            try:
-                self._executing_tools.remove(func_name)
-            except ValueError:
-                pass
-
-        await self.phases.return_to_thinking()
-
-    # ---- Core loop: finalize ----
-
-    async def _finalize_turn(
-        self, acc_text: str, all_sentences: list[str],
-        iv_think_buf: str, speaking_started: bool,
-        user_message: str, round_num: int,
-        blocks: list[BlockRef], public_text: str,
-        *,
-        conversation_id: SessionId | None = None,
-        session: SessionMemory | None = None,
-    ) -> None:
-        """收尾本轮：mood fallback → 归档 session → 推送结构化块 → after_response。
-
-        public_text 已由 `_stream_llm_response` 重建（去 META，保留 PAUSE/STAGE_CN/
-        块内容），不再在此 find-strip。构建 AssistantMessage 写入 session，
-        推送 code/markdown 块到前端，最后触发 fire-and-forget _after_response。
-
-        Args:
-            acc_text: LLM 原始输出全文（含标签）
-            all_sentences: 所有分句文本列表（用于 block 构建）
-            iv_think_buf: 内心独白文本（多个 <inner_voice> 换行合并）
-            speaking_started: 是否已开始语音/文本输出
-            user_message: 用户原始输入（传给 _after_response）
-            round_num: 当前轮次编号（传给 response_recorder）
-            blocks: BlockRef 列表 —— (kind, content, lang, after_sentence_idx)
-            public_text: 重建后的公开文本（供 analyze_assistant / log_conversation / after_response）
-            conversation_id: 批次 3 目标会话 ID（SessionId NewType，generation.completed
-                的 conversationId）
-            session: 批次 3 本轮目标会话（局部捕获——_after_response / turn_completed
-                归属用，不读 self._session，防 active 切换后 in-flight 异步延续落错会话）
-        """
-        # 批次 3：本轮目标会话局部捕获（process() 传入，_think_loop 贯通）
-        target = session if session is not None else self._session
-        # 注意：不在此处 flush_emojis——最后一句 TTS 的 pop(sid-1) 在 wait_all 后才执行。
-        # emoji 依附顺序由 finish_turn → wait_all → flush_emojis 保证（见 _transition_idle）。
-
-        # Fallback: LLM 未输出 <mood> → 关键词检测
-        if self._character_engine and not self._mood_applied:
-            logger.debug("心情: <mood> 未检测到，使用关键词 fallback")
-            self._character_engine.analyze_user(user_message)
-            # F1-b：读 target.character_state（FSM 门禁保证 engine 仍绑定 target）
-            fallback_mood = (target.character_state.mood
-                             if target is not None else self._character_engine.state.mood)
-            self._tts_mgr.set_emotion(fallback_mood)
-
-        if public_text.strip():
-            if self._character_engine:
-                self._character_engine.analyze_assistant(public_text)
-            if not speaking_started:
-                await self._output.typing(False)
-                ctx = self._generation_ctx
-                if ctx is not None and ctx.protocol_version >= 2:
-                    # 批次 8b（D5）：v2 发 v2 兼容 segment（channel=public_reply）——
-                    # 替代 v1 message 帧，客户端以 segment.completed.content 为渲染真值
-                    # （protocol-v2 §2 注）。
-                    # F4：TEXT_DELTA 已流式开段但未出 SENTENCE 边界时 current_segment_id
-                    # 已非 None——直接完成现有段，不重复 open（防悬空段+文本重复）。
-                    if ctx.current_segment_id is not None:
-                        await self._output.segment_completed(public_text, ctx)
-                        ctx.close_segment()
-                    else:
-                        ctx.open_segment(MessageChannel.PUBLIC_REPLY, SegmentKind.TEXT)
-                        await self._output.segment_started(ctx)
-                        await self._output.segment_completed(public_text, ctx)
-                        ctx.close_segment()
-                else:
-                    msg = MessageObj(content=public_text)
-                    await self._output.send(msg)
-        if public_text.strip():
-            assistant_parts, content_type = build_parts(all_sentences, blocks)
-            # 批次 2：assistant 父消息 ID 用 generation 开始预分配的 ID（贯通 ACK/session 对齐）
-            assistant_msg_id = (self._generation_ctx.assistant_message_id
-                                if self._generation_ctx is not None else new_message_id())
-            target.add_message(AssistantMessage(
-                content=assistant_parts,
-                message_id=assistant_msg_id,
-                inner_voice=iv_think_buf.strip() or None,
-                block_index=content_type,
-                token_usage=TokenUsageSummary(
-                    rounds=list(self._token_tracker.current_turn_usages),
-                    turn_total=sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
-                ) if self._token_tracker and self._token_tracker.current_turn_usages else None,
-            ))
-            if self._response_recorder is not None:
-                self._response_recorder.record(
-                    raw_text=acc_text,
-                    inner_voice=iv_think_buf.strip() or None,
-                    round_num=round_num,
-                )
-
-            log_conversation("assistant", self._prompt._character.name, public_text)
-            if iv_think_buf.strip():
-                logger.debug("💭 %s", iv_think_buf.strip())
-                log_conversation("inner_voice", self._prompt._character.name,
-                                 iv_think_buf.strip())
-            background_reserved = False
-            if self._session_work_reserver is not None:
-                await self._session_work_reserver(target.session_id)
-                background_reserved = True
-
-            async def _run_after_response() -> None:
-                try:
-                    await self._after_response(
-                        user_message, public_text,
-                        session=target, engine=self._character_engine)
-                finally:
-                    if (background_reserved
-                            and self._session_work_releaser is not None):
-                        self._session_work_releaser(target.session_id)
-
-            try:
-                task = asyncio.create_task(
-                    _run_after_response(), name="after-response")
-            except Exception:
-                if background_reserved and self._session_work_releaser is not None:
-                    self._session_work_releaser(target.session_id)
-                raise
-            self._pending_after_response.append(task)
-            # 清理已完成的 task，避免列表无限增长
-            self._pending_after_response = [
-                t for t in self._pending_after_response if not t.done()
-            ]
-
-            # 推送结构化块到前端（参数直接从 blocks 取——修复旧 getattr(...,"language","") 恒空）
-            for kind, content, lang, _after in blocks:
-                params: dict = {
-                    "block_type": kind,
-                    "content": content.strip(),
-                }
-                if kind == "code":
-                    params["language"] = lang
-                await self._output.command("block", params=params)
-
-        # 批次 3 review 修复（F9）：成功路径 generation 终态 → completed，移到
-        # turn_completed 之前落位。此前 mark 放在 _transition_idle 之后——客户端已收
-        # generation.completed（turn_completed 先发）但 registry 仍 running，TTS 播放窗口
-        # （_transition_idle 等 wait_all 5-30s）内打断会把已完成的 generation 标 cancelled，
-        # 造成客户端 completed 与服务端 cancelled 不一致。前置后 _handle_interrupt 经
-        # _generation_completed 守卫不再重标。
-        if self._generation_ctx is not None:
-            self._generation_completed = True
-            if self._generation_registry is not None:
-                try:
-                    await self._generation_registry.mark(
-                        self._generation_ctx.generation_id,
-                        status="completed", finish_reason="stop")
-                except Exception:
-                    logger.debug("generation mark completed 失败", exc_info=True)
-
-        # 批次 2：父完成（v2 generation.completed——usage/model/mood 落位；v1 NO-OP，token_usage 已实时广播）
-        if self._generation_ctx is not None:
-            try:
-                from frontend_contract import TokenRound, TokenUsage
-                rounds = [
-                    TokenRound.model_validate(r.model_dump(mode="json"))
-                    for r in (self._token_tracker.current_turn_usages
-                              if self._token_tracker is not None else [])
-                ]
-                usage = TokenUsage(
-                    rounds=rounds,
-                    turn_total=sum(r.total_tokens for r in
-                                   (self._token_tracker.current_turn_usages
-                                    if self._token_tracker is not None else [])),
-                )
-                # 批次 3：会话级 token 累计（get_session_stats 按目标会话取）
-                conversation_usage: dict | None = None
-                if self._token_tracker is not None:
-                    try:
-                        conversation_usage = await self._token_tracker.get_session_stats(
-                            target.session_id)
-                    except Exception:
-                        logger.debug("get_session_stats 失败，conversation_usage=None",
-                                     exc_info=True)
-                # F1-b：mood 读 target.character_state（防换绑竞态下读错会话）
-                mood = (target.character_state.mood if target is not None else (
-                    self._character_engine.state.mood
-                    if self._character_engine is not None else None))
-                # 批次 5（D8）：model 用 ctx.model_id 快照（非即时读取 self._llm.model）——
-                # 与 generation.started 同一次快照，避免 completed 时读到已切换模型
-                await self._output.turn_completed(
-                    "stop", usage, self._generation_ctx.model_id, mood, self._generation_ctx,
-                    conversation_id=conversation_id or target.session_id,
-                    conversation_usage=conversation_usage)
-            except Exception:
-                logger.debug("turn_completed 发射失败", exc_info=True)
-
-        await self._transition_idle()
+    # 轮次收尾已迁至 CognitiveFinalize mixin（CORE-MOD-P1-04）。
 
     # ---- Core loop: main orchestrator ----
+
+    def _prepare_think_input(
+        self,
+        user_message: str,
+        stt_emotion: str,
+        stt_events: list[str] | None,
+        is_task_result: bool,
+        task_result_context: dict | None,
+    ) -> str:
+        """think_loop 前置：STT 情绪分析 + 后台任务结果唤醒消息。"""
+        if self._character_engine:
+            if stt_emotion and stt_emotion != "NEUTRAL":
+                self._character_engine.analyze_user_stt(stt_emotion, stt_events)
+        if is_task_result and task_result_context:
+            return self._build_wake_up_message(task_result_context)
+        return user_message
+
+    def _resolve_empty_response(
+        self,
+        empty_retried: bool,
+        messages: list[dict],
+    ) -> tuple[str, str, list[str], bool]:
+        """空响应守卫：首空注入 nudge 重试；仍空发兜底回复。
+
+        Returns:
+            (public_text, acc_text, all_sentences, retry)：retry=True 时调用方
+            continue；否则返回兜底文本。
+        """
+        if not empty_retried:
+            logger.warning("LLM 返回空响应（无文本、无工具调用），注入 nudge 重试一次")
+            messages.append({"role": "system", "content": _EMPTY_RESPONSE_NUDGE})
+            return "", "", [], True
+        self._empty_response_count += 1
+        _log = (logger.error
+                if self._empty_response_count >= _EMPTY_RESPONSE_THRESHOLD
+                else logger.warning)
+        _log("LLM 重试后仍返回空响应（连续 %d 轮），发送兜底回复",
+             self._empty_response_count)
+        return (_EMPTY_RESPONSE_FALLBACK,
+                _EMPTY_RESPONSE_FALLBACK,
+                [_EMPTY_RESPONSE_FALLBACK],
+                False)
+
+    async def _start_turn_tracking(self, messages: list[dict], tool_defs: list[dict]) -> None:
+        """prompt 记录 + token turn 启动 + typing + generation.started。"""
+        if self._prompt_recorder is not None:
+            self._prompt_recorder.record(
+                messages=list(messages), tools=tool_defs, round_num=0, model=self._llm.model)
+        if self._token_tracker is not None:
+            self._token_tracker.start_turn()
+        await self._output.typing(True)
+        if self._generation_ctx is not None:
+            await self._output.turn_started(self._generation_ctx)
 
     async def _think_loop(self, user_message: str, user_name: str,
                           stt_emotion: str = "", stt_events: list[str] | None = None,
@@ -1160,12 +642,8 @@ class CognitiveLoop(CognitiveTools):
             session: 批次 3 本轮目标会话（局部捕获，贯通到 stream/finalize）
             protocol_version: 来源协议版本（1=v1，2=v2）
         """
-        # 前置：STT 情绪分析 + 渐进式唤醒
-        if self._character_engine:
-            if stt_emotion and stt_emotion != "NEUTRAL":
-                self._character_engine.analyze_user_stt(stt_emotion, stt_events)
-        if is_task_result and task_result_context:
-            user_message = self._build_wake_up_message(task_result_context)
+        user_message = self._prepare_think_input(
+            user_message, stt_emotion, stt_events, is_task_result, task_result_context)
 
         # 1. 构建 prompt
         self._phase = TurnPhase.BUILD_PROMPT
@@ -1173,18 +651,7 @@ class CognitiveLoop(CognitiveTools):
             user_message, user_name, content, stt_emotion, stt_events, is_task_result,
             user_message_id=message_id, conversation_id=conversation_id)
 
-        # 记录 prompt + token turn start
-        if self._prompt_recorder is not None:
-            self._prompt_recorder.record(
-                messages=list(messages), tools=tool_defs, round_num=0, model=self._llm.model)
-        if self._token_tracker is not None:
-            self._token_tracker.start_turn()
-
-        await self._output.typing(True)
-
-        # 批次 2：生成开始（v2 generation.started；v1 无新增）
-        if self._generation_ctx is not None:
-            await self._output.turn_started(self._generation_ctx)
+        await self._start_turn_tracking(messages, tool_defs)
 
         # 2. ReAct 循环
         empty_retried = False
@@ -1202,25 +669,11 @@ class CognitiveLoop(CognitiveTools):
                 # 重试后仍空 → 兜底回复（同时注入 all_sentences，保证 session 归档
                 # 与前端显示的文本一致——build_parts([]) 会产出空 parts）。
                 if not raw_tool_calls and not public_text.strip():
-                    if not empty_retried:
+                    public_text, acc_text, all_sentences, retry = \
+                        self._resolve_empty_response(empty_retried, messages)
+                    if retry:
                         empty_retried = True
-                        logger.warning(
-                            "LLM 返回空响应（无文本、无工具调用），注入 nudge 重试一次")
-                        messages.append({"role": "system", "content": _EMPTY_RESPONSE_NUDGE})
                         continue
-                    # 连续空响应计数器——超阈值升 error，防系统性 bug 持续发
-                    # 「走神」回复而不升级告警。
-                    self._empty_response_count += 1
-                    _log = (logger.error
-                            if self._empty_response_count >= _EMPTY_RESPONSE_THRESHOLD
-                            else logger.warning)
-                    _log(
-                        "LLM 重试后仍返回空响应（连续 %d 轮），发送兜底回复",
-                        self._empty_response_count,
-                    )
-                    public_text = _EMPTY_RESPONSE_FALLBACK
-                    acc_text = _EMPTY_RESPONSE_FALLBACK
-                    all_sentences = [_EMPTY_RESPONSE_FALLBACK]
                 else:
                     # 正常响应（有文本或工具调用）——重置空响应计数
                     self._empty_response_count = 0
@@ -1341,106 +794,6 @@ class CognitiveLoop(CognitiveTools):
             except Exception:
                 logger.warning("after-response task 异常", exc_info=True)
         self._pending_after_response.clear()
-
-    # ---- StreamProcessor event dispatch ----
-
-    async def _dispatch_stream_event(
-        self, event: StreamEvent, *,
-        speaking_started: bool, all_sentences: list[str],
-        iv_think_buf_holder: list[str],
-        session: SessionMemory | None = None,
-    ) -> tuple[bool, list[str]]:
-        """分发 StreamEvent → 副作用。
-
-        这是 StreamProcessor（纯状态机）和 CognitiveLoop（副作用世界）之间的桥。
-        按事件类型分发：mood → CharacterEngine, inner_voice → UI command,
-        ttft → clock span, sentence → TTS/UI, text_delta → 纯文本模式输出。
-
-        Args:
-            event: StreamProcessor 产出的解析事件
-            speaking_started: 当前轮是否已开始语音/文本输出
-            all_sentences: 已累积的分句列表（in-place 追加）
-            iv_think_buf_holder: 累积列表，逐条 append inner_voice 文本（可变容器绕过 Python 闭包限制）
-            session: 本轮目标会话（F1-b 捕获，_apply_mood 写其 character_state）
-
-        Returns:
-            (speaking_started, all_sentences): 更新后的状态
-        """
-        if event.type == StreamEventType.MOOD:
-            if self._character_engine:
-                await _apply_mood(event.text, self._character_engine, self._tts_mgr,
-                                  self._output, session)
-            self._mood_applied = True
-
-        elif event.type == StreamEventType.INNER_VOICE:
-            if event.text:
-                iv_think_buf_holder.append(event.text)
-                try:
-                    if self._generation_ctx is not None:
-                        # 统一发射：v1 command inner_voice；v2 作为 inner_voice 段
-                        await self._output.inner_voice(event.text, self._generation_ctx)
-                    else:
-                        # 防御（无 ctx，直接调用/旧路径）：v1 command 直发
-                        await self._output.command(
-                            "inner_voice", params={"content": event.text})
-                except Exception:
-                    logger.debug("inner_voice broadcast failed", exc_info=True)
-
-        elif event.type == StreamEventType.TTFT:
-            ttft_ms = int((time.perf_counter() - self._ttft_start) * 1000)
-            if self._clock is not None:
-                self._clock._spans["ttft"] = ttft_ms
-            logger.debug("TTFT: %d ms", ttft_ms)
-
-        elif event.type == StreamEventType.SENTENCE:
-            sentence = event.text
-            if not sentence:
-                return speaking_started, all_sentences
-            all_sentences.append(sentence)
-            logger.debug("分句 (%d 字符)", len(sentence))
-            if not speaking_started:
-                await self.phases.enter_speaking()
-                speaking_started = True
-            tts_active = self._tts_mgr.active and self._tts_mgr.enabled
-            if tts_active:
-                self._tts_mgr.stream_sentence(sentence)
-            ctx = self._generation_ctx
-            if ctx is not None:
-                if ctx.current_segment_id is not None:
-                    # 活动段（由本句 deltas 打开）→ 完成本句段
-                    await self._output.segment_completed(sentence, ctx, tts_active=tts_active)
-                    ctx.close_segment()
-                else:
-                    # 无活动段（deltas 合并到前段 / 本句无独立 delta 流）→ 为本句新开段再完成，
-                    # 保证每句独立 segmentId（PRD BE-022）
-                    ctx.open_segment(MessageChannel.PUBLIC_REPLY, SegmentKind.TEXT)
-                    await self._output.segment_started(ctx)
-                    await self._output.segment_completed(sentence, ctx, tts_active=tts_active)
-                    ctx.close_segment()
-            elif not tts_active:
-                # text-only：TEXT_DELTA 已广播增量，此处只发句子边界信号结束气泡，避免整句重复显示
-                await self._output.send("")
-
-        elif event.type == StreamEventType.TEXT_DELTA:
-            tts_active = self._tts_mgr.active and self._tts_mgr.enabled
-            ctx = self._generation_ctx
-            if event.text:
-                if ctx is not None:
-                    # 打开 public_reply 段（首个 delta 时）——TTS 模式下也开段（v2 segment.completed 恒发）
-                    if ctx.current_segment_id is None:
-                        ctx.open_segment(MessageChannel.PUBLIC_REPLY, SegmentKind.TEXT)
-                        await self._output.segment_started(ctx)
-                    # loop 保留 TTS 门控：TTS 活跃时不发 delta（v1 现状；v2 段文本由 segment.completed 承载）
-                    if not tts_active:
-                        await self._output.text_delta(event.text, ctx)
-                elif not tts_active:
-                    await self._output._broadcast(
-                        "on_text_delta", event.text,
-                        capability=ChannelCapability.TEXT_DELTA,
-                    )
-
-        return speaking_started, all_sentences
-
 
     @staticmethod
     def _build_wake_up_message(ctx: dict) -> str:

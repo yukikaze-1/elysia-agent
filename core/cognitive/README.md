@@ -95,7 +95,7 @@ THINKING → LLM 返回 tool_calls → EXECUTING → 工具结果注入 → THIN
 
 事件类型: `MOOD` / `INNER_VOICE` / `SENTENCE` / `TEXT_DELTA` / `TTFT`
 
-`CognitiveLoop._dispatch_stream_event()` 负责将事件翻译为副作用（mood 更新、inner_voice 广播、TTS 分发、FSM 切换）。
+`CognitiveStreaming._dispatch_stream_event()`（`streaming.py`，CORE-MOD-P1-04）负责将事件翻译为副作用（mood 更新、inner_voice 广播、TTS 分发、FSM 切换）。
 
 **TTS 停顿标签保护** — `<#0.5#>` 由 tokenizer 识别为 PAUSE 原子 token（持有上界由尾串正则驱动，跨 chunk 不变式保证不切碎），以受保护 span 整体嵌入句子；分句边界只在 SPEECH 文本上扫描，停顿标签内的 `.` 永不参与边界判定。停顿标签不显示在 UI 中。
 
@@ -106,7 +106,10 @@ THINKING → LLM 返回 tool_calls → EXECUTING → 工具结果注入 → THIN
 ```
 core/cognitive/
 ├── __init__.py    — 重导出 CognitiveLoop
-├── loop.py               — CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event）
+├── loop.py               — CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt）
+├── streaming.py           — CognitiveStreaming mixin：_stream_llm_response + _dispatch_stream_event + _apply_mood（CORE-MOD-P1-04）
+├── tool_phase.py          — CognitiveToolPhase(CognitiveTools) mixin：_execute_tool_round + _build_tool_result_parts（CORE-MOD-P1-04）
+├── finalize.py            — CognitiveFinalize mixin：_finalize_turn（mood fallback/归档/block/generation 终态，CORE-MOD-P1-04）
 ├── tools.py              — CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
 ├── timing.py      — Timer + TimingClock 延迟统计
 ├── generation.py  — GenerationContext: generation_id/assistant_message_id/conversation_id 预分配贯通（ID NewType；channel/kind 对齐契约枚举 MessageChannel/SegmentKind，批次 2）

@@ -73,152 +73,23 @@ def warn_if_attachment_signature_disabled(sig_secret: str, access_token: str) ->
     )
 
 
-def create_app(
+def _make_ws_handler(
     agent: "Agent",
-    serve_static: bool = True,
-    serve_chat: bool = False,
-    wake_word_enabled: bool = False,
-    task_system: "WorkflowEngine | None" = None,
-    auth_token: str = "",
-    access_token: str = "",
-    max_ws_connections: int | None = None,
-    max_request_bytes: int | None = None,
-    rate_limits: dict[str, int] | None = None,
-    product_mode: bool = False,
-    idempotency_repo: "IdempotencyRepository | None" = None,
-) -> web.Application:
-    """创建一个带 WebSocket handler 和可选静态文件的 aiohttp Application。
-
-    STT 不再经参数注入——handle_ws 直接读 ``agent.stt`` 槽位（含 stt_transcribe /
-    stt_emotion_state），支持热切换。
-
-    Args:
-        agent: Agent 实例（需具备 _output、_bus、process_message()）。
-        serve_static: 是否在 /static/ 挂载静态目录。
-        serve_chat: 是否注册 / 聊天路由（默认关——v1 网页聊天停用，/ 404；
-            SERVE_CHAT=1 可恢复）。/debug 独立于本开关（拆耦合，仅受 debug.html
-            存在性约束）。
-        wake_word_enabled: 是否对音频输入启用唤醒词检测。
-        task_system: WorkflowEngine 实例，供 debug 路由使用（可选）。
-        auth_token: 非空时，/shutdown、/restart、/tools/reload 与 /debug/api/*
-            需要 Authorization: Bearer <auth_token> 请求头。
-        access_token: 非空时，/ws、业务 /api/*、/uploads/* 需要
-            Authorization: Bearer <access_token>（产品认证，与 auth_token 权限域分离）。
-        max_ws_connections: 并发 WS 连接上限（0/None 不限）。超出拒绝升级（503 CONNECTION_LIMITED）。
-        max_request_bytes: 业务请求体上限（client_max_size，app 级；0=不限，None/缺省 64MB；
-            multipart 除外——upload_handler 同源同步）。
-        rate_limits: D6b 限流规则 {类别: rpm}（0 关闭）。None/空 → 不挂载限流。
-            REST 高成本入口（provider test/upload/search/chat）429 RATE_LIMITED；
-            WS 建连按「ws」类别、消息按类别（text/voice→messages、switch_model→provider_test、
-            tool_approval→tools）→ error RATE_LIMITED。key 认证主体优先、匿名回退 IP。
-        product_mode: D6c 产品/dev 模式——非回环绑定为 True。True + 幂等 Mongo
-            离线 → v2 幂等 fail-closed（503）；False + 离线 → 内存降级（capabilities
-            暴露非 durable 窗口）。
-        idempotency_repo: D6c 幂等 claim 仓库（agent.idempotency_repo），None → 纯内存。
-
-    Returns:
-        web.Application: 配置好的 aiohttp Application 实例。
-    """
-    # 请求体上限：app 级 client_max_size（aiohttp 无按路由选项；multipart 手工限制不受其约束）。
-    # is not None 语义：0 → 0（aiohttp 原生不限），None/缺省 → 64MB（falsy 回落会误吞 0）。
-    cms = max_request_bytes if max_request_bytes is not None else 64 * 1024 * 1024
-    app = web.Application(client_max_size=cms)
-    # 请求体超限 → 413 REQUEST_TOO_LARGE 信封（恒挂载）
-    app.middlewares.append(_make_payload_middleware(cms))
-    # D5/P2-03：legacy /uploads/ 静态响应加 nosniff（防浏览器按实际扩展嗅探执行活动内容）
-    app.middlewares.append(_nosniff_uploads)
-    # BE-P2-02：限流合法主体集（auth_token + access_token 去空）——只有命中集合的
-    # Bearer token 才按 auth 主体分桶，缺失/无效统一 ip 桶（防伪造 Authorization
-    # 轮换获得 per-token 配额）。WS 建连经 request.app 读取同一集合。
-    valid_tokens = frozenset({auth_token, access_token} - {""})
-    # D6b：公开入口限流中间件（先于 auth——认证失败/匿名 401 洪水同样被限）。
-    # 单进程语义（per-process），不假装全局限流。
-    limiter: RateLimiter | None = None
-    if rate_limits:
-        limiter = RateLimiter(rate_limits)
-        app.middlewares.append(_make_rate_limit_middleware(limiter, valid_tokens))
-        app["rate_limiter"] = limiter
-    # D6c：幂等存储后端配置（product_mode 由绑定 host 判定——非回环=产品）。
-    # configure_store 幂等（多次 create_app/restart 安全）；测试经 reset_store 隔离。
-    from core.storage.idempotency import configure_store
-    configure_store(idempotency_repo, product_mode=product_mode)
-    # 产品认证：access_token 为空 → 全匿名（本地开发，v1 兼容）
-    if access_token:
-        app.middlewares.append(_make_access_auth_middleware(access_token))
-
-    # 附件签名 fail-open 启动警告（spec §3.4）：SIG 未配置 + 无鉴权（access_token 空）
-    # → 提示仅限本地开发（有鉴权时无签名下载被 fail-closed 拒，无需提示）。
-    # 逐级 getattr 兜底（测试用 _FakeAgent 无 config 属性，容错跳过）。
-    sig_secret = getattr(
-        getattr(getattr(agent, "config", None), "server", None),
-        "attachment_sig_secret", "") or ""
-    warn_if_attachment_signature_disabled(sig_secret, access_token)
-
-    # 将 agent + stt + task_system 注入 app context，供 handler 访问
-    app["agent"] = agent
-    # BE-P2-02：合法 token 集注入 app context——WS 建连限流 key 分类器读取
-    # （与 REST 中间件闭包持有的 valid_tokens 同源）。
-    app["rate_valid_tokens"] = valid_tokens
-    # BE-P2-01：/ready 依赖 product_mode（idempotency fail-closed 门禁依据）与
-    # idempotency_repo（幂等真实 ping），注入 app context 供 ready_handler 读取。
-    app["product_mode"] = product_mode
-    app["idempotency_repo"] = idempotency_repo
-    if task_system is not None:
-        app["task_system"] = task_system
-
-    def _check_auth(request: web.Request) -> bool:
-        """管理端点认证（/shutdown /restart /tools /debug/api/*）。
-
-        批次 8a（D1）fallback：auth_token 空 + access_token 非空 → 用 access_token 校验
-        （Demo 单 token 语义，docs/14 §6）；两者都空 → 匿名本地开发。
-
-        Args:
-            request: aiohttp Request with optional Authorization header.
-
-        Returns:
-            bool: True if authorized (no token set, or token matches).
-        """
-        if auth_token:
-            expected = f"Bearer {auth_token}"
-        elif access_token:
-            expected = f"Bearer {access_token}"
-        else:
-            return True
-        return hmac.compare_digest(
-            request.headers.get("Authorization", ""), expected)
-
-    # 并发 WS 硬上限（批次 8c F14）：闭包计数 check+自增在同一事件循环调度内原子
-    # （无 await 分隔），杜绝 TOCTOU 预检（旧实现对 output._channels 计数，并发握手
-    # 或陈旧 channel 会误判）；连接关闭（handle_ws 返回）finally 自减。
+    wake_word_enabled: bool,
+    max_ws_connections: int | None,
+) -> Callable[[web.Request], Awaitable[web.Response | web.WebSocketResponse]]:
+    """构建 WS 路由 handler（含并发上限硬检查 + 协议版本协商 + 限流）。"""
     _ws_active = 0
 
     async def ws_handler(request: web.Request) -> web.Response | web.WebSocketResponse:
-        """WebSocket 连接处理入口（含并发上限硬检查 + 协议版本协商）。
-
-        9B-3：升级前协议版本协商——`X-Protocol-Version` 显式不支持的版本
-        （如 "2.0" 展示版本 / "3" / 乱拼写）→ HTTP 400 ProtocolError
-        （`CONTRACT_VALIDATION`，message 明示支持集合），不静默降级 v1；
-        拒绝优先于 platform 解析（未知版本不解析 X-Client-Platform）。
-        `handle_ws` 内 `resolve_protocol_version` 返回 None 理论上不可达（防御处理）。
-
-        Args:
-            request: aiohttp Request。
-
-        Returns:
-            web.Response | web.WebSocketResponse: 版本拒绝/并发超限错误响应或
-            WebSocket 连接对象。
-        """
+        """WebSocket 连接处理入口。"""
         nonlocal _ws_active
-        # D6b：WS 建连限流——per-key（合法认证主体优先、缺失/无效回退 IP），升级前 429 拒绝
-        # （防重连风暴/滥用；配合 max_ws_connections 并发硬上限，二者正交）。
-        # BE-P2-02：与 REST 中间件同分类器——合法 token 集经 app context 传入。
         limiter = request.app.get("rate_limiter")
         if limiter is not None and not limiter.check(
                 "ws", rate_key_for_request(
                     request, request.app.get("rate_valid_tokens", frozenset()))):
             resp = _protocol_error_response(
                 "RATE_LIMITED", "连接过于频繁，请稍后重试", 429, True)
-            # Task 7（BE-P1-03）：建连 429 带 Retry-After（与 REST 中间件一致，秒）。
             resp.headers["Retry-After"] = "60"
             return resp
         proto_header = request.headers.get("X-Protocol-Version", "")
@@ -239,155 +110,166 @@ def create_app(
                 _ws_active -= 1
         return await handle_ws(request, agent, wake_word_enabled)
 
-    app.router.add_get("/ws", ws_handler)
+    return ws_handler
 
+
+def _register_static_routes(app: web.Application, *, serve_static: bool,
+                            serve_chat: bool) -> None:
+    """注册静态资源 / debug / chat 页面路由。"""
     if serve_static and _STATIC_DIR.is_dir():
         app.router.add_static("/static/", _STATIC_DIR, show_index=False)
 
     if _LIVE2D_DIR.is_dir():
         app.router.add_static("/live2d/", _LIVE2D_DIR, show_index=False)
 
-    # Debug 页面——独立于聊天，index.html 存在与否不影响（拆耦合）
     debug_path = _STATIC_DIR / "debug.html"
     if debug_path.is_file():
         async def debug_handler(_request: web.Request) -> web.FileResponse:
-            """提供 Debug 仪表盘 HTML 页面。
-
-            Args:
-                _request: aiohttp Request（未使用）。
-
-            Returns:
-                web.FileResponse: debug.html 文件响应。
-            """
+            """提供 Debug 仪表盘 HTML 页面。"""
             return web.FileResponse(debug_path)
         app.router.add_get("/debug", debug_handler)
 
-    # 聊天页面——serve_chat 关闭则不注册（/ 404）
     if serve_chat:
         index_path = _STATIC_DIR / "index.html"
         if index_path.is_file():
             async def index_handler(_request: web.Request) -> web.FileResponse:
-                """提供主聊天应用 HTML 页面。
-
-                Args:
-                    _request: aiohttp Request（未使用）。
-
-                Returns:
-                    web.FileResponse: index.html 文件响应。
-                """
+                """提供主聊天应用 HTML 页面。"""
                 return web.FileResponse(index_path)
             app.router.add_get("/", index_handler)
 
-    # 健康检查端点 —— Docker/Kubernetes liveness(/health) + readiness(/ready)
-    app.router.add_get("/health", health_handler)
-    app.router.add_get("/ready", ready_handler)
 
-    # 关闭端点 —— 触发优雅的 agent 停止
+def _register_management_routes(
+    app: web.Application,
+    agent: "Agent",
+    check_auth: Callable[[web.Request], bool],
+) -> None:
+    """注册 shutdown / restart / tools / tools.reload 管理端点。"""
+
     async def shutdown_handler(request: web.Request) -> web.Response:
-        """优雅关闭端点。将 agent 状态置为 STOPPING。
-
-        Args:
-            request: aiohttp Request（设置 token 时需要认证）。
-
-        Returns:
-            web.Response: {"status": "shutting_down"} 或 401 unauthorized。
-        """
-        if not _check_auth(request):
+        """优雅关闭端点。"""
+        if not check_auth(request):
             code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
             msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
             return _protocol_error_response(code, msg, 401)
-        import logging
-        _log = logging.getLogger(__name__)
-        _log.info("Shutdown requested via HTTP")
-        request.app["agent"].request_shutdown()
+        logger.info("Shutdown requested via HTTP")
+        agent.request_shutdown()
         return web.json_response({"status": "shutting_down"})
     app.router.add_post("/shutdown", shutdown_handler)
-    app.router.add_get("/shutdown", shutdown_handler)  # 也接受浏览器直接访问
+    app.router.add_get("/shutdown", shutdown_handler)
 
-    # 重启端点 —— 触发带配置重新加载的优雅重启
     async def restart_handler(request: web.Request) -> web.Response:
-        """优雅重启端点。将 agent 状态置为 RESTARTING。
-
-        Args:
-            request: aiohttp Request（设置 token 时需要认证）。
-
-        Returns:
-            web.Response: {"status": "restarting"} 或 401 unauthorized。
-        """
-        if not _check_auth(request):
+        """优雅重启端点。"""
+        if not check_auth(request):
             code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
             msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
             return _protocol_error_response(code, msg, 401)
-        import logging
-        _log = logging.getLogger(__name__)
-        _log.info("Restart requested via HTTP")
-        request.app["agent"].request_restart()
+        logger.info("Restart requested via HTTP")
+        agent.request_restart()
         return web.json_response({"status": "restarting"})
     app.router.add_post("/restart", restart_handler)
 
-    # Tools 端点 —— 列出已加载的插件
     async def tools_handler(request: web.Request) -> web.Response:
-        """列出已加载的工具插件。
-
-        Args:
-            request: aiohttp Request（设置 token 时需要认证）。
-
-        Returns:
-            web.Response: {"plugins": [...]} 或 401 unauthorized。
-        """
-        if not _check_auth(request):
+        """列出已加载的工具插件。"""
+        if not check_auth(request):
             code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
             msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
             return _protocol_error_response(code, msg, 401)
-        agent = request.app["agent"]
         return web.json_response({
             "plugins": agent.tool_adapter._manager.plugin_list,  # noqa: SLF001
         })
     app.router.add_get("/tools", tools_handler)
 
-    # Tool 重载端点 —— 热重载单个插件
     async def tool_reload_handler(request: web.Request) -> web.Response:
-        """热重载单个工具插件。
-
-        Args:
-            request: aiohttp Request（设置 token 时需要认证），
-                JSON 请求体需含插件 "name"。
-
-        Returns:
-            web.Response: {"ok": True, "name": ...} 或错误。
-        """
-        if not _check_auth(request):
+        """热重载单个工具插件。"""
+        if not check_auth(request):
             code = "AUTH_REQUIRED" if not request.headers.get("Authorization") else "AUTH_INVALID"
             msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
             return _protocol_error_response(code, msg, 401)
-        agent = request.app["agent"]
         try:
             body = await request.json()
             name = body.get("name", "")
         except web.HTTPRequestEntityTooLarge:
-            raise  # chunked 超限放行——交中间件统一 413 信封（F13）
+            raise
         except Exception:
-            return web.json_response(
-                {"ok": False, "error": "无效的请求体"}, status=400,
-            )
+            return web.json_response({"ok": False, "error": "无效的请求体"}, status=400)
         if not name:
-            return web.json_response(
-                {"ok": False, "error": "缺少插件名称"}, status=400,
-            )
+            return web.json_response({"ok": False, "error": "缺少插件名称"}, status=400)
         ok, reason = await agent.tool_adapter._manager.reload_plugin(name)  # noqa: SLF001
         if ok:
             return web.json_response({"ok": True, "name": name})
-        else:
-            return web.json_response(
-                {"ok": False, "name": name, "error": reason},
-            )
+        return web.json_response({"ok": False, "name": name, "error": reason})
     app.router.add_post("/tools/reload", tool_reload_handler)
 
-    # 内置表情注册表：create_app 启动时扫描 static/stickers/*.png 构建（批次 7 Task 6）
+
+def create_app(
+    agent: "Agent",
+    serve_static: bool = True,
+    serve_chat: bool = False,
+    wake_word_enabled: bool = False,
+    task_system: "WorkflowEngine | None" = None,
+    auth_token: str = "",
+    access_token: str = "",
+    max_ws_connections: int | None = None,
+    max_request_bytes: int | None = None,
+    rate_limits: dict[str, int] | None = None,
+    product_mode: bool = False,
+    idempotency_repo: "IdempotencyRepository | None" = None,
+) -> web.Application:
+    """创建一个带 WebSocket handler 和可选静态文件的 aiohttp Application。
+
+    STT 不再经参数注入——handle_ws 直接读 ``agent.stt`` 槽位（含 stt_transcribe /
+    stt_emotion_state），支持热切换。
+    """
+    cms = max_request_bytes if max_request_bytes is not None else 64 * 1024 * 1024
+    app = web.Application(client_max_size=cms)
+    app.middlewares.append(_make_payload_middleware(cms))
+    app.middlewares.append(_nosniff_uploads)
+
+    valid_tokens = frozenset({auth_token, access_token} - {""})
+    limiter: RateLimiter | None = None
+    if rate_limits:
+        limiter = RateLimiter(rate_limits)
+        app.middlewares.append(_make_rate_limit_middleware(limiter, valid_tokens))
+        app["rate_limiter"] = limiter
+
+    from core.storage.idempotency import configure_store
+    configure_store(idempotency_repo, product_mode=product_mode)
+    if access_token:
+        app.middlewares.append(_make_access_auth_middleware(access_token))
+
+    sig_secret = getattr(
+        getattr(getattr(agent, "config", None), "server", None),
+        "attachment_sig_secret", "") or ""
+    warn_if_attachment_signature_disabled(sig_secret, access_token)
+
+    app["agent"] = agent
+    app["rate_valid_tokens"] = valid_tokens
+    app["product_mode"] = product_mode
+    app["idempotency_repo"] = idempotency_repo
+    if task_system is not None:
+        app["task_system"] = task_system
+
+    def _check_auth(request: web.Request) -> bool:
+        """管理端点认证（/shutdown /restart /tools /debug/api/*）。"""
+        if auth_token:
+            expected = f"Bearer {auth_token}"
+        elif access_token:
+            expected = f"Bearer {access_token}"
+        else:
+            return True
+        return hmac.compare_digest(
+            request.headers.get("Authorization", ""), expected)
+
+    app.router.add_get("/ws", _make_ws_handler(
+        agent, wake_word_enabled, max_ws_connections))
+    _register_static_routes(app, serve_static=serve_static, serve_chat=serve_chat)
+    app.router.add_get("/health", health_handler)
+    app.router.add_get("/ready", ready_handler)
+    _register_management_routes(app, agent, _check_auth)
+
     from core.input.sticker_registry import load_stickers
     load_stickers()
 
-    # 子模块路由（批次 C：api_routes 拆 5 域）
     register_provider_routes(app)
     register_tts_routes(app)
     register_upload_routes(app)
@@ -397,9 +279,6 @@ def create_app(
     register_session_routes(app)
     register_debug_routes(app, _check_auth)
 
-    # ---- 用户上传文件目录（批次 7 静态挂载收敛） ----
-    # 只公开 legacy images/desktop 目录（既有 /api/images 与批次 4 桌面截图链路兼容）；
-    # 新 kind 单数目录 data/uploads/{image,video,audio,file} 不公开——走 /api/attachments/{id} 签名下载。
     _IMAGES_DIR = ProjectPath.DATA_UPLOADS_IMAGES.resolve()
     _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     app.router.add_static("/uploads/images/", str(_IMAGES_DIR), show_index=False)

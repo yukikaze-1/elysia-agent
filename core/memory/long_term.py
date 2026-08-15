@@ -47,6 +47,95 @@ class MemoryEntry:
         return len(self.embedding)
 
 
+async def _search_milvus_candidates(
+    repo: "MemoryRepository | None",
+    entries: list[MemoryEntry],
+    backend: Any,
+    query_embedding: list[float] | None,
+    query_text: str,
+    top_k: int,
+) -> tuple[list[MemoryEntry], dict[int, float | None]]:
+    """Milvus ANN 候选召回 + 与内存条目 PK/文本兜底匹配。"""
+    candidates: list[MemoryEntry] = []
+    distances: dict[int, float | None] = {}
+    if repo is None or not await repo.health_check():
+        return candidates, distances
+
+    vec = query_embedding
+    if vec is None and query_text and backend is not None:
+        try:
+            vec = await backend.embed_query(query_text)
+        except Exception:
+            logger.debug("Embedding failed for search", exc_info=True)
+
+    if not vec:
+        return candidates, distances
+
+    try:
+        raw = await repo.search(
+            vector=vec,
+            top_k=min(top_k * 4, 20),
+            output_fields=["id", "text", "memory_type", "poignancy", "timestamp"],
+        )
+        pk_to_distance: dict[int, float] = {}
+        text_fb: dict[str, float] = {}
+        for r in raw:
+            pk = r.get("id")
+            text = r.get("text", "")
+            d = float(r.get("distance", r.get("score", 1.0)))
+            if pk is not None:
+                pk_to_distance[pk] = d
+            else:
+                text_fb[text] = d
+
+        for e in entries:
+            if e._milvus_pk is not None and e._milvus_pk in pk_to_distance:
+                candidates.append(e)
+                distances[id(e)] = pk_to_distance[e._milvus_pk]
+            elif e._milvus_pk is None and e.text in text_fb:
+                candidates.append(e)
+                distances[id(e)] = text_fb[e.text]
+                logger.debug("LongTermMemory: entry matched via text fallback (no PK)")
+    except Exception as e:
+        logger.warning("Milvus search failed: %s", e)
+
+    return candidates, distances
+
+
+def _rerank_candidates(
+    candidates: list[MemoryEntry],
+    distances: dict[int, float | None],
+    fb_scores: dict[int, float],
+    memory_type: str | None,
+    top_k: int,
+) -> list[MemoryEntry]:
+    """rerank：0.5×相似度 + 0.3×重要性 + 0.2×新鲜度，再按类型过滤/截断。"""
+    if not candidates:
+        return []
+
+    now = _time.time()
+    scored: list[tuple[float, MemoryEntry]] = []
+    for entry in candidates:
+        dist = distances.get(id(entry), 0.0)
+        if dist is not None:
+            sim = 1.0 / (1.0 + dist)
+        else:
+            sim = fb_scores.get(id(entry), 0.3)
+
+        poi = min(entry.poignancy, 10) / 10.0
+        age_days = (now - entry.timestamp) / 86400 if entry.timestamp > 0 else 30
+        rec = math.exp(-0.1 * age_days)
+        score = 0.5 * sim + 0.3 * poi + 0.2 * rec
+        scored.append((score, entry))
+
+    if memory_type:
+        mt = MemoryType.try_coerce(memory_type)
+        scored = [(sc, e) for sc, e in scored if mt is not None and e.memory_type == mt]
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [e for _, e in scored[:top_k]]
+
+
 class LongTermMemory:
     """长期记忆，可选 Milvus 向量检索 + embedding。
 
@@ -659,94 +748,25 @@ class LongTermMemory:
         if not self._entries and self._repo is None:
             return []
 
-        candidates: list[MemoryEntry] = []
-        distances: dict[int, float | None] = {}  # id(entry) → L2 distance 或 None（fallback 标记）
+        candidates, distances = await _search_milvus_candidates(
+            self._repo, self._entries, backend, query_embedding, query_text, top_k)
 
-        # 尝试 Milvus——取 top_k * 4 作为 rerank 候选池
-        if self._repo is not None and await self._repo.health_check():
-            vec = query_embedding
-            if vec is None and query_text and backend is not None:
-                try:
-                    vec = await backend.embed_query(query_text)
-                except Exception:
-                    logger.debug("Embedding failed for search", exc_info=True)
-
-            if vec:
-                try:
-                    raw = await self._repo.search(
-                        vector=vec,
-                        top_k=min(top_k * 4, 20),
-                        output_fields=["id", "text", "memory_type", "poignancy", "timestamp"],
-                    )
-                    # 从 Milvus 结果构建 PK→distance + text→distance（fallback）映射
-                    pk_to_distance: dict[int, float] = {}
-                    text_fb: dict[str, float] = {}
-                    for r in raw:
-                        pk = r.get("id")
-                        text = r.get("text", "")
-                        d = float(r.get("distance", r.get("score", 1.0)))
-                        if pk is not None:
-                            pk_to_distance[pk] = d
-                        else:
-                            text_fb[text] = d
-
-                    # 将 Milvus 结果与内存条目匹配：优先 PK，文本兜底
-                    for e in self._entries:
-                        if e._milvus_pk is not None and e._milvus_pk in pk_to_distance:
-                            candidates.append(e)
-                            distances[id(e)] = pk_to_distance[e._milvus_pk]
-                        elif e._milvus_pk is None and e.text in text_fb:
-                            candidates.append(e)
-                            distances[id(e)] = text_fb[e.text]
-                            logger.debug("LongTermMemory: entry matched via text fallback (no PK)")
-                except Exception as e:
-                    logger.warning("Milvus search failed: %s", e)
-
-        # 从搜索结果中排除已吸收条目
         candidates = [e for e in candidates if e.id not in self._absorbed_ids]
 
-        # Milvus 无候选时回退到内存搜索
         fb_scores: dict[int, float] = {}
         if not candidates:
             fallback_results = self._search_fallback(
                 query_text, min(top_k * 2, len(self._entries))
             )
-            # 从兜底结果中排除已吸收条目
-            fallback_results = [(s, e) for s, e in fallback_results if e.id not in self._absorbed_ids]
-            fb_scores = {id(e): s for s, e in fallback_results}
+            fallback_results = [
+                (sc, e) for sc, e in fallback_results if e.id not in self._absorbed_ids
+            ]
+            fb_scores = {id(e): sc for sc, e in fallback_results}
             for fb_score, entry in fallback_results:
                 candidates.append(entry)
-                distances[id(entry)] = None  # flag for rerank to use fb_score
+                distances[id(entry)] = None
 
-        if not candidates:
-            return []
-
-        # 重排序：0.5 × 相似度 + 0.3 × 重要性 + 0.2 × 新鲜度
-        now = _time.time()
-        scored: list[tuple[float, MemoryEntry]] = []
-        for entry in candidates:
-            # 相似度：Milvus 用 1/(1+L2_distance)，否则用兜底重叠分数
-            dist = distances.get(id(entry), 0.0)
-            if dist is not None:
-                sim = 1.0 / (1.0 + dist)
-            else:
-                sim = fb_scores.get(id(entry), 0.3)
-
-            poi = min(entry.poignancy, 10) / 10.0  # 归一化到 [0,1]
-
-            age_days = (now - entry.timestamp) / 86400 if entry.timestamp > 0 else 30
-            rec = math.exp(-0.1 * age_days)  # 指数衰减，半衰期约 6.9 天
-
-            score = 0.5 * sim + 0.3 * poi + 0.2 * rec
-            scored.append((score, entry))
-
-        # 按 memory_type 过滤（如指定）——try_coerce 大小写不敏感，未知值不命中
-        if memory_type:
-            mt = MemoryType.try_coerce(memory_type)
-            scored = [(s, e) for s, e in scored if mt is not None and e.memory_type == mt]
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [e for _, e in scored[:top_k]]
+        return _rerank_candidates(candidates, distances, fb_scores, memory_type, top_k)
 
     def _search_fallback(self, query: str, top_k: int) -> list[tuple[float, MemoryEntry]]:
         """In-memory 文本重叠搜索，供 rerank 使用。

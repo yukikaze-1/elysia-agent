@@ -119,7 +119,10 @@ core/
 │   └── tests/
 ├── status/                # AgentStatus 接口层：protocol.py（ABC）+ fsm.py（FSM-backed 实现）+ agent_fsm.py（底层状态机）
 ├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing + TurnPhase
-│   ├── loop.py            #   CognitiveLoop(CognitiveTools): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt / _stream_llm_response / _execute_tool_round / _finalize_turn / _dispatch_stream_event；每轮目标会话解析后原子换绑 ToolContext.services["session"]/["_session_msg_count"]，BE-S3-RUN-P0-01）
+│   ├── loop.py            #   CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt；每轮目标会话解析后原子换绑 ToolContext.services["session"]/["_session_msg_count"]，BE-S3-RUN-P0-01）
+│   ├── streaming.py       #   CognitiveStreaming mixin：_stream_llm_response / _dispatch_stream_event / _apply_mood（CORE-MOD-P1-04）
+│   ├── tool_phase.py      #   CognitiveToolPhase(CognitiveTools) mixin：_execute_tool_round / _build_tool_result_parts（CORE-MOD-P1-04）
+│   ├── finalize.py        #   CognitiveFinalize mixin：_finalize_turn（CORE-MOD-P1-04）
 │   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task + _gate_tool_calls
 │   ├── timing.py          #   Timer + TimingClock latency tracking
 │   ├── generation.py      #   GenerationContext: generation_id/assistant_message_id/conversation_id 预分配贯通（ID 字段 NewType；channel/kind 对齐契约层 MessageChannel/SegmentKind StrEnum）

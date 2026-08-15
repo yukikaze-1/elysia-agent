@@ -94,6 +94,56 @@ def _doc_to_message(doc: dict) -> Message:
     return msg
 
 
+def _build_search_filter(*, session_id: SessionId | None, query: str,
+                          date_from: str | None, date_to: str | None,
+                          timezone: str, category: str | None) -> dict | None:
+    """组装 query_search 的 Mongo filter；非法参数返回 None（调用方返回空结果）。"""
+    filter_expr: dict = {}
+    if session_id is not None:
+        filter_expr["session_id"] = session_id
+
+    elem_text: dict = {}
+    elem_type: dict = {}
+    if query:
+        if len(query) > 200:
+            return None
+        elem_text = {"type": "text",
+                     "content": {"$regex": re.escape(query), "$options": "i"}}
+    if category == SearchCategory.LINK:
+        elem_type = {"type": "text",
+                     "content": {"$regex": r"(https?://|www\.)", "$options": "i"}}
+    elif category in _CATEGORY_PART_TYPES - {"text", "link"}:
+        elem_type = {"type": category}
+    elif category == SearchCategory.TEXT and not query:
+        elem_type = {"type": "text"}
+
+    elem = []
+    if elem_text:
+        elem.append({"$elemMatch": elem_text})
+    if elem_type:
+        elem.append({"$elemMatch": elem_type})
+    if len(elem) == 1:
+        filter_expr["content"] = elem[0]
+    elif len(elem) == 2:
+        filter_expr["$and"] = [{"content": e} for e in elem]
+    if category == SearchCategory.TOOL:
+        filter_expr["role"] = "tool"
+
+    if date_from or date_to:
+        try:
+            tz = ZoneInfo(timezone)
+            start, end = _build_date_bounds(date_from, date_to, tz)
+        except Exception:
+            return None
+        ts_range: dict = {}
+        if start is not None:
+            ts_range["$gte"] = start
+        if end is not None:
+            ts_range["$lt"] = end
+        filter_expr["timestamp"] = ts_range
+    return filter_expr
+
+
 class MessageRepository(Repository):
     """消息归档存储。"""
 
@@ -391,53 +441,11 @@ class MessageRepository(Repository):
         """
         if self._db is None:
             return [], False, None
-        filter_expr: dict = {}
-        if session_id is not None:
-            filter_expr["session_id"] = session_id
-
-        # 内容匹配：query 与 category 拆两条 $elemMatch 用 $and（不同 part 元素可分别命中）
-        elem_text: dict = {}   # 关键词只命中 text part 的 content
-        elem_type: dict = {}   # category 命中对应 part 的 type
-        if query:
-            # D3/P1-16：字面搜索——re.escape 防 raw regex（`.`/`[`/灾难模式注入 Mongo
-            # $regex 导致 500/ReDoS）；长度上限在 handler 层已校验，repo 层防御性再查。
-            if len(query) > 200:
-                return [], False, None
-            elem_text = {"type": "text",
-                         "content": {"$regex": re.escape(query), "$options": "i"}}
-        if category == SearchCategory.LINK:
-            elem_type = {"type": "text",
-                         "content": {"$regex": r"(https?://|www\.)", "$options": "i"}}
-        elif category in _CATEGORY_PART_TYPES - {"text", "link"}:
-            elem_type = {"type": category}
-        elif category == SearchCategory.TEXT and not query:
-            elem_type = {"type": "text"}
-        elem = []
-        if elem_text:
-            elem.append({"$elemMatch": elem_text})
-        if elem_type:
-            elem.append({"$elemMatch": elem_type})
-        if len(elem) == 1:
-            filter_expr["content"] = elem[0]
-        elif len(elem) == 2:
-            filter_expr["$and"] = [{"content": e} for e in elem]
-        if category == SearchCategory.TOOL:
-            filter_expr["role"] = "tool"
-
-        # 自然日 → 半开 UTC 区间 [dayStart(date_from), nextDayStart(date_to))
-        if date_from or date_to:
-            try:
-                tz = ZoneInfo(timezone)
-                start, end = _build_date_bounds(date_from, date_to, tz)
-                ts_range: dict = {}
-                if start is not None:
-                    ts_range["$gte"] = start
-                if end is not None:
-                    ts_range["$lt"] = end
-                filter_expr["timestamp"] = ts_range
-            except Exception:
-                # 非法时区/日期格式：仓库方法不抛异常，返回空结果（调用方抛 INVALID_TIMEZONE）
-                return [], False, None
+        filter_expr = _build_search_filter(
+            session_id=session_id, query=query, date_from=date_from,
+            date_to=date_to, timezone=timezone, category=category)
+        if filter_expr is None:
+            return [], False, None
 
         # keyset 游标
         if cursor:

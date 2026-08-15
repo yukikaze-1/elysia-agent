@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from aiohttp import web, WSMsgType
@@ -161,37 +162,30 @@ async def _send_session_replay(ws: "web.WebSocketResponse", agent: "Agent",
         messages=items, token_stats=token_stats).wire_dict())
 
 
-async def handle_ws(
+@dataclass
+class _WsConnection:
+    """单条 WebSocket 连接的运行时状态。"""
+
+    ws: web.WebSocketResponse
+    channel: WebSocketChannel
+    client_id: str
+    protocol_version: int
+    desktop_conn_id: str | None
+    voice_mgr: VoiceSessionManager
+    sent_message_ids: set[str]
+    audio_buf: AudioBuffer | None = None
+    monitor_task: asyncio.Task | None = None
+
+
+async def _open_ws_connection(
     request: web.Request,
     agent: "Agent",
-    wake_word_enabled: bool = False,
-) -> web.WebSocketResponse:
-    """处理来自浏览器客户端的 WebSocket 连接。
-
-    管理完整 WS 生命周期：连接、会话历史回放、能力宣告、音频缓冲区搭建、
-    消息路由与清理。
-
-    STT 从 create_app 参数注入改为读 ``agent.stt`` 槽位：建连时
-    ``agent.stt is not None`` 才建 audio_buf，转写/情绪经 ``agent.stt_transcribe``
-    / ``agent.stt_emotion_state`` 读取（支持热切换）。
-
-    Args:
-        request: 发起 WebSocket 升级的 aiohttp Request。
-        agent: 提供输出通道与消息处理的 Agent 实例。
-        wake_word_enabled: 是否对本连接启用唤醒词检测。
-
-    Returns:
-        web.WebSocketResponse: 关闭后的 WebSocket 连接对象。
-    """
-    # heartbeat=30s 定期发 ping 检测半开连接；receive_timeout=60s 关闭僵尸连接，
-    # 防止休眠/断 Wi-Fi 客户端产生永久僵尸 channel（_send_json 每次广播打 warning、
-    # STT monitor task 每 100ms 空转、连接无限累积）
+    wake_word_enabled: bool,
+) -> _WsConnection:
+    """握手、初始帧回放、voice/audio 装配——连接级 setup 全部收口在此。"""
     ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024, heartbeat=30, receive_timeout=60)
     await ws.prepare(request)
 
-    # 版本协商（批次 1 + 9B-3）：握手头 X-Protocol-Version。缺省/空/"1" → v1 路径（现状）；
-    # TRANSPORT_VERSION("2") → v2 路径。其余显式值 → None——server.py ws_handler wrapper
-    # 已在升级前拒绝（HTTP 400），handle_ws 内不可达；此处仅防御处理（回退 v1 legacy）。
     proto_header = request.headers.get("X-Protocol-Version", "")
     resolved = resolve_protocol_version(proto_header)
     if resolved is None:
@@ -200,8 +194,6 @@ async def handle_ws(
     else:
         protocol_version = resolved
 
-    # 批次 4（spec §5.1 D-l）：X-Client-Platform 头 → WebSocketChannel.client_platform。
-    # 仅 v2 连接解析——v1 无 desktop 概念，伪冒 platform 头在 v1 上不生效（负面隔离）。
     client_platform = ""
     if protocol_version >= 2:
         client_platform = request.headers.get("X-Client-Platform", "")
@@ -210,14 +202,10 @@ async def handle_ws(
     client_id = new_message_id()
     channel = WebSocketChannel(ws, protocol_version=protocol_version,
                                client_platform=client_platform)
-    # 批次 8a（D2）：每 v2 连接分配稳定连接身份 conn_<hex> 存 channel.connection_id
-    # （tool.status 路由据其校验发送连接是投递目标）；v1 无 desktop 概念恒 None。
-    # electron 的该值即原 desktop_conn_id 语义（on_client_connect / server_info 沿用）。
     conn_id = f"conn_{uuid.uuid4().hex[:12]}" if protocol_version >= 2 else None
     channel.connection_id = conn_id
     agent.output.add_channel(channel)
 
-    # 批次 4（spec §5.1）：v2 + electron 握手 → 桥标记 connected + 同步 desktop 可用性
     desktop_conn_id: str | None = conn_id if client_platform == "electron" else None
     if desktop_conn_id is not None:
         try:
@@ -227,20 +215,12 @@ async def handle_ws(
         except Exception:
             logger.debug("Desktop bridge on_client_connect 失败", exc_info=True)
 
-    # 发送会话历史给新连接的客户端
-    # 批次 3：建连回放按 protocol_version resolve——v1 恒 default（active 切换不影响 v1），
-    # v2 用当前活动会话。token_stats 也取目标会话（v1/v2 各自独立统计）。
     try:
         target = await agent.resolve_session(None, protocol_version)
         await _send_session_replay(ws, agent, target)
     except Exception:
         logger.warning("Failed to send session on connect", exc_info=True)
 
-    # 发送服务能力状态（嵌套 per-service 形状：available/enabled/model/default）。
-    # v2 客户端用 server_info（含 protocol_version/features）取代 capabilities，避免重复帧。
-    # 批次 4（BE-042 附件持有者校验闭环）：v2 + electron 建连时把握手生成的 conn_id
-    # 下发为 server_info.connectionId（Electron 据此构造附件上传 X-Client-Connection 头）；
-    # 非 electron 的 desktop_conn_id 恒 None → wire 缺省省略（v1 类型字节不变）。
     try:
         if protocol_version >= 2:
             from core.services.capabilities import build_server_info
@@ -251,11 +231,6 @@ async def handle_ws(
     except Exception:
         logger.debug("Failed to send capabilities on connect", exc_info=True)
 
-    # 发送当前心情（expression 事件）。心情持久化在 session.character_state，
-    # 重启后服务端已恢复，但前端 `chat.mood` 只由 expression 事件更新——
-    # 连接时不推送，心情标签要等下一轮 <mood> 才出现。复用前端现有 handler，零改动。
-    # review 修复（兼容#5）：v1 恒读 default 会话的 mood（active 切走不影响 v1 心情），
-    # v2 才读 active（character_engine.state 跟随 active）。
     try:
         if protocol_version >= 2:
             cs = agent.character_engine.state
@@ -268,16 +243,10 @@ async def handle_ws(
     except Exception:
         logger.debug("Failed to send mood on connect", exc_info=True)
 
-    # 重新广播挂起的 HITL 审批请求（前端重连后恢复审批弹窗）
     try:
         if hasattr(agent, 'tool_adapter') and agent.tool_adapter is not None:
             pending = agent.tool_adapter._manager.get_pending_approvals()  # noqa: SLF001
             for request_id, tool_name, params in pending:
-                # 与正常路径（ToolManager._broadcast → websocket.on_command）格式一致。
-                # 批次 4 重放版本门控（spec §7）：v2 连接收 enrich 版（+ summary 结构化
-                # 参数摘要 + runtime/version/riskLevel/permissionRequired/approvalAuthority，
-                # 复用 Task 5 ToolManager 的元数据 + _build_param_summary 逻辑，保持一致）；
-                # v1 连接收原样 base——逐字节不变（兼容硬约束 §10.1）。
                 base = {
                     "tool": tool_name,
                     "params": str(params)[:200],
@@ -311,17 +280,10 @@ async def handle_ws(
     except Exception:
         logger.debug("Failed to re-send pending approvals", exc_info=True)
 
-    # 批次 6（BE-060~062）：每连接一个 VoiceSessionManager——无条件创建（放在
-    # `if agent.stt is not None:` 块之外，否则 STT 为 None 时 voice_mgr 未定义，
-    # BINARY 分支 NameError，review #10）。emit 直接走本连接 send_json。
-    from core.input.voice_sessions import VoiceSessionManager
     voice_mgr = VoiceSessionManager(
         agent=agent, emit=lambda data: ws.send_json(data),
         on_vad_interrupt=lambda: do_interrupt(agent, skip_vad=True),
     )
-    # 批次 8b（D1）：本连接已发消息 ID 集合（文本/附件 accepted + voice.commit +
-    # REALTIME 段）——断连归属判定的数据源：仅当在途 generation 由本连接发起才取消，
-    # 多标签/多设备下 Tab B 断开不误杀 Tab A 的生成。
     sent_message_ids: set[str] = set()
 
     audio_buf: AudioBuffer | None = None
@@ -345,16 +307,11 @@ async def handle_ws(
             on_wake_notify=lambda: send_wake(ws),
         )
 
-        # 监视 FSM 状态：assistant 说话时 deafen 麦克风（回声抑制）
-        # 只在上升沿 deafen 一次 2s 不够——长回复（5-30s 多句 TTS）后半段回声会越过
-        # deafen 窗口触发 VAD interrupt，自我打断剩余回复。改为 SPEAKING 期间持续刷新。
         async def _monitor_state():
             while not ws.closed:
                 try:
                     await asyncio.sleep(0.1)
                     if agent.status.is_speaking and audio_buf:
-                        # 持续刷新 deafen——TTS 播放期间麦克风保持静音（回声被抑制）；
-                        # is_speaking 变 False 后 deafen 自然过期，用户语音可正常触发打断
                         audio_buf.deafen(2.0)
                 except asyncio.CancelledError:
                     raise
@@ -363,113 +320,145 @@ async def handle_ws(
         monitor_task = asyncio.create_task(_monitor_state(), name=f"state-monitor-{client_id}")
 
     logger.info("WS client connected: %s (STT=%s)", client_id, "yes" if audio_buf else "no")
+    return _WsConnection(
+        ws=ws,
+        channel=channel,
+        client_id=client_id,
+        protocol_version=protocol_version,
+        desktop_conn_id=desktop_conn_id,
+        voice_mgr=voice_mgr,
+        sent_message_ids=sent_message_ids,
+        audio_buf=audio_buf,
+        monitor_task=monitor_task,
+    )
 
-    try:
-        async for msg in ws:
-            if msg.type == WSMsgType.TEXT:
-                try:
-                    data = json.loads(msg.data)
-                    if not isinstance(data, dict):
-                        # 9B-2（Task 5）：非 dict 帧不再抛单参 ValidationError（pydantic 2.13
-                        # 构造抛 TypeError 导致断连）——直接回 error 帧，连接存活。
-                        await ws.send_json(ErrorMessage(
-                            message="WS 消息必须是 JSON 对象",
-                            code="CONTRACT_VALIDATION",
-                            requestId=_current_request_id(),
-                        ).wire_dict())
-                        continue
-                    await handle_json_message(
-                        data, agent, audio_buf, ws, voice_mgr=voice_mgr,
-                        sent_message_ids=sent_message_ids,
-                        limiter=request.app.get("rate_limiter"),
-                        rate_key=rate_key_for_request(
-                            request,
-                            request.app.get("rate_valid_tokens", frozenset()))
-                        if request.app.get("rate_limiter") is not None else None,
-                    )
-                except json.JSONDecodeError:
-                    await ws.send_json(ErrorMessage(
-                        message="Invalid JSON",
+
+async def _run_ws_message_loop(
+    conn: _WsConnection,
+    request: web.Request,
+    agent: "Agent",
+) -> None:
+    """连接建立后的消息循环：TEXT 路由 / BINARY 音频分流 / 错误隔离。"""
+    async for msg in conn.ws:
+        if msg.type == WSMsgType.TEXT:
+            try:
+                data = json.loads(msg.data)
+                if not isinstance(data, dict):
+                    await conn.ws.send_json(ErrorMessage(
+                        message="WS 消息必须是 JSON 对象",
                         code="CONTRACT_VALIDATION",
                         requestId=_current_request_id(),
                     ).wire_dict())
-                except ValidationError as e:
-                    # D4/P1-17：日志与 ACK 都不含 invalid input——只取 loc/type/code
-                    err_summary = "; ".join(
-                        f"{'.'.join(str(x) for x in err['loc'])}:{err['type']}"
-                        for err in e.errors(include_input=False)
-                    )
-                    logger.warning("WS 消息内容校验失败: %s", err_summary)
-                    await ws.send_json(ErrorMessage(
-                        message=f"Invalid message content: {err_summary}",
-                        code="CONTRACT_VALIDATION",
+                    continue
+                await handle_json_message(
+                    data, agent, conn.audio_buf, conn.ws, voice_mgr=conn.voice_mgr,
+                    sent_message_ids=conn.sent_message_ids,
+                    limiter=request.app.get("rate_limiter"),
+                    rate_key=rate_key_for_request(
+                        request,
+                        request.app.get("rate_valid_tokens", frozenset()))
+                    if request.app.get("rate_limiter") is not None else None,
+                )
+            except json.JSONDecodeError:
+                await conn.ws.send_json(ErrorMessage(
+                    message="Invalid JSON",
+                    code="CONTRACT_VALIDATION",
+                    requestId=_current_request_id(),
+                ).wire_dict())
+            except ValidationError as e:
+                err_summary = "; ".join(
+                    f"{'.'.join(str(x) for x in err['loc'])}:{err['type']}"
+                    for err in e.errors(include_input=False)
+                )
+                logger.warning("WS 消息内容校验失败: %s", err_summary)
+                await conn.ws.send_json(ErrorMessage(
+                    message=f"Invalid message content: {err_summary}",
+                    code="CONTRACT_VALIDATION",
+                    requestId=_current_request_id(),
+                ).wire_dict())
+            except Exception:
+                logger.exception("WS 消息处理未预期异常——回 INTERNAL error，连接存活")
+                try:
+                    await conn.ws.send_json(ErrorMessage(
+                        message="内部错误",
+                        code="INTERNAL",
                         requestId=_current_request_id(),
                     ).wire_dict())
                 except Exception:
-                    # 9abc P1-3（DoD）：畸形消息不得断开连接——任何未预期异常兜底为
-                    # ErrorMessage{INTERNAL} 并继续循环（logger.exception 记录，不吞静默）。
-                    logger.exception("WS 消息处理未预期异常——回 INTERNAL error，连接存活")
-                    try:
-                        await ws.send_json(ErrorMessage(
-                            message="内部错误",
-                            code="INTERNAL",
-                            requestId=_current_request_id(),
-                        ).wire_dict())
-                    except Exception:
-                        logger.debug("发送 INTERNAL error 失败", exc_info=True)
-                    continue
+                    logger.debug("发送 INTERNAL error 失败", exc_info=True)
+                continue
 
-            elif msg.type == WSMsgType.BINARY:
-                # 批次 6：有活动语音会话 → 喂给会话管理器（RECORDING/REALTIME/DICTATION 分流）；
-                # 批次 8b（D2）：v2 连接 BINARY 只在 voice_mgr 会话内有效——无会话 → 丢弃，
-                # 不落 legacy audio_buf（否则 RECORDING 复位残留帧绕过 commit 自动成轮次）；
-                # legacy VAD 自动提交仅 v1（现状逐字节不变）。voice_mgr 恒非 None，判空仅兜底。
-                if voice_mgr is not None and voice_mgr.has_active_session():
-                    await voice_mgr.feed_pcm(msg.data)
-                elif protocol_version < 2 and audio_buf and agent.stt_enabled:
-                    await audio_buf.feed(msg.data)
+        elif msg.type == WSMsgType.BINARY:
+            if conn.voice_mgr is not None and conn.voice_mgr.has_active_session():
+                await conn.voice_mgr.feed_pcm(msg.data)
+            elif conn.protocol_version < 2 and conn.audio_buf and agent.stt_enabled:
+                await conn.audio_buf.feed(msg.data)
 
-            elif msg.type == WSMsgType.ERROR:
-                logger.warning("WS error: %s", ws.exception())
+        elif msg.type == WSMsgType.ERROR:
+            logger.warning("WS error: %s", conn.ws.exception())
 
+
+async def _close_ws_connection(conn: _WsConnection, agent: "Agent") -> None:
+    """连接清理：monitor/audio/voice 关闭、channel 移除、desktop 下线、断线取消。"""
+    if conn.monitor_task and not conn.monitor_task.done():
+        conn.monitor_task.cancel()
+    if conn.audio_buf:
+        await conn.audio_buf.flush()
+    if conn.voice_mgr is not None:
+        conn.sent_message_ids.update(conn.voice_mgr.emitted_message_ids)
+        await conn.voice_mgr.close()
+    agent.output.remove_channel(conn.channel)
+    if conn.desktop_conn_id is not None:
+        try:
+            await agent.desktop_bridge.on_client_disconnect(conn.desktop_conn_id)
+            agent.sync_desktop_available()
+            logger.info("WS desktop 客户端已断开: %s (%s)",
+                        conn.client_id, conn.desktop_conn_id)
+        except Exception:
+            logger.debug("Desktop bridge on_client_disconnect 失败", exc_info=True)
+    logger.info("WS client disconnected: %s", conn.client_id)
+    if conn.protocol_version >= 2:
+        try:
+            gen_uid = getattr(getattr(agent, "cognitive", None),
+                              "current_generation_user_message_id", None)
+            if gen_uid and gen_uid in conn.sent_message_ids:
+                from core.monitoring.event_bus import EventPriority
+                agent.bus.post(InterruptData(source="disconnect"),
+                               priority=EventPriority.INTERRUPT)
+        except Exception:
+            logger.debug("v2 断线取消 generation 失败", exc_info=True)
+
+
+async def handle_ws(
+    request: web.Request,
+    agent: "Agent",
+    wake_word_enabled: bool = False,
+) -> web.WebSocketResponse:
+    """处理来自浏览器客户端的 WebSocket 连接。
+
+    管理完整 WS 生命周期：连接、会话历史回放、能力宣告、音频缓冲区搭建、
+    消息路由与清理。
+
+    STT 从 create_app 参数注入改为读 ``agent.stt`` 槽位：建连时
+    ``agent.stt is not None`` 才建 audio_buf，转写/情绪经 ``agent.stt_transcribe``
+    / ``agent.stt_emotion_state`` 读取（支持热切换）。
+
+    Args:
+        request: 发起 WebSocket 升级的 aiohttp Request。
+        agent: 提供输出通道与消息处理的 Agent 实例。
+        wake_word_enabled: 是否对本连接启用唤醒词检测。
+
+    Returns:
+        web.WebSocketResponse: 关闭后的 WebSocket 连接对象。
+    """
+    conn = await _open_ws_connection(request, agent, wake_word_enabled)
+    try:
+        await _run_ws_message_loop(conn, request, agent)
     except asyncio.CancelledError:
         pass
     finally:
-        if monitor_task and not monitor_task.done():
-            monitor_task.cancel()
-        if audio_buf:
-            await audio_buf.flush()
-        if voice_mgr is not None:
-            # D1 语音归属：REALTIME 段/commit 的 message_id 并入本连接已发集合
-            # （_on_segment 已登记到 voice_mgr._emitted_message_ids，Task 6 覆盖）。
-            sent_message_ids.update(voice_mgr.emitted_message_ids)
-            await voice_mgr.close()
-        agent.output.remove_channel(channel)
-        # 批次 4（spec §5.1 D-o）：v2 + electron 连接断开 → 桥标 offline + 未接手 call
-        # 立即 resolve UNAVAILABLE + 同步 desktop 可用性（ToolManager available 字段）。
-        if desktop_conn_id is not None:
-            try:
-                await agent.desktop_bridge.on_client_disconnect(desktop_conn_id)
-                agent.sync_desktop_available()
-                logger.info("WS desktop 客户端已断开: %s (%s)", client_id, desktop_conn_id)
-            except Exception:
-                logger.debug("Desktop bridge on_client_disconnect 失败", exc_info=True)
-        logger.info("WS client disconnected: %s", client_id)
-        # 批次 2 重连语义（最小）+ 批次 8b（D1）：仅当在途 generation 由本连接发起才取消——
-        # 多标签/多设备下 Tab B 断开不再误杀 Tab A 的生成。归属 = 当前 generation 的
-        # user_message_id ∈ 本连接已发消息集合（文本/附件/语音 commit/REALTIME 段）。
-        if protocol_version >= 2:
-            try:
-                gen_uid = getattr(getattr(agent, "cognitive", None),
-                                  "current_generation_user_message_id", None)
-                if gen_uid and gen_uid in sent_message_ids:
-                    from core.monitoring.event_bus import EventPriority
-                    agent.bus.post(InterruptData(source="disconnect"),
-                                   priority=EventPriority.INTERRUPT)
-            except Exception:
-                logger.debug("v2 断线取消 generation 失败", exc_info=True)
-
-    return ws
+        await _close_ws_connection(conn, agent)
+    return conn.ws
 
 
 def _is_v2(agent: "Agent", ws: "web.WebSocketResponse | None") -> bool:

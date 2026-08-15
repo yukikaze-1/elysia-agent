@@ -13,6 +13,69 @@ from core.schema.adapters.message_adapter import content_to_openai, content_text
 logger = logging.getLogger(__name__)
 
 
+def _history_message_content(msg: Message, *, supports_multimodal: bool) -> dict[str, object] | None:
+    """把单条历史消息转换为 OpenAI message content；tool 消息返回 None。"""
+    if msg.role == "tool":
+        return None
+
+    inner_voice = getattr(msg, "inner_voice", None)
+    iv_prefix = f"<inner_voice>{inner_voice}</inner_voice>\n" if inner_voice else ""
+
+    tool_calls = getattr(msg, "tool_calls", None)
+    tool_summary = _format_tool_summary(tool_calls) if tool_calls else ""
+
+    parts = msg.content  # list[Part]
+    if supports_multimodal:
+        msg_content = content_to_openai(list(parts))
+        if tool_summary:
+            if isinstance(msg_content, list):
+                msg_content.append({"type": "text", "text": tool_summary})
+            else:
+                msg_content = msg_content + tool_summary
+        if iv_prefix:
+            if isinstance(msg_content, list):
+                msg_content.insert(0, {"type": "text", "text": iv_prefix.rstrip()})
+            else:
+                msg_content = iv_prefix + msg_content
+        return {"role": msg.role, "content": msg_content}
+
+    text_only = [p for p in parts if isinstance(p, TextPart)]
+    text_content = "".join(p.content for p in text_only)
+    image_count = sum(1 for p in parts if isinstance(p, ImagePart))
+    if image_count > 0 and msg.role == "user":
+        hint = _format_image_history_hint(image_count)
+        text_content = hint + text_content if text_content else hint
+    if not text_content and not tool_summary:
+        return None
+    msg_content = (text_content or "") + (tool_summary or "")
+    return {"role": msg.role, "content": iv_prefix + msg_content}
+
+
+def _current_user_message(
+    user_content: str | list[dict],
+    *,
+    supports_multimodal: bool,
+) -> dict[str, object] | None:
+    """把当前用户消息转换为 OpenAI message；空文本返回 None。"""
+    if isinstance(user_content, list):
+        user_parts = parts_from_dicts(user_content)
+        has_images = any(isinstance(p, ImagePart) for p in user_parts)
+        if has_images and not supports_multimodal:
+            text_content = content_text(user_parts)
+            image_count = sum(1 for p in user_parts if isinstance(p, ImagePart))
+            if image_count == 1:
+                hint = "[用户发送了一张图片。使用 describe_image 工具查看。]"
+            else:
+                indices = list(range(image_count))
+                hint = f"[用户发送了{image_count}张图片。使用 describe_image(image_indices={indices}) 一次性查看所有图片。]"
+            user_text = f"{hint}\n{text_content}" if text_content else hint
+            return {"role": "user", "content": user_text}
+        return {"role": "user", "content": content_to_openai(user_parts)}
+    if user_content:
+        return {"role": "user", "content": user_content}
+    return None
+
+
 class MessageBuilder:
     """纯 prompt 组装 — 接收 system prompt + history → 输出 messages[]。
 
@@ -40,62 +103,16 @@ class MessageBuilder:
              ...history with inner_voice + tool_summary injection,
              {"role": "user", "content": user_content}]
         """
-        messages: list[dict] = [{"role": "system", "content": system_prompt}]
-
+        messages: list[dict[str, object]] = [{"role": "system", "content": system_prompt}]
         for msg in history:
-            if msg.role == "tool":
-                continue
+            entry = _history_message_content(msg, supports_multimodal=supports_multimodal)
+            if entry is not None:
+                messages.append(entry)
 
-            inner_voice = getattr(msg, "inner_voice", None)
-            iv_prefix = f"<inner_voice>{inner_voice}</inner_voice>\n" if inner_voice else ""
-
-            tool_calls = getattr(msg, "tool_calls", None)
-            tool_summary = _format_tool_summary(tool_calls) if tool_calls else ""
-
-            parts = msg.content  # list[Part]
-            if supports_multimodal:
-                msg_content = content_to_openai(list(parts))
-                if tool_summary:
-                    if isinstance(msg_content, list):
-                        msg_content.append({"type": "text", "text": tool_summary})
-                    else:
-                        msg_content = msg_content + tool_summary
-                if iv_prefix:
-                    if isinstance(msg_content, list):
-                        msg_content.insert(0, {"type": "text", "text": iv_prefix.rstrip()})
-                    else:
-                        msg_content = iv_prefix + msg_content
-                messages.append({"role": msg.role, "content": msg_content})
-            else:
-                text_only = [p for p in parts if isinstance(p, TextPart)]
-                text_content = "".join(p.content for p in text_only)
-                image_count = sum(1 for p in parts if isinstance(p, ImagePart))
-                if image_count > 0 and msg.role == "user":
-                    hint = _format_image_history_hint(image_count)
-                    text_content = hint + text_content if text_content else hint
-                if text_content or tool_summary:
-                    msg_content = (text_content or "") + (tool_summary or "")
-                    messages.append({"role": msg.role, "content": iv_prefix + msg_content})
-
-        # 当前用户消息
-        if isinstance(user_content, list):
-            user_parts = parts_from_dicts(user_content)
-            has_images = any(isinstance(p, ImagePart) for p in user_parts)
-            if has_images and not supports_multimodal:
-                text_content = content_text(user_parts)
-                image_count = sum(1 for p in user_parts if isinstance(p, ImagePart))
-                if image_count == 1:
-                    hint = "[用户发送了一张图片。使用 describe_image 工具查看。]"
-                else:
-                    indices = list(range(image_count))
-                    hint = f"[用户发送了{image_count}张图片。使用 describe_image(image_indices={indices}) 一次性查看所有图片。]"
-                user_text = f"{hint}\n{text_content}" if text_content else hint
-                messages.append({"role": "user", "content": user_text})
-            else:
-                messages.append({"role": "user", "content": content_to_openai(user_parts)})
-        elif user_content:
-            messages.append({"role": "user", "content": user_content})
-
+        if user_content is not None:
+            entry = _current_user_message(user_content, supports_multimodal=supports_multimodal)
+            if entry is not None:
+                messages.append(entry)
         return messages
 
 
