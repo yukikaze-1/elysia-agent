@@ -63,6 +63,11 @@ def _parse_events(raw_text: str) -> list[str]:
     return [e for e in events if e != "Speech"]
 
 
+# 内置 SenseVoice 默认端点（阶段4 P0-01 D1=B：唯一权威默认——构造函数/STTConfig/
+# STTFactory 三处引用，取代"构造函数默认参数碰巧兜底"）
+DEFAULT_BASE_URL = "http://localhost:20042"
+
+
 class SenseVoiceBackend(STTBackend):
     """SenseVoice 语音识别后端。
 
@@ -75,7 +80,7 @@ class SenseVoiceBackend(STTBackend):
         model: str = "sense-voice",
         *,
         api_key: str = "",
-        base_url: str = "http://localhost:20042",
+        base_url: str = DEFAULT_BASE_URL,
         logger: logging.Logger | None = None,
     ):
         """初始化 SenseVoice 后端。

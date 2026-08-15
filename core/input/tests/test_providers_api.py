@@ -522,3 +522,80 @@ async def test_test_endpoint_usable_timeout(aiohttp_client):
         data = await resp.json()
     assert data["ok"] is False
     assert data["error"] == "测试超时"
+
+
+# ---- 阶段 4 P0-01：SenseVoice 默认地址单源（BE-S4-INT-P0-01，spec §4.1） ----
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_test_endpoint_sensevoice_connectivity_ok(aiohttp_client):
+    """内置 sensevoice connectivity 成功：create 无 base_url kwarg（默认注入在工厂层）。"""
+    from core.input.server import create_app
+    agent = _make_app_agent()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+    with patch("Module.stt.registry.STTFactory.create") as mock_create:
+        fake = AsyncMock()
+        fake.test.return_value = {"ok": True, "latency_ms": 12}
+        fake.close = AsyncMock()
+        mock_create.return_value = fake
+        resp = await client.post("/api/providers/test", json={
+            "service": "stt", "provider": "sensevoice",
+            "model": "sense-voice", "level": "connectivity",
+        })
+        data = await resp.json()
+    assert data["ok"] is True
+    assert data["latency_ms"] == 12
+    mock_create.assert_called_once_with("sensevoice/sense-voice")
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_test_endpoint_sensevoice_failure_diagnostic(aiohttp_client):
+    """sensevoice 服务不可达 → 可诊断 ok=false，不报 URL 缺协议（spec §3.4 T6）。"""
+    from core.input.server import create_app
+    agent = _make_app_agent()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+    with patch("Module.stt.registry.STTFactory.create") as mock_create:
+        fake = AsyncMock()
+        fake.test.return_value = {
+            "ok": False,
+            "error": "无法连接 SenseVoice 服务 (http://localhost:20042): connection refused",
+        }
+        fake.close = AsyncMock()
+        mock_create.return_value = fake
+        resp = await client.post("/api/providers/test", json={
+            "service": "stt", "provider": "sensevoice",
+            "model": "sense-voice", "level": "connectivity",
+        })
+        data = await resp.json()
+    assert data["ok"] is False
+    assert "Request URL is missing" not in data["error"]
+    assert "localhost:20042" in data["error"]
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_test_endpoint_body_base_url_override_passes_through(aiohttp_client):
+    """合法 body base_url → create_kwargs explicit 传入工厂（spec §3.4 T8）。"""
+    from core.input.server import create_app
+    agent = _make_app_agent()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+    with patch("Module.stt.registry.STTFactory.create") as mock_create:
+        fake = AsyncMock()
+        fake.test.return_value = {"ok": True, "latency_ms": 5}
+        fake.close = AsyncMock()
+        mock_create.return_value = fake
+        resp = await client.post("/api/providers/test", json={
+            "service": "stt", "provider": "sensevoice",
+            "model": "sense-voice", "level": "connectivity",
+            "base_url": "http://1.2.3.4:20042",
+        })
+        data = await resp.json()
+    assert data["ok"] is True
+    mock_create.assert_called_once_with(
+        "sensevoice/sense-voice", base_url="http://1.2.3.4:20042", http_client_factory=ANY)
+

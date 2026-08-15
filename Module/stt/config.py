@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from Module.config import ConfigField
+from Module.stt.sensevoice import DEFAULT_BASE_URL
 
 
 @dataclass
@@ -12,7 +13,7 @@ class STTConfig:
         help="STT provider/model 标识，格式: provider/model-name",
     )
     base_url: str = ConfigField(
-        default="http://localhost:20042",
+        default=DEFAULT_BASE_URL,
         env="SENSEVOICE_URL",
         help="STT 服务端点",
     )

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
-from Module.stt.sensevoice import SenseVoiceBackend
+from Module.stt.sensevoice import DEFAULT_BASE_URL, SenseVoiceBackend
 
 if TYPE_CHECKING:
     from Module.stt.config import STTConfig
@@ -60,6 +60,13 @@ class STTFactory:
             if "logger" not in kwargs:
                 kwargs["logger"] = inject_logger(__name__)
             return OpenAICompatSTTBackend(model=model, api_key=api_key, base_url=base_url, **kwargs)
+
+        # D1=B（spec §4.1）：内置分支空值兜底——必须在 custom 分支之后（否则 custom 会拿到
+        # 默认地址而非 raise）。openai/deepgram 已 NotImplementedError，此处仅剩 sensevoice。
+        # 4 生产调用点（server.py:221 切换/422 启动、voice_sessions.py:457 听写快照、
+        # provider_routes.py:303 Profile 测试）全部经此统一解析。
+        if not base_url:
+            base_url = DEFAULT_BASE_URL
 
         if "logger" not in kwargs:
             kwargs["logger"] = inject_logger(__name__)
