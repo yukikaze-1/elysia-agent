@@ -205,3 +205,25 @@ def test_stage4_no_sensitive_data():
         blob = _ARTIFACTS[name]
         for banned in ("sk-", "Bearer ", "/home/", "BEGIN ", "http://127.0.0.1"):
             assert banned not in blob, f"{name} 含敏感内容 {banned!r}"
+
+
+def test_check_fails_on_artifacts_drift():
+    """篡改 _ARTIFACTS 中某样例 → _check() 返回 1（漂移拦截，spec §4.3 P7）。
+
+    不触真实归档——patch 生成器 _ARTIFACTS 注入篡改条目，_check() 对 tempfile 与归档
+    git diff 即失配返回 1（归档只读比对，不落盘）。
+    """
+    import scripts.gen_contract_frames as gcf
+    from unittest.mock import patch as _patch
+    mutated = dict(gcf._ARTIFACTS)
+    mutated["ws-v2-recording.jsonl"] = (
+        mutated["ws-v2-recording.jsonl"] + '{"type": "tampered"}\n')
+    with _patch.dict(gcf._ARTIFACTS, mutated):
+        assert gcf._check() == 1
+    """样例无真实音频/转写/密钥/绝对路径（spec §4.3 P6 + 验收 §7.5）。"""
+    for name in ("ws-v2-recording.jsonl", "ws-v2-dictation.jsonl", "ws-v2-audio.jsonl",
+                 "ws-v2-service.jsonl", "rest-providers.jsonl", "rest-provider-test.jsonl",
+                 "rest-tts-voices.jsonl", "rest-tts-preview.jsonl", "rest-envelopes.jsonl"):
+        blob = _ARTIFACTS[name]
+        for banned in ("sk-", "Bearer ", "/home/", "BEGIN ", "http://127.0.0.1"):
+            assert banned not in blob, f"{name} 含敏感内容 {banned!r}"

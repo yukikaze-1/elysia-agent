@@ -4,7 +4,6 @@
 custom STT 必须显式 base_url 的约束。SenseVoiceBackend 构造 httpx.AsyncClient 不发网络；
 断言 base_url 落在 backend._client.base_url。
 """
-import asyncio
 
 import httpx
 import pytest

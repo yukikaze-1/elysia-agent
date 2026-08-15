@@ -92,7 +92,7 @@ class _Smoke:
         }
 
 
-async def _profile_scenarios(smoke: _Smoke, agent: object, client: TestClient) -> None:
+async def _profile_scenarios(smoke: _Smoke, agent: Any, client: TestClient) -> None:
     """Profile 与模型切换（spec §5.2）：列表不回显密钥 / test 成功+失败 / save-delete / PROFILE_IN_USE。"""
     from frontend_contract import rest
 
@@ -126,6 +126,33 @@ async def _profile_scenarios(smoke: _Smoke, agent: object, client: TestClient) -
         d = await r.json()
     smoke.check("Profile test 离线可诊断", d.get("ok") is False and
                 "Request URL is missing" not in d.get("error", ""), str(d))
+
+    # save/delete 自定义 Profile + 正在使用的 Profile 不可删除（spec §5.2）
+    # custom_providers.yaml/secret_store 隔离到 tmp（smoke 不写真实配置）；base_url 用公网
+    # IP 字面量（SSRF 免 DNS 放行）；PROFILE_IN_USE 经 config.llm.model 标记"正在使用"→ 409。
+    import tempfile
+    from core.input import custom_providers as cp
+    from core.storage import secret_store
+    with tempfile.TemporaryDirectory() as _tmp:
+        _tmp_yaml = Path(_tmp) / "custom_providers.yaml"
+        with patch.object(cp, "_DEFAULT_PATH", _tmp_yaml), \
+             patch.object(secret_store, "_DEFAULT_DIR", Path(_tmp)):
+            r = await client.post("/api/providers", json={
+                "service": "llm",
+                "entry": {"name": "smoke_llm", "base_url": "http://1.2.3.4:8080",
+                          "models": ["m1"], "runtime": "backend"}})
+            d = await r.json()
+            smoke.check("Profile save 成功", r.status == 200 and d.get("ok") is True, str(d)[:120])
+            saved_model = agent.config.llm.model
+            agent.config.llm.model = "custom/smoke_llm"   # 标记"正在使用" → 删除应 409
+            r = await client.delete("/api/providers/llm/smoke_llm")
+            d = await r.json()
+            agent.config.llm.model = saved_model
+            smoke.check("正在使用的 Profile 不可删除", r.status == 409 and
+                        d.get("code") == "PROFILE_IN_USE", str(d)[:120])
+            r = await client.delete("/api/providers/llm/smoke_llm")
+            d = await r.json()
+            smoke.check("Profile delete 成功", r.status == 200 and d.get("ok") is True, str(d)[:120])
 
 
 class _SmokeTTSBackend:
@@ -183,8 +210,8 @@ async def _tts_rest_scenarios(smoke: _Smoke, tts_stub: _SmokeTTSBackend, client:
     smoke.check("preview 非法 voice", d.get("ok") is False and d.get("error"), str(d)[:120])
 
 
-async def _voice_ws_scenarios(smoke: _Smoke, agent: object, client: TestClient) -> None:
-    """普通录音/实时语音/听写/播放控制（spec §5.2）：真实 ws_handler + VoiceSessionManager。"""
+async def _voice_ws_scenarios(smoke: _Smoke, client: TestClient) -> None:
+    """普通录音/实时语音/听写/服务控制（spec §5.2）：真实 ws_handler + VoiceSessionManager。"""
     pcm = PCM_FIXTURE.read_bytes()
 
     ws = await client.session.ws_connect(client.make_url("/ws"), headers={"X-Protocol-Version": "2"})
@@ -308,6 +335,56 @@ async def _voice_ws_scenarios(smoke: _Smoke, agent: object, client: TestClient) 
             cancelled_ok = d.get("clientRequestId") == "req_smoke_dict2"
             break
     smoke.check("听写 cancel 清理", cancelled_ok, "")
+
+    # ── 服务控制：switch_model / set_tts_voice（spec §5.2）──
+    # switch_stt 建真后端 + 1s 连通测试（server.py:198-254）——patch STTFactory.create 桩
+    # 使成功路径确定性；失败路径（custom/nonexistent → ValueError → ok=false）无需 patch。
+    with patch("Module.stt.registry.STTFactory.create", return_value=_SmokeSTTBackend()):
+        await ws.send_json({"type": "switch_model", "service": "stt", "model": "sensevoice/sense-voice"})
+        sw_ok = None
+        while True:
+            m = await asyncio.wait_for(ws.receive(), timeout=10)
+            if m.type != WSMsgType.TEXT:
+                continue
+            d = json.loads(m.data)
+            if d.get("type") == "switch_model_result":
+                sw_ok = d.get("ok")
+                break
+    smoke.check("switch_model 成功 ok=true", sw_ok is True, "")
+    await ws.send_json({"type": "switch_model", "service": "stt", "model": "custom/nonexistent"})
+    sw_fail = None
+    while True:
+        m = await asyncio.wait_for(ws.receive(), timeout=10)
+        if m.type != WSMsgType.TEXT:
+            continue
+        d = json.loads(m.data)
+        if d.get("type") == "switch_model_result":
+            sw_fail = d.get("ok")
+            break
+    smoke.check("switch_model 失败 ok=false 保留旧模型", sw_fail is False, "")
+    # set_tts_voice：经 _active_tts_profile(agent._tts 桩).list_voices 校验 → 成功带 voice 回显
+    await ws.send_json({"type": "set_tts_voice", "voice": "elysia_test_001"})
+    sv_ok = None
+    while True:
+        m = await asyncio.wait_for(ws.receive(), timeout=10)
+        if m.type != WSMsgType.TEXT:
+            continue
+        d = json.loads(m.data)
+        if d.get("type") == "set_tts_voice_result":
+            sv_ok = (d.get("ok") is True and d.get("voice") == "elysia_test_001")
+            break
+    smoke.check("set_tts_voice 成功带 voice 回显", sv_ok, "")
+    await ws.send_json({"type": "set_tts_voice", "voice": "no_such_voice"})
+    sv_fail = None
+    while True:
+        m = await asyncio.wait_for(ws.receive(), timeout=10)
+        if m.type != WSMsgType.TEXT:
+            continue
+        d = json.loads(m.data)
+        if d.get("type") == "set_tts_voice_result":
+            sv_fail = (d.get("ok") is False and d.get("error"))
+            break
+    smoke.check("set_tts_voice 非法 voice 失败", sv_fail, "")
     await ws.close()
 
 
@@ -407,7 +484,7 @@ async def main() -> int:
         async with TestClient(TestServer(app)) as client:
             await _profile_scenarios(smoke, agent, client)
             await _tts_rest_scenarios(smoke, tts_stub, client)
-            await _voice_ws_scenarios(smoke, agent, client)
+            await _voice_ws_scenarios(smoke, client)
             await _tts_playback_scenarios(smoke)
     finally:
         await agent.stop()
