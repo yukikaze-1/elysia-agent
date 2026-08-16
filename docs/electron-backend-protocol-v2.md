@@ -208,7 +208,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `PROFILE_RUNTIME_NOT_BACKEND` | 400 | false | **落地**：对 desktop/local 条目执行后端 test/switch（后端不代理本机 Profile，批次 5） |
 | `VOICE_SESSION_CONFLICT` | 409 | false | 已有活动录音/会话时再 start（recording/realtime/dictation 通用，批次 6） |
 | `VOICE_SESSION_NOT_FOUND` | 404 | false | pause/resume/stop/cancel 未知 sessionId（批次 6） |
-| `VOICE_RECORDING_NOT_FOUND` | 404 | false | IDLE 态收 stop/commit/discard（未知 recordingId，批次 6） |
+| `VOICE_RECORDING_NOT_FOUND` | 404 | false | IDLE 态收 stop/commit（未知 recordingId，批次 6）；**`voice.discard` 已幂等成功不再产生**（阶段4真实联调修订） |
 | `VOICE_RECORDING_TOO_LONG` | 413 | false | 录音缓冲超 `MAX_RECORDING_SECONDS`（600s ≈ 18.3MiB，批次 6） |
 | `DICTATION_NOT_FOUND` | 404 | false | 无活动 dictation 时收 `dictation.stop`/`dictation.cancel`（批次 6） |
 | `STT_UNAVAILABLE` | 503 | true | STT 未启用/后端不可用/活动 STT 为 desktop-local runtime（start 拒绝 / 转写失败 / 录音 stop 时 STT 已关，批次 6） |
@@ -387,7 +387,7 @@ Desktop 工具**不走 `tool_approval`**（approvalAuthority=client，Electron �
 - 已有活动会话再 start → `VOICE_SESSION_CONFLICT`；`agent.stt` 为 None 或未启用 → `STT_UNAVAILABLE`。
 - **音频输入契约（批次 9C，固定格式）**：三种 start 帧（`voice.record.start`/`voice_session.start`/`dictation.start`）可带可选 `audio` descriptor `{codec, sampleRate, channels}`；唯一支持 `codec="pcm_s16le"` + `sampleRate=16000` + `channels=1`，**不符 → 升级前 `error{CONTRACT_VALIDATION}`，不建会话**。`audio` 缺省 → 按默认 16k/mono/pcm_s16le 处理（向后兼容）。BINARY PCM 帧 feed 时校验 `MAX_CHUNK_BYTES`（1 MiB），超限 → `error{CONTRACT_VALIDATION}` + 会话终止（`voice_session.ended`/`dictation.cancelled`；已 stop 的 TRANSCRIBING/PENDING 窗口只丢 chunk 不发 error）。**网络 chunk 无需 640B 对齐**：后端会跨 BINARY chunk 重组连续的 640 字节/20ms VAD 帧；流末不足一帧的部分只暂存、不单独判静音，后续字节到达后继续检测。**段/WAV 边界**：原始段音频（含最终非整帧尾部）原样送 STT，不截断。
 - **音频不落盘**（内存缓冲）、不入消息 content——语音消息 = 纯文本消息（批次 7 才做音频附件，BE-070）。
-- 失败信封区分：`voice.commit` 违规 → `user_message.ack{rejected}`；`voice.record.start/stop/discard` 与 `voice_session.*`/`dictation.*`/`audio.cancel` 违规 → `error{code}`。
+- 失败信封区分：`voice.commit` 违规 → `user_message.ack{rejected}`；`voice.record.start/stop/discard` 与 `voice_session.*`/`dictation.*`/`audio.cancel` 违规 → `error{code}`。`voice.discard` 成功（含 IDLE/重复幂等）为 send-only 无 ACK；仅 recordingId 不匹配或 realtime/dictation 活跃时报 `error{VOICE_SESSION_CONFLICT}`（阶段4真实联调修订）。
 
 ### 12.2 普通录音（BE-060）
 
@@ -399,12 +399,13 @@ server → {"type":"voice.transcript","recordingId":"…","text":"…","emotion"
 client → {"type":"voice.commit","recordingId":"…","text":"…","clientRequestId":"req_…","clientMessageId":"msg_…"?,"conversationId":null}?
 server → {"type":"user_message.ack",…}（v2：幂等 + 预分配 messageId + 会话归属）
 server → generation.*（Agent 流程，复用字幕文本，不重转写）
-client → {"type":"voice.discard","recordingId":"…"}（丢弃，清缓冲）
+client → {"type":"voice.discard","recordingId":"…"}（取消任意未提交阶段：RECORDING/TRANSCRIBING/PENDING；IDLE/重复幂等成功，send-only 无 ACK，阶段4真实联调修订）
 ```
 
 - 空转写不发 `voice.transcript`（前端未收字幕即视为未识别，无需 commit）；`< 640B` 录音视为空转写，不发 `voice.transcript`。
 - `voice.commit` 幂等（clientRequestId，digest = 携带 text）：重试命中 → 重发原 ACK 不重复生成；异摘要 / 缺 clientRequestId / 文本与 PENDING 字幕不一致 → `user_message.ack{rejected, CONTRACT_VALIDATION}`。
 - 录音缓冲超 600s（≈18.3MiB）→ `error{VOICE_RECORDING_TOO_LONG}` + 清缓冲；stop 时 STT 已关 → `error{STT_UNAVAILABLE}` + 清缓冲回 IDLE。
+- **`voice.discard` 取消原语（阶段4真实联调修订）**：可取消当前录音的任意未提交阶段——RECORDING（未 stop，采集启动失败场景）、TRANSCRIBING（取消在途 STT，迟到结果不复活）、PENDING（丢弃字幕/情绪/events）；录音已结束（IDLE）后迟到/重复 discard 幂等成功，不发错误。错误 recordingId 或 realtime/dictation 活跃 → `error{VOICE_SESSION_CONFLICT}`，绝不误清其它会话。成功后不调 STT、不发 `voice.transcript`、不触发 generation。
 
 ### 12.3 实时语音会话（BE-061）
 

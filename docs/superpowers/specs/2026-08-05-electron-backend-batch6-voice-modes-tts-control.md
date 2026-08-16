@@ -72,19 +72,21 @@ ws_handler 集成：
 
 ```
 IDLE ──voice.record.start──▶ RECORDING
+RECORDING ──voice.discard──▶ IDLE           （取消任意未提交阶段，不要求先 stop；阶段4真实联调修订）
 RECORDING ──voice.record.stop──▶ TRANSCRIBING   （STT 在途）
 TRANSCRIBING ──STT 完成──▶ PENDING             （voice.transcript 已发，存字幕+emotion 快照）
 TRANSCRIBING ──voice.discard──▶ IDLE           （取消在途 STT + 清缓冲）
 PENDING ──voice.commit──▶ IDLE                  （v2 提交）
 PENDING ──voice.discard──▶ IDLE
+IDLE ──voice.discard──▶ IDLE               （幂等成功；阶段4真实联调修订）
 任一转场失败（校验不过）→ 发失败响应，状态不变（commit 走 ack{rejected}，其余走 ErrorMessage{code}，见下，review NEW-S）
 ```
 
 边界规则（review S7）：
-- RECORDING 态收 `commit`/`discard` → `CONTRACT_VALIDATION`（未 stop 不得提交）。
+- RECORDING 态收 `commit` → `CONTRACT_VALIDATION`（未 stop 不得提交）；收 `discard` → **允许**（取消任意未提交阶段，阶段4真实联调修订）。
 - TRANSCRIBING 态收 `stop`/`commit` → `CONTRACT_VALIDATION`（STT 在途）；`discard` **允许**（取消在途 STT + 清态）。
 - PENDING 态收 `stop` → `CONTRACT_VALIDATION`（已转写完，须 commit/discard）。
-- IDLE 态收 `stop`/`commit`/`discard` → `VOICE_RECORDING_NOT_FOUND`。
+- IDLE 态收 `stop`/`commit` → `VOICE_RECORDING_NOT_FOUND`；收 `discard` → **幂等成功**（阶段4真实联调修订）。
 - **commit 处理顺序（review NEW-A/NEW-M/NEW-T，优先于状态机门禁）**：① 缺 `clientRequestId` → 直接 `user_message.ack{rejected, CONTRACT_VALIDATION}`（置于幂等查重与状态机门禁**之前**，畸形请求不依赖当前状态归因）；② 按 `clientRequestId` 查幂等表，三态分支——命中且同摘要 → **重发原 ACK，无视当前状态**（网络重试时状态可能已转 IDLE，幂等重放不应被门禁吞掉）；命中但异摘要 → `user_message.ack{rejected, CONTRACT_VALIDATION}`，不查状态；未命中（新请求）→ ③ 走状态机 PENDING 门禁。与 §6.1 step 2/3 一致。
 - **失败信封区分（review NEW-Q/NEW-Z）**：`voice.commit` 违规 → **`user_message.ack{rejected}`**（v2 rejected 语义，可带 code，如 IDLE-commit → `ack{rejected, code: VOICE_RECORDING_NOT_FOUND}`）；`voice.record.start/stop/discard` 违规 → **`ErrorMessage{code}`**。
 
@@ -118,7 +120,7 @@ client → {"type":"voice.discard","recordingId":"rec_…"}  （丢弃，清缓�
 | `voice.record.start` | `recordingId: str` | 客户端生成；已有活动录音/会话 → `VOICE_SESSION_CONFLICT` |
 | `voice.record.stop` | `recordingId: str` | 触发预转写；无此录音 → `VOICE_RECORDING_NOT_FOUND` |
 | `voice.commit` | `recordingId, text, clientRequestId, clientMessageId?, conversationId?` | v2 提交（§6）；`text` = 用户确认的字幕文本（幂等摘要依据，服务端校验与 PENDING 一致）；复用 PENDING 字幕文本不重转写 |
-| `voice.discard` | `recordingId` | 丢弃 pending/在途录音 |
+| `voice.discard` | `recordingId` | 丢弃任意未提交阶段（RECORDING/TRANSCRIBING/PENDING）；IDLE/重复幂等成功（阶段4真实联调修订） |
 
 Server→Client：`voice.transcript {recordingId, text, emotion?}`。
 
@@ -287,7 +289,7 @@ server → {"type":"dictation.cancelled","clientRequestId":"req_…"}
 |---|---|---|---|
 | `VOICE_SESSION_CONFLICT` | 409 | false | 已有活动录音/会话时再 start（recording/realtime/dictation 通用） |
 | `VOICE_SESSION_NOT_FOUND` | 404 | false | pause/resume/stop/cancel 未知 sessionId |
-| `VOICE_RECORDING_NOT_FOUND` | 404 | false | IDLE 态收 stop/commit/discard（未知 recordingId） |
+| `VOICE_RECORDING_NOT_FOUND` | 404 | false | IDLE 态收 stop/commit（未知 recordingId）；**`voice.discard` 已幂等成功不再产生**（阶段4真实联调修订） |
 | `VOICE_RECORDING_TOO_LONG` | 413 | false | 录音缓冲超 `MAX_RECORDING_SECONDS` |
 | `DICTATION_NOT_FOUND` | 404 | false | 无活动 dictation 时收 `dictation.stop`/`dictation.cancel` |
 | `STT_UNAVAILABLE` | 503 | true | STT 未启用/后端不可用/活动 STT 为 desktop-local runtime（start 拒绝 / 转写失败 / 录音 stop 时 STT 已关） |
