@@ -56,7 +56,7 @@ web.run_app(app, port=8000)
 
 ### create_app
 
-- `create_app(agent, *, serve_static, wake_word_enabled, task_system, auth_token, access_token, max_ws_connections, max_request_bytes)` — 创建 aiohttp Application。STT 不再参数注入：建连时 `ws_handler` 读 `agent.stt` 槽位（`agent.stt_transcribe` / `agent.stt_emotion_state`），支持运行时热切换；BINARY 帧经 `agent.stt_enabled` 防御门控。
+- `create_app(agent, *, serve_static=True, serve_chat=False, wake_word_enabled=False, task_system=None, auth_token="", access_token="", max_ws_connections=None, max_request_bytes=None, rate_limits=None, product_mode=False, idempotency_repo=None)` — 创建 aiohttp Application。STT 不再参数注入：建连时 `ws_handler` 读 `agent.stt` 槽位（`agent.stt_transcribe` / `agent.stt_emotion_state`），支持运行时热切换；BINARY 帧经 `agent.stt_enabled` 防御门控。
 
 ### 产品认证（批次 1，BE-010）
 
@@ -78,7 +78,7 @@ web.run_app(app, port=8000)
 
 ### 服务模式开关
 
-- `set_service {service, enabled}` WS 消息 → `agent.set_service()` → `service_mode_result` 广播（所有 client）。TTS off → `_tts_mgr` 停用回落逐字文本流；STT off → 前端停麦 + 后端 BINARY 防御。模式与当前模型经 `session.service_state` 持久化（30d TTL），启动时 `_apply_service_state` 应用。
+- `set_service {service, enabled}` WS 消息 → `agent.set_service()` → `service_mode_result` 广播（所有 client）。TTS off → `_tts_mgr` 停用回落逐字文本流；STT off → 前端停麦 + 后端 BINARY 防御。模式与当前模型经 `session.service_state` 持久化（sessions 集合无自动 TTL，显式删除才清理），启动时 `_apply_service_state` 应用。
 
 ### REST API
 

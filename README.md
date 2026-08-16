@@ -8,7 +8,7 @@
 
 > **运行环境：Linux**（Windows/Mac 用户请使用 WSL2 或虚拟机）
 
-> 最近 (2026-08-12): Electron v2 后端加固后复核整改（见 [docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md](docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md)）——BE-P1-06（降级终态负载丢失）与 BE-P1-07（首轮健康探测漏补偿）已修复：完整记录恢复 `restore` 条件 upsert + recover 四分支、store 显式 `needs_recovery`/durable 强化、协调器首轮补触发、product `/ready` 门禁含补偿状态；BE-P2-04（runbook schemaHash）修正。**BE-RISK-01 保持开放**（accepted 提交窗口；happy-path 联调候选，不作 D6c 故障恢复冻结基线）。2026-08-11: 加固批次（[review](docs/review/electron-v2-first-integration-backend-review-2026-08-11.md) 已闭环）——并发 claim 所有权、幂等三态 + 崩溃恢复、dev 降级 overlay/reconcile、WS 限流 clientRequestId 关联、ACK 判别联合 + 负面 golden、clean-start 会话发现、探针分层 /ready、限流认证主体分桶、联调 runbook。2026-08-09/10: Electron v2 联调后端契约封口（Batch 9A/9B/9C + 接入充分性复审）——session 回放 `conversationId` / 历史分页显式 cursor（严格区分，before/after 只认 cursor）/ 显式会话存在性校验（禁幽灵会话）/ 版本化机器契约产物（`contract.schema.json` + `contract.raw.ts` + 七类 golden frames 漂移门禁）/ ClientMessage 判别联合统一入站校验 / 严格版本协商（{缺省/"1"→v1, "2"→v2}，其余 400）/ 输入音频固定格式 + descriptor / dictation 会话内 STT profile / Desktop 重连交叠按 `connectionId` 精确投递。产品化门禁（远程鉴权 fail-closed、幂等持久化、实际请求限流）defer 单独批次。2026-08-09: pyright 门禁扩展到全仓——include core/ + Module/ + frontend_contract/（清 Module 28 errors + frontend 0 error 纳入）。同日: core 生产代码 pyright 门禁（`make pyright` 锁 Elysia env 清 92 处报错）+ 全项目文档体检（删除/归档过时文档）。2026-08-08: core ID NewType 化 + channel/kind 对齐契约枚举（MessageChannel/SegmentKind StrEnum）+ MemoryEntry.memory_type 对齐（try_coerce/coerce 归一）。2026-08-06: 通用附件与媒体链路（批次 7）——`POST /api/uploads`（filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载 + Range/206）、`GET /api/attachments/{id}/sign`（签发）、`GET /api/stickers`（内置表情包）+ 附件 GC 四规则 + `/health`/`/ready` 拆分 + `build_sha`/`requestId`。2026-08-03: 前后端契约单源化——顶层 `frontend_contract/` 包（Pydantic 唯一权威），WS/REST/Debug 契约建模 + `gen_ts.py` 发射器生成前端 TS 快照 + `make check-types` 漂移门禁。同日: 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。测试统计见 `scripts/print_test_stats.py`（2026-08-11 起不手写易漂移数字）。
+> 最近 (2026-08-16): `core/` 模块化健康评估闭环（provider/服务能力/幂等/限流/prompt 组装分区、认知循环拆 mixin、input 路由按域拆分），CI 跨包测试导入已修复；同日完成活跃文档体检，刷新架构/测试/存储/README 中的过时路径与统计。2026-08-12: Electron v2 后端加固后复核整改（见 [docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md](docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md)）——BE-P1-06（降级终态负载丢失）与 BE-P1-07（首轮健康探测漏补偿）已修复：完整记录恢复 `restore` 条件 upsert + recover 四分支、store 显式 `needs_recovery`/durable 强化、协调器首轮补触发、product `/ready` 门禁含补偿状态；BE-P2-04（runbook schemaHash）修正。**BE-RISK-01 保持开放**（accepted 提交窗口；happy-path 联调候选，不作 D6c 故障恢复冻结基线）。2026-08-11: 加固批次（[review](docs/review/electron-v2-first-integration-backend-review-2026-08-11.md) 已闭环）——并发 claim 所有权、幂等三态 + 崩溃恢复、dev 降级 overlay/reconcile、WS 限流 clientRequestId 关联、ACK 判别联合 + 负面 golden、clean-start 会话发现、探针分层 /ready、限流认证主体分桶、联调 runbook。2026-08-09/10: Electron v2 联调后端契约封口（Batch 9A/9B/9C + 接入充分性复审）——session 回放 `conversationId` / 历史分页显式 cursor（严格区分，before/after 只认 cursor）/ 显式会话存在性校验（禁幽灵会话）/ 版本化机器契约产物（`contract.schema.json` + `contract.raw.ts` + 七类 golden frames 漂移门禁）/ ClientMessage 判别联合统一入站校验 / 严格版本协商（{缺省/"1"→v1, "2"→v2}，其余 400）/ 输入音频固定格式 + descriptor / dictation 会话内 STT profile / Desktop 重连交叠按 `connectionId` 精确投递。产品化门禁（远程鉴权 fail-closed、幂等持久化、实际请求限流）defer 单独批次。2026-08-09: pyright 门禁扩展到全仓——include core/ + Module/ + frontend_contract/（清 Module 28 errors + frontend 0 error 纳入）。同日: core 生产代码 pyright 门禁（`make pyright` 锁 Elysia env 清 92 处报错）+ 全项目文档体检（删除/归档过时文档）。2026-08-08: core ID NewType 化 + channel/kind 对齐契约枚举（MessageChannel/SegmentKind StrEnum）+ MemoryEntry.memory_type 对齐（try_coerce/coerce 归一）。2026-08-06: 通用附件与媒体链路（批次 7）——`POST /api/uploads`（filetype 魔数校验 + 签名 URL）、`GET /api/attachments/{id}`（HMAC 短签下载 + Range/206）、`GET /api/attachments/{id}/sign`（签发）、`GET /api/stickers`（内置表情包）+ 附件 GC 四规则 + `/health`/`/ready` 拆分 + `build_sha`/`requestId`。2026-08-03: 前后端契约单源化——顶层 `frontend_contract/` 包（Pydantic 唯一权威），WS/REST/Debug 契约建模 + `gen_ts.py` 发射器生成前端 TS 快照 + `make check-types` 漂移门禁。同日: 服务运行时状态 + 热插拔——STT/TTS 后端模式开关（set_service）+ 模型/模式跨重启持久化（ServiceState）+ STT 槽位化热切换 + capabilities 嵌套 per-service。2026-08-02: 导入风格统一——全量相对导入改绝对 + ruff TID252 门禁（CI 强制）。2026-07-03: Brain Prompt 提供者架构——12 个 PromptSection 独立模块。测试统计见 `scripts/print_test_stats.py`（2026-08-11 起不手写易漂移数字）。
 
 ---
 
@@ -274,9 +274,13 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Storage | [core/storage/README.md](core/storage/README.md) | 统一存储层（Repository 模式） |
 | Schema | [core/schema/README.md](core/schema/README.md) | 基础类型层（AgentState/事件/多模态消息 Part） |
 | Config | [core/config/README.md](core/config/README.md) | 应用配置 + 角色配置 dataclass |
-| Adapter | [core/adapter/README.md](core/adapter/README.md) | 适配器层（LLM + TTS + Tool + Message） |
+| Adapter | [core/adapter/README.md](core/adapter/README.md) | 适配器层（LLM + TTS + Tool） |
 | Task | [core/task/README.md](core/task/README.md) | 任务数据模型 + Worker Pool 调度器 |
-| Utils | [core/utils/README.md](core/utils/README.md) | 通用工具（message_id + log_setup） |
+| Prompt | [core/prompt/README.md](core/prompt/README.md) | System prompt 组装层（MessageBuilder + PromptAssembler） |
+| Providers | [core/providers/README.md](core/providers/README.md) | Provider 元数据与自定义 provider |
+| Services | [core/services/README.md](core/services/README.md) | 服务能力声明与广播（capabilities） |
+| Network | [core/network/README.md](core/network/README.md) | 传输无关限流（rate limiter） |
+| Utils | [core/utils/README.md](core/utils/README.md) | 通用工具（ID 生成 shim + log_setup + text_utils + server_guard） |
 | CharacterEngine | [core/personality/README.md](core/personality/README.md) | 四层性格+情绪模型（Core→Self→State→Mood） |
 | 工具总览 | [core/tools/README.md](core/tools/README.md) | 工具插件列表 + 开发指南 |
 | 工具: desktop | [core/tools/desktop/README.md](core/tools/desktop/README.md) | desktop.file.select / read / write + screen.capture（委托 Electron，批次 4） |
@@ -292,7 +296,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 ### 其他文档
 | 文档 | 内容 |
 |------|------|
-| [docs/architecture.md](docs/architecture.md) | 完整架构详解（1000+ 行） |
+| [docs/architecture.md](docs/architecture.md) | 完整架构详解 |
 | [frontend_contract/README.md](frontend_contract/README.md) | 前后端契约单源（可执行 Pydantic + TS 生成快照 + 漂移门禁） |
 | [docs/completed.md](docs/completed.md) | 已完成工作月度归档索引 |
 | [CLAUDE.md](CLAUDE.md) | AI 助手指令 + 项目地图 |
@@ -303,7 +307,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | [scripts/README.md](scripts/README.md) | 工具脚本（启动/预检/清理数据库） |
 | [docs/readme-conventions.md](docs/readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 | [docs/code-style-guide.md](docs/code-style-guide.md) | 代码风格与类型约束（ID NewType 体系 + 权威归属 + StrEnum/coerce + getattr 纪律） |
-| [docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md) | Agent 公开接口设计（31 个 @property + 写方法） |
+| [docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md) | Agent 公开接口设计（薄 getter + 写方法；当前 39 个 @property） |
 | [docs/superpowers/specs/2026-08-02-service-runtime-state-design.md](docs/superpowers/specs/2026-08-02-service-runtime-state-design.md) | 服务运行时状态 + 热插拔设计（ServiceState + set_service + capabilities 嵌套） |
 | [docs/review/doc-review-2026-07-18.md](docs/review/doc-review-2026-07-18.md) | 文档审查报告（2026-07-18） |
 | [docs/archive/](docs/archive/) | 归档文档（历史记录，不再随代码库更新）：electron 基线/迁移/进度/审计、经验与同步笔记、数据结构普查、前端交接包、WorkflowEngine 历史设计 |
@@ -497,7 +501,7 @@ Agent/
 
 ## 测试
 
-测试统计由 `scripts/print_test_stats.py` 生成（不手写易漂移数字）。当前（2026-08-11）全量收集 3503：unit 1956 / service 1398 / integration 35 / slow 56 / external 36（真实 LLM E2E，独立 opt-in）；合并门禁 `-m "not external"` 3467。详见 [docs/testing.md](docs/testing.md)。
+测试统计由 `scripts/print_test_stats.py` 生成（不手写易漂移数字）。当前（2026-08-16）全量收集 3804：unit 2070 / service 1580 / integration 52 / slow 57 / external 36（真实 LLM E2E，独立 opt-in）；合并门禁 `-m "not external"` 3768。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia

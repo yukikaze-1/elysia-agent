@@ -146,5 +146,5 @@ connectionStore.onmessage → _onMessage
 - [项目 CLAUDE.md](../CLAUDE.md) — 完整架构文档
 - [前后端契约单源 frontend_contract](../frontend_contract/README.md) — 类型唯一权威来源（生成 contract.generated.ts）
 - [前端代码审查 TODO](../docs/archive/frontend_todo.md) — 已知问题清单及修复状态（已归档，剩余活项并入 [todo.md](../todo.md)）
-- [后端 API 路由](../core/input/api_routes.py)
+- [后端 Input 层 README（REST 路由索引）](../core/input/README.md)
 - [WebSocket 协议](../core/input/ws_handler.py)

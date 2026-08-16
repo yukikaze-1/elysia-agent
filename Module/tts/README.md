@@ -136,7 +136,7 @@ MINIMAX_TTS_URL=https://api.minimaxi.com     # 可选
 2. 实现所有抽象方法 + `provider_name` + `get_preprocess()`
 3. 在 `registry.py` `_BACKENDS` 注册，`TTSFactory.create()` 添加分支
 4. 在 `text_preprocess.py` 中添加对应预处理函数（如需要）
-5. 在 `core/input/api_routes.py` 的 `/api/providers` 端点注册（前端设置页可见）
+5. 在 `Module/config/providers.yaml` 的 `tts:` 段登记 provider（base_url/env_key/models——前端设置页与 `/api/providers` 由此读取）
 
 ## 测试
 

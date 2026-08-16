@@ -30,4 +30,4 @@ services/
 |------|------|
 | [core/input/README.md](../input/README.md) | WS 建连消费 capabilities/server_info |
 | [frontend_contract/README.md](../../frontend_contract/README.md) | 契约模型单源 |
-| [docs/electron-backend-protocol-v2.md](../electron-backend-protocol-v2.md) | v2 server_info 语义 |
+| [docs/electron-backend-protocol-v2.md](../../docs/electron-backend-protocol-v2.md) | v2 server_info 语义 |

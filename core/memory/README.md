@@ -10,7 +10,7 @@
 ┌─────────────────────────────────────────────────────────┐
 │                   记忆管线                                │
 │                                                         │
-│  对话轮次 → SessionMemory (deque, maxlen, MongoDB 30d TTL)│
+│  对话轮次 → SessionMemory (deque, maxlen, MongoDB 持久化，无自动 TTL)│
 │     ↓                                                   │
 │  MemoryConsolidator (缓冲 6 条 → LLM 提取 → 比对 → 写入)  │
 │     ↓                                                   │
@@ -54,7 +54,7 @@
 
 ### SessionMemory
 
-- 后端：`deque`（maxlen 可配，默认 20）+ MongoDB 持久化（30 天 TTL）
+- 后端：`deque`（maxlen 可配，默认 20）+ MongoDB 持久化（无 Mongo TTL；删除走 REST/debug 显式级联删除）
 - `recent_messages()` 取最近 N 条给 CognitiveLoop 拼接上下文
 - `append()` 追加消息时 fire-and-forget 写入 MongoDB archive
 - `save()` / `restore()` 服务端会话恢复

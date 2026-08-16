@@ -36,7 +36,7 @@
 | [superpowers/specs/archive/](superpowers/specs/archive/) | 已归档设计规格（按月分目录 `archive/<YYYY-MM>/`） |
 | [superpowers/plans/archive/](superpowers/plans/archive/) | 已归档实施计划（按月分目录 `archive/<YYYY-MM>/`） |
 | [review/](review/) | 代码/文档审查报告（code-review、doc-review、frontend_completed） |
-| [progress/](progress/) | 进度快照（现仅 2026-08-13 两个已闭环批次状态；历史参考——当前事实源见 runbook + review） |
+| [progress/](progress/) | 执行记录/进度快照（2026-08-13 ~ 2026-08-15 共 6 个，均历史参考——当前事实源见 runbook + review） |
 | [legacy/](legacy/) | 已废弃文档（companion-*，保留作历史参考） |
 | [archive/](archive/) | 归档历史记录：electron 基线/迁移/进度/审计、经验与同步笔记、数据结构普查、前端交接包（frontend-handoff-v2）、WorkflowEngine 历史设计（architecture/PROGRESS/migration）、frontend_todo、Cyrene 后端改造任务清单/执行上下文（v0.1 历史）、2026-08-10 后端+前端适配进度快照 |
 | [completed/](completed/) | 已完成月度归档（2026-05 ~ 2026-08） |

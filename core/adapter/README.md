@@ -29,7 +29,7 @@ core/adapter/
 - `stream_think()` — 结构化流式输出 `{content, tool_calls}` chunks
 - 自动重试（429/500/502/503/504，指数退避 3 次）
 - `switch_model()` — 热切换底层 LLM 后端（先建后换，create 失败保留旧后端 + `_requested_model`）
-- `get_raw_client()` — 暴露底层 HTTP client（供 TaskSystem 直接使用）
+- `get_raw_client()` — 暴露底层 HTTP client（供 WorkflowEngine 直接使用）
 - 非流式 tool-call JSON 解析兜底
 
 ### TTSStreamManager（`tts_adapter.py`，496 行）

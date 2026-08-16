@@ -4,7 +4,7 @@
 
 ReAct 调度器 + inner_voice 状态机，是认知流水线的核心执行引擎。流式接收 LLM 输出，实时解析 `<inner_voice>` 标签，检测工具调用，管理 TTS 流式播放。
 
-使用 mixin 模式：`CognitiveLoop(CognitiveTools)`。
+使用 mixin 模式：`CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize)`（流式/工具轮/终态收尾三分支）。
 
 ## 架构
 
@@ -69,7 +69,7 @@ THINKING → LLM 返回 tool_calls → EXECUTING → 工具结果注入 → THIN
 ```
 
 - `_execute_tools_directly()`: 并行执行轻量工具
-- `_handle_submit_task()`: 拦截后台任务委托，提交到 TaskSystem
+- `_handle_submit_task()`: 拦截后台任务委托，提交到 WorkflowEngine
 - 超时保护：每轮 60s，中断时级联 cancel
 
 ### TTS 流式播放

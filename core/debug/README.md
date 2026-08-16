@@ -29,7 +29,7 @@
 │ Database tab:                                      │
 │   LTM CRUD | Session management | Message archive  │
 │ Tasks tab:                                         │
-│   TaskSystem DAG (SSE real-time)                  │
+│   WorkflowEngine DAG (SSE real-time)                  │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -51,7 +51,7 @@ Prompt/Response 查看:
   → GET /debug/api/responses         → 列出全部 response
   → GET /debug/api/responses/{index} → 按 0-based index 查看单条 response
 
-TaskSystem 实时推送:
+WorkflowEngine 实时推送:
   → GET /debug/api/tasks/stream → SSE → 前端 DAG 可视化
 ```
 

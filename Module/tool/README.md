@@ -197,7 +197,7 @@ Module/tool/    ← 本模块 — 可复用框架（零业务依赖）
 core/tools/     ← Elysia 项目的具体工具插件
 ```
 
-分层模式与 `Module/llm/`（框架）↔ `core/llm_adapter.py`（项目封装）一致。
+分层模式与 `Module/llm/`（框架）↔ `core/adapter/llm_adapter.py`（项目封装）一致。
 
 ## 依赖
 
