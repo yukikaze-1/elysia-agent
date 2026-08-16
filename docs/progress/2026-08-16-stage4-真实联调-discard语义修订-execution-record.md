@@ -41,7 +41,9 @@
 
 ## 验收结论（Phase 10，subagent 独立验收）
 
-- **结论：本批可标记「阶段 4 已开发/自动化已验证」（整改清单 §5）；不得标记「完整真实联调通过」**——Windows Electron 真实复验（前端配套 FE-S4-RUN-P0-01/P1-01 落地 + 双方 SHA 固定后）未执行，属 elysia-frontend + 联调作业另行推进。
+- **实现批结论：本批标记「阶段 4 已开发/自动化已验证」（整改清单 §5）；完整通过标记留待 Windows Electron 真实复验。**
+
+> **2026-08-17 更新：修复后真实复验已完成并通过。** 双方运行时 SHA：backend `4740dfd` / frontend `f1e17dc`；R1（采集失败免重连）、R2（空录音删除/重录 + 45s 等待态）、R3（实体麦克风）、R4（Profile/TTS/自动朗读/转写）全部通过，无 `CONTRACT_VALIDATION` / `VOICE_SESSION_CONFLICT` / `VOICE_RECORDING_NOT_FOUND`。验收记录：[2026-08-17-阶段4修复后真实联调验收](../review/2026-08-17-阶段4修复后真实联调验收.md)。
 - 8 个维度全 PASS，全部关键门禁独立重跑核实（非采信）：① 生产状态机语义（`discard_recording()` 六行转场 + IDLE 先返 + CONFLICT 不拆会话 + 零 await 无 TOCTOU + `_run_recording_stt` 防线保留）；② 测试覆盖（55 unit + 29 service，+10/+3，零 mock 断言真实行为，marker 正确，§3.6 11 场景全映射）；③ 门禁复核（84 targeted + smoke 27/0 退出 0 + **test-quick 3631 精确复现** + ruff + pyright 0 + check-types 三子项）；④ golden 零 churn（`ws-v2-recording.jsonl` 未变 + `--check` 退出 0 + 41 码单源 + ERR 常量与基线 IDENTICAL）；⑤ 文档同步（活跃文档新语义 + 历史文档零触碰）；⑥ 范围纪律（8 文件精确 + golden/Makefile/providers.yaml/frontend_contract 零改动）；⑦ commit 完整性（spec/plan 单 commit + feature 链线性逐 commit 文件核对）；⑧ 执行记录核对（数字精确复现 + 修复项已落）。
 - **备注**：test-quick +14 vs 本批新增 13——基线 fc5b45ec 相对上一批验收计数 3617 已有前序 commit 微移（模块化/readme 刷新批次），非本批多出测试；当前值 3631 被精确复现，不影响结论。test-normal 3739 按指示采信主审查未独立重跑。
 
@@ -49,4 +51,4 @@
 
 - 后端修复 SHA `46492d26` 交前端（elysia-frontend FE-S4-RUN-P0-01/P1-01：清理 helper 收敛 + 有状态协议桩测试）；
 - 双方 SHA 固定后 → Windows Electron + Ubuntu 后端**真实复验**：采集启动失败后无需重连即可再次录音、空录音删除不再产生 `VOICE_RECORDING_NOT_FOUND`/`CONTRACT_VALIDATION`；
-- 复验通过前，阶段 4 只可标记「已开发/自动化已验证」，**不得**标记「完整真实联调通过」。
+- ~~复验通过前，阶段 4 只可标记「已开发/自动化已验证」，**不得**标记「完整真实联调通过」。~~ **已完成（2026-08-17）：阶段 4 标记「完整真实联调通过」。**
