@@ -299,7 +299,7 @@ sandbox = ProjectPath.DATA_SANDBOX.resolve(session_id="a") # → <root>/data/san
 
 - **项目根检测**: `ELYSIA_ROOT` 环境变量 > `paths.py` 所在目录
 - **环境变量覆盖**: `ELYSIA_PATH_{NAME}` 可逐路径覆盖（如 `ELYSIA_PATH_LOG=/var/log/elysia`）
-- **23 个枚举成员**: 15 目录 + 8 文件（含 `SESSION_PENDING_CHECK`），枚举类 `ProjectPath(str, Enum)`。批次 4 新增 `DATA_UPLOADS_DESKTOP`、批次 5 新增 `DATA_SECRETS`（`data/uploads/desktop` + `data/secrets`），批次 7 的 `DATA_UPLOADS_IMAGES` 也已预置
+- **25 个枚举成员**: 15 目录 + 10 文件（含 `MEMORY_PENDING_SYNCS` / `SESSION_PENDING_CLEANUP` 两个 journal），枚举类 `ProjectPath(str, Enum)`。批次 4 新增 `DATA_UPLOADS_DESKTOP`、批次 5 新增 `DATA_SECRETS`，批次 7 起 `DATA_UPLOADS_IMAGES` 预置，2026-08-14 起 `LIVE2D_ASSETS` 指向 `data/live2d-assets`
 - **语义**: `resolve()` 纯计算返回 `pathlib.Path`，不检查存在性
 
 ---
@@ -308,7 +308,7 @@ sandbox = ProjectPath.DATA_SANDBOX.resolve(session_id="a") # → <root>/data/san
 
 ### 4.1 事件总线 (EventBus)
 
-基于 `asyncio.PriorityQueue`，三重优先级 + FIFO 保序：
+基于 `asyncio.PriorityQueue`，三重优先级 + FIFO 保序。`EventPriority` / `EventType` 定义在 `core/schema/agent.py`（`core/status/fsm.py` 也从此处消费），`Event` / `EventBus` 在 `core/monitoring/event_bus.py`：
 
 ```python
 class EventPriority(IntEnum):
@@ -366,9 +366,15 @@ INTERRUPTED → IDLE
 
 ### 4.2.1 Agent 公开接口（组合根访问路径）
 
-`Agent` 是组合根（composition root），持有 22+ 子系统。除 `agent.status` / `agent.phases` 外，通过 **39 个同名 `@property`** 公开子系统访问路径——`@property` 只是薄 getter（`return self._xxx`），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+`Agent` 是组合根（composition root），持有 30+ 子系统/仓库。除 `agent.status` / `agent.phases` 外，通过 **39 个同名 `@property`** 公开访问路径——`@property` 只是薄 getter（`return self._xxx`，少数为懒初始化），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
 
-**子系统对象（23 个）**：`agent.session` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.tts` / `agent.config` / `agent.bus` / `agent.cognitive` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine` / `agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder`
+**会话/记忆/存储（11 个）**：`agent.session` / `agent.session_manager` / `agent.active_session_id` / `agent.pending_messages` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.attachment_repo` / `agent.idempotency_repo`
+
+**适配器/能力（11 个）**：`agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.tts` / `agent.tts_manager` / `agent.stt` / `agent.stt_enabled` / `agent.tts_enabled` / `agent.stt_emotion_state` / `agent.config` / `agent.bus`
+
+**认知/后台（8 个）**：`agent.cognitive` / `agent.generation_registry` / `agent.desktop_bridge` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine`
+
+**角色/观测（5 个）**：`agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder`
 
 **标量（4 个）**：`agent.user_name` / `agent.state` / `agent.started_at` / `agent.stt_ok`
 
@@ -380,10 +386,10 @@ INTERRUPTED → IDLE
 
 ### 4.3 认知循环 (CognitiveLoop)
 
-ReAct 调度器，采用 mixin 模式 `CognitiveLoop(CognitiveTools)`。通过 `agent.phases`（`CognitivePhaseController`）驱动状态转换，`_think_loop()` 从 378 行提取为 4 个独立方法 + ~30 行主循环，每步设置 `self._phase`（TurnPhase）供 debug 面板观测内部进度：
+ReAct 调度器，采用 mixin 模式 `CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize)`——流式分发、工具轮、终态收尾三块分别落在 `core/cognitive/{streaming,tool_phase,finalize}.py`（CORE-MOD-P1-04）。`process()` 的轮前准备/异常收尾也提取为 `_prepare_turn()` / `_handle_turn_exception()`。通过 `agent.phases`（`CognitivePhaseController`）驱动状态转换，每步设置 `self._phase`（TurnPhase）供 debug 面板观测内部进度：
 
 ```python
-class CognitiveLoop:
+class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
     MAX_TOOL_ROUNDS = 5  # 防止无限工具调用
 
     async def process(self, user_message, ...):
@@ -577,7 +583,8 @@ class SessionMemory:
 
     # 运行时状态经专用类型字段持久化：save() 写 character_state + service_state
     # （reflector 计数器经 set_memory_reflector() 在 save 时并入 character_state，session.py:210/246），
-    # load()/load_from_jsonl() 恢复（MongoDB 30d TTL + JSONL fallback）。已无 _reflector_state 字段。
+    # load()/load_from_jsonl() 恢复（MongoDB 持久化 + JSONL fallback；2026-08-10 后
+    # sessions 不再建 Mongo TTL 索引，删除走显式级联删除）。已无 _reflector_state 字段。
     async connect_db() → bool
     async save() → bool           # Upsert by session_id（MongoDB 优先，不可用时降级 JSONL）
     async load(sid?) → bool       # 从 MongoDB 恢复（JSONL fallback）
@@ -719,38 +726,56 @@ Browser Microphone
 ### 6.3 WebSocket 服务器 (core/input/)
 
 ```
-aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂载；定义分布见 `core/input/server.py` + `api_routes.py` + `session_routes.py` + `attachment_routes.py` + `debug_routes/`）：
+aiohttp Application（62 个显式 handler 注册，不含 aiohttp 自动 HEAD；另有 4 个静态挂载）。2026-08-14 起路由按域拆到独立模块，定义分布见 `core/input/server.py` + 下列 `*_routes.py`：
 
-**server.py（10）：**
+**server.py（8）— 纯装配 + 管理/健康端点：**
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
-| GET | `/` | static/index.html |
-| GET | `/debug` | static/debug.html |
-| GET | `/ws` | WebSocket handler |
+| GET | `/ws` | WebSocket handler（协议版本协商 + 并发上限 + 建连限流） |
 | GET | `/health`, `/ready` | 健康检查（批次 7 拆分：liveness/readiness + 真依赖检查） |
 | GET\|POST | `/shutdown` | 关闭服务 |
 | POST | `/restart` | 重启服务 |
-| GET | `/tools` | 工具插件列表 |
+| GET | `/tools` | 工具插件列表（管理端点） |
 | POST | `/tools/reload` | 热重载工具插件（返回 `{ok, name, error?}`——成功/失败 + 原因，E1） |
 
-**api_routes.py（14）：**
+**provider_routes.py（4）：**
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| GET\|POST | `/api/providers` | 模型 provider 列表 / 添加自定义 provider（批次 5：密钥入 Secret Store + SSRF/runtime 守卫） |
+| DELETE | `/api/providers/{service}/{name}` | 删除自定义 provider（激活中禁止） |
+| POST | `/api/providers/test` | 连通性测试（批次 5：SSRF 守卫 + runtime 门控） |
+
+**tts_routes.py（2）：**
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| GET | `/api/tts/voices` | TTS 声音列表（批次 5 BE-051） |
+| POST | `/api/tts/preview` | TTS 固定短文本试听（批次 5，不读聊天） |
+
+**upload_routes.py（3）：**
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| POST | `/api/images` | 图片上传（遗留端点） |
+| POST | `/api/uploads` | 通用附件上传（批次 7，filetype 魔数校验 + 签名 URL + 64MB；阶段 3 逐文件 kind——每文件一组 `kind+files` 邻接配对；MIME 规范化单源 `normalize_attachment_mime`） |
+| GET | `/api/stickers` | 内置表情包列表（批次 7，sticker_registry） |
+
+**tools_routes.py（3）：**
+
+| 方法 | 路径 | 功能 |
+|------|------|------|
+| GET | `/api/tools` | 工具元数据导出（批次 4，runtime 过滤） |
+| GET | `/api/tools/calls/{callId}` | 桌面调用状态查询（批次 4） |
+| POST | `/api/uploads/desktop/{callId}` | 桌面附件上传（批次 4，持有者校验） |
+
+**chat_routes.py（2）：**
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
 | POST | `/api/chat` | JSON chat API |
 | GET | `/api/messages` | 消息归档分页查询 |
-| POST | `/api/images` | 图片上传（遗留端点） |
-| GET\|POST | `/api/providers` | 模型 provider 列表 / 添加自定义 provider（批次 5：密钥入 Secret Store + SSRF/runtime 守卫） |
-| DELETE | `/api/providers/{service}/{name}` | 删除自定义 provider（激活中禁止） |
-| POST | `/api/providers/test` | 连通性测试（批次 5：SSRF 守卫 + runtime 门控） |
-| GET | `/api/tts/voices` | TTS 声音列表（批次 5 BE-051） |
-| POST | `/api/tts/preview` | TTS 固定短文本试听（批次 5，不读聊天） |
-| GET | `/api/tools` | 工具元数据导出（批次 4，runtime 过滤） |
-| GET | `/api/tools/calls/{callId}` | 桌面调用状态查询（批次 4） |
-| POST | `/api/uploads` | 通用附件上传（批次 7，filetype 魔数校验 + 签名 URL + 64MB；阶段 3 逐文件 kind——每文件一组 `kind+files` 邻接配对，兼容旧单 kind 整批提示；复验批次起 kind 确定后 MIME 规范化单源——audio+video/webm→audio/webm、WAV 探测别名→audio/wav，写/读/下载三路径同值） |
-| GET | `/api/stickers` | 内置表情包列表（批次 7，sticker_registry） |
-| POST | `/api/uploads/desktop/{callId}` | 桌面附件上传（批次 4，持有者校验） |
 
 **session_routes.py（13，批次 3 多会话）：**
 
@@ -759,22 +784,22 @@ aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂�
 | GET\|POST | `/api/sessions` | 会话列表 / 创建 |
 | GET\|PATCH\|DELETE | `/api/sessions/{conversationId}` | 会话详情 / 重命名 / 删除 |
 | POST | `/api/sessions/{conversationId}/activate` | 切换活动会话 |
-| GET | `/api/sessions/{conversationId}/messages` | 会话消息历史（before/after 分页） |
+| GET | `/api/sessions/{conversationId}/messages` | 会话消息历史（before/after cursor 分页） |
 | GET | `/api/sessions/{conversationId}/resources` | 会话资源（sticker 分类 + 附件软删过滤） |
 | GET | `/api/sessions/{conversationId}/generations` | 会话 generation 列表（BE-024） |
 | GET | `/api/sessions/{conversationId}/pending` | 会话 pending 消息 |
 | GET | `/api/messages/{messageId}/context` | 消息上下文窗口 |
-| GET | `/api/search/messages` | 全库消息搜索（category 支持 sticker，阶段 3；date_from/date_to 严格 YYYY-MM-DD fail-fast） |
+| GET | `/api/search/messages` | 全库消息搜索（category 白名单 8 值；date_from/date_to 严格 YYYY-MM-DD fail-fast） |
 | GET | `/api/generations/{generationId}` | generation 详情（BE-024） |
 
 **attachment_routes.py（2，批次 7 BE-070）：**
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
-| GET | `/api/attachments/{attachment_id}` | 附件签名下载（HMAC 短签，Range/206；Content-Type 过 `normalize_attachment_mime`，存量 audio 别名兼容） |
+| GET | `/api/attachments/{attachment_id}` | 附件签名下载（HMAC 短签，Range/206；Content-Type 过 `normalize_attachment_mime`） |
 | GET | `/api/attachments/{attachment_id}/sign` | 签发下载签名（Bearer） |
 
-**debug_routes/（25）：**
+**debug_routes/（25 handler 注册 / 18 路径）：**
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
@@ -782,9 +807,8 @@ aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂�
 | GET | `/debug/api/db-status` | 数据库连接状态 |
 | GET | `/debug/api/prompts` + `{n}` | Prompt 记录列表/详情 |
 | GET | `/debug/api/responses` + `{n}` | Response 记录列表/详情 |
-| GET\|POST | `/debug/api/ltm` | LTM 列表 / 新增记忆 |
+| GET\|POST\|DELETE | `/debug/api/ltm` | LTM 列表 / 新增 / 清空 |
 | PUT\|DELETE | `/debug/api/ltm/{entry_id}` | 更新 / 删除单条记忆 |
-| DELETE | `/debug/api/ltm` | 清空全部 LTM |
 | GET\|DELETE | `/debug/api/sessions` | Session 列表 / 清空全部 |
 | GET\|DELETE | `/debug/api/sessions/{session_id}` | Session 详情 / 删除 |
 | GET\|DELETE | `/debug/api/archive` | Archive 分页 / 清空全部 |
@@ -796,7 +820,7 @@ aiohttp Application（约 64 条业务/WS/debug 路由，另有 4 个静态挂�
 | GET | `/debug/api/character-versions` | Character 版本历史（L2/C6，通过 type 参数选择） |
 | POST | `/debug/api/character-rollback` | Character 内容回滚（L2/C6，通过 type/version 参数） |
 
-**静态挂载（4）**：`/static/`（构建产物）、`/live2d/`（Live2D 资源）、`/uploads/images/` + `/uploads/desktop/`（附件静态目录——已收窄：只挂 images/desktop 两个子目录，新 kind 目录走 `/api/attachments/{id}` 签名下载，见 `server.py:509-515` 注释）。
+**静态挂载（4）**：`/static/`（构建产物）、`/live2d/`（Live2D 资源）、`/uploads/images/` + `/uploads/desktop/`（附件静态目录——已收窄：只挂 images/desktop 两个子目录，新 kind 目录走 `/api/attachments/{id}` 签名下载，见 `core/input/server.py` 静态挂载注册）。
 
 每个 WS 连接:
   └── 创建 WebSocketChannel → OutputManager
@@ -935,20 +959,13 @@ class Agent:
 
     async def start():
         # AgentFSM.reset() + LLMAdapter.reconnect()
-        # Archive.connect()
-        # 状态恢复: CharacterReflector.restore_state → CharacterEngine.restore_state → MemoryReflector.restore_state
-        # JSONL snapshot 恢复
-        # ToolContext 构造 + 注入
-        # _db_health_loop 创建
-        # MongoDB + Milvus 并行连接
-        # SessionMemory.load() — 恢复历史会话
-        # TokenTracker + PromptRecorder 初始化
-        # await tool_adapter.start() — 加载工具插件
-        # TaskScheduler Worker Pool 启动
-        # IdleMonitor.start()
-        # TTS 条件启动（STT 在 run_server() 中初始化）
-        # WorkflowEngine 启动 + Mailbox 轮询
-        # 事件处理循环 (_process_events)
+        # _start_persistence() — MessageRepository/SessionRepository/TokenRepository/
+        #   MemoryRepository + MongoDB/Milvus 并行连接 + SessionManager 恢复
+        # 随后按 _STARTUP_STEPS 数据驱动执行:
+        #   token+prompt → tool_context → worker_pool → idle+events → service_state
+        #   → tts → task_system → mailbox_polling → db_health → attachment_repo → attachment_gc
+        # 任一启动步骤失败 → 回滚 stop()（不留下 RUNNING 僵尸）
+        # 事件处理循环 _process_events 由 _start_idle_and_events 启动
 
     async def stop():
         # 1. _flush_after_response() — 等待 fire-and-forget after-response task 完成
@@ -1008,7 +1025,7 @@ core/utils/log_setup.py:
 
 ## 11. 测试架构
 
-3,503 个测试按 5 层 markers 组织（unit / service / integration / slow / external opt-in；全量收集，合并门禁 `-m "not external"` 3,467，`make test-normal` 口径 `not slow and not external` 3,428；具体数字以 `scripts/print_test_stats.py` 为准，不手写易漂移）。
+3,804 个测试按 5 层 markers 组织（unit / service / integration / slow / external opt-in；全量收集，合并门禁 `-m "not external"` 3,768，2026-08-16 实测 `make test-quick` 3618 passed / `make test-normal` 3726 passed；具体数字以 `scripts/print_test_stats.py` 为准，不手写易漂移）。
 
 完整分层体系、测试文件索引、按模块运行命令 → [docs/testing.md](testing.md)
 
@@ -1027,7 +1044,7 @@ Agent/
 ├── README.md                # 项目说明
 │
 ├── Module/                  # L0 基础设施层
-│   ├── _common/              #   共享工具 (registry_helpers, test_helpers, main_runner, ...)
+│   ├── _common/              #   共享工具 (env + registry_helpers + ssrf + error_type + test_helpers + main_runner)
 │   ├── llm/                 # LLM: DeepSeek / OpenAI / Ollama / Mimo / Custom
 │   ├── stt/                 # STT: SenseVoice / Custom (OpenAI-compatible)
 │   ├── tts/                 # TTS: GPT-SoVits / MiniMax / Custom (OpenAI-compatible)
@@ -1056,11 +1073,22 @@ Agent/
 │   │   ├── llm_adapter.py
 │   │   ├── tts_adapter.py
 │   │   ├── tool_adapter.py
-│   │   ├── tool_call_parser.py
-│   │   ├── message_builder.py
-│   │   └── prompt_assembler.py
-│   ├── cognitive/            #   CognitiveLoop 包 (loop + tools + timing + generation + delegation)
-│   │   ├── loop.py           #     CognitiveLoop(CognitiveTools): process + _think_loop + _dispatch_stream_event
+│   │   └── tool_call_parser.py
+│   ├── prompt/               #   System prompt 组装层（CORE-MOD-P1-02 从 adapter 迁入）
+│   │   ├── message_builder.py #  MessageBuilder: system prompt + history → messages[]
+│   │   └── prompt_assembler.py # PromptAssembler: 12 sections → SystemPromptManager → MessageBuilder
+│   ├── providers/            #   Provider 元数据与自定义 provider（CORE-MOD-P1-01 从 input 迁入）
+│   │   ├── custom_providers.py
+│   │   └── provider_registry.py
+│   ├── services/             #   服务能力声明与广播（CORE-MOD-P1-01 从 input 迁入）
+│   │   └── capabilities.py
+│   ├── network/              #   网络运行时基础设施（CORE-MOD-P2-01 从 input 迁入）
+│   │   └── rate_limiter.py
+│   ├── cognitive/            #   CognitiveLoop 包 (loop + streaming + tool_phase + finalize + tools + timing + generation)
+│   │   ├── loop.py           #     CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize): process + _prepare_turn + _think_loop + _handle_turn_exception
+│   │   ├── streaming.py      #     CognitiveStreaming: _stream_llm_response + _dispatch_stream_event + _apply_mood（CORE-MOD-P1-04）
+│   │   ├── tool_phase.py     #     CognitiveToolPhase: _execute_tool_round + _build_tool_result_parts（CORE-MOD-P1-04）
+│   │   ├── finalize.py       #     CognitiveFinalize: _finalize_turn（CORE-MOD-P1-04）
 │   │   ├── tools.py          #     CognitiveTools: 工具执行 + submit_task
 │   │   ├── timing.py         #     Timer + TimingClock 延迟统计
 │   │   ├── generation.py     #     GenerationContext: generation_id/assistant_message_id/conversation_id 预分配（ID 字段对齐 NewType：GenerationId/MessageId/SessionId/RequestId/SegmentId；channel/kind 对齐契约层 MessageChannel/SegmentKind StrEnum）
@@ -1081,23 +1109,24 @@ Agent/
 │   │   ├── __init__.py       #     重导出 Task + TaskScheduler
 │   │   ├── task.py           #     任务数据模型
 │   │   └── scheduler.py      #     Worker Pool 调度器
-│   ├── utils/                #   通用工具包
-│   ├── schema/               #   共享类型包 (agent + types + part + tool + message + service_state + adapters)
+│   ├── utils/                #   通用工具包（message_id 重导出 shim + log_setup + text_utils + server_guard）
+│   ├── schema/               #   共享类型包 (agent + types + part + tool + message + service_state + adapters + utils)
 │   ├── status/                #   AgentStatus 接口层 (protocol + FSMBacked 实现)
 │   │   ├── protocol.py       #     AgentStatus（对外只读）+ CognitivePhaseController（对内写）
 │   │   └── fsm.py            #     FSMBackedStatus + FSMBackedPhaseController
-│   ├── storage/               #   存储层 — Repository 模式 (MongoDB/Milvus)（13 文件）
-│   │   ├── base.py           #     Repository 基类 + 共享连接/索引辅助
-│   │   ├── session_repo.py   #     SessionRepository: session CRUD + 30d TTL
+│   ├── storage/               #   存储层 — Repository 模式 (MongoDB/Milvus)（15 文件）
+│   │   ├── base.py           #     Repository 基类 + 共享连接/索引辅助（bson_expires 等）
+│   │   ├── session_repo.py   #     SessionRepository: session CRUD（无 Mongo TTL，显式级联删除）
 │   │   ├── message_repo.py   #     MessageRepository: 消息归档 append-only
 │   │   ├── token_repo.py     #     TokenRepository: token 统计持久化
 │   │   ├── memory_repo.py    #     MemoryRepository: LTM Milvus 操作
-│   │   ├── generation_repo.py #    GenerationRepository: generation 生命周期 upsert/query（BE-024，TTL 30d）
+│   │   ├── generation_repo.py #    GenerationRepository: generation 生命周期 upsert/query（BE-024，ttl_expires_at TTL 30d）
 │   │   ├── character_version_repo.py # CharacterVersionRepository: L2/C6 版本历史
 │   │   ├── attachment_repo.py #    AttachmentRepository: 附件元数据（BE-070，fail-closed，ref_count/refs 软删，TTL 不设由 GC 管）
 │   │   ├── attachment_release.py #  AttachmentRelease: 会话/消息删除的附件引用释放共享 helper
 │   │   ├── attachment_gc.py  #     AttachmentGC: 启动兜底扫描四规则（软删/孤儿/未关联/磁盘）
-│   │   ├── desktop_call_repo.py #  DesktopCallRepository: 桌面调用状态（Mongo + 进程内缓存 + 30d TTL，批次 4）
+│   │   ├── desktop_call_repo.py #  DesktopCallRepository: 桌面调用状态（Mongo + 进程内缓存 + ttl_expires_at TTL 30d，批次 4）
+│   │   ├── idempotency.py    #     v2 消息幂等存储（内存权威 overlay + Mongo 写穿 + recover 四分支，CORE-MOD-P1-01 从 input 迁入）
 │   │   ├── idempotency_repo.py #    IdempotencyRepository: 幂等 claim 三态持久化（唯一约束 + TTL，claim 所有权 + restore 条件 upsert，D6c + 2026-08-12）
 │   │   └── secret_store.py   #     SecretStore: 密钥存储（data/secrets/profiles.json，0600 + 原子写，批次 5）
 │   ├── debug/                #   Debug 仪表板包
@@ -1105,24 +1134,27 @@ Agent/
 │   │   ├── prompt_recorder.py #   Prompt 记录器
 │   │   └── response_recorder.py # Response 记录器
 │   ├── input/                #   Input: WebSocket + HTTP 服务器
-│   │   ├── server.py         #     aiohttp 应用入口（create_app 读 agent.stt 槽位，不再参数注入 STT；4 静态挂载）
-│   │   ├── ws_handler.py     #     WebSocket 消息路由（set_service + BINARY 防御 + v2 路由）
-│   │   ├── capabilities.py   #     build_capabilities 嵌套 per-service 能力声明 + 全量重播
-│   │   ├── api_routes.py     #     REST API 路由（chat/messages/providers/tts/uploads/stickers/tools）
+│   │   ├── server.py         #     aiohttp 纯装配入口（create_app + 管理端点；bind 守卫已迁 core/utils/server_guard.py）
+│   │   ├── middleware.py     #     认证 / payload / 限流中间件工厂 + _nosniff_uploads
+│   │   ├── health.py         #     /health /ready 探针（liveness/readiness 分层）
+│   │   ├── errors.py         #     统一错误信封（_protocol_error_response）
+│   │   ├── _common.py        #     跨业务共享 helper（_send_ack/_find_channel/_tool_error/_archive_*）
+│   │   ├── ws_handler.py     #     WebSocket 连接/消息路由（_WS_HANDLERS 注册表分发）
+│   │   ├── ws_v2.py          #     v2 深业务（_route_v2_text/_handle_voice_commit + 幂等/ACK helper）
+│   │   ├── provider_routes.py #    Provider 管理 REST
+│   │   ├── tts_routes.py     #     TTS 声音 REST
+│   │   ├── upload_routes.py  #     上传/表情 REST
+│   │   ├── tools_routes.py   #     Desktop 工具 REST
+│   │   ├── chat_routes.py    #     Chat API + 消息归档 REST
 │   │   ├── session_routes.py #     多会话 REST（CRUD/历史/搜索/资源/generation 状态/pending，批次 3）
 │   │   ├── attachment_routes.py #  附件签名下载 + 签发（批次 7 BE-070）
 │   │   ├── voice_sessions.py #     三模式语音状态机（普通录音/实时语音/输入法转写，批次 6 BE-060~062）
 │   │   ├── sticker_registry.py #  内置表情注册表（批次 7 BE-071）
-│   │   ├── tts_profile.py   #     TTS 声音 Profile（批次 5 BE-051）
-│   │   ├── debug_routes/     #     Debug API 路由 (package: 25 路由 / 7 模块)
+│   │   ├── tts_profile.py    #     TTS 声音 Profile（批次 5 BE-051）
+│   │   ├── debug_routes/     #     Debug API 路由 (package: 25 注册 / 7 模块 + _shared)
 │   │   ├── audio_buffer.py   #     音频缓冲 + VAD
 │   │   ├── wakeword.py       #     唤醒词检测
-│   │   ├── custom_providers.py #   自定义 provider 路由（批次 5：Secret Store 优先 + runtime/能力）
-│   │   ├── provider_registry.py # /api/providers 响应组装（env 过滤 + 未配置引导）
-│   │   ├── idempotency.py   #     v2 消息幂等存储（内存权威 overlay + Mongo 写穿 + recover 四分支，D6c + 2026-08-12）
-│   │   ├── rate_limiter.py  #     D6b token-bucket 限流（REST 429 + WS RATE_LIMITED；key 认证主体优先）
-│   │   ├── ssrf.py          #     批次 5 SSRFGuard（validate_endpoint + guarded transport）
-│   │   └── __main__.py      #     python -m core.input 入口
+│   │   └── __main__.py       #     python -m core.input 入口
 │   ├── config/               #   配置子包
 │   │   ├── __init__.py       #     重导出 AppConfig + CharacterConfig
 │   │   ├── app_config.py     #     App 配置
@@ -1139,6 +1171,7 @@ Agent/
 │   │   ├── session.py       #     SessionMemory (MongoDB + deque; character_state/service_state 专用字段)
 │   │   ├── long_term.py     #     LongTermMemory (Milvus + Embedding)
 │   │   ├── embedding_provider.py #  EmbeddingProvider: 嵌入懒加载 + fallback
+│   │   ├── llm_protocol.py        #  MemoryLLM Protocol（MemoryReflector/Consolidator 的 LLM 能力面）
 │   │   ├── consolidator.py  #     MemoryConsolidator (提取 + 比对 + 写入)
 │   │   └── memory_reflector.py #  MemoryReflector (定期去重 + KMeans)
 │   ├── prompts/              # Jinja2 模板 (.j2, PascalCase)
@@ -1237,7 +1270,7 @@ Agent/
 
 ## 13. 并发任务全景
 
-所有并发使用裸 `asyncio.create_task`，分布在以下调用点：
+并发任务以 `asyncio.create_task` 为主（个别 fire-and-forget 归档用 `asyncio.ensure_future` 并登记 task 集合），分布在以下调用点：
 
 ```
 Agent 启动
@@ -1260,23 +1293,23 @@ INTERRUPT:
 
 | # | 位置 | 用途 | 管理模式 |
 |---|------|------|----------|
-| 1 | agent/lifecycle.py | embedding 预加载 | fire-and-forget + tracked |
+| 1 | agent/_lifecycle_tools.py | embedding 预加载 | fire-and-forget + tracked |
 | 2 | agent/agent.py | `_process_events` 主循环 | 常驻，stop 时 cancel |
 | 3 | agent/agent.py | cognitive process (USER_INPUT) | `_current_task`，INTERRUPT cancel |
 | 4 | agent/agent.py | cognitive process (SYSTEM_TICK) | 同上 |
-| 5 | cognitive/loop.py | `_after_response` | fire-and-forget，无追踪 |
+| 5 | cognitive/finalize.py | `_after_response` | fire-and-forget，由 `_pending_after_response` 追踪 |
 | 6 | adapter/tts_adapter.py | TTS 音频下载 + 转发（每句） | fire-and-forget，_tts_tasks[] 追踪 |
 | 7 | idle_monitor.py | idle 监控 tick | 常驻，stop 时 cancel |
-| 8 | long_term.py | embedding 加载 | insert 时 await (wait=True), search 时 fire-and-forget |
+| 8 | memory/embedding_provider.py | embedding 懒加载 | insert 时 await (wait=True), search 时 fire-and-forget |
 | 9 | personality/engine.py | expression 输出 | 纯 fire-and-forget，无追踪 |
-| 10 | tool/manager.py | SafetyPipeline 执行 | Pipeline 内部追踪 |
-| 11 | agent/agent.py | `_poll_mailboxes()` | WorkflowEngine mailbox 500ms 轮询，常驻，stop 时 cancel |
+| 10 | Module/tool/manager.py | SafetyPipeline 执行 | Pipeline 内部追踪 |
+| 11 | agent/_lifecycle_task_system.py | `_poll_mailboxes()` | WorkflowEngine mailbox 500ms 轮询，常驻，stop 时 cancel |
 | 12 | agent/agent.py | cognitive process (TASK_RESULT) | `_current_task` |
-| 13 | agent/lifecycle.py | `_db_health_loop()` | 数据库健康检查 120s 间隔，常驻，stop 时 cancel |
-| 14 | memory/session.py | archive_append | fire-and-forget，无追踪 |
-| 15 | input/server.py | per-connection state monitor | 常驻，disconnect 时 cancel |
-| 16 | workflow_engine/workflow_engine.py | sub-agent task submit | WorkflowEngine 内部追踪 |
-| 17 | workflow_engine/workflow_engine.py | sub-agent task resume | WorkflowEngine 内部追踪 |
+| 13 | agent/_lifecycle_persistence.py | `_db_health_loop()` | 数据库健康检查 120s 间隔，常驻，stop 时 cancel |
+| 14 | memory/session.py | archive_append | `ensure_future` + `_archive_tasks` 登记 + 信号量上限 |
+| 15 | input/ws_handler.py | per-connection state monitor | 常驻，disconnect 时 cancel |
+| 16 | Module/workflow_engine/workflow_engine.py | sub-agent task submit | WorkflowEngine 内部追踪 |
+| 17 | Module/workflow_engine/workflow_engine.py | sub-agent task resume | WorkflowEngine 内部追踪 |
 | 18 | personality/reflector.py | CharacterReflector fire-and-forget | fire-and-forget，无追踪 |
 | 19 | task/scheduler.py | Worker Pool + prune loop | 常驻，stop 时 cancel |
 
