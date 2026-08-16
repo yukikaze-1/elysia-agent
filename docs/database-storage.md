@@ -1,17 +1,17 @@
 # 数据库存储表格
 
-项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **8 个集合**（Milvus 1 + MongoDB 7），外加若干内存/文件存储结构。没有使用 SQL 数据库。
+项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **9 个集合**（Milvus 1 + MongoDB 8），外加若干内存/文件存储结构。没有使用 SQL 数据库。
 
 | 集合 | 位置 | 用途 | 保留策略 |
 |------|------|------|----------|
 | `long_term_memory` | Milvus | 记忆摘要（向量搜索）| 1万条数量上限（超限驱逐，同步删除 Milvus）；max_age_days=90 预留未使用 |
-| `sessions` | MongoDB | LLM 上下文窗口 | max_messages 截断, 30天 TTL |
+| `sessions` | MongoDB | LLM 上下文窗口 | 无自动 TTL——`max_messages` 截断，删除走 REST/debug 显式级联删除 |
 | `message_archive` | MongoDB | 对话消息永久归档 | 永久, 只增不删 |
 | `token_usage` | MongoDB | LLM token 统计 | 永久, 只增不删 |
 | `character_versions` | MongoDB | L2/C6 性格版本历史 | 永久，per content_type 独立计数 |
-| `generations` | MongoDB | generation 生命周期状态（BE-024） | 30天 TTL |
+| `generations` | MongoDB | generation 生命周期状态（BE-024） | 30天 TTL（按真实 BSON Date `ttl_expires_at`） |
 | `attachments` | MongoDB | 附件元数据（BE-070，fail-closed） | TTL 不设，生命周期由 GC 管（软删 24h / 未关联 7d） |
-| `desktop_calls` | MongoDB | 桌面工具调用状态（批次 4） | 30天 TTL（按 updated_at） |
+| `desktop_calls` | MongoDB | 桌面工具调用状态（批次 4） | 30天 TTL（按真实 BSON Date `ttl_expires_at`） |
 | `idempotency` | MongoDB | `clientRequestId` 幂等 claim（D6c，2026-08-11） | 1h TTL（`expires_at` BSON Date，TTL 索引）；`(conversation_id, client_request_id)` 唯一约束防并发双写 |
 
 ---
@@ -78,7 +78,8 @@
 |------|------|------|
 | `session_id` | ASC | 会话查询 |
 | `updated_at` | DESC | 按时间排序 |
-| `updated_at`（TTL） | — | 30 天过期（`expireAfterSeconds=2592000`） |
+
+> 2026-08-10 整改后 `sessions` **不再建 Mongo TTL 索引**（ISO 字符串字段不会触发 TTL，且会话删除需走级联删除协议）；旧文档中的「30 天 TTL」已失效。清理通过 `DELETE /api/sessions/{id}` 与 debug 会话删除显式执行。
 
 **操作**: 原子 upsert（`update_one(upsert=True)`）
 **降级**: MongoDB 不可用时纯内存运行（deque，maxlen 默认 20，config.yaml session_max_messages 可配）
@@ -137,10 +138,11 @@
 | `session_id` | String | 所属会话 |
 | `message_id` | String | 关联消息 ID |
 | `status` | String | `started` / `segment_started` / `segment_completed` / `completed` / `failed` |
-| `updated_at` | String（ISO） | 最后更新时间（TTL 基准） |
+| `updated_at` | String（ISO） | 最后更新时间 |
+| `ttl_expires_at` | BSON Date | 30 天 TTL 基准（B6/P2-01；启动对缺字段旧记录幂等回填） |
 
-**索引**: `generation_id` unique + `(session_id, updated_at)` + `message_id`。
-**TTL**: 30 天（`expireAfterSeconds` 按 `updated_at` 过期，与 sessions 对齐）。Mongo 离线时 `GenerationRegistry` no-op。
+**索引**: `generation_id` unique + `(session_id, updated_at)` + `message_id` + `ttl_expires_at` TTL。
+**TTL**: 30 天（`expireAfterSeconds` 按真实 BSON Date `ttl_expires_at` 过期；旧 ISO `updated_at` 不会触发，`GenerationRepository.connect()` 幂等回填）。Mongo 离线时 `GenerationRegistry` no-op。
 
 ### 集合: `attachments`（数据库: `default`，BE-070）
 
@@ -176,10 +178,11 @@
 | `status` | String | `pending` / `accepted` / `running` / `succeeded` / `failed` / `rejected` / `cancelled` / `expired` / `offline` |
 | `params` / `result` / `error` | — | 调用参数 / 结果 / 错误 |
 | `expires_at` | String（ISO） | 超时截止 |
-| `updated_at` | String（ISO） | 最后更新（TTL 基准） |
+| `updated_at` | String（ISO） | 最后更新 |
+| `ttl_expires_at` | BSON Date | 30 天 TTL 基准（B6/P2-01；业务 `expires_at` 是调用超时，非回收 TTL） |
 
-**索引**: `call_id` unique + `(status, updated_at)` + `updated_at` TTL。
-**TTL**: 30 天（`expireAfterSeconds` 按 `updated_at` 过期，与 sessions/generations 对齐）。
+**索引**: `call_id` unique + `(status, updated_at)` + `ttl_expires_at` TTL。
+**TTL**: 30 天（`expireAfterSeconds` 按真实 BSON Date `ttl_expires_at` 过期，与 generations 对齐）。
 
 ---
 
@@ -209,10 +212,10 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `id` | str | `msg_` 前缀 + 26 位十六进制（`new_message_id()` 生成） |
+| `id` | MemoryId | `mem_` 前缀 + 26 位十六进制（`new_memory_id()` 生成；Milvus 旧 `msg_` 数据读回兼容） |
 | `text` | str | 记忆文本 |
 | `embedding` | list[float] | 向量 |
-| `memory_type` | `MemoryType` | `Fact` / `Preference` / `Event` / `Plan` / `Note`。构造经 `__post_init__` coerce 归一（未知 → `Note`），`MemoryEntry` 字段类型即 `MemoryType` StrEnum |
+| `memory_type` | `MemoryType` | `Fact` / `Preference` / `Event` / `Plan` / `Note`。构造 `__post_init__` 经 `MemoryType.coerce` 归一（未知 → `Note`），`MemoryEntry` 字段类型即 `MemoryType` StrEnum |
 | `poignancy` | int | 重要性 1-10 |
 | `timestamp` | float | Unix 时间 |
 | `metadata` | dict | 扩展元数据 |
