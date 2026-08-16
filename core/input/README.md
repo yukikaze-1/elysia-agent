@@ -101,6 +101,7 @@ python -m core.input
 | `core/input/custom_providers.py` | `core/providers/custom_providers.py` | provider 元数据被 agent 生命周期/热切换消费 |
 | `core/input/provider_registry.py` | `core/providers/provider_registry.py` | 与 custom provider 同域 |
 | `core/input/capabilities.py` | `core/services/capabilities.py` | 服务能力声明 + 广播是运行时能力，agent 与 input 共用 |
+| `core/input/rate_limiter.py` | `core/network/rate_limiter.py` | 限流是传输无关基础设施（CORE-MOD-P2-01） |
 
 ---
 

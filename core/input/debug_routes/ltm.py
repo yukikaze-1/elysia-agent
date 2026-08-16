@@ -9,7 +9,7 @@ import logging
 
 from aiohttp import web
 
-from core.input.errors import _protocol_error_response
+from core.input.debug_routes._shared import _protocol_error_response
 from core.schema.memory import MemoryType
 from core.schema.types import MemoryId
 from frontend_contract import debug as contract

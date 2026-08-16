@@ -10,7 +10,7 @@ from typing import Awaitable, Callable
 from aiohttp import web
 
 from core.input.errors import _protocol_error_response
-from core.input.rate_limiter import RateLimiter, rate_key_for_request
+from core.network.rate_limiter import RateLimiter, rate_key_for_request
 
 logger = logging.getLogger(__name__)
 

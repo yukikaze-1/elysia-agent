@@ -17,7 +17,8 @@ core/tools/
 ├── runtime_config/     # 运行时配置查询 (GetRuntimeConfig)
 ├── self_state/         # 自身状态查询 (GetSelfState)
 ├── vision/             # 图片识别 (DescribeImage)
-└── desktop/            # Desktop 工具 (FileSelect/FileRead/FileWrite/ScreenCapture，委托 Electron)
+├── desktop/            # Desktop 工具 (FileSelect/FileRead/FileWrite/ScreenCapture，委托 Electron)
+└── tests/              # 全部插件测试 + MockWebSearchPlugin（CORE-MOD-P3-01 从插件目录迁入）
 ```
 
 ## 插件列表

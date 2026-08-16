@@ -25,7 +25,7 @@ from core.storage.idempotency import (
     get_store,
     reset_store,
 )
-from core.input.rate_limiter import RateLimiter
+from core.network.rate_limiter import RateLimiter
 from core.input.voice_sessions import VoiceSessionError
 from core.storage.idempotency_repo import (
     COLLECTION,

@@ -61,11 +61,11 @@
     │  │ Output   │ │Logger │ │ Database                 │    │
     │  │ Manager  │ │Factor │ │ Vectordb / Docdb / Graph │    │
     │  └──────────┘ └───────┘ └──────────────────────────┘    │
-    │  ┌──────────┐ ┌───────┐ ┌────────┐                     │
-    │  │  Input   │ │ Schema│ │ Prompt │                     │
-    │  │AudioBuf  │ │(models│ │Manager │                     │
-    │  │+ Server  │ │ +msg) │ │(Jinja2)│                     │
-    │  └──────────┘ └───────┘ └────────┘                     │
+    │  ┌──────────┐ ┌────────┐                              │
+    │  │ Schema   │ │ Prompt │                              │
+    │  │(models   │ │Manager │                              │
+    │  │ +msg)    │ │(Jinja2)│                              │
+    │  └──────────┘ └────────┘                              │
     └────────────────────────────────────────────────────────┘
 ```
 
@@ -73,6 +73,7 @@
 - **L0 Module/**: 无状态原子能力 — 每个服务遵循 Protocol-Registry-Backend 模式，可独立替换
 - **L1 core/**: 认知中枢 — 事件总线、状态机、ReAct 调度器、情绪引擎、提示词组装
 - **L2 core/memory/**: 记忆与工具 — 会话持久化、语义召回、事实提取
+- **接口层 core/input/**: WebSocket + HTTP 输入输出（server/ws/audio/voice/REST），不属于 L0
 
 ---
 

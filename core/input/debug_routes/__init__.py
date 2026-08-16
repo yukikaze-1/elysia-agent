@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 from aiohttp import web
 
-from core.input.errors import _protocol_error_response
+from core.input.debug_routes._shared import _protocol_error_response
 
 logger = logging.getLogger(__name__)
 

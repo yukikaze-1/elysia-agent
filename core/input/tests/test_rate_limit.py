@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from core.input.rate_limiter import RateLimiter, TokenBucket, rate_key_for_request
+from core.network.rate_limiter import RateLimiter, TokenBucket, rate_key_for_request
 
 
 # ── 单元：TokenBucket ─────────────────────────────────────────────────────

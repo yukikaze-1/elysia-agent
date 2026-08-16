@@ -72,7 +72,7 @@ Agent.start()
 
 ## 核心组件
 
-`core/` 根目录 + 子包共 154 个 `.py` 文件（排除 tests/__pycache__）。其中 10 个为核心组件（详细描述），13 个为支撑模块（简表），另有 19 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`, `input/`, `desktop/`, `prompts/` 等，含 `tools/`/`tests/`/`schema/`）在各自 README 中详述。
+`core/` 根目录 + 子包共约 165 个生产 `.py` 文件（排除 tests/__pycache__，口径不含 `core/tools/tests` 等测试文件）。其中 10 个为核心组件（详细描述），13 个为支撑模块（简表），另有 21 个子包（`agent/`, `cognitive/`, `memory/`, `personality/`, `text/`, `debug/`, `input/`, `desktop/`, `prompts/` 等，含 `tools/`/`schema/`）在各自 README 中详述。
 
 ### 核心组件详解（10 个）
 
@@ -167,7 +167,8 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `core/storage/` | 存储仓库层：`SessionRepository`/`MessageRepository`/`TokenRepository`/`MemoryRepository`/`CharacterVersionRepository`/`GenerationRepository`（MongoDB + Milvus） | -- |
 | `core/providers/` | Provider 元数据与自定义 provider 持久化（`custom_providers.py` + `provider_registry.py`，CORE-MOD-P1-01 从 input 迁入） | [providers/README.md](providers/README.md) |
 | `core/services/` | 服务运行时能力声明与广播（`capabilities.py`，CORE-MOD-P1-01 从 input 迁入） | [services/README.md](services/README.md) |
-| `core/input/` | 输入层：WebSocket + HTTP server（`server.py`/`ws_handler.py`/`ws_v2.py`/`session_routes.py`/`attachment_routes.py`/`voice_sessions.py`/`audio_buffer.py`/`sticker_registry.py`/`wakeword.py`/`tts_profile.py`/`rate_limiter.py`/`debug_routes/`） | [input/README.md](input/README.md) |
+| `core/network/` | 网络运行时基础设施（`rate_limiter.py`，CORE-MOD-P2-01 从 input 迁入） | [network/README.md](network/README.md) |
+| `core/input/` | 输入层：WebSocket + HTTP server（`server.py`/`ws_handler.py`/`ws_v2.py`/`session_routes.py`/`attachment_routes.py`/`voice_sessions.py`/`audio_buffer.py`/`sticker_registry.py`/`wakeword.py`/`tts_profile.py`/`debug_routes/`） | [input/README.md](input/README.md) |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
 | `core/task/` | 任务子包：`task.py`（Task 数据模型 + TaskType/TaskStatus 枚举 + Future 绑定）+ `scheduler.py`（TaskScheduler Worker Pool） | [task/README.md](task/README.md) |
 | `core/text/` | 文本流处理管线：`tags`（标签注册表）+ `tokenizer`（结构感知切分）+ `splitter`（分句保护）+ `parts`（TextPart 构建）+ `stream_processor`（协调器） | [text/README.md](text/README.md) |

@@ -30,7 +30,7 @@ from core.storage.idempotency import (
     IdempotencyEntry,
     get_store,
 )
-from core.input.rate_limiter import RateLimiter, rate_key_for_request
+from core.network.rate_limiter import RateLimiter, rate_key_for_request
 from core.input.sticker_registry import get as get_sticker
 from core.input.voice_sessions import VoiceSessionError, VoiceSessionManager
 from core.storage.idempotency_repo import STATUS_ACCEPTED, STATUS_REJECTED

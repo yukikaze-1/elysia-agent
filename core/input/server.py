@@ -36,7 +36,7 @@ from core.input.middleware import (
     _make_access_auth_middleware, _make_payload_middleware, _make_rate_limit_middleware,
     _nosniff_uploads,
 )
-from core.input.rate_limiter import RateLimiter, rate_key_for_request
+from core.network.rate_limiter import RateLimiter, rate_key_for_request
 
 if TYPE_CHECKING:
     from Module.workflow_engine.workflow_engine import WorkflowEngine
