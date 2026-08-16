@@ -19,13 +19,13 @@ Mongo 持久化 + **进程内缓存（读权威）**——幂等去重/状态查
         target_connection,    # 目标 Electron 连接 ID
         created_at,           # 建档时间（ISO UTC）
         expires_at,           # 超时截止（ISO UTC）
-        updated_at,           # 最后更新（ISO UTC，TTL 基准）
+        updated_at,           # 最后更新（ISO UTC，排序/展示用）
+        ttl_expires_at,       # 真实 BSON Date（30 天 TTL 基准，B6/P2-01）
         result,               # None | {output, attachments, execution_summary}
         error,                # None | {code, message}
     }
 
-索引：call_id unique + status+updated_at + TTL 30 天（updated_at 过期，对齐
-sessions/generations）。
+索引：call_id unique + status+updated_at + ttl_expires_at TTL 30 天（对齐 generations）。
 
 进程内缓存语义（review 修正，不沿用 GenerationRepo 离线读返回 None）：
 - `_cache[call_id]` 为唯一读权威；写入同步 cache + Mongo（可达时）；
@@ -45,7 +45,7 @@ sessions/generations）。
   仅更新 result/error（记录真实结果供查询），不覆盖终态枚举。
 
 offline 为**准终态**：无主动过期定时器——offline → expired 表项仅为语义完备，
-实际靠 30d TTL 兜底回收（spec §4.1 显式声明，不要为其加自动过期）。
+实际靠 ttl_expires_at 的 30d TTL 兜底回收（spec §4.1 显式声明，不要为其加自动过期）。
 """
 
 import logging
@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 COLLECTION = "desktop_calls"
 
-# TTL：30 天，按 updated_at 过期（与 sessions/generations 对齐）
+# TTL：30 天，按真实 BSON Date ttl_expires_at 过期（与 generations 对齐）
 DESKTOP_CALLS_TTL_SECONDS = 30 * 86400
 
 # 9 值状态常量

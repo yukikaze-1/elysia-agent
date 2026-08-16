@@ -73,7 +73,7 @@ class SessionRepository(Repository):
         self._injected_db = db is not None
 
     async def connect(self) -> bool:
-        """建立 MongoDB 连接，创建索引和 TTL。
+        """建立 MongoDB 连接并创建索引（sessions 无 Mongo TTL——删除走显式级联删除）。
 
         Returns:
             True 表示连接成功，False 表示连接失败。

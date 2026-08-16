@@ -14,11 +14,12 @@ cancelled/interrupted）到 Mongo，重连 + 搜索可按 status 查询。
         finish_reason,        # stop / error / None
         error,                # 错误信息（status=failed 时）
         created_at,           # 建档时间（ISO UTC）
-        updated_at,           # 最后更新时间（ISO UTC，TTL 基准）
+        updated_at,           # 最后更新时间（ISO UTC，排序/展示用）
+        ttl_expires_at,       # 真实 BSON Date（30 天 TTL 基准，B6/P2-01）
         finished_at,          # 终态落位时间（None 表示未终态）
     }
 
-索引：generation_id unique + session_id+updated_at + message_id（find_by_message）+ TTL 30d。
+索引：generation_id unique + session_id+updated_at + message_id（find_by_message）+ ttl_expires_at TTL 30d。
 """
 
 import base64

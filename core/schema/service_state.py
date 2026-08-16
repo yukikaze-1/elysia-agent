@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 
 class ServiceState(BaseModel):
-    """服务运行时状态（SessionMemory 专用字段，MongoDB 30d TTL，重启存活）。
+    """服务运行时状态（SessionMemory 专用字段，sessions 集合持久化——无 Mongo 自动 TTL，显式删除才清理；重启存活）。
 
     stt_enabled / tts_enabled 三态：None = 用户未显式改，回退 config.<svc>.enabled。
     """
