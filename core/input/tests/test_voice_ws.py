@@ -550,3 +550,50 @@ class TestProfileDictationSttGate:
         assert cancelled and len(cancelled) == 1, f"应收到唯一 dictation.cancelled: {ws.sent}"
         assert not finals, f"不应有 dictation.final: {ws.sent}"
         assert mgr.has_active_session() is False
+
+
+# ── BE-S4-RUN-P0-01 阶段4真实联调：WS 路由级 discard（Task 2） ──────────────
+
+
+@pytest.mark.asyncio
+async def test_voice_discard_ws_sequence():
+    """WS：start(A) → discard(A) → start(B) 无 CONTRACT/NOT_FOUND/CONFLICT（review §3.6 #10）。"""
+    agent, ws, mgr = make()
+    await handle_json_message({"type": "voice.record.start", "recordingId": "rec_a"},
+                              agent, None, ws, voice_mgr=mgr)
+    await handle_json_message({"type": "voice.discard", "recordingId": "rec_a"},
+                              agent, None, ws, voice_mgr=mgr)
+    errs = [s.get("code") for s in ws.sent if s.get("type") == "error"]
+    assert not any(c in ("CONTRACT_VALIDATION", "VOICE_RECORDING_NOT_FOUND") for c in errs)
+    assert mgr.mode().value == "idle"
+    await handle_json_message({"type": "voice.record.start", "recordingId": "rec_b"},
+                              agent, None, ws, voice_mgr=mgr)
+    assert mgr.mode().value == "recording"       # 无 VOICE_SESSION_CONFLICT
+    errs = [s.get("code") for s in ws.sent if s.get("type") == "error"]  # 重算，含 start(B)
+    assert not any(c in ("CONTRACT_VALIDATION", "VOICE_RECORDING_NOT_FOUND", "VOICE_SESSION_CONFLICT")
+                   for c in errs)
+
+
+@pytest.mark.asyncio
+async def test_voice_discard_realtime_isolated_ws():
+    """WS：realtime 活跃收 voice.discard → error{VOICE_SESSION_CONFLICT}，会话不受影响。"""
+    agent, ws, mgr = make()
+    await handle_json_message({"type": "voice_session.start", "sessionId": "vs_1",
+                               "conversationId": None},
+                              agent, None, ws, voice_mgr=mgr)
+    await handle_json_message({"type": "voice.discard", "recordingId": "rec_x"},
+                              agent, None, ws, voice_mgr=mgr)
+    errs = [s for s in ws.sent if s.get("type") == "error"]
+    assert errs and errs[-1].get("code") == "VOICE_SESSION_CONFLICT"
+    assert mgr.mode().value == "realtime"        # 会话未拆
+    assert mgr._session_id == "vs_1"
+    await mgr.close()
+
+
+@pytest.mark.asyncio
+async def test_voice_discard_idle_idempotent_ws():
+    """WS：无录音时 voice.discard（IDLE）→ 不发任何 error 帧（现象 B，review §3.6 #6）。"""
+    agent, ws, mgr = make()
+    await handle_json_message({"type": "voice.discard", "recordingId": "rec_x"},
+                              agent, None, ws, voice_mgr=mgr)
+    assert not any(s.get("type") == "error" for s in ws.sent)
