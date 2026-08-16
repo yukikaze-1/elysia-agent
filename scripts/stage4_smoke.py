@@ -40,6 +40,38 @@ def _backend_sha() -> str:
         return "unknown"
 
 
+async def _recv_until_type(ws: Any, target: str, timeout: float = 10) -> dict | None:
+    """收帧直到匹配 target 类型或超时；跳过其它帧，超时返回 None（不抛）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            m = await asyncio.wait_for(ws.receive(), timeout=deadline - time.monotonic())
+        except asyncio.TimeoutError:
+            return None
+        if m.type != WSMsgType.TEXT:
+            continue
+        d = json.loads(m.data)
+        if d.get("type") == target:
+            return d
+    return None
+
+
+async def _drain_errors(ws: Any, rounds: int = 3) -> dict | None:
+    """最多 rounds 轮短超时排空帧，返回第一条 error 帧（无则 None）。"""
+    err = None
+    for _ in range(rounds):
+        try:
+            m = await asyncio.wait_for(ws.receive(), timeout=0.5)
+        except asyncio.TimeoutError:
+            break
+        if m.type != WSMsgType.TEXT:
+            continue
+        d = json.loads(m.data)
+        if d.get("type") == "error" and err is None:
+            err = d
+    return err
+
+
 class _SmokeSTTBackend:
     """固定文本 STT 桩（spec §5.1 默认 stub；构造不发网络）。"""
 
@@ -261,22 +293,38 @@ async def _voice_ws_scenarios(smoke: _Smoke, client: TestClient) -> None:
         if d.get("type") == "state" and d.get("state") == "idle":
             break
     smoke.check("commit 触发消息+generation", committed, "")
-    # discard：start → stop → discard（voice_sessions.py:339-340 在 RECORDING 态 direct
-    # discard 会 raise「先 stop 再 discard」）——stop 后再 discard，短暂窗口断言无
-    # user_message.ack（discard 不创建消息、不触发 generation），随后可再次录音。
+    # ── discard 取消原语（BE-S4-RUN-P0-01，review §5 两真实序列）──
+    # 序列 1（采集启动失败清理，现象 A）：start 被后端接受后采集初始化失败 → 前端 fire-and-forget
+    # discard → RECORDING 态直接取消（不再「先 stop 再 discard」），无需 stop/重连即可再 start。
+    await ws.send_json({"type": "voice.record.start", "recordingId": "rec_smoke_cap"})
+    await ws.send_json({"type": "voice.discard", "recordingId": "rec_smoke_cap"})
+    e1 = await _drain_errors(ws)
+    smoke.check("采集失败 discard 无错误帧", e1 is None, str(e1)[:120])
+    # discard 后可立即重录（rec_smoke_2 完整走 stop→transcript，证明会话已释放）
     await ws.send_json({"type": "voice.record.start", "recordingId": "rec_smoke_2"})
     await ws.send_bytes(pcm[:4096])
     await ws.send_json({"type": "voice.record.stop", "recordingId": "rec_smoke_2"})
+    t2 = await _recv_until_type(ws, "voice.transcript", timeout=10)
+    smoke.check("discard 后可立即重录", bool(t2), str(t2)[:120])
+    # PENDING 态 discard：丢弃已收字幕，不创建消息（无 user_message.ack）
     await ws.send_json({"type": "voice.discard", "recordingId": "rec_smoke_2"})
-    no_ack = True
-    for _ in range(3):
+    e2 = await _drain_errors(ws)
+    ack2 = False
+    while True:
         try:
             m = await asyncio.wait_for(ws.receive(), timeout=1)
-            if m.type == WSMsgType.TEXT and json.loads(m.data).get("type") == "user_message.ack":
-                no_ack = False
         except asyncio.TimeoutError:
             break
-    smoke.check("discard 不创建消息", no_ack, "")
+        if m.type == WSMsgType.TEXT and json.loads(m.data).get("type") == "user_message.ack":
+            ack2 = True
+    smoke.check("已收字幕 discard 无错误不建消息", e2 is None and not ack2,
+                f"err={e2} ack={ack2}")
+    # 序列 2（空录音迟到删除，现象 B）：空录音 stop 自动 reset 回 IDLE，迟到 discard 幂等成功
+    await ws.send_json({"type": "voice.record.start", "recordingId": "rec_smoke_empty"})
+    await ws.send_json({"type": "voice.record.stop", "recordingId": "rec_smoke_empty"})  # 零 PCM → 空转写 reset
+    await ws.send_json({"type": "voice.discard", "recordingId": "rec_smoke_empty"})
+    e3 = await _drain_errors(ws)
+    smoke.check("空录音迟到 discard 幂等无错误", e3 is None, str(e3)[:120])
     # 实时语音：start(sessionId) → BINARY → 等 ack（_ack_loop ACK_INTERVAL=1s，会话须
     # 保持 ≥1s 否则首帧 ack 永不发出，voice_sessions.py:747-752）→ stop → ended
     await ws.send_json({"type": "voice_session.start", "sessionId": "vs_smoke_1"})
