@@ -64,7 +64,7 @@ def test_providers_response_shape():
 @pytest.mark.unit
 def test_providers_response_roundtrip_registry_shape():
     """build_providers_response 输出能直接构造 ProvidersResponse（wire 不丢键）。"""
-    from core.input.provider_registry import build_providers_response
+    from core.providers.provider_registry import build_providers_response
 
     raw = build_providers_response({"llm": [], "stt": [], "tts": []})
     resp = ProvidersResponse.model_validate(raw)

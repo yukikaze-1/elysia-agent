@@ -40,7 +40,7 @@ from Module.workflow_engine.workflow_engine import WorkflowEngine
 from Module.tool.manager import ToolManager
 from Module.tool.protocol import PluginContext, ToolPlugin
 from core.tools.time.plugin import TimePlugin
-from core.tools.web.mock_plugin import MockWebSearchPlugin
+from core.tools.tests.mock_plugin import MockWebSearchPlugin
 
 
 # ── Mock 插件映射 ────────────────────────────────────────────────────────────────

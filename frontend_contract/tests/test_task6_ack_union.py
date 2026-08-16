@@ -209,6 +209,6 @@ def test_rejected_golden_frames_validate_and_in_progress_retry():
             in_progress = f
     assert in_progress is not None
     # 与 Task 4 idempotency._IN_PROGRESS_RETRY_AFTER_MS 单源同值（= GRACE_SECONDS * 1000）
-    from core.input.idempotency import _IN_PROGRESS_RETRY_AFTER_MS
+    from core.storage.idempotency import _IN_PROGRESS_RETRY_AFTER_MS
     assert in_progress["error"]["retryAfterMs"] == 30000
     assert _IN_PROGRESS_RETRY_AFTER_MS == 30000
