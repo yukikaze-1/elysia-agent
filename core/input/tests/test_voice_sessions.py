@@ -174,11 +174,9 @@ async def test_recording_state_boundaries():
     with pytest.raises(VoiceSessionError) as ei:
         await mgr.stop_recording("rec_1")
     assert ei.value.code == "CONTRACT_VALIDATION"
-    # TRANSCRIBING 态 discard 允许 → 复位后二次 discard 报 NOT_FOUND
+    # TRANSCRIBING 态 discard 允许 → 复位后二次 discard 幂等成功（阶段4真实联调修订）
     await mgr.discard_recording("rec_1")
-    with pytest.raises(VoiceSessionError) as ei:
-        await mgr.discard_recording("rec_1")
-    assert ei.value.code == "VOICE_RECORDING_NOT_FOUND"
+    await mgr.discard_recording("rec_1")       # 幂等成功，不再 NOT_FOUND
 
 
 @pytest.mark.asyncio
@@ -1037,3 +1035,141 @@ async def test_chunk_too_large_dictation_emits_cancelled():
     assert cancelled and cancelled[-1]["clientRequestId"] == "req_f4"
     assert mgr.mode() is VoiceMode.IDLE
     assert mgr._dictation_stt is None      # teardown 已释放快照/清态
+
+
+@pytest.mark.asyncio
+async def test_discard_recording_state_succeeds():
+    """start → discard（未 stop）成功回 IDLE，随后可再次 start（现象 A，review §3.6 #1）。"""
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_a")
+    await mgr.discard_recording("rec_a")          # 不再 raise CONTRACT_VALIDATION
+    assert mgr.has_active_session() is False
+    assert not emitted                            # 成功 send-only，无任何帧
+    await mgr.start_recording("rec_b")            # 不再 VOICE_SESSION_CONFLICT
+    assert mgr.has_active_session() is True
+
+
+@pytest.mark.asyncio
+async def test_discard_no_stt_no_transcript_no_message():
+    """start → PCM → discard：不调 STT、不发 transcript、不生成消息（补充约束 1）。"""
+    mgr, emitted, bus_posts = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 6400)
+    mgr._agent._last_text = "不应被转写"
+    await mgr.discard_recording("rec_1")
+    await asyncio.sleep(0.05)
+    assert not any(e.get("type") == "voice.transcript" for e in emitted)
+    assert not any(e.get("type") == "user_message.ack" for e in emitted)
+    assert not bus_posts
+    assert mgr._in_flight_stt is None
+
+
+@pytest.mark.asyncio
+async def test_discard_transcribing_cancels_stt():
+    """start → stop → TRANSCRIBING → discard：取消在途 STT，迟到结果不复活，可重新 start。"""
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 6400)
+    mgr._agent._last_text = "迟到结果"
+    await mgr.stop_recording("rec_1")
+    await mgr.discard_recording("rec_1")
+    await asyncio.sleep(0.05)                     # 让被取消任务收尾
+    assert not any(e.get("type") == "voice.transcript" for e in emitted)
+    assert mgr._in_flight_stt is None
+    assert mgr.has_active_session() is False
+    await mgr.start_recording("rec_2")
+
+
+@pytest.mark.asyncio
+async def test_discard_pending_then_restart():
+    """start → stop → PENDING → discard：清字幕后可立即开始新录音（review §3.6 #4）。"""
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 6400)
+    mgr._agent._last_text = "待确认"
+    await mgr.stop_recording("rec_1")
+    await asyncio.sleep(0.05)
+    assert any(e.get("type") == "voice.transcript" for e in emitted)  # 确认进入 PENDING
+    await mgr.discard_recording("rec_1")
+    with pytest.raises(VoiceSessionError) as ei:
+        mgr.commit_recording("rec_1", "待确认")
+    assert ei.value.code == "VOICE_RECORDING_NOT_FOUND"
+    assert mgr.has_active_session() is False
+    await mgr.start_recording("rec_2")
+
+
+@pytest.mark.asyncio
+async def test_discard_after_short_pcm_idempotent():
+    """<640B → stop（F3 空转写 reset 回 IDLE）→ discard：幂等成功无 raise（review §3.6 #5）。"""
+    mgr, _, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 100)             # < 一帧 640B
+    await mgr.stop_recording("rec_1")             # 空转写直接 reset 回 IDLE
+    await mgr.discard_recording("rec_1")          # IDLE 态幂等成功
+    await mgr.discard_recording("rec_1")          # 重复幂等成功
+
+
+@pytest.mark.asyncio
+async def test_discard_after_empty_transcript_idempotent():
+    """STT 空 → reset 回 IDLE → discard：幂等成功无 raise（现象 B，review §3.6 #6）。"""
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.feed_pcm(b"\x00" * 6400)
+    mgr._agent._last_text = "   "                 # 纯空白 → 空转写 reset
+    await mgr.stop_recording("rec_1")
+    await asyncio.sleep(0.05)
+    assert not any(e.get("type") == "voice.transcript" for e in emitted)
+    await mgr.discard_recording("rec_1")          # IDLE 幂等成功
+
+
+@pytest.mark.asyncio
+async def test_discard_repeat_idempotent():
+    """discard → discard 重复调用均成功（IDLE 幂等，review §3.6 #7）。"""
+    mgr, _, _ = make_manager()
+    await mgr.start_recording("rec_1")
+    await mgr.discard_recording("rec_1")
+    await mgr.discard_recording("rec_1")          # 二次幂等成功
+
+
+@pytest.mark.asyncio
+async def test_discard_mismatched_id_does_not_cancel_current():
+    """录音 A 活跃时 discard(B)：CONFLICT，A 不受影响（review §3.6 #8，绝不取消当前录音）。"""
+    mgr, emitted, _ = make_manager()
+    await mgr.start_recording("rec_a")
+    with pytest.raises(VoiceSessionError) as ei:
+        await mgr.discard_recording("rec_b")
+    assert ei.value.code == "VOICE_SESSION_CONFLICT"
+    assert mgr._mode == VoiceMode.RECORDING       # A 仍在
+    assert mgr._recording_id == "rec_a"
+    await mgr.feed_pcm(b"\x00" * 6400)
+    mgr._agent._last_text = "A 正常"
+    await mgr.stop_recording("rec_a")             # A 仍可走完正常生命周期
+    await asyncio.sleep(0.05)
+    assert any(e.get("type") == "voice.transcript" for e in emitted)
+
+
+@pytest.mark.asyncio
+async def test_discard_realtime_isolated():
+    """realtime 活跃时 discard：CONFLICT，realtime 会话不受影响（review §3.6 #9）。"""
+    mgr, _, _ = make_manager()
+    await mgr.start_realtime("vs_1", None)
+    with pytest.raises(VoiceSessionError) as ei:
+        await mgr.discard_recording("rec_x")
+    assert ei.value.code == "VOICE_SESSION_CONFLICT"
+    assert mgr._mode == VoiceMode.REALTIME
+    assert mgr._session_id == "vs_1"
+    await mgr.feed_pcm(_loud(1600))               # realtime 仍可 feed
+    await mgr.stop_session("vs_1")
+    await mgr.close()                             # 清 ack/idle 后台任务
+
+
+@pytest.mark.asyncio
+async def test_discard_dictation_isolated():
+    """dictation 活跃时 discard：CONFLICT，dictation 会话不受影响（review §3.6 #9）。"""
+    mgr, _, _ = make_manager()
+    await mgr.start_dictation("req_d1")
+    with pytest.raises(VoiceSessionError) as ei:
+        await mgr.discard_recording("rec_x")
+    assert ei.value.code == "VOICE_SESSION_CONFLICT"
+    assert mgr._mode == VoiceMode.DICTATION
+    await mgr.stop_dictation("req_d1")

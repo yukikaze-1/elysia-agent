@@ -334,12 +334,21 @@ class VoiceSessionManager:
         return payload
 
     async def discard_recording(self, recording_id: str) -> None:
-        if self._mode != VoiceMode.RECORDING or self._recording_id != recording_id:
-            raise VoiceSessionError(ERR_RECORDING_NOT_FOUND, "无活动录音")
-        if self._rec_state == _RecordingState.RECORDING:
-            raise VoiceSessionError(ERR_CONTRACT, "录音中，先 stop 再 discard")
+        """取消当前录音的任意未提交阶段（BE-S4-RUN-P0-01，阶段4真实联调修订）。
+
+        - RECORDING/TRANSCRIBING/PENDING（recordingId 匹配）：取消在途 STT、清 PCM/字幕并回 IDLE；
+        - IDLE：幂等成功（迟到/重复 discard），不发错误、无 ACK（send-only wire 形状）；
+        - recordingId 不匹配（另一条录音活跃）或 realtime/dictation 活跃：VOICE_SESSION_CONFLICT，
+          绝不误清其它会话。
+        """
+        if self._mode == VoiceMode.IDLE:
+            return                     # 幂等成功：无活动录音
+        if self._mode != VoiceMode.RECORDING:
+            raise VoiceSessionError(ERR_CONFLICT, "已有活动语音会话，无法 discard")
+        if self._recording_id != recording_id:
+            raise VoiceSessionError(ERR_CONFLICT, "recordingId 不匹配，存在另一条活动录音")
         if self._in_flight_stt is not None and not self._in_flight_stt.done():
-            self._in_flight_stt.cancel()
+            self._in_flight_stt.cancel()   # TRANSCRIBING 态取消在途 STT
         self._reset_recording()
 
     # ---- REALTIME（BE-061） ----
