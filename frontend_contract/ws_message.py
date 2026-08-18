@@ -418,7 +418,7 @@ class GenerationCompletedMessage(ContractModel):
     finishReason: FinishReason = Field(description="完成原因（限 stop/tool_calls）")
     usage: TokenUsage = Field(description="回合 token 统计（turn_total=0/rounds=[] 表示无调用记录）")
     model: str = Field(description="实际模型")
-    mood: Optional[str] = Field(default=None, description="心情（<mood> 标签落位），可缺省")
+    mood: Optional[str] = Field(default=None, description="心情自由文本（如 `开心`/`平静`），非枚举；前端本地归一，未知值忽略")
     completeness: Literal["complete"] = Field(default="complete", description="完整性（P0 恒 complete）")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
     conversationUsage: Optional[ConversationUsage] = Field(

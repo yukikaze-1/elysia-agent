@@ -429,7 +429,7 @@ export interface GenerationCompletedMessage {
   usage: TokenUsage
   /** 实际模型 */
   model: string
-  /** 心情（<mood> 标签落位），可缺省 */
+  /** 心情自由文本（如 `开心`/`平静`），非枚举；前端本地归一，未知值忽略 */
   mood?: string
   /** 完整性（P0 恒 complete） */
   completeness: 'complete'

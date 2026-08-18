@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: e5d4dd2b9296b727
+// schemaHash: 7b5a5280455078e4
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -433,7 +433,7 @@ export interface GenerationCompletedMessage {
   usage: TokenUsage
   /** 实际模型 */
   model: string
-  /** 心情（<mood> 标签落位），可缺省 */
+  /** 心情自由文本（如 `开心`/`平静`），非枚举；前端本地归一，未知值忽略 */
   mood?: string
   /** 完整性（P0 恒 complete） */
   completeness: 'complete'
