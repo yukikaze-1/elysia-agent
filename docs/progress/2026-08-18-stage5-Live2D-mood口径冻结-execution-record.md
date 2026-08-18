@@ -53,3 +53,9 @@
 - **B-3（联调环境基线）**：联调前执行——`bash scripts/start.sh` + `/health`（200，version 以**当时** HEAD build SHA 结尾——清单写 2ac03a06 已过期，HEAD 现为 `3c14d1d8`）+ `/ready`（chatReady/fullReady true）+ Mongo/Milvus/idempotency true。
 - **B-4（联调后回填）**：阶段 5 真实联调完成后，在清单或新验收记录回填：后端运行时 SHA / `/health` version、前端实际 SHA、C3-1 真实 mood 观察值（如 `开心`）与前端表情表现、B-2 是否仍 defer、阶段 5 三态结论。
 - **标记**：本批可标「阶段 5 已开发/自动化已验证（B-1 口径冻结）」；「阶段 5 完整真实联调通过」须待前端阶段 5 批次 + Windows Electron 真实复验后由联调作业推进。
+
+## 2026-08-19 更新：阶段 5 真实联调已通过
+
+- B-3/B-4 已闭环：后端运行于 `0a4058e`，前端 `da7f617`，真实 Windows Electron 完成 C1/C2/C3 与 deferred 结论。
+- 阶段 5 整体升「**已真实联调**」；B-2 `live2d.directive` 仍 defer。
+- 后端侧验收与回填：`docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`。
