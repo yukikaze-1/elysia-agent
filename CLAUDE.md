@@ -447,6 +447,14 @@ C1 renders L1 + L2. C9 conditionally renders L3 via `AwarenessTrigger` (cooldown
 
 Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plugins are imported in `__init__.py` and added to `ALL_PLUGINS`.
 
+## Vision（看图）备忘 — WebUI `describe_image` 优先
+
+- **看用户/任务里提到的图片，优先用 WebUI（Agent 平台）自带的 `describe_image` 工具**：传图片本地绝对路径（如 `/home/yomu/elysia-agent/static/Elysia.png`）或 URL + `prompt`，即可拿到图片描述，无需经过项目后端。
+- 同一平台的 `read_image`（图片直接喂给底层模型）**不可用**：当前底层模型 `deepseek-v4-pro` 未声明 image input，会报 `model ... does not declare image input`；看图一律走 `describe_image`。
+- 实测记录（2026-08-19，`static/Elysia.png`）：WebUI `describe_image` 可正常查看并正确描述（粉色短发、紫瞳、精灵耳、粉白礼服少女）。偶发 timeout / 安全策略拒绝时，换更简短、中性的 `prompt` 重试即可。
+- 项目后端也有同名工具 `core/tools/vision/DescribeImagePlugin`（agent 运行时描述用户消息中的图片，与 WebUI 工具无关）：模型来自 `config.vision.model`（默认 `mimo/mimo-v2.5`），支持 `image_index` / `image_indices`，结果缓存到 `data/cache/vision/*.json`，本地路径 / `/static/*` 会转 base64 data URI。链路实测成功，但 MiMo 可能认错角色（把 Elysia 认成《原神》诺艾尔），只保证返回描述。
+- 项目插件的运行/测试坑：环境带 `ALL_PROXY=socks://127.0.0.1:7897/` 时，httpx 报 `Unknown scheme for proxy URL`；先 `env -u ALL_PROXY -u all_proxy` 再跑（HTTP 代理可保留）。
+
 ## Memory & storage
 
 | Store | Backend | Purpose |
