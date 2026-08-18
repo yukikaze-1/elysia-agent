@@ -12,7 +12,7 @@
 
 - Electron Main 连 `/ws` 时带：`Authorization: Bearer <access_token>`（远程）+ `X-Protocol-Version: 2` + **`X-Client-Platform: electron`**（批次 4，Desktop 工具桥定向投递目标标识，spec §5.1 D-l）。
 - **版本协商（批次 9B）**：`X-Protocol-Version` 支持集合 **{缺省/空 → v1, `"1"` → v1, `"2"` → v2}**；其余显式值（`"2.0"`/`"3"`/乱写）在**升级前**返回 HTTP 400 `ProtocolError`（`code=CONTRACT_VALIDATION`，message 明示支持集合）。传输 token 与展示版本分离：握手头只能用 `"2"`；`server_info.protocol_version` 为展示值 `"2.0"`（**不可**回填握手头，否则 400）。机器契约产物 `contract.raw.ts`/`contract.schema.json` 文件头带 `transportVersion: "2"`（握手可用值）。
-- v2 连接建连帧：`session`（历史回放，**含 `conversationId` = 本回放消息所属会话，批次 9A**）→ `server_info`（协议版本/能力/服务形状 + **`connectionId`**，批次 4）→ `expression`（当前心情）。
+- v2 连接建连帧：`session`（历史回放，**含 `conversationId` = 本回放消息所属会话，批次 9A**）→ `server_info`（协议版本/能力/服务形状 + **`connectionId`**，批次 4）→ `expression`（当前心情，**自由文本非枚举**，客户端本地归一映射，未知值忽略）。
 - **批次 8c（F15）**：switch_model / set_service 后的 `capabilities` 重播仅达 v1 通道——v2 用 `server_info` 取代 capabilities，`broadcast_capabilities` 跳过 protocol_version ≥ 2 的通道；v2 对切换的感知经自身 `switch_model_result`/`service_mode_result` 回显（多客户端 v2 切换同步为已知限制）。
 - **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。Desktop 工具 call 同样登记该 ID 为 `target_connection`，后端只向 `client_platform=electron && connection_id=target_connection` 的精确通道投递；重连期间旧连接即使尚未移除也不会收到新请求。
 - **`server_info.build_sha`（批次 7，BE-081）**：构建 git HEAD 完整 SHA（`core/version.py` `get_build_sha()`，`git rev-parse HEAD`，非 git 仓库/失败 → None 缺省省略）；`server_version` 为 `__version__ + "+" + build_sha[:7]` 后缀（`build_server_version()`，无 git 时仅 `0.1.0`）。供前端展示/反馈定位。
@@ -49,6 +49,7 @@ server → {"type":"state","state":"idle"}
 | `generation.completed` | Server→Client | `generationId`、`messageId`、`channel`（public_reply）、`finishReason`（stop/tool_calls）、`usage`{turn,session}、`model`、`mood`、`completeness`（complete） |
 | `generation.failed` | Server→Client | `generationId`、`messageId`、`code`、`message`、`retryable`、`details` |
 
+> `generation.completed.mood` 为**自由文本/中文标签，非枚举**（LLM `<mood>` 标签原样落位，如 `开心`/`平静`）；客户端负责本地归一映射，未知值安全忽略（阶段5联调口径，2026-08-18）。
 ### 2.2 Client→Server 文本（v2）
 
 ```json
@@ -112,7 +113,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 ## 5. 完成 / 失败 / 取消
 
-- **完成**：`generation.completed` 是唯一终态（携带 usage/model/mood）。前端**不得**从 `state idle` 推断回复结束。
+- **完成**：`generation.completed` 是唯一终态（携带 usage/model/mood；**`mood` 为自由文本非枚举**——LLM `<mood>` 标签原样落位，客户端本地归一，未知值忽略，阶段5联调口径）。前端**不得**从 `state idle` 推断回复结束。
 - **LLM 层失败**：`generation.failed{code:GENERATION_PROVIDER_UNAVAILABLE|GENERATION_TIMEOUT, retryable:true}`。**不向 v2 客户端发 `❌` 前缀 delta**（v1 兼容保留）。
 - **内部错误**：`generation.failed{code:INTERNAL, retryable:false}`。
 - **取消**：客户端发 `{"type":"interrupt"}` → `generation.failed{code:GENERATION_CANCELLED, retryable:false}` + TTS 终止 + `state interrupted` → `state idle`。迟到增量被服务端停止。
@@ -135,7 +136,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `command` block | 照发（代码块标记） |
 | `command` inner_voice | **抑制**（由 `generation.segment.started(channel=inner_voice)` 表达） |
 | `token_usage` | **抑制**（由 `generation.completed.usage` 承载） |
-| `expression` | **抑制**（心情由 `generation.completed.mood` 落位 + 建连 mood 推送） |
+| `expression` | **抑制**（心情由 `generation.completed.mood` 落位 + 建连 mood 推送；**`mood` 为自由文本非枚举**，客户端本地归一，未知值忽略） |
 
 ## 8. 契约 replay 样例与历史轨迹
 
