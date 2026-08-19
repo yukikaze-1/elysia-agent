@@ -214,3 +214,15 @@ class ToolAdapter:
             对应运行时工具名；未知（submit_task/幻觉名）返回 None。
         """
         return self._manager.resolve_llm_name(llm_name)
+
+    def runtime_for(self, tool_name: str) -> str:
+        """按运行时工具名反查 runtime（backend/desktop/local_worker）；未知 → backend（D6-03）。
+
+        Args:
+            tool_name: 运行时工具名（resolve_llm_name 结果）。
+
+        Returns:
+            ToolRuntime 值（"backend"/"desktop"/"local_worker"）；submit_task/未知 → "backend"。
+        """
+        runtime = self._manager.runtime_of(tool_name)
+        return runtime if runtime in ("backend", "desktop", "local_worker") else "backend"

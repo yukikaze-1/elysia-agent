@@ -145,6 +145,18 @@ class ToolManager:
                 return name
         return None
 
+    def runtime_of(self, tool_name: str) -> str | None:
+        """按运行时工具名直读插件 runtime；未注册返回 None。
+
+        Args:
+            tool_name: 运行时工具名（resolve_llm_name 结果）。
+
+        Returns:
+            plugin.runtime（backend/desktop/local_worker）；未注册 → None。
+        """
+        plugin = self._plugins.get(tool_name)
+        return plugin.runtime if plugin is not None else None
+
     def _load_safety_config(self, instance: ToolPlugin, cls: type[ToolPlugin]) -> None:
         """从插件目录加载 config.yaml 覆盖 SafetyProfile 字段（load/reload 共用）。
 

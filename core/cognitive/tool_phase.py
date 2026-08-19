@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Callable
 
 from Module.tool.protocol import ToolResult
+from Module.tool.safety import _safe_arg_summary
 from Module.workflow_contract import WorkflowId
 from core.adapter.tool_call_parser import normalize_tool_calls
 from core.cognitive.tools import CognitiveTools
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from Module.workflow_engine.workflow_engine import WorkflowEngine
     from core.adapter.tool_adapter import ToolAdapter
     from core.cognitive.delegation import DelegationPreparer
+    from core.cognitive.generation import GenerationContext
     from core.cognitive.timing import TimingClock
     from core.memory.session import SessionMemory
     from core.status.fsm import FSMBackedPhaseController
@@ -52,6 +54,24 @@ def _build_tool_result_parts(tool_result: ToolResult) -> list[Part]:
     return parts
 
 
+def _truncate_output_summary(content: str | None, max_len: int = 2000) -> tuple[str | None, bool]:
+    """outputSummary 截断（§7-1）：≤ max_len 原样；超长截断 + truncated=True。
+
+    Args:
+        content: 工具结果原始内容（可 None）。
+        max_len: 截断上限（字符，默认 2000）。
+
+    Returns:
+        (output_summary, truncated)——output_summary 为 None 时 truncated 恒 False。
+        截断后总长 ≤ max_len（`content[:max_len - 1] + "…"`，含省略号）。
+    """
+    if content is None:
+        return None, False
+    if len(content) <= max_len:
+        return content, False
+    return content[: max_len - 1] + "…", True
+
+
 class CognitiveToolPhase(CognitiveTools):
     """工具执行阶段 mixin：submit_task 拦截 → Gate → dispatch → 结果注入。"""
 
@@ -64,6 +84,7 @@ class CognitiveToolPhase(CognitiveTools):
     _task_system: "WorkflowEngine | None"
     _executing_tools: list[str]
     _clock: "TimingClock | None"
+    _generation_ctx: "GenerationContext | None"
     phases: "FSMBackedPhaseController"
 
     def _prepare_tool_round(
@@ -147,6 +168,7 @@ class CognitiveToolPhase(CognitiveTools):
         dispatch_tcs: list[ToolCall],
         _on_tool_calls: Callable | None,
         messages: list[dict],
+        conversation_id: SessionId | None = None,
     ) -> None:
         """普通工具 dispatch、执行、结果注入与 executing 追踪清理。"""
         for tc in dispatch_tcs:
@@ -156,11 +178,16 @@ class CognitiveToolPhase(CognitiveTools):
             if not isinstance(args, dict):
                 args = {}
             self._executing_tools.append(func_name)
-            await self._output.action("tool_executing", params={
-                "tool": func_name,
-                "call_id": call_id,
-                "args": {k: str(v) for k, v in args.items()},
-            })
+            await self._output.tool_started(
+                call_id=call_id, tool_name=func_name,
+                runtime=(self._tool_adapter.runtime_for(func_name)
+                         if self._tool_adapter is not None else "backend"),
+                v1_args={k: str(v) for k, v in args.items()},
+                input_summary=_safe_arg_summary(args),
+                generation_id=(self._generation_ctx.generation_id
+                               if self._generation_ctx is not None else None),
+                conversation_id=conversation_id,
+            )
 
         if self._clock is None:
             raise RuntimeError("TimingClock 未初始化")
@@ -181,16 +208,26 @@ class CognitiveToolPhase(CognitiveTools):
                 "content": tool_result.llm_content,
             })
             error_type_str = tool_result.error_type.value if tool_result.error_type else None
-            await self._output.action("tool_done", params={
-                "tool": tc.function.name,
-                "call_id": tc.id,
-                "success": tool_result.success,
-                "content": tool_result.content or "",
-                "error": tool_result.error,
-                "error_type": error_type_str,
-                "duration_ms": tool_result.duration_ms,
-                "truncated": tool_result.truncated,
-            })
+            output_summary, output_truncated = _truncate_output_summary(tool_result.content)
+            await self._output.tool_completed(
+                call_id=tc.id, tool_name=tc.function.name,
+                runtime=(self._tool_adapter.runtime_for(tc.function.name)
+                         if self._tool_adapter is not None else "backend"),
+                success=tool_result.success,
+                v1_content=tool_result.content or "",
+                output_summary=output_summary,
+                v1_truncated=tool_result.truncated,
+                output_truncated=output_truncated,
+                error_v1=tool_result.error,
+                error_v2=({"code": error_type_str or "TOOL_ERROR",
+                           "message": tool_result.error or ""}
+                          if tool_result.error else None),
+                error_type=error_type_str,
+                duration_ms=tool_result.duration_ms,
+                generation_id=(self._generation_ctx.generation_id
+                               if self._generation_ctx is not None else None),
+                conversation_id=conversation_id,
+            )
             self._session.add_message(ToolResultMessage(
                 message_id=new_message_id(),
                 content=_build_tool_result_parts(tool_result),
@@ -225,6 +262,7 @@ class CognitiveToolPhase(CognitiveTools):
             return
 
         if submit_tcs:
+            # Task 4（B-6-04）改写 _run_submit_tasks 增加 conversation_id 后，此处透传
             await self._run_submit_tasks(submit_tcs, messages)
             dispatch_tcs = other_tcs
         else:
@@ -236,5 +274,6 @@ class CognitiveToolPhase(CognitiveTools):
             tool_calls=normalized if normalized else None,
         ))
 
-        await self._dispatch_tool_calls(dispatch_tcs, _on_tool_calls, messages)
+        await self._dispatch_tool_calls(
+            dispatch_tcs, _on_tool_calls, messages, conversation_id=conversation_id)
         await self.phases.return_to_thinking()

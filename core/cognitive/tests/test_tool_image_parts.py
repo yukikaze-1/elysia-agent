@@ -50,6 +50,10 @@ class _FakeAdapter:
                 return n
         return None
 
+    def runtime_for(self, tool_name: str) -> str:
+        """runtime 反查（Task 3 发射点，镜像真实 ToolAdapter）：desktop.* → desktop，其余 → backend。"""
+        return "desktop" if tool_name.startswith("desktop.") else "backend"
+
     @property
     def tool_context(self):
         return self._ctx
