@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: 7b5a5280455078e4
+// schemaHash: 8d054eebca4ae568
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -1038,7 +1038,9 @@ export interface ToolRequestMessage {
   /** 工具版本（语义化版本） */
   toolVersion: string
   /** 工具 Runtime（desktop） */
-  runtime: string
+  runtime: ToolRuntime
+  /** LLM tool_call_id（前端统一领域键，D6-03） */
+  sourceCallId: string
   /** 工具参数（input_schema 校验后） */
   arguments: Record<string, unknown>
   /** 调用原因（LLM 生成），可缺省 */
@@ -1084,6 +1086,50 @@ export interface ToolStatusMessage {
   attachments?: ToolAttachment[]
   /** 执行摘要（去本地路径），可缺省 */
   executionSummary?: string
+}
+
+/** Backend 工具开始（v2，Server→Client 展示生命周期，D6-02/08）。 */
+export interface ToolStartedMessage {
+  type: 'tool.started'
+  /** LLM tool_call_id（归档同值，前端权威键） */
+  callId: string
+  /** 工具名 */
+  toolName: string
+  /** 工具 Runtime */
+  runtime: ToolRuntime
+  /** 服务端脱敏参数摘要（_safe_arg_summary），可缺省 */
+  inputSummary?: string
+  /** 生成实例 ID，可缺省 */
+  generationId?: string
+  /** 会话 ID，可缺省 */
+  conversationId?: string
+}
+
+/** Backend 工具完成（v2，Server→Client 展示生命周期，D6-02/08）。 */
+export interface ToolCompletedMessage {
+  type: 'tool.completed'
+  /** LLM tool_call_id（与 started 同值） */
+  callId: string
+  /** 工具名 */
+  toolName: string
+  /** 工具 Runtime */
+  runtime: ToolRuntime
+  /** 是否成功 */
+  success: boolean
+  /** 截断后的公开结果摘要（≤2000 字符），可缺省 */
+  outputSummary?: string
+  /** 错误（{code,message}，code=errorType 或 TOOL_ERROR），可缺省 */
+  error?: Record<string, unknown>
+  /** ErrorType 值，可缺省 */
+  errorType?: string
+  /** 耗时毫秒，可缺省 */
+  durationMs?: number
+  /** outputSummary 超长截断标记，可缺省 */
+  truncated?: boolean
+  /** 生成实例 ID，可缺省 */
+  generationId?: string
+  /** 会话 ID，可缺省 */
+  conversationId?: string
 }
 
 /** 单个已配置 provider（models 为可选用模型列表）。
@@ -2290,6 +2336,11 @@ export type ServiceName =
   | 'tts'
   | 'llm'
 
+export type ToolRuntime =
+  | 'backend'
+  | 'desktop'
+  | 'local_worker'
+
 export type ToolStatusEnum =
   | 'accepted'
   | 'rejected'
@@ -2318,6 +2369,8 @@ export type ServerMessage =
   | TypingMessage
   | TranscriptionMessage
   | ActionMessage
+  | ToolStartedMessage
+  | ToolCompletedMessage
   | CommandMessage
   | WakeMessage
   | SwitchModelResultMessage

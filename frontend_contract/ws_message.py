@@ -892,6 +892,14 @@ class AudioCancelMessage(ContractModel):
 # ─────────────────────────── 批次 4 Desktop 工具桥（BE-040/041/043） ───────────────────────────
 
 
+class ToolRuntime(StrEnum):
+    """工具 Runtime（wire 值 backend/desktop/local_worker；D6-03 权威键关联）。"""
+
+    BACKEND = "backend"
+    DESKTOP = "desktop"
+    LOCAL_WORKER = "local_worker"
+
+
 class ToolStatusEnum(str, Enum):
     """桌面工具状态（Client→Server `tool.status` 判别六态，D-m）。
 
@@ -933,7 +941,8 @@ class ToolRequestMessage(ContractModel):
     callId: str = Field(description="调用 ID（call_ 前缀）")
     toolName: str = Field(description="工具名（desktop.file.read 等）")
     toolVersion: str = Field(description="工具版本（语义化版本）")
-    runtime: str = Field(description="工具 Runtime（desktop）")
+    runtime: ToolRuntime = Field(description="工具 Runtime（desktop）")
+    sourceCallId: str = Field(description="LLM tool_call_id（前端统一领域键，D6-03）")
     arguments: dict[str, Any] = Field(description="工具参数（input_schema 校验后）")
     reason: Optional[str] = Field(default=None, description="调用原因（LLM 生成），可缺省")
     riskLevel: str = Field(description="风险等级（safe/medium/high）")
@@ -964,6 +973,35 @@ class ToolStatusMessage(ContractModel):
     attachments: Optional[list[ToolAttachment]] = Field(
         default=None, description="附件引用（status=result，后端托管 URL），可缺省")
     executionSummary: Optional[str] = Field(default=None, description="执行摘要（去本地路径），可缺省")
+
+
+class ToolStartedMessage(ContractModel):
+    """Backend 工具开始（v2，Server→Client 展示生命周期，D6-02/08）。"""
+
+    type: Literal["tool.started"] = "tool.started"
+    callId: str = Field(description="LLM tool_call_id（归档同值，前端权威键）")
+    toolName: str = Field(description="工具名")
+    runtime: ToolRuntime = Field(description="工具 Runtime")
+    inputSummary: Optional[str] = Field(default=None, description="服务端脱敏参数摘要（_safe_arg_summary），可缺省")
+    generationId: Optional[str] = Field(default=None, description="生成实例 ID，可缺省")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
+
+
+class ToolCompletedMessage(ContractModel):
+    """Backend 工具完成（v2，Server→Client 展示生命周期，D6-02/08）。"""
+
+    type: Literal["tool.completed"] = "tool.completed"
+    callId: str = Field(description="LLM tool_call_id（与 started 同值）")
+    toolName: str = Field(description="工具名")
+    runtime: ToolRuntime = Field(description="工具 Runtime")
+    success: bool = Field(description="是否成功")
+    outputSummary: Optional[str] = Field(default=None, description="截断后的公开结果摘要（≤2000 字符），可缺省")
+    error: Optional[dict[str, Any]] = Field(default=None, description="错误（{code,message}，code=errorType 或 TOOL_ERROR），可缺省")
+    errorType: Optional[str] = Field(default=None, description="ErrorType 值，可缺省")
+    durationMs: Optional[float] = Field(default=None, description="耗时毫秒，可缺省")
+    truncated: Optional[bool] = Field(default=None, description="outputSummary 超长截断标记，可缺省")
+    generationId: Optional[str] = Field(default=None, description="生成实例 ID，可缺省")
+    conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
 
 
 # ─────────────────── ClientMessage 判别联合（模块级，9B-2） ───────────────────
@@ -1003,6 +1041,8 @@ ServerMessage = Annotated[Union[
     TypingMessage,
     TranscriptionMessage,
     ActionMessage,
+    ToolStartedMessage,
+    ToolCompletedMessage,
     CommandMessage,
     WakeMessage,
     SwitchModelResultMessage,

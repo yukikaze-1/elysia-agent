@@ -229,7 +229,8 @@ def _tool() -> list[str]:
     """桌面工具：tool.request → tool_approval 指令 → tool_calls 完成 → idle。"""
     request = wm.ToolRequestMessage(
         callId="call_frame_1", toolName="desktop.file.read", toolVersion="1.0.0",
-        runtime="desktop",
+        runtime=wm.ToolRuntime.DESKTOP,
+        sourceCallId="tc_frame_1",
         arguments={"path": "/tmp/frame_demo.txt", "offset": 0, "limit": 4096},
         reason="读取文件内容供用户确认", riskLevel="high", permissionRequired=True,
         approvalAuthority="client", paramHash="sha256_frame_demo",

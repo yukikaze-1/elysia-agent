@@ -15,17 +15,18 @@ from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 @pytest.mark.unit
 def test_server_message_members():
-    """ServerMessage 判别联合：39 具名成员（38 既有 - UserAckMessage + Accepted/Rejected；UnknownMessage 由发射器追加）。
+    """ServerMessage 判别联合：41 具名成员（40 既有 - UserAckMessage + Accepted/Rejected；UnknownMessage 由发射器追加）。
 
     Task 6：UserAckMessage 拆为 Accepted/Rejected status 判别联合——成员须经递归展开
     （复用 __main__._collect 扁平化）后数具体 BaseModel，断言含 Accepted/Rejected、
     无 Annotated 字面量。
+    阶段 6（B-6-01）：新增 ToolStartedMessage/ToolCompletedMessage 入联合 → 39 → 41。
     """
     from frontend_contract import __main__ as main_mod
     models, discriminated = main_mod._collect()
     members = discriminated["ServerMessage"]
     names = {m.__name__ for m in members}
-    assert len(members) == 39  # 39 具名 + UnknownMessage（发射器追加）
+    assert len(members) == 41  # 41 具名 + UnknownMessage（发射器追加）
     assert "UnknownMessage" not in names
     assert "AcceptedUserAckMessage" in names
     assert "RejectedUserAckMessage" in names
@@ -301,7 +302,7 @@ def test_heartbeat_ack_removed_from_union():
     from frontend_contract.tests.test_batch6_contract import _union_members
     members = _union_members()
     assert "HeartbeatAckMessage" not in members
-    assert len(members) == 39
+    assert len(members) == 41
 
 
 @pytest.mark.unit

@@ -9,6 +9,7 @@
 - rest：ToolMetadata/ToolRegistryResponse/DesktopCallStatus（命名避开 debug.py 既有同名类——grep 确认无冲突）
 """
 import pytest
+from pydantic import TypeAdapter
 
 from frontend_contract import ws_message as w
 from frontend_contract.rest import DesktopCallStatus, ToolMetadata, ToolRegistryResponse
@@ -48,7 +49,8 @@ def test_tool_request_message_wire():
     """ToolRequestMessage：type=tool.request + 全字段；reason/requestId 可缺省省略。"""
     msg = w.ToolRequestMessage(
         callId="call_abc", toolName="desktop.file.read", toolVersion="1.0.0",
-        runtime="desktop", arguments={"path": "/home/user/doc.txt"},
+        runtime="desktop", sourceCallId="tc_desktop_1",
+        arguments={"path": "/home/user/doc.txt"},
         reason="用户请求分析所选文件", riskLevel="medium", permissionRequired=True,
         approvalAuthority="client", paramHash="sha256:deadbeef",
         expiresAt="2026-08-05T00:01:00+00:00", requestId="req_1",
@@ -70,7 +72,8 @@ def test_tool_request_message_wire():
     # reason/requestId 可缺省省略
     msg2 = w.ToolRequestMessage(
         callId="call_2", toolName="desktop.screen.capture", toolVersion="1.0.0",
-        runtime="desktop", arguments={}, riskLevel="high", permissionRequired=True,
+        runtime="desktop", sourceCallId="tc_desktop_2",
+        arguments={}, riskLevel="high", permissionRequired=True,
         approvalAuthority="client", paramHash="sha256:0", expiresAt="t",
     )
     d2 = msg2.wire_dict()
@@ -237,3 +240,58 @@ def test_desktop_call_status_status_enum():
             callId="c", toolName="desktop.file.read", toolVersion="1.0.0",
             runtime="desktop", paramHash="h", status="bogus", createdAt="t", expiresAt="t",
         )
+
+
+# ── 阶段 6 工具双轨展示帧（B-6-01） ─────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_tool_runtime_enum_values():
+    """ToolRuntime 值域（backend/desktop/local_worker）。"""
+    assert [r.value for r in w.ToolRuntime] == ["backend", "desktop", "local_worker"]
+
+
+@pytest.mark.unit
+def test_tool_started_wire_shape():
+    """tool.started wire：camelCase + 必填/可缺省 + 可选字段缺省省略。"""
+    msg = w.ToolStartedMessage(callId="tc_1", toolName="web.fetch", runtime=w.ToolRuntime.BACKEND)
+    d = msg.wire_dict()
+    assert d == {"type": "tool.started", "callId": "tc_1", "toolName": "web.fetch",
+                 "runtime": "backend"}
+    d2 = w.ToolStartedMessage(callId="tc_2", toolName="desktop.file.read",
+                              runtime=w.ToolRuntime.DESKTOP, inputSummary="path=<redacted>",
+                              generationId="gen_1", conversationId="conv_1").wire_dict()
+    assert d2["inputSummary"] == "path=<redacted>"
+    assert d2["generationId"] == "gen_1" and d2["conversationId"] == "conv_1"
+
+
+@pytest.mark.unit
+def test_tool_completed_wire_shape():
+    """tool.completed wire：成功与失败（error dict）。"""
+    ok = w.ToolCompletedMessage(callId="tc_1", toolName="web.fetch", runtime=w.ToolRuntime.BACKEND,
+                                success=True, outputSummary="title", truncated=False).wire_dict()
+    assert ok["success"] is True and ok["outputSummary"] == "title"
+    err = w.ToolCompletedMessage(callId="tc_1", toolName="web.fetch", runtime=w.ToolRuntime.BACKEND,
+                                 success=False, error={"code": "TOOL_ERROR", "message": "boom"},
+                                 errorType="TOOL_ERROR").wire_dict()
+    assert err["error"] == {"code": "TOOL_ERROR", "message": "boom"}
+
+
+@pytest.mark.unit
+def test_tool_messages_in_server_union():
+    """两新帧入 ServerMessage 判别联合。"""
+    for frame in ({"type": "tool.started", "callId": "tc_1", "toolName": "x",
+                   "runtime": "backend"},
+                  {"type": "tool.completed", "callId": "tc_1", "toolName": "x",
+                   "runtime": "backend", "success": True}):
+        TypeAdapter(w.ServerMessage).validate_python(frame)
+
+
+@pytest.mark.unit
+def test_tool_request_source_call_id_required():
+    """tool.request.sourceCallId 缺省 → 校验失败。"""
+    with pytest.raises(Exception):
+        w.ToolRequestMessage(callId="call_1", toolName="desktop.file.read", toolVersion="1.0.0",
+                             runtime="desktop", arguments={}, riskLevel="high",
+                             permissionRequired=True, approvalAuthority="client",
+                             paramHash="h", expiresAt="2026-08-19T00:00:00+00:00")

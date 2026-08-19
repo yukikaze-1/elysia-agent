@@ -11434,6 +11434,136 @@
           "title": "ToolCallFunction",
           "type": "object"
         },
+        "ToolCompletedMessage": {
+          "description": "Backend 工具完成（v2，Server→Client 展示生命周期，D6-02/08）。",
+          "properties": {
+            "callId": {
+              "description": "LLM tool_call_id（与 started 同值）",
+              "title": "Callid",
+              "type": "string"
+            },
+            "conversationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID，可缺省",
+              "title": "Conversationid"
+            },
+            "durationMs": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "耗时毫秒，可缺省",
+              "title": "Durationms"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "错误（{code,message}，code=errorType 或 TOOL_ERROR），可缺省",
+              "title": "Error"
+            },
+            "errorType": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "ErrorType 值，可缺省",
+              "title": "Errortype"
+            },
+            "generationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "生成实例 ID，可缺省",
+              "title": "Generationid"
+            },
+            "outputSummary": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "截断后的公开结果摘要（≤2000 字符），可缺省",
+              "title": "Outputsummary"
+            },
+            "runtime": {
+              "$ref": "#/$defs/ToolRuntime",
+              "description": "工具 Runtime"
+            },
+            "success": {
+              "description": "是否成功",
+              "title": "Success",
+              "type": "boolean"
+            },
+            "toolName": {
+              "description": "工具名",
+              "title": "Toolname",
+              "type": "string"
+            },
+            "truncated": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "outputSummary 超长截断标记，可缺省",
+              "title": "Truncated"
+            },
+            "type": {
+              "const": "tool.completed",
+              "default": "tool.completed",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "callId",
+            "toolName",
+            "runtime",
+            "success"
+          ],
+          "title": "ToolCompletedMessage",
+          "type": "object"
+        },
         "ToolRequestMessage": {
           "description": "桌面工具执行请求（Server→Client，v2 定向投递 desktop channel）。\n\nbridge._deliver 按 call 登记的 `target_connection` 精确定位\n`client_platform == \"electron\"` 且 `connection_id` 相等的 v2 连接，再 _send_json\n本帧；v1/其它 Electron 连接不收 desktop 帧（D-l）。paramHash = 规范化 arguments\n的 SHA-256（BE-043 篡改拒绝权威依据）；expiresAt = 桥 request_timeout 的绝对\n过期时间（UTC ISO）。",
           "properties": {
@@ -11500,8 +11630,12 @@
               "type": "string"
             },
             "runtime": {
-              "description": "工具 Runtime（desktop）",
-              "title": "Runtime",
+              "$ref": "#/$defs/ToolRuntime",
+              "description": "工具 Runtime（desktop）"
+            },
+            "sourceCallId": {
+              "description": "LLM tool_call_id（前端统一领域键，D6-03）",
+              "title": "Sourcecallid",
               "type": "string"
             },
             "toolName": {
@@ -11526,6 +11660,7 @@
             "toolName",
             "toolVersion",
             "runtime",
+            "sourceCallId",
             "arguments",
             "riskLevel",
             "permissionRequired",
@@ -11534,6 +11669,87 @@
             "expiresAt"
           ],
           "title": "ToolRequestMessage",
+          "type": "object"
+        },
+        "ToolRuntime": {
+          "description": "工具 Runtime（wire 值 backend/desktop/local_worker；D6-03 权威键关联）。",
+          "enum": [
+            "backend",
+            "desktop",
+            "local_worker"
+          ],
+          "title": "ToolRuntime",
+          "type": "string"
+        },
+        "ToolStartedMessage": {
+          "description": "Backend 工具开始（v2，Server→Client 展示生命周期，D6-02/08）。",
+          "properties": {
+            "callId": {
+              "description": "LLM tool_call_id（归档同值，前端权威键）",
+              "title": "Callid",
+              "type": "string"
+            },
+            "conversationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID，可缺省",
+              "title": "Conversationid"
+            },
+            "generationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "生成实例 ID，可缺省",
+              "title": "Generationid"
+            },
+            "inputSummary": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "服务端脱敏参数摘要（_safe_arg_summary），可缺省",
+              "title": "Inputsummary"
+            },
+            "runtime": {
+              "$ref": "#/$defs/ToolRuntime",
+              "description": "工具 Runtime"
+            },
+            "toolName": {
+              "description": "工具名",
+              "title": "Toolname",
+              "type": "string"
+            },
+            "type": {
+              "const": "tool.started",
+              "default": "tool.started",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "callId",
+            "toolName",
+            "runtime"
+          ],
+          "title": "ToolStartedMessage",
           "type": "object"
         },
         "TranscriptionMessage": {
@@ -11939,7 +12155,9 @@
           "state": "#/$defs/StateMessage",
           "switch_model_result": "#/$defs/SwitchModelResultMessage",
           "token_usage": "#/$defs/TokenUsageMessage",
+          "tool.completed": "#/$defs/ToolCompletedMessage",
           "tool.request": "#/$defs/ToolRequestMessage",
+          "tool.started": "#/$defs/ToolStartedMessage",
           "transcription": "#/$defs/TranscriptionMessage",
           "typing": "#/$defs/TypingMessage",
           "user_message.ack": {
@@ -12008,6 +12226,12 @@
         },
         {
           "$ref": "#/$defs/ActionMessage"
+        },
+        {
+          "$ref": "#/$defs/ToolStartedMessage"
+        },
+        {
+          "$ref": "#/$defs/ToolCompletedMessage"
         },
         {
           "$ref": "#/$defs/CommandMessage"
@@ -16524,6 +16748,148 @@
       "title": "ToolCallResult",
       "type": "object"
     },
+    "ToolCompletedMessage": {
+      "$defs": {
+        "ToolRuntime": {
+          "description": "工具 Runtime（wire 值 backend/desktop/local_worker；D6-03 权威键关联）。",
+          "enum": [
+            "backend",
+            "desktop",
+            "local_worker"
+          ],
+          "title": "ToolRuntime",
+          "type": "string"
+        }
+      },
+      "description": "Backend 工具完成（v2，Server→Client 展示生命周期，D6-02/08）。",
+      "properties": {
+        "callId": {
+          "description": "LLM tool_call_id（与 started 同值）",
+          "title": "Callid",
+          "type": "string"
+        },
+        "conversationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "会话 ID，可缺省",
+          "title": "Conversationid"
+        },
+        "durationMs": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "耗时毫秒，可缺省",
+          "title": "Durationms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "错误（{code,message}，code=errorType 或 TOOL_ERROR），可缺省",
+          "title": "Error"
+        },
+        "errorType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ErrorType 值，可缺省",
+          "title": "Errortype"
+        },
+        "generationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "生成实例 ID，可缺省",
+          "title": "Generationid"
+        },
+        "outputSummary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "截断后的公开结果摘要（≤2000 字符），可缺省",
+          "title": "Outputsummary"
+        },
+        "runtime": {
+          "$ref": "#/$defs/ToolRuntime",
+          "description": "工具 Runtime"
+        },
+        "success": {
+          "description": "是否成功",
+          "title": "Success",
+          "type": "boolean"
+        },
+        "toolName": {
+          "description": "工具名",
+          "title": "Toolname",
+          "type": "string"
+        },
+        "truncated": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "outputSummary 超长截断标记，可缺省",
+          "title": "Truncated"
+        },
+        "type": {
+          "const": "tool.completed",
+          "default": "tool.completed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "callId",
+        "toolName",
+        "runtime",
+        "success"
+      ],
+      "title": "ToolCompletedMessage",
+      "type": "object"
+    },
     "ToolHistoryItem": {
       "description": "工具执行历史（OverviewTab 面板 12）。",
       "properties": {
@@ -16830,6 +17196,18 @@
       "type": "object"
     },
     "ToolRequestMessage": {
+      "$defs": {
+        "ToolRuntime": {
+          "description": "工具 Runtime（wire 值 backend/desktop/local_worker；D6-03 权威键关联）。",
+          "enum": [
+            "backend",
+            "desktop",
+            "local_worker"
+          ],
+          "title": "ToolRuntime",
+          "type": "string"
+        }
+      },
       "description": "桌面工具执行请求（Server→Client，v2 定向投递 desktop channel）。\n\nbridge._deliver 按 call 登记的 `target_connection` 精确定位\n`client_platform == \"electron\"` 且 `connection_id` 相等的 v2 连接，再 _send_json\n本帧；v1/其它 Electron 连接不收 desktop 帧（D-l）。paramHash = 规范化 arguments\n的 SHA-256（BE-043 篡改拒绝权威依据）；expiresAt = 桥 request_timeout 的绝对\n过期时间（UTC ISO）。",
       "properties": {
         "approvalAuthority": {
@@ -16895,8 +17273,12 @@
           "type": "string"
         },
         "runtime": {
-          "description": "工具 Runtime（desktop）",
-          "title": "Runtime",
+          "$ref": "#/$defs/ToolRuntime",
+          "description": "工具 Runtime（desktop）"
+        },
+        "sourceCallId": {
+          "description": "LLM tool_call_id（前端统一领域键，D6-03）",
+          "title": "Sourcecallid",
           "type": "string"
         },
         "toolName": {
@@ -16921,6 +17303,7 @@
         "toolName",
         "toolVersion",
         "runtime",
+        "sourceCallId",
         "arguments",
         "riskLevel",
         "permissionRequired",
@@ -16929,6 +17312,89 @@
         "expiresAt"
       ],
       "title": "ToolRequestMessage",
+      "type": "object"
+    },
+    "ToolStartedMessage": {
+      "$defs": {
+        "ToolRuntime": {
+          "description": "工具 Runtime（wire 值 backend/desktop/local_worker；D6-03 权威键关联）。",
+          "enum": [
+            "backend",
+            "desktop",
+            "local_worker"
+          ],
+          "title": "ToolRuntime",
+          "type": "string"
+        }
+      },
+      "description": "Backend 工具开始（v2，Server→Client 展示生命周期，D6-02/08）。",
+      "properties": {
+        "callId": {
+          "description": "LLM tool_call_id（归档同值，前端权威键）",
+          "title": "Callid",
+          "type": "string"
+        },
+        "conversationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "会话 ID，可缺省",
+          "title": "Conversationid"
+        },
+        "generationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "生成实例 ID，可缺省",
+          "title": "Generationid"
+        },
+        "inputSummary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "服务端脱敏参数摘要（_safe_arg_summary），可缺省",
+          "title": "Inputsummary"
+        },
+        "runtime": {
+          "$ref": "#/$defs/ToolRuntime",
+          "description": "工具 Runtime"
+        },
+        "toolName": {
+          "description": "工具名",
+          "title": "Toolname",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool.started",
+          "default": "tool.started",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "callId",
+        "toolName",
+        "runtime"
+      ],
+      "title": "ToolStartedMessage",
       "type": "object"
     },
     "ToolStatusMessage": {
@@ -18368,6 +18834,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "7b5a5280455078e4",
+  "schemaHash": "8d054eebca4ae568",
   "transportVersion": "2"
 }
