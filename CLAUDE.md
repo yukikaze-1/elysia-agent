@@ -447,7 +447,7 @@ C1 renders L1 + L2. C9 conditionally renders L3 via `AwarenessTrigger` (cooldown
 
 Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plugins are imported in `__init__.py` and added to `ALL_PLUGINS`.
 
-**阶段 6 工具双轨决策（2026-08-19，方案 B 已定案，代码批未开始）：** Desktop 工具继续走 `tool.request/tool.status`；Backend 工具新增 v2 `tool.started/tool.completed` 展示帧，v2 停发 `action{tool_executing/tool_done}`（v1 不变）；`tool.request` 补必填 `sourceCallId`（LLM `tool_call_id`）并由桥填充 `requestId`。B-6-01~09 更新点与契约冻结见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`；实现前先读该记录（含 `outputSummary` 截断等未拍板项）。
+**阶段 6 工具双轨（2026-08-19，方案 B 已定案，后端代码批已完成）：** Desktop 工具走 `tool.request/tool.status`；Backend 工具 v2 发 `tool.started/tool.completed` 展示帧，v2 停发 `action{tool_executing/tool_done}`（v1 逐字节不变）；`tool.request` 必填 `sourceCallId`（LLM `tool_call_id`，经 scheduler 线程化到 `ctx.call_id`）并由桥填充 `requestId`。后端 B-6-01~09 落地（commit `c16e27d9..6a54fc25`），执行记录见 `docs/progress/2026-08-19-stage6-工具双轨-execution-record.md`；golden `ws-v2-tool.jsonl` 预期增 `sourceCallId`（D-GL-01）。前端 F-6 批在 elysia-frontend 并行（D-§7-4/5 前端定）。
 
 ## Vision（看图）备忘 — WebUI `describe_image` 优先
 
