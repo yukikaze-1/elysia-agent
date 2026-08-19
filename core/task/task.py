@@ -39,6 +39,7 @@ class ToolCallPayload(TypedDict):
     """TOOL_CALL 类型任务的 payload。"""
     tool_name: str
     arguments: dict[str, Any]
+    call_id: str
 
 
 @dataclass
@@ -122,6 +123,7 @@ class Task:
         parent_id: str,
         tool_name: str,
         arguments: dict[str, Any],
+        call_id: str = "",
         priority: int = 5,
     ) -> "Task":
         """创建工具调用子任务。
@@ -130,12 +132,17 @@ class Task:
             parent_id: 父任务 ID
             tool_name: 工具名称
             arguments: 工具参数
+            call_id: LLM tool_call_id（D6-07：sourceCallId 数据源，thread 到 worker ctx.call_id）
             priority: 优先级，0=最高, 5=默认
 
         Returns:
             Task: 新创建的工具调用任务
         """
-        payload: ToolCallPayload = {"tool_name": tool_name, "arguments": arguments}
+        payload: ToolCallPayload = {
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "call_id": call_id,
+        }
         return cls(  # type: ignore[reportCallIssue]
             id=new_task_id(),
             type=TaskType.TOOL_CALL,

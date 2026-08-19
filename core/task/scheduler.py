@@ -150,6 +150,7 @@ class TaskScheduler:
                 parent_id=parent_id or "",
                 tool_name=tc.function.name,
                 arguments=tc.function.parsed,
+                call_id=tc.id,
             )
             sub_tasks.append(t)
 
@@ -400,16 +401,20 @@ class TaskScheduler:
         """
         tool_name = task.payload.get("tool_name", "")
         arguments = task.payload.get("arguments", {})
+        call_id = task.payload.get("call_id", "")
 
         if self._tool_executor is None:
             raise RuntimeError("ToolExecutor 未注入，请先调用 Scheduler.start()")
         if self._tool_ctx is None:
             self._tool_ctx = ToolContext()
         while True:
+            # 每调用克隆一次 ctx：thread LLM tool_call_id → ctx.call_id（D6-07），
+            # 且调用内写 ctx.services 落在副本不污染共享 ctx（对齐 _execute_tools_directly 惯例）
+            ctx = self._tool_ctx.clone_for_call(call_id=call_id)
             try:
                 result = await asyncio.wait_for(
                     self._tool_executor.execute(
-                        tool_name, ctx=self._tool_ctx, **arguments,
+                        tool_name, ctx=ctx, **arguments,
                     ),
                     timeout=_TOOL_TIMEOUT,
                 )

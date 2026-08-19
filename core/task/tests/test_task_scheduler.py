@@ -298,6 +298,39 @@ async def test_dispatch_tool_calls_empty():
     await sched.stop()
 
 
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_call_id_threaded_to_worker_ctx():
+    """D6-07：call_id 线程化——payload 携带 call_id，worker 执行时 ctx.call_id 非空。
+
+    ``new_tool_call(call_id=...)`` 把 LLM tool_call_id 存入 payload["call_id"]；
+    ``_execute_tool`` 经 ``clone_for_call(call_id=...)`` 为每次执行克隆 ctx 并设置
+    ctx.call_id（对齐 _execute_tools_directly 惯例），共享 base ctx 不被调用内污染。
+    """
+    seen_call_ids: list[str] = []
+
+    class _RecordingExecutor:
+        """记录每次 execute 收到的 ctx.call_id（Mock ToolAdapter）。"""
+
+        async def execute(self, tool_name, ctx, **kwargs):
+            seen_call_ids.append(ctx.call_id)
+            return ToolResult.ok(name=tool_name, content="ok", duration_ms=0.0)
+
+    # payload 线程化：new_tool_call 携带 call_id
+    t = Task.new_tool_call("p1", "echo", {"msg": "a"}, call_id="tc_x")
+    assert t.payload["call_id"] == "tc_x"
+
+    sched = TaskScheduler(tool_executor=_RecordingExecutor(), num_workers=1,
+                          checkpoint_path=None)
+    await sched.start()
+    try:
+        results = await sched.dispatch_tool_calls("p1", [_tc("tc_x", "echo", '{"msg":"a"}')])
+        assert results[0][1].success  # type: ignore[reportAttributeAccessIssue]
+        assert seen_call_ids == ["tc_x"], f"worker 收到 call_id={seen_call_ids!r}"
+    finally:
+        await sched.stop()
+
+
 # ═══════════════════════════════════════════════════════════════════
 # 二、取消
 # ═══════════════════════════════════════════════════════════════════
