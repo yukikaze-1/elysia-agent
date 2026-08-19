@@ -49,7 +49,9 @@
 
 ## 验收结论（Phase 10，subagent 独立验收）
 
-（待填写）
+- **实现批结论：本批可标记「阶段 6 已开发/自动化已验证」；「阶段 6 真实联调通过」留待前端 F-6 批 + Windows Electron 桌面四工具真机验证。**
+- 8 个维度全 PASS，关键门禁独立重跑核实（非采信）：① 契约冻结正确性（ToolRuntime/两新帧/sourceCallId 必填/ServerMessage 联合 + 三产物一致 + ToolStatusMessage.runtime 保持 str）；② D6-07 端到端（tool_phase→scheduler `new_tool_call(call_id=tc.id)`→`clone_for_call`→ctx.call_id→plugin→bridge `sourceCallId`，roundtrip 断言非空 + `requestId` msg_ 前缀）；③ v1 wire/帧集逐字节保持（`v1_suppress` 保 submit_task v1 `{tool_done}`）；④ 门禁复核（check-types 三子项 + lint + pyright 0 + 479 目标测试 + test-quick 3652 精确复现）；⑤ 范围纪律（Makefile/providers.yaml/docs/review 零改动 + golden 仅 sourceCallId 一行 + 41 码）；⑥ commit 完整性（spec/plan 单 commit + 10 线性无 merge）；⑦ 执行记录核对（数字/链/决策表与代码现实一致 +21 新测试逐个数）；⑧ D-scheduler fix（call_id 线程化 + 每调用 clone + 无调度回归）。
+- **卫生项**：验收时工作树有一处执行记录 Phase 8 回填未提交——已 commit（`cb6ea92e`）收干净树。
 
 ## 后续衔接
 
