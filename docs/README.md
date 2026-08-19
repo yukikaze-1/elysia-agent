@@ -26,6 +26,7 @@
 | [review/electron-v2-message-id-fix-report-2026-08-13.md](review/electron-v2-message-id-fix-report-2026-08-13.md) | 消息 ID 修复报告：BE-INT-P0-01/02 + P1-01 关闭（D1-D6 + 真实 Mongo 回填 69→0 + 门禁证据） |
 | [review/2026-08-13-Windows-Electron-二次真实联调后端整改清单.md](review/2026-08-13-Windows-Electron-二次真实联调后端整改清单.md) | 二次联调后端整改：WS replay tool 项缺身份 → 前端重复消息（BE-INT2-P0-01/P1-01） |
 | [review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md](review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md) | 二次联调 WS replay 身份修复报告：BE-INT2-P0-01/P1-01 关闭（D1-D4 + 真实 sanity + 门禁） |
+| [review/2026-08-19-阶段6-工具双轨统筹决策记录.md](review/2026-08-19-阶段6-工具双轨统筹决策记录.md) | 阶段 6 工具双轨统筹：方案 B 定案 + `tool.started/tool.completed`/`sourceCallId` 契约冻结 + B-6/F-6 更新点清单 |
 
 ## 子目录
 

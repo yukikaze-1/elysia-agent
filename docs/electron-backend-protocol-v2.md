@@ -342,6 +342,17 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 Desktop 工具**不走 `tool_approval`**（approvalAuthority=client，Electron 自管本地授权），
 走 §10.2/§10.3 的 `tool.request`/`tool.status`。
 
+> **阶段 6 待实现（2026-08-19，方案 B 已定案，代码批未开始）：**
+> - `tool.request` 将新增**必填** `sourceCallId`（LLM tool_call_id，前端统一领域键），
+>   `requestId` 由 `ctx.trace_id` 填充；桥登记/持久化 `source_call_id/request_id`；
+> - 新增 Server→Client `tool.started{callId(LLM tool_call_id), toolName,
+>   runtime(backend|desktop|local_worker), inputSummary?, generationId?,
+>   conversationId?}` 与 `tool.completed{callId, toolName, runtime, success,
+>   outputSummary?, error?, errorType?, durationMs?, truncated?, generationId?,
+>   conversationId?}`；v2 停发 `action{tool_executing/tool_done}`（v1 不变）；
+> - `generation.completed` 不加 `tool_calls`，`finishReason` 成功路径仍恒 `stop`。
+> 完整更新点与门禁见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（B-6-01~09）。
+
 ---
 
 ## 11. 模型 Profile 与 TTS 声音契约（批次 5，spec BE-050/051）
