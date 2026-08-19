@@ -212,6 +212,68 @@ class OutputManager:
             channels=channels, capability=capability or ChannelCapability.ACTION,
         )
 
+    async def tool_started(
+        self, *, call_id: str, tool_name: str, runtime: str,
+        v1_args: dict, input_summary: str | None,
+        generation_id: str | None = None, conversation_id: str | None = None,
+        v1_suppress: bool = False,
+        channels: list[OutputChannel] | None = None,
+    ) -> None:
+        """工具开始：v1 发 action{tool_executing}（wire 逐字节不变）；v2 发 tool.started（D6-02）。
+
+        v1_suppress=True：跳过 v1 action{tool_executing}——submit_task 场景 v1 从未发过，
+        加帧会破坏「v1 帧集不变」（spec Critical 2 修正）。
+        """
+        v1, v2 = self._split_versions(channels)
+        if v1 and not v1_suppress:
+            await self._broadcast(
+                "on_action", "tool_executing",
+                params={"tool": tool_name, "call_id": call_id, "args": v1_args},
+                channels=v1, capability=ChannelCapability.ACTION,
+            )
+        if v2:
+            await self._broadcast(
+                "on_tool_started",
+                call_id=call_id, tool_name=tool_name, runtime=runtime,
+                input_summary=input_summary,
+                generation_id=generation_id, conversation_id=conversation_id,
+                channels=v2,
+            )
+
+    async def tool_completed(
+        self, *, call_id: str, tool_name: str, runtime: str,
+        success: bool, v1_content: str, output_summary: str | None,
+        v1_truncated: bool, output_truncated: bool,
+        error_v1: str | None, error_v2: dict | None, error_type: str | None,
+        duration_ms: float | None,
+        generation_id: str | None = None, conversation_id: str | None = None,
+        channels: list[OutputChannel] | None = None,
+    ) -> None:
+        """工具完成：v1 发 action{tool_done}（wire 逐字节不变）；v2 发 tool.completed（D6-02）。
+
+        error_v1（v1 tool_done.error，str）与 error_v2（v2 tool.completed.error，dict
+        {code,message}，D-ERROR）语义独立，不得互相塞错类型。
+        """
+        v1, v2 = self._split_versions(channels)
+        if v1:
+            await self._broadcast(
+                "on_action", "tool_done",
+                params={"tool": tool_name, "call_id": call_id, "success": success,
+                        "content": v1_content, "error": error_v1, "error_type": error_type,
+                        "duration_ms": duration_ms, "truncated": v1_truncated},
+                channels=v1, capability=ChannelCapability.ACTION,
+            )
+        if v2:
+            await self._broadcast(
+                "on_tool_completed",
+                call_id=call_id, tool_name=tool_name, runtime=runtime,
+                success=success, output_summary=output_summary,
+                truncated=output_truncated, error=error_v2, error_type=error_type,
+                duration_ms=duration_ms, generation_id=generation_id,
+                conversation_id=conversation_id,
+                channels=v2,
+            )
+
     async def command(
         self,
         cmd: str,

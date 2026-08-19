@@ -62,6 +62,21 @@ class OutputChannel(ABC):
             params: 可选的动作参数。
         """
 
+    async def on_tool_started(self, *, call_id: str, tool_name: str, runtime: str,
+                              input_summary: str | None = None,
+                              generation_id: str | None = None,
+                              conversation_id: str | None = None) -> None:
+        """工具开始（v2 展示生命周期）：默认 no-op，通道按需 override。"""
+
+    async def on_tool_completed(self, *, call_id: str, tool_name: str, runtime: str,
+                                success: bool, output_summary: str | None = None,
+                                error: dict | None = None, error_type: str | None = None,
+                                duration_ms: float | None = None,
+                                truncated: bool | None = None,
+                                generation_id: str | None = None,
+                                conversation_id: str | None = None) -> None:
+        """工具完成（v2 展示生命周期）：默认 no-op，通道按需 override。"""
+
     async def on_audio_chunk(self, chunk: bytes, *, stream_id: int = 0) -> None:
         """音频流 chunk — stream_id 区分并发流
 

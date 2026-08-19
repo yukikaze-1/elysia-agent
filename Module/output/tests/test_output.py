@@ -891,3 +891,81 @@ async def test_on_token_usage_emits_modeled_message():
     assert ws.sent[0]["session"]["byModel"] == {"m": 3}
     assert "by_model" not in ws.sent[0]["session"]
     assert "cached_tokens" not in ws.sent[0]["turn"]["rounds"][0]
+
+
+# ============================================================
+# 阶段6 工具双轨：tool.started/completed v1/v2 分流（B-6-02）
+# ============================================================
+
+class _ToolV1Channel(_TestChannel):
+    """v1 通道：protocol_version=1，收 action。"""
+    protocol_version = 1
+
+class _ToolV2Channel(_TestChannel):
+    """v2 通道：protocol_version=2，收 tool.started/completed。"""
+    protocol_version = 2
+
+    async def on_tool_started(self, *, call_id: str, tool_name: str, runtime: str,
+                              input_summary: str | None = None,
+                              generation_id: str | None = None,
+                              conversation_id: str | None = None) -> None:
+        self.events.append(("tool_started", (call_id, tool_name, runtime, input_summary,
+                                             generation_id, conversation_id)))
+
+    async def on_tool_completed(self, *, call_id: str, tool_name: str, runtime: str,
+                                success: bool, output_summary: str | None = None,
+                                error: dict | None = None, error_type: str | None = None,
+                                duration_ms: float | None = None,
+                                truncated: bool | None = None,
+                                generation_id: str | None = None,
+                                conversation_id: str | None = None) -> None:
+        self.events.append(("tool_completed", (call_id, tool_name, runtime, success,
+                                               output_summary, error, error_type, duration_ms,
+                                               truncated, generation_id, conversation_id)))
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_tool_started_v2_new_frame_v1_action():
+    """v1 收 action{tool_executing}、v2 收 tool.started，互不串发。"""
+    mgr = OutputManager()
+    ch1, ch2 = _ToolV1Channel({ChannelCapability.ACTION}), _ToolV2Channel({ChannelCapability.ACTION})
+    mgr.add_channel(ch1); mgr.add_channel(ch2)
+    await mgr.tool_started(call_id="tc_1", tool_name="web.fetch", runtime="backend",
+                           v1_args={"url": "<str:12>"}, input_summary="url=<str:12>")
+    assert ch1.events and ch1.events[0] == ("action", ("tool_executing",
+                                                       {"tool": "web.fetch", "call_id": "tc_1",
+                                                        "args": {"url": "<str:12>"}}))
+    assert ch2.events and ch2.events[0][0] == "tool_started"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_tool_completed_v2_new_frame_v1_action():
+    """v1 收 action{tool_done}（params 逐字节）、v2 收 tool.completed。"""
+    mgr = OutputManager()
+    ch1, ch2 = _ToolV1Channel({ChannelCapability.ACTION}), _ToolV2Channel({ChannelCapability.ACTION})
+    mgr.add_channel(ch1); mgr.add_channel(ch2)
+    await mgr.tool_completed(call_id="tc_1", tool_name="web.fetch", runtime="backend",
+                             success=True, v1_content="full", output_summary="sum",
+                             v1_truncated=False, output_truncated=False,
+                             error_v1=None, error_v2=None, error_type=None, duration_ms=1.2)
+    ev = ch1.events[0]
+    assert ev[0] == "action" and ev[1][0] == "tool_done"
+    assert ev[1][1] == {"tool": "web.fetch", "call_id": "tc_1", "success": True,
+                        "content": "full", "error": None, "error_type": None,
+                        "duration_ms": 1.2, "truncated": False}
+    assert ch2.events[0][0] == "tool_completed"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_tool_started_v1_suppress_no_v1_frame():
+    """v1_suppress=True：v1 不产生 action{tool_executing}（submit_task v1 帧集不变）。"""
+    mgr = OutputManager()
+    ch1, ch2 = _ToolV1Channel({ChannelCapability.ACTION}), _ToolV2Channel({ChannelCapability.ACTION})
+    mgr.add_channel(ch1); mgr.add_channel(ch2)
+    await mgr.tool_started(call_id="tc_1", tool_name="submit_task", runtime="backend",
+                           v1_args={}, input_summary="intent=<str:3>", v1_suppress=True)
+    assert not ch1.events
+    assert ch2.events and ch2.events[0][0] == "tool_started"

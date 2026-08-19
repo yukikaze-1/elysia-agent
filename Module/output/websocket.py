@@ -43,7 +43,9 @@ from frontend_contract import (
     AckError,
 )
 from frontend_contract.rest import FinishReason
-from frontend_contract.ws_message import AudioFormat, MessageChannel, SegmentKind
+from frontend_contract.ws_message import (AudioFormat, MessageChannel, SegmentKind,
+                                          ToolCompletedMessage, ToolRuntime,
+                                          ToolStartedMessage)
 
 
 class WebSocketChannel(OutputChannel):
@@ -133,6 +135,32 @@ class WebSocketChannel(OutputChannel):
         """
         # 契约：params None → 缺省省略（X?）；ActionMessage.params 已 Optional（批次 8c F3）
         await self._send_json(ActionMessage(action=action, params=params).wire_dict())
+
+    async def on_tool_started(self, *, call_id: str, tool_name: str, runtime: str,
+                              input_summary: str | None = None,
+                              generation_id: str | None = None,
+                              conversation_id: str | None = None) -> None:
+        """工具开始（v2 展示生命周期）：发 tool.started 帧。"""
+        await self._send_json(ToolStartedMessage(
+            callId=call_id, toolName=tool_name, runtime=ToolRuntime(runtime),
+            inputSummary=input_summary, generationId=generation_id,
+            conversationId=conversation_id,
+        ).wire_dict())
+
+    async def on_tool_completed(self, *, call_id: str, tool_name: str, runtime: str,
+                                success: bool, output_summary: str | None = None,
+                                error: dict | None = None, error_type: str | None = None,
+                                duration_ms: float | None = None,
+                                truncated: bool | None = None,
+                                generation_id: str | None = None,
+                                conversation_id: str | None = None) -> None:
+        """工具完成（v2 展示生命周期）：发 tool.completed 帧。"""
+        await self._send_json(ToolCompletedMessage(
+            callId=call_id, toolName=tool_name, runtime=ToolRuntime(runtime),
+            success=success, outputSummary=output_summary, error=error, errorType=error_type,
+            durationMs=duration_ms, truncated=truncated, generationId=generation_id,
+            conversationId=conversation_id,
+        ).wire_dict())
 
     async def on_command(self, cmd: str, *, params: dict | None = None) -> None:
         """发送前端指令。
