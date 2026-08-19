@@ -35,7 +35,7 @@
 - **spec**：code-review 2 轮——r1 **With fixes**（2 Critical + 2 Important + 7 Minor + 3 Rec 全消化）：CRIT-1 `ToolResult.error` str→dict 直塞静默丢帧 → D-ERROR；CRIT-2 submit_task v1 帧集 → D-v1-suppress；IMP-3 registry_metadata 热路径 → runtime_of 直读；IMP-4 `doc["source_call_id"]` KeyError → `.get`；MIN-5~11 + Rec（ServerMessage 行域、overturn 措辞等）。r2 **Yes**（3 Minor 措辞优化消化）。
 - **plan**：code-review 2 轮——r1 **With fixes**（1 Critical + 5 Important + 5 Minor 全消化）：CRIT 测试裸名 NameError；IMP-2 gen_contract_frames pyright `Literal`→`ToolRuntime`；IMP-3 测试通道脚手架 + `ev[1][1]`；IMP-4 `_generation_ctx` 类型占位；IMP-5 `request_id or None` roundtrip；IMP-6 marker。r2 **Yes**（3 Minor，Task 4 marker 注记已补）。
 - **任务评审**（8 个，均 Approved）：T1 契约（test_ws_message 成员数 39→41 偏离确认为机械必然）；T2 输出层（v1 逐字节比对）；T5 desktop ID（两 concern 均 CONFIRMED：requestId 实为 `msg_...`、**sourceCallId 生产空串缺口**→D-scheduler）；T5b scheduler（D6-07 生产非空实测 `call_llm_desktop`）；T3 发射点（call-site 推迟协调点确认）；T4 submit_task（call-site 已补 + conversationId 断言）；T6 文档（与契约逐字段一致）。
-- **最终 whole-branch 评审**（Phase 8，opus）：（待填写）
+- **最终 whole-branch 评审**（Phase 8，opus）：**Ready to merge: Yes**——无 Critical/Important。D6-07 链端到端实测（tool_phase→scheduler dispatch→`new_tool_call(call_id=tc.id)`→`clone_for_call`→ctx.call_id→plugin→bridge `sourceCallId`）；v1 wire/帧集逐字节保持；契约与 spec 一致；golden 仅 `sourceCallId` 一行；41 码；test_ws_message 39→41 机械必然。4 Minor 均 triage-safe（test_runtime_of 插件名耦合 / test_desktop 默认 ctx 空断言 / v2 广播无 capability 过滤不对称 / bridge `or ""` 缺键不可分）。
 
 ## 执行偏差（已解决/Ruling）
 
