@@ -167,3 +167,26 @@ class TestDesktopExecute:
         assert call["risk_level"] == "medium"
         assert call["permission_required"] is True
         assert call["approval_authority"] == "client"
+        # B-6-05：call dict 恒含 source_call_id/request_id（ctx.call_id / ctx.trace_id or None）
+        assert call["source_call_id"] == ""          # 默认 ctx.call_id 空串
+        assert call["request_id"] is None            # 默认 ctx.trace_id 空串 → None
+
+    def test_bridge_available_delegates_id_passthrough(self):
+        """call dict 透传 source_call_id/request_id（= ctx.call_id / ctx.trace_id or None）。"""
+        plugin = DesktopFileReadPlugin()
+        bridge = MagicMock()
+        bridge.is_available.return_value = True
+        bridge.request_and_wait = AsyncMock(return_value=ToolResult.ok(
+            name="desktop.file.read", content="文件内容", duration_ms=0.0,
+        ))
+        ctx = ToolContext(
+            services={"desktop_bridge": bridge},
+            call_id="tc_llm_desktop", trace_id="trace_req_1",
+        )
+        params = FileReadParams(path="/home/user/doc.txt")
+        result = asyncio.run(plugin.execute(ctx=ctx, params=params))
+
+        assert result.success is True
+        call = bridge.request_and_wait.await_args.kwargs["call"]
+        assert call["source_call_id"] == "tc_llm_desktop"
+        assert call["request_id"] == "trace_req_1"

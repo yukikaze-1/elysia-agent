@@ -145,6 +145,9 @@ def _call(**overrides) -> dict:
         "risk_level": "medium",
         "permission_required": True,
         "approval_authority": "client",
+        # B-6-05：插件 _delegate 恒带两字段（source_call_id=ctx.call_id、request_id=trace_id or None）
+        "source_call_id": "tc_default",
+        "request_id": None,
     }
     call.update(overrides)
     return call
@@ -612,6 +615,26 @@ class TestLifecycleAndQuery:
         assert frame["toolName"] == "desktop.file.read"
         assert frame["paramHash"] == "sha256-abc"
         assert frame["expiresAt"] > "2020"
+        # 收尾
+        await bridge.handle_status(_status(call_id, "result", output="ok"))
+        await asyncio.wait_for(task, 2.0)
+
+    @pytest.mark.asyncio
+    async def test_build_request_frame_carries_source_call_id(self):
+        """_build_request_frame wire 含 sourceCallId/requestId，与 repo doc 一致（D6-07）。"""
+        repo, bridge, frames = _make_bridge()
+        await bridge.on_client_connect("conn_9")
+        task = asyncio.create_task(bridge.request_and_wait(
+            call=_call(source_call_id="tc_abc123", request_id="trace_xyz")))
+        await _until(lambda: len(frames) == 1)
+        call_id = frames[0]["callId"]
+        frame = frames[0]
+        doc = repo.calls[call_id]
+        # 必填 sourceCallId 贯通：非 None、与登记 source_call_id 一致
+        assert doc["source_call_id"] == "tc_abc123"
+        assert doc["request_id"] == "trace_xyz"
+        assert frame["sourceCallId"] == "tc_abc123"
+        assert frame["requestId"] == "trace_xyz"
         # 收尾
         await bridge.handle_status(_status(call_id, "result", output="ok"))
         await asyncio.wait_for(task, 2.0)

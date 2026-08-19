@@ -383,6 +383,7 @@ class DesktopToolBridge:
 
     def _build_request_frame(self, doc: dict) -> dict:
         """组装 tool.request 投递帧（契约模型 → wire_dict，Task 1 契约单源）。"""
+        # 敏感纪律（D-p）不变：日志只记 callId/状态/字段名，不打印 source_call_id 之外任何参数值。
         msg = ToolRequestMessage(
             callId=doc["call_id"],
             toolName=doc["tool_name"],
@@ -394,6 +395,7 @@ class DesktopToolBridge:
             permissionRequired=bool(doc.get("permission_required")),
             approvalAuthority=doc.get("approval_authority") or "client",
             paramHash=doc.get("arguments_hash") or "",
+            sourceCallId=doc.get("source_call_id") or "",  # 必填（D6-07）；.get 防升级前缺键（spec Important 4）
             expiresAt=doc.get("expires_at") or "",
             requestId=doc.get("request_id"),
         )

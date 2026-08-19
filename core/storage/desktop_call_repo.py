@@ -15,6 +15,8 @@ Mongo 持久化 + **进程内缓存（读权威）**——幂等去重/状态查
         risk_level,           # safe/medium/high
         permission_required,  # bool
         approval_authority,   # "client"
+        source_call_id,       # LLM tool_call_id（D6-07，前端统一领域键）
+        request_id,           # 请求追踪 ID（D6-07）
         status,               # pending|accepted|running|succeeded|failed|rejected|cancelled|expired|offline
         target_connection,    # 目标 Electron 连接 ID
         created_at,           # 建档时间（ISO UTC）

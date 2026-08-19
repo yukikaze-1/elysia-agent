@@ -225,7 +225,15 @@ class TestDesktopRoundtrip:
             assert tool_req["approvalAuthority"] == "client"
             assert tool_req["paramHash"]  # sha256 参数摘要非空
             assert tool_req["expiresAt"] > "2020"
-            assert tool_req.get("requestId") is None  # 缺省省略（exclude_none），可不带
+            # B-6-05：sourceCallId 由 ctx.call_id 透传（D6-07）——字段已贯通至 wire。
+            # 注意：真实 Agent 路径经 TaskScheduler._worker_loop 以**裸 base ctx** 执行工具
+            # （core/task/scheduler.py:412，call_id 恒 ""，仅 trace_id 每回合 set，
+            # loop.py:355）→ sourceCallId 现为 ""。非空值仅在 _execute_tools_directly 路径
+            # （clone_for_call(call_id=tc.id)）成立。待 scheduler 补 call_id 贯通后收紧。
+            # requestId 由 per-turn trace_id 填充（new_message_id()，非空串）；空 trace_id 的
+            # 直接执行路径经 `or None` 才 wire 省略（防 requestId:""）。
+            assert tool_req.get("sourceCallId") == ""
+            assert (tool_req.get("requestId") or "").startswith("msg_")
 
             # Electron 接手：accepted → running → result
             await ws.send_json(_status(tool_req, "accepted"))

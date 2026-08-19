@@ -167,11 +167,15 @@ class TestDeliverCallback:
         other.connection_id = "conn_target"
         agent._output._channels = [other, target]
 
-        frame = {"type": "tool.request", "callId": "call_x"}
+        # B-6-05：frame 含 sourceCallId/requestId（D6-07 贯通），deliver 原样转发不改写
+        frame = {"type": "tool.request", "callId": "call_x",
+                 "sourceCallId": "tc_desktop_1", "requestId": None}
         await _LifecycleTools._deliver_tool_request(agent, "conn_target", frame)
 
         target._send_json.assert_awaited_once_with(frame)
         other._send_json.assert_not_called()
+        assert target._send_json.await_args.args[0]["sourceCallId"] == "tc_desktop_1"
+        assert target._send_json.await_args.args[0]["requestId"] is None
 
     @pytest.mark.asyncio
     async def test_reconnect_overlap_delivers_only_to_latest_target(self):

@@ -123,6 +123,9 @@ class _DesktopPluginBase(ToolPlugin):
             "risk_level": self.risk_level,
             "permission_required": self.permission_required,
             "approval_authority": self.approval_authority,
+            "source_call_id": ctx.call_id,          # B-6-05：LLM tool_call_id 透传（D6-07）
+            "request_id": ctx.trace_id or None,     # B-6-05：请求追踪 ID（空串→None→wire 省略，
+                                                    # 防 requestId:""；真实 Agent 回合经 loop.py:355 填非空 trace_id）
         }
         return await bridge.request_and_wait(call=call)
 
