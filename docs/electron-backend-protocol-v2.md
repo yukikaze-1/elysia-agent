@@ -342,16 +342,17 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 Desktop 工具**不走 `tool_approval`**（approvalAuthority=client，Electron 自管本地授权），
 走 §10.2/§10.3 的 `tool.request`/`tool.status`。
 
-> **阶段 6 待实现（2026-08-19，方案 B 已定案，代码批未开始）：**
-> - `tool.request` 将新增**必填** `sourceCallId`（LLM tool_call_id，前端统一领域键），
->   `requestId` 由 `ctx.trace_id` 填充；桥登记/持久化 `source_call_id/request_id`；
-> - 新增 Server→Client `tool.started{callId(LLM tool_call_id), toolName,
->   runtime(backend|desktop|local_worker), inputSummary?, generationId?,
->   conversationId?}` 与 `tool.completed{callId, toolName, runtime, success,
->   outputSummary?, error?, errorType?, durationMs?, truncated?, generationId?,
->   conversationId?}`；v2 停发 `action{tool_executing/tool_done}`（v1 不变）；
-> - `generation.completed` 不加 `tool_calls`，`finishReason` 成功路径仍恒 `stop`。
-> 完整更新点与门禁见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（B-6-01~09）。
+### 10.7 阶段 6：工具展示帧与 sourceCallId（B-6，2026-08-19）
+
+- **`tool.request` 新增必填 `sourceCallId`**（LLM `tool_call_id`，前端统一领域键）；`requestId`
+  由 `ctx.trace_id` 填充；`runtime` 收敛为 `ToolRuntime`（backend|desktop|local_worker，wire 值不变）。
+- **新增 Server→Client v2 帧**：
+  - `tool.started{callId(LLM tool_call_id), toolName, runtime, inputSummary?, generationId?, conversationId?}`；
+  - `tool.completed{callId, toolName, runtime, success, outputSummary?(≤2000 字符截断), error?({code,message}),
+    errorType?, durationMs?, truncated?(outputSummary 超长截断), generationId?, conversationId?}`。
+- **v2 停发 `action{tool_executing/tool_done}`**（v1 保持 action 逐字节不变）；
+  Backend 工具 `tool.started/tool.completed` 为展示生命周期，后端只发不回环。
+- `generation.completed` 不扩展 `tool_calls`；`finishReason` 成功路径仍恒 `stop`。
 
 ---
 
