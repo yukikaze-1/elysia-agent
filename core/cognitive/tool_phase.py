@@ -122,9 +122,19 @@ class CognitiveToolPhase(CognitiveTools):
         self,
         submit_tcs: list[ToolCall],
         messages: list[dict],
+        conversation_id: SessionId | None = None,
     ) -> None:
         """submit_task 专用路径：执行、结果注入、后台任务 mailbox 注册。"""
         for tc in submit_tcs:
+            parsed = tc.function.parsed if isinstance(tc.function.parsed, dict) else {}
+            await self._output.tool_started(
+                call_id=tc.id, tool_name="submit_task", runtime="backend",
+                v1_args={}, input_summary=_safe_arg_summary(parsed),
+                v1_suppress=True,   # submit_task v1 从未发 tool_executing，帧集不变
+                generation_id=(self._generation_ctx.generation_id
+                               if self._generation_ctx is not None else None),
+                conversation_id=conversation_id,
+            )
             result = await self._handle_submit_task(tc)
             tc_id = tc.id
             messages.append({
@@ -132,16 +142,25 @@ class CognitiveToolPhase(CognitiveTools):
                 "tool_call_id": tc_id,
                 "content": result.llm_content,
             })
-            await self._output.action("tool_done", params={
-                "tool": "submit_task",
-                "call_id": tc_id,
-                "success": result.success,
-                "content": result.content or "",
-                "error": result.error,
-                "error_type": None,
-                "duration_ms": result.duration_ms,
-                "truncated": result.truncated,
-            })
+            error_type_str = result.error_type.value if result.error_type else None
+            output_summary, output_truncated = _truncate_output_summary(result.content)
+            await self._output.tool_completed(
+                call_id=tc_id, tool_name="submit_task", runtime="backend",
+                success=result.success,
+                v1_content=result.content or "",
+                output_summary=output_summary,
+                v1_truncated=result.truncated,
+                output_truncated=output_truncated,
+                error_v1=result.error,
+                error_v2=({"code": error_type_str or "TOOL_ERROR",
+                           "message": result.error or ""}
+                          if result.error else None),
+                error_type=error_type_str,
+                duration_ms=result.duration_ms,
+                generation_id=(self._generation_ctx.generation_id
+                               if self._generation_ctx is not None else None),
+                conversation_id=conversation_id,
+            )
             self._session.add_message(ToolResultMessage(
                 message_id=new_message_id(),
                 content=[TextPart(content=result.content or "")],
@@ -159,7 +178,8 @@ class CognitiveToolPhase(CognitiveTools):
                     dispatched_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
                     self._on_background_task(
                         result.async_task_id, mailbox, intent=(
-                            tc.function.parsed.get("intent", "")
+                            tc.function.parsed.get("intent", "") if isinstance(
+                                tc.function.parsed, dict) else ""
                         ), dispatched_at=dispatched_now,
                     )
 
@@ -262,8 +282,8 @@ class CognitiveToolPhase(CognitiveTools):
             return
 
         if submit_tcs:
-            # Task 4（B-6-04）改写 _run_submit_tasks 增加 conversation_id 后，此处透传
-            await self._run_submit_tasks(submit_tcs, messages)
+            # B-6-04：submit_task 专用路径透传会话 ID（两帧 conversationId 数据源）
+            await self._run_submit_tasks(submit_tcs, messages, conversation_id=conversation_id)
             dispatch_tcs = other_tcs
         else:
             dispatch_tcs = normalized
