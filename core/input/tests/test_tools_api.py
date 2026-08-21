@@ -300,10 +300,10 @@ class TestDesktopUpload:
         return d
 
     async def _post(self, client, call_id, *, connection, filename="shot.png",
-                    content_type="image/png"):
+                    content_type="image/png", body=None):
         """构造浏览器同款 multipart 并 POST。"""
         form = FormData()
-        form.add_field("file", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64,
+        form.add_field("file", body or (b"\x89PNG\r\n\x1a\n" + b"\x00" * 64),
                        filename=filename, content_type=content_type)
         return await client.post(
             f"/api/uploads/desktop/{call_id}",
@@ -329,6 +329,30 @@ class TestDesktopUpload:
             data = await resp.json()
             assert data["url"] == "/uploads/desktop/call_up_ok.png"
             assert (upload_dir / "call_up_ok.png").exists()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_upload_text_txt_accepted_for_desktop_read_attachment(
+            self, aiohttp_client, fresh_idempotency, upload_dir):
+        """desktop.file.read >64 KiB 附件回传：text/plain .txt 必须被接受并落盘。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            await _upsert(agent, _call_doc("call_up_txt", status="running",
+                                           connection="conn_up"))
+            resp = await self._post(client, "call_up_txt", connection="conn_up",
+                                    filename="large-read.txt",
+                                    content_type="text/plain",
+                                    body=b"hello text attachment")
+            assert resp.status == 200, (resp.status, await resp.text())
+            data = await resp.json()
+            assert data["url"] == "/uploads/desktop/call_up_txt.txt"
+            assert (upload_dir / "call_up_txt.txt").exists()
         finally:
             await agent.stop()
 

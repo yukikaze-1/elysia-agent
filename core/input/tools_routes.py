@@ -121,8 +121,9 @@ async def desktop_upload_handler(request: web.Request) -> web.Response:
     Electron 上传时携带；后端在 WS 握手时已把 conn_id 记到 bridge._connection_id
     并写入 call 的 target_connection（spec §4.2），本 handler 校验头 == target_connection。
 
-    类型/尺寸白名单：沿用 image_max_mb / image_allowed_types + application/octet-stream
-    （desktop.file.* 非截图结果）；仿 image_upload_handler 结构 read_chunk 限流反 DoS。
+    类型/尺寸白名单：沿用 image_max_mb / image_allowed_types，并放行
+    application/octet-stream / text/plain / application/json（desktop.file.read
+    >64 KiB 文本附件回传）；仿 image_upload_handler 结构 read_chunk 限流反 DoS。
     """
     from core.storage.desktop_call_repo import (
         STATUS_ACCEPTED, STATUS_OFFLINE, STATUS_PENDING, STATUS_RUNNING,
@@ -147,13 +148,16 @@ async def desktop_upload_handler(request: web.Request) -> web.Response:
     if (doc.get("status") or "") not in accepting:
         return _tool_error("INVALID_REQUEST", "调用已结束，拒绝接收附件", 403)
 
-    # 类型/尺寸约束（对齐 image_upload_handler）
+    # 类型/尺寸约束：图片（对齐 image_upload_handler）+ 桌面文本附件（desktop.file.read
+    # >64 KiB 走附件回传）+ 安全扩展的 octet-stream 兜底；危险活动内容扩展在下方显式拒绝。
     cfg = agent.config.server
     mb = cfg.image_max_mb
     max_bytes = (mb if mb is not None and mb > 0 else 10) * 1024 * 1024
     allowed = list(cfg.image_allowed_types
                    or ["image/png", "image/jpeg", "image/gif", "image/webp"])
     allowed.append("application/octet-stream")
+    allowed.append("text/plain")
+    allowed.append("application/json")
 
     try:
         reader = await request.multipart()
