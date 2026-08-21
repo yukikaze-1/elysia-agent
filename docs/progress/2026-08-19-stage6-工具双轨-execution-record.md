@@ -58,3 +58,11 @@
 - **前端 F-6 批**（elysia-frontend）：契约合并后 pull，跑 `check:contract`（WS 计数随新帧增长）；raw/领域批与后端 B-6-02~06 已可并行；D-§7-4（desktop.file.read 大结果路径）、D-§7-5（action 兼容帧保留/移除）在前端批定。
 - **阶段 6 真实联调**：后端运行版本含 `tool.started/completed` + `sourceCallId`；前端含 Main 工具服务；桌面四工具真机验证需 Windows Electron（决策记录 §6）。通过前阶段 6 只可标「已开发/自动化已验证」。
 - **遗留 Minor**（均 triage safe）：scheduler 空 `tc.id` 无 uuid 兜底（与 `_execute_tools_directly` 分歧，spec 合规）；failure-path 测试未断言 conversationId（happy path 已覆盖）；`error_type_str` 数据驱动 vs 旧硬编码 None（submit_task 恒 None 等价）；bridge `or ""` 缺键与真空串不可分；test_runtime_of 断言具体插件名 `get_time`。
+
+## 2026-08-21 更新：阶段 6 真实 Windows Electron 联调已通过
+
+- 前端 `2cf6de7`（含联调收口修复）+ 后端 `03a6e882`；真实 Windows Electron + 真实后端完成清单 §1–§7。
+- 后端侧关键观测：`tool.started/tool.completed` 真实后端 v2 冒烟（get_time）通过且 `action=0`；desktop `tool.request.sourceCallId` 非空闭环；四桌面工具 select/read/write/capture 真实回传 `succeeded/rejected/cancelled`；截图 `tool.status{result}` + `POST /api/uploads/desktop/{callId}` 附件归档恢复；`GET /api/tools/calls/{callId}` 状态查询与重连/超时语义实测。
+- 前端侧收口复验：`corsEnabled:false` 下截图归档图正常加载（1728×1080）；实时工具卡按会话隔离 A→B→A 正确隐藏/恢复；8.3 三项语音真实人声 PASS。
+- 可选项 1.5/2.8/4.5 DEFERRED；晚到成功不替换已归档 timeout 为独立后端语义待办（桥超时 120s，非 60s）。
+- 三态：**阶段 6 已真实联调**（前端验收见 elysia-frontend `docs/review/2026-08-21-阶段6-真实联调验收.md`）。
