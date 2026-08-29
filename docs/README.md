@@ -28,6 +28,12 @@
 | [review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md](review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md) | 二次联调 WS replay 身份修复报告：BE-INT2-P0-01/P1-01 关闭（D1-D4 + 真实 sanity + 门禁） |
 | [review/2026-08-19-阶段6-工具双轨统筹决策记录.md](review/2026-08-19-阶段6-工具双轨统筹决策记录.md) | 阶段 6 工具双轨统筹：方案 B 定案 + `tool.started/tool.completed`/`sourceCallId` 契约冻结 + B-6/F-6 更新点清单 |
 
+### Provider、模型协议与运行状态设计（2026-08-30）
+
+| 文档 | 内容 |
+|------|------|
+| [Provider、模型发现、协议适配与运行状态后端架构设计](2026-08-30-provider-model-runtime-backend-architecture-design.md) | ProviderConnection/ModelProfile 拆分、在线模型发现、Chat Completions/Responses Adapter、Secret 与 SSRF 边界、v1 迁移、运行状态接口及完整实施清单 |
+
 ### 架构与模块化评估
 
 | 文档 | 内容 |
