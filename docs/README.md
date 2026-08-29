@@ -28,6 +28,13 @@
 | [review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md](review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md) | 二次联调 WS replay 身份修复报告：BE-INT2-P0-01/P1-01 关闭（D1-D4 + 真实 sanity + 门禁） |
 | [review/2026-08-19-阶段6-工具双轨统筹决策记录.md](review/2026-08-19-阶段6-工具双轨统筹决策记录.md) | 阶段 6 工具双轨统筹：方案 B 定案 + `tool.started/tool.completed`/`sourceCallId` 契约冻结 + B-6/F-6 更新点清单 |
 
+### 架构与模块化评估
+
+| 文档 | 内容 |
+|------|------|
+| [review/2026-08-16-core模块化健康评估.md](review/2026-08-16-core模块化健康评估.md) | 第一轮 `core/` 模块化健康评估及 9 项已关闭问题：运行时依赖环、输入层职责、复杂度枢纽、测试与文档布局 |
+| [review/2026-08-30-后端架构分层与模块化增量评估.md](review/2026-08-30-后端架构分层与模块化增量评估.md) | 阶段 6 后的增量静态评估：即时工具调度语义收窄、应用用例边界、私有接口、WS/契约拆分、后台协程治理与数据库迁移机制 |
+
 ### 任务系统与任务中心设计（2026-08-29）
 
 | 文档 | 内容 |
