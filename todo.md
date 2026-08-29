@@ -2,6 +2,16 @@
 
 > **CI 配置**：WorkflowEngine 已用 `external` marker 取代 `--ignore`（F1）——unit/service 测试入 `test-quick`/`test-normal` 合并门禁，真实 LLM/DB 集成测试标 `external`、独立 `test-external` opt-in（`RUN_EXTERNAL_TESTS=1`）。`test-quick`/`test-normal` 不再跳过任何目录。
 
+## 决策记录
+
+> **任务中心（TaskSystem + TaskService）暂缓不做（2026-08-30）**：产品任务中心按当前决策继续暂缓。正式依据见
+> [`docs/2026-08-29-task-system-overall-architecture-design.md`](docs/2026-08-29-task-system-overall-architecture-design.md)
+> 与 [`docs/2026-08-29-task-system-backend-architecture-design.md`](docs/2026-08-29-task-system-backend-architecture-design.md)
+> （Task/TaskStep/ToolExecution 三实体目标架构 + 分批实施 A~E + 待决策 TSA-P01~P10/BE-D01~D13）。
+> `docs/2026-08-30-后端架构分层与模块化增量评估.md` 亦明确排除任务中心，聚焦收窄现有边界治理（即时工具调度语义收窄、应用用例边界、边界门禁、数据库迁移）。
+> 暂缓期内不把普通工具调用并入 WorkflowEngine，不创建产品 TaskRecord，不动现有 wire 契约，不实现任务中心 REST/WS API。
+> 恢复激励点：需要可查询/可控/可恢复展示的任务历史时，从批次 A（公共契约 + 持久读模型）启动。
+
 ## 已知 Bug
 
 | 优先级 | 问题 | 说明 |
