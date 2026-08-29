@@ -28,6 +28,13 @@
 | [review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md](review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md) | 二次联调 WS replay 身份修复报告：BE-INT2-P0-01/P1-01 关闭（D1-D4 + 真实 sanity + 门禁） |
 | [review/2026-08-19-阶段6-工具双轨统筹决策记录.md](review/2026-08-19-阶段6-工具双轨统筹决策记录.md) | 阶段 6 工具双轨统筹：方案 B 定案 + `tool.started/tool.completed`/`sourceCallId` 契约冻结 + B-6/F-6 更新点清单 |
 
+### 任务系统与任务中心设计（2026-08-29）
+
+| 文档 | 内容 |
+|------|------|
+| [任务系统与任务中心总体架构设计](2026-08-29-task-system-overall-architecture-design.md) | 前后端共同领域模型、Runtime 边界、公共契约、状态机、持久化、分批实施与待决策项；与 `elysia-frontend` 中同名文档保持镜像同步 |
+| [任务系统后端架构设计](2026-08-29-task-system-backend-architecture-design.md) | TaskService、WorkflowEngine、ToolExecutionCoordinator、正式 REST/WS API、Mongo 持久化和 Desktop Runtime 后端接入设计 |
+
 ## 子目录
 
 | 目录 | 内容 |
