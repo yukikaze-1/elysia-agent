@@ -34,6 +34,12 @@
 |------|------|
 | [Provider、模型发现、协议适配与运行状态后端架构设计](2026-08-30-provider-model-runtime-backend-architecture-design.md) | ProviderConnection/ModelProfile 拆分、在线模型发现、Chat Completions/Responses Adapter、Secret 与 SSRF 边界、v1 迁移、运行状态接口及完整实施清单 |
 
+### 多角色、角色 Prompt 与自定义角色设计（2026-08-30）
+
+| 文档 | 内容 |
+|------|------|
+| [多角色、角色 Prompt 与自定义角色后端架构设计](2026-08-30-character-prompt-customization-backend-architecture-design.md) | 现有十二段 Prompt/四层人格事实基线，Definition/Revision/Instance/UserIdentity 分层，角色状态与记忆隔离，REST/WS、存储、迁移、测试及分阶段实施门禁 |
+
 ### 架构与模块化评估
 
 | 文档 | 内容 |
