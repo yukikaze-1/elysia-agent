@@ -62,3 +62,26 @@ def mock_long_term() -> MagicMock:
 def mock_session() -> SessionMemory:
     """空会话（无 own_life、无 mood 覆盖）。"""
     return SessionMemory()
+
+
+# ---- 共享 helper（供泄漏测试 + 快照测试复用）----
+
+
+def make_assembler(cold_config, cold_engine_mock, mock_long_term, mock_session):
+    """构造用冷角色 + mock 引擎的 PromptAssembler。"""
+    from core.prompt.prompt_assembler import PromptAssembler
+    return PromptAssembler(
+        cold_config, mock_session, mock_long_term,
+        personality_engine=cold_engine_mock,
+    )
+
+
+async def render_system_prompt(assembler, user_message="今天天气不错。",
+                               user_name="用户", stt_emotion="", stt_events=None,
+                               tts_provider="minimax") -> str:
+    """渲染完整 12 段 system prompt。"""
+    return await assembler.build_system_prompt(
+        user_message=user_message, user_name=user_name,
+        stt_emotion=stt_emotion, stt_events=stt_events or [],
+        tts_provider=tts_provider,
+    )
