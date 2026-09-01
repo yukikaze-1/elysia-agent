@@ -38,7 +38,7 @@
 
 | 文档 | 内容 |
 |------|------|
-| [多角色、角色 Prompt 与自定义角色后端架构设计](2026-08-30-character-prompt-customization-backend-architecture-design.md) | 现有十二段 Prompt/四层人格事实基线，Definition/Revision/Instance/UserIdentity 分层，角色状态与记忆隔离，REST/WS、存储、迁移、测试及分阶段实施门禁 |
+| [多角色、角色 Prompt 与自定义角色后端架构设计](2026-08-30-character-prompt-customization-backend-architecture-design.md) | 现有十二段 Prompt/四层人格事实基线，Definition/Revision/Instance/UserIdentity 分层，角色状态与记忆隔离，`character-contract-v1` 前后端冻结契约，REST/WS、存储、迁移、测试及分阶段实施门禁 |
 
 ### 架构与模块化评估
 

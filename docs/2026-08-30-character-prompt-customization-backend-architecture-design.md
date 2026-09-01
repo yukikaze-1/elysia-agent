@@ -5,6 +5,7 @@
 > **文档状态：** 架构设计稿（目标设计，未实现）
 > **日期：** 2026-08-30
 > **事实基线：** `192.168.1.18:~/elysia-agent@a410a9dd2167d47fcc4678e6b4d3d68eafe419ad`
+> **前后端契约冻结：** `character-contract-v1`（2026-08-30；与前端《Cyrene 多角色、用户身份与自定义角色前端架构设计》对齐）
 > **权威范围：** 角色定义、自定义角色、角色 Prompt、四层人格状态、会话绑定、用户最小身份、角色记忆隔离、角色运行态与前端契约
 > **验证口径：** 本文基于后端代码与现有文档静态核对；目标接口、集合与类均不代表已经实现
 > **明确排除：** 任务中心继续暂缓；Neo4j 关系图谱暂不实现；本文不规定最终前端 UI 视觉稿
@@ -747,7 +748,7 @@ TurnCharacterContext
 | `statePolicy` | 行为 | 适用场景 |
 |---------------|------|----------|
 | `preserve` | 保留 L2/L3/L4/C6，再把 sourceRevision 更新到新版本 | 小幅措辞、外观、声音修改；默认 |
-| `reset_evolution` | 清空 L2/L3/C6/反思缓冲，mood 回到新角色 idle；保留会话与记忆 | 核心人格被重写 |
+| `reset_evolution` | 清空 L2、L3（含 history/awareness/compression 派生态）、动态 C6、reflector，mood 回到新角色 idle；保留会话、记忆与关系 | 核心人格被重写 |
 
 `reset_evolution` 是显式、可审计的破坏性操作，API 响应必须回显被重置的字段类别。首版不自动让 LLM“迁移人格状态”，避免不可验证改写。
 
@@ -759,7 +760,7 @@ Revision 生效规则必须确定：
 - `pinned` instance 保持原版本，不受 Definition 指针变化影响；
 - legacy session 迁移出的 instance 默认 pinned，防止首次上线时顺带改变旧会话人格；
 - 升级可以在保存事务内完成，也可以写入 `pending_revision/state_policy` 后由下一轮原子应用，但不能出现“Revision 已变、状态策略未执行且无人知道”的半完成状态；
-- API 响应返回新 revision、受影响 instance 数与 pending 数，便于前端和运维判断是否完全生效。
+- API 响应使用 §11.0 的 `CharacterMutationResult`，返回新角色详情、`affectedInstances` 与 `pendingInstances`。`affectedInstances` 是本次应升级的 `follow_latest` instance 总数，`pendingInstances` 是其中尚待下一轮原子应用的子集；`preserve` 时 `resetFields=[]`。
 
 ### 7.6 会话选角与切换规则
 
@@ -780,9 +781,9 @@ Revision 生效规则必须确定：
 {
   "characterId": "chr_builtin_elysia",
   "characterInstanceId": "chi_...",
-  "revision": 3,
+  "characterRevision": 3,
+  "stateVersion": 17,
   "mood": {"label": "平静", "intensity": 0.5, "updatedAt": "..."},
-  "currentActivity": null,
   "lastInteractionAt": "...",
   "proactiveEnabled": false,
   "updatedAt": "..."
@@ -795,6 +796,8 @@ Revision 生效规则必须确定：
 - 不从 mood 或 L3 猜一个“正在想你”之类的文案；
 - L2/L3、awareness 原文、reflector buffer 继续放在 debug API；
 - 前端若只需要 Live2D 表情，继续消费 `expression`；丰富状态使用独立 typed snapshot/event。
+- `characterRevision` 是角色内容版本，`stateVersion` 是演化状态 CAS/事件顺序；两者不得复用同一个 `revision` 字段；
+- REST 返回完整 `CharacterPublicState`；WS 的 `state` 字段返回完整公开视图，不发送 JSON Merge Patch。
 
 ---
 
@@ -1081,6 +1084,151 @@ update: $set state/... + $inc state_version
 
 所有 wire 类型先定义在 `frontend_contract/rest.py`，再生成 schema/TypeScript；路由不得手写漂移 dict。
 
+### 11.0 `character-contract-v1` 开工冻结契约
+
+本节是前后端开工时的精确 wire 口径。§11 其余小节解释业务语义；若示意文字与本节冲突，以本节和 `frontend_contract` 生成产物为准。实现完成后，Pydantic 模型、JSON Schema、生成 TS、golden frame 和前端 Main raw schema 必须同形。
+
+命名与包装规则：
+
+- 新角色 REST DTO 的业务字段使用 `camelCase`；分页沿用现有后端 wire 约定 `has_more + cursor`；
+- Main 将 raw `{items, has_more, cursor}` 映射为 Renderer 领域 `{items, hasMore, nextCursor}`，Renderer 不得直接依赖 snake_case；
+- 成功响应直接返回下表所列 typed object，不额外套 `{ok,data}`；
+- optional 字段未知时省略。角色 Revision 内可清空的受管引用继续使用显式 `null`；Main 统一映射为领域 `undefined`；
+- 时间为 UTC ISO-8601 字符串；cursor 为不透明字符串，客户端不得解析；
+- `UserIdentityProfile.revision`、`CharacterRevision.revision/currentRevision` 与 `CharacterPublicState.stateVersion` 都从 1 开始并为正整数；计数器和 `pendingInstances` 可为 0；
+- 所有错误复用 `ProtocolError`：`{code,message,retryable,requestId,error,details,retryAfterMs?}`，其中 `error === message` 仅为旧客户端兼容，`details` 只允许公开安全字段；
+- `CharacterStatePolicy` 唯一取值为 `preserve | reset_evolution`，前后端不得再使用缩写 `reset`。
+
+冻结的共享响应类型：
+
+```typescript
+interface CharacterListResponse {
+  items: CharacterSummary[]
+  has_more: boolean
+  cursor?: string
+}
+
+interface CharacterRevisionListResponse {
+  items: CharacterRevisionSummary[]
+  has_more: boolean
+  cursor?: string
+}
+
+interface CharacterBindingSnapshot {
+  characterId: string
+  characterInstanceId: string
+  characterRevision: number
+  displayName: string
+  presentation: CharacterPresentation
+}
+
+type ResetField =
+  | 'self_l2'
+  | 'state_l3'
+  | 'speaking_style_c6'
+  | 'reflector'
+  | 'mood'
+
+interface CharacterStateImpact {
+  statePolicy: 'preserve' | 'reset_evolution'
+  affectedInstances: number
+  pendingInstances: number
+  resetFields: ResetField[]
+}
+
+interface CharacterMutationResult {
+  character: CharacterDetail
+  stateImpact: CharacterStateImpact
+}
+
+interface CharacterArchiveResult {
+  character: CharacterSummary
+  userProfile?: UserIdentityProfile
+}
+
+interface CharacterPublicStateView {
+  mood?: { label: string; intensity: number; updatedAt: string }
+  currentActivity?: string
+  lastInteractionAt?: string
+  proactiveEnabled: boolean
+  updatedAt: string
+}
+
+interface CharacterPublicState extends CharacterPublicStateView {
+  characterId: string
+  characterInstanceId: string
+  characterRevision: number
+  stateVersion: number
+}
+
+interface ResetCharacterEvolutionResult {
+  state: CharacterPublicState
+  resetFields: ResetField[]
+}
+```
+
+冻结的请求/响应矩阵：
+
+| 方法与路径 | 请求 | 成功响应 |
+|---|---|---|
+| `GET /api/me` | 无 | `200 UserIdentityProfile` |
+| `PUT /api/me` | 完整最小身份字段 + `expectedRevision` | `200 UserIdentityProfile` |
+| `GET /api/characters` | query：`source/status/search/cursor/limit`；默认 `status=active` | `200 CharacterListResponse` |
+| `POST /api/characters` | 顶层完整 `CharacterDraft` | `201 CharacterDetail` |
+| `GET /api/characters/{id}` | 无 | `200 CharacterDetail{summary,current}` |
+| `PUT /api/characters/{id}` | 顶层 `expectedRevision/statePolicy` + 完整 `CharacterDraft` 字段 | `200 CharacterMutationResult` |
+| `DELETE /api/characters/{id}` | 无 | `200 CharacterArchiveResult` |
+| `POST /api/characters/{id}/clone` | `{displayName?: string}` | `201 CharacterDetail` |
+| `GET /api/characters/{id}/revisions` | query：`cursor/limit` | `200 CharacterRevisionListResponse` |
+| `POST /api/characters/{id}/rollback` | `{targetRevision,expectedRevision,statePolicy}` | `200 CharacterMutationResult` |
+| `POST /api/characters/validate` | 顶层完整 `CharacterDraft` | `200 CharacterValidationResult`，无效草稿也是 200 + `valid=false` |
+| `POST /api/characters/preview` | `{draft: CharacterDraft,userMessage: string}` | `200 CharacterPreviewResult` |
+| `GET /api/character-instances/{id}/state` | 无 | `200 CharacterPublicState` |
+| `POST /api/character-instances/{id}/reset-evolution` | `{expectedStateVersion: number}` | `200 ResetCharacterEvolutionResult` |
+
+`PUT` 的前端领域命令可以使用 `{characterId, expectedRevision, statePolicy, draft}`，但 Main mapper 必须把 `draft` 展平为上述 wire；后端不接收额外的 `draft` 包装层。`preview` 因同时含用户输入，明确保留 `draft` 包装层。
+
+校验与预览响应冻结为：
+
+```typescript
+interface CharacterValidationIssue {
+  severity: 'error' | 'warning'
+  code: string
+  path: string       // JSON Pointer，例如 /promptProfile/corePersonality
+  message: string
+}
+
+interface CharacterValidationResult {
+  valid: boolean
+  issues: CharacterValidationIssue[]
+  estimatedPromptChars?: number
+}
+
+interface CharacterPreviewResult {
+  ephemeral: true
+  reply: string
+  model?: string
+  usage?: { input?: number; output?: number; total?: number }
+}
+```
+
+保存接口收到无效内容时返回 400 `CHARACTER_VALIDATION`，`details.issues` 与 validate 的 issue 形状相同。Preview 由客户端 HTTP abort 取消；服务端在断连后 best-effort 取消上游，且无论取消是否及时都不得产生任何持久化副作用。
+
+归档默认角色时，后端在同一业务事务中把 `defaultCharacterId` 改为 bootstrap 内置角色并递增 profile revision，同时在 `CharacterArchiveResult.userProfile` 返回新档案；未改变默认角色时省略 `userProfile`。这避免前端持有指向 archived 角色的默认值。
+
+`reset_evolution` 的 V1 精确范围为：清空 L2 self；清空 L3 当前态、history、awareness/compression 派生态；清空动态 C6；清空 reflector buffer/context/history；mood 回到当前 Revision 的 idle。它原子递增一次 `stateVersion` 并返回新 public state。它不删除/重写 session、message archive、LTM、relationship、UserIdentity、角色 Revision、会话 service/voice 设置或受管资产；instance 正在生成/反思且无法安全取得锁时返回 409 `CHARACTER_BUSY`，不得强行中断。
+
+#### 11.0.1 跨仓机器契约交付
+
+冻结文档不是机器契约替代品。后端契约子批完成时必须先交付：
+
+1. `frontend_contract` Pydantic 源；
+2. 重新生成的 `contract.schema.json` 与 `contract.raw.ts`；
+3. 扩展后的 `scripts/gen_contract_frames.py` golden：至少有 `rest-character.jsonl` 与 `ws-v2-character.jsonl`，覆盖 §11～§12 的成功、冲突和 identity 帧；
+4. 一份 handoff manifest，记录 `character-contract-v1`、backend commit、transport/protocol version、schemaHash、生成命令和 `verified` 状态。
+
+先运行 `make gen-types && make check-types`，再把以上产物交给 Electron。`contract.raw.ts` 是前端镜像/审查依据，不直接代替 Electron Main 的 strict Zod runtime schema。前端 fixture manifest 必须记录同一 backend commit/schemaHash；真实联调前保持 `verified=false`，不能把生成样例伪装成实抓 trace。
+
 ### 11.1 用户身份
 
 | 方法 | 路径 | 作用 |
@@ -1089,6 +1237,10 @@ update: $set state/... + $inc state_version
 | PUT | `/api/me` | 完整更新最小身份，带 expectedRevision |
 
 `PUT /api/me` 成功后只影响下一轮。displayName 改变不会重写历史消息或长期记忆文本。
+
+bootstrap profile 的 revision 为 1；每次成功 PUT，以及归档默认角色导致的原子 fallback，revision 恰好递增 1。冲突返回 `USER_PROFILE_REVISION_CONFLICT` 与 `details.currentRevision`。
+
+`PUT /api/me` 是完整最小身份替换，不是 PATCH：请求不得带 `userId/revision/initialized/createdAt/updatedAt`；首次成功 PUT 由后端把 `initialized` 设为 true，之后不能通过此接口改回 false。省略 `preferredAddress/pronouns` 表示清空；省略 `defaultCharacterId` 表示使用 bootstrap 内置角色。前端必须以 GET 结果为基线提交完整表单，不能把“字段未加载”误当作清空。
 
 ### 11.2 角色列表与详情
 
@@ -1127,7 +1279,7 @@ Preview 强约束：
 | 方法 | 路径 | 作用 |
 |------|------|------|
 | GET | `/api/character-instances/{instanceId}/state` | 产品态 CharacterPublicState |
-| POST | `/api/character-instances/{instanceId}/reset-evolution` | 显式重置 L2/L3/C6/反思状态 |
+| POST | `/api/character-instances/{instanceId}/reset-evolution` | 按 §11.0 显式重置演化状态并返回 resetFields + 新公开状态 |
 
 普通前端不需要直接创建 instance；`POST /api/sessions` 负责取得 canonical instance。未来需要多时间线时再开放 instance create/clone。
 
@@ -1142,6 +1294,10 @@ Preview 强约束：
 }
 ```
 
+协议层允许 `characterId` 省略，以便非交互客户端使用 `UserIdentityProfile.defaultCharacterId`；Electron 在 `character_profiles=true` 时必须经过默认值/选择器解析并显式发送。无论请求是否省略，成功响应都必须返回 canonical `character` binding。
+
+为保持现有会话 API 兼容，创建成功继续返回 `200 SessionSummary`，不改为 201；`GET /api/sessions` 的每个非 legacy summary 和 `GET /api/sessions/{id}` 内的 summary 使用同一 binding 形状。
+
 `SessionSummary` 增加：
 
 ```json
@@ -1150,13 +1306,13 @@ Preview 强约束：
     "characterId": "chr_builtin_cyrene",
     "characterInstanceId": "chi_...",
     "displayName": "Cyrene",
-    "revision": 1,
+    "characterRevision": 1,
     "presentation": {}
   }
 }
 ```
 
-迁移期该字段可 optional；`character_profiles` feature 为 true 后，新创建/已迁移会话必须返回。
+迁移期该字段可 optional；`character_profiles` feature 为 true 后，新创建/已迁移会话必须返回。该形状也作为 assistant `SessionMessageItem.character` 的审计快照；历史消息使用实际生成时的 revision，不随 Definition 当前版本变化。
 
 ### 11.6 角色创建/更新请求示意
 
@@ -1197,8 +1353,9 @@ POST 不传 `expectedRevision`；PUT 必传并与 currentRevision 一致，否�
 
 | 场景 | HTTP |
 |------|------|
-| 创建成功 | 201 |
-| 查询/更新/克隆/归档成功 | 200 |
+| 角色创建/克隆成功 | 201 |
+| 会话创建成功（保持现有兼容） | 200 |
+| 查询/更新/归档/回滚成功 | 200 |
 | 请求结构或角色内容不合法 | 400 |
 | 未认证 | 401 |
 | 无权访问其他 owner 数据 | 403 或按项目防枚举策略返回 404 |
@@ -1223,9 +1380,11 @@ character_state_stream: bool = false
 
 只有当 REST、session binding、runtime isolation、memory scope 和生成契约均完成后，才可将 `character_profiles=true`。状态事件未实现前 `character_state_stream=false`。
 
+安全放量时，false 状态可以省略这两个新 key；Electron 对缺失严格映射为 false。配置未开启时，运行时继续发送 legacy 帧，不提前夹带角色字段或新事件；新增 DTO/字段先只存在于 schema/golden 中供离线对拍。
+
 ### 12.2 Session replay
 
-`SessionMessage` 增加 optional `character` 摘要，与 REST SessionSummary 同形。连接或 `activate_session` 回放后，前端无需从名字猜当前角色。
+`SessionMessageItem` 增加 optional `character: CharacterBindingSnapshot`。assistant item 必须保存并回放实际 generation 的角色快照；user/tool item 可以省略。连接或 `activate_session` 回放后，前端无需从名字猜当前角色。
 
 ### 12.3 Generation identity
 
@@ -1248,6 +1407,8 @@ character_state_stream: bool = false
 
 前端据此拒绝把迟到的旧角色 delta/expression 应用到新活动角色视图。
 
+契约模型在放量期保持 optional；当 `character_profiles=true` 时，`generation.started/completed/failed` 三种终端路径都必须带齐并互相一致。segment/delta 无需重复字段，客户端通过 `generationId` 表解析身份。缺失或不一致属于服务端契约错误，不得回退到“当前活动角色”。
+
 ### 12.4 Character state event
 
 新增服务端事件：
@@ -1258,26 +1419,30 @@ character_state_stream: bool = false
   "conversationId": "conv_...",
   "characterId": "chr_...",
   "characterInstanceId": "chi_...",
-  "revision": 3,
+  "characterRevision": 3,
+  "stateVersion": 17,
   "state": {
     "mood": {"label": "开心", "intensity": 0.72, "updatedAt": "..."},
-    "currentActivity": null,
-    "lastInteractionAt": "..."
+    "lastInteractionAt": "...",
+    "proactiveEnabled": false,
+    "updatedAt": "..."
   }
 }
 ```
 
-事件只包含产品态字段。WS 新连接/会话激活时先发 snapshot；之后仅在实际状态变化时发增量快照，避免每秒轮询。
+事件只包含产品态字段。`state` 是完整 `CharacterPublicStateView`，不是 patch；未知 optional 字段省略。WS 新连接/会话激活时先发 snapshot，之后仅在实际状态变化时发新的完整公开视图，避免每秒轮询。客户端只按同一 instance 内严格递增的 `stateVersion` 应用事件，不能用时间字符串替代顺序判断。
 
-### 12.5 Expression 兼容
+### 12.5 Expression 与 Live2D directive
 
-现有 `expression` 保留，新增 optional：
+现有 `expression` 和 `live2d.directive` 保留，新增 optional：
 
 - `conversationId`；
+- `generationId`（存在 generation 时）；
 - `characterId`；
-- `characterInstanceId`。
+- `characterInstanceId`；
+- `characterRevision`。
 
-兼容期旧客户端忽略新字段。新客户端必须先检查身份再驱动 Live2D。未来协议大版本可将身份字段设为 required。
+兼容期契约字段 optional，旧客户端忽略新字段。`character_profiles=true` 后，服务端必须提供 `conversationId + characterId + characterInstanceId + characterRevision`，新客户端先检查身份再驱动 Live2D；若只有 `generationId`，Main 可从 generation identity 补齐，但两类身份都缺失时必须丢弃，不能作用于当前角色。
 
 ### 12.6 角色配置变更事件
 
@@ -1292,6 +1457,37 @@ character.catalog.changed
 ```
 
 该事件不携带完整 authored Prompt，客户端收到后重新 GET 详情。
+
+### 12.7 TTS 音频身份
+
+现有 `audio_start` 保留 `stream_id/format/sampleRate/durationMs`，增加：
+
+```json
+{
+  "type": "audio_start",
+  "stream_id": 42,
+  "format": "wav",
+  "conversationId": "conv_...",
+  "generationId": "gen_...",
+  "characterId": "chr_...",
+  "characterInstanceId": "chi_...",
+  "characterRevision": 3
+}
+```
+
+`generationId` 对非 generation 音频可省略，其余四个身份字段在 `character_profiles=true` 后必填。chunk/end/cancel 继续用 `stream_id` 关联，不重复角色字段；Main 必须从 `audio_start` 建立 stream identity，并让组装后的 ready/cancel 领域事件保留全部身份。没有通过会话与 instance 守卫的迟到音频不得自动播放，也不得驱动口型。REST TTS preview 不属于聊天 generation，不写角色状态。
+
+### 12.8 严格 schema 放量与事件顺序
+
+放量顺序固定为：
+
+1. 前端先发布能接收所有新增 optional 字段/事件的 raw schema 和 mapper，但 UI 能力仍关闭；
+2. 后端 contract/golden 产物加入新增字段，feature 仍为 false；运行时仍省略角色 additive 字段和新事件；
+3. 双端对拍 Session、generation、state、expression/directive、audio 帧；
+4. Prompt/runtime/memory 隔离门禁通过后才置 `character_profiles=true`；
+5. state snapshot/重连路径通过后才置 `character_state_stream=true`。
+
+后端不得向仍使用 strict 旧 schema 的客户端提前发送未知事件。V1 通过“feature 默认关闭且关闭时不序列化新字段”实现部署隔离；若同一后端将来必须同时服务旧、新客户端，需另立 schema/transport capability 协商设计，在此之前不得开启 feature，也不能假设旧客户端会忽略字段。
 
 ---
 
@@ -1357,6 +1553,22 @@ character.catalog.changed
 ## 14. 稳定错误码
 
 在现有错误目录中增加：
+
+角色 REST 失败统一返回现有 `ProtocolError` wire，禁止路由自行返回字符串或任意 dict：
+
+```json
+{
+  "code": "CHARACTER_REVISION_CONFLICT",
+  "message": "角色已被其他操作更新，请刷新后重试",
+  "retryable": true,
+  "requestId": "req_...",
+  "error": "角色已被其他操作更新，请刷新后重试",
+  "details": {"currentRevision": 4},
+  "retryAfterMs": 1000
+}
+```
+
+`retryAfterMs` 仅在后端能给出可靠退避值时出现；409 并不自动等于可安全重放，前端仍须根据 `code` 处理。校验错误可以在 `details.issues` 携带 §11.0 的公开 issue；任何详情都不得包含 Prompt 正文、用户自由文本、路径、traceback 或上游响应体。
 
 | 错误码 | retryable | 典型 HTTP | 含义 |
 |--------|-----------|-----------|------|
@@ -1610,6 +1822,23 @@ Module/system_prompt/
 - Windows Electron 真机联调；
 - feature flag 最后开启。
 
+### 17.1 前后端并行开工与依赖门
+
+为避免前端等待整个后端完成，把阶段 C 的“纯契约”拆成 **BE-C0 契约子批**，但不改变 A→H 的产品放量顺序：
+
+| 可并行工作 | 允许开始 | 合并/退出门禁 |
+|---|---|---|
+| BE-A/BE-B Prompt 基线与去专属化 | 立即 | 泄漏测试和 Elysia 回归通过 |
+| BE-C0 `frontend_contract` DTO/事件/golden | 立即，feature 恒 false | §11.0.1 handoff bundle + `make check-types` |
+| FE-A raw/domain schema、mapper、旧兼容 | 立即按冻结文档搭骨架 | 必须消费 BE-C0 同一 commit/schemaHash 后才退出 |
+| BE-C + FE-B/FE-C | BE-C0 稳定后 | UserIdentity + 两个内置角色只读链路 |
+| BE-D + FE-D | BE-C 退出后 | CRUD/版本/冲突/Preview；仍不能进入真实聊天 |
+| BE-E/BE-F + FE-E | 对应前置完成后 | 会话/runtime/memory 全隔离；profiles 仍 false |
+| BE-G + FE-F | BE-F 退出后 | state/Live2D/TTS identity 竞态通过 |
+| BE-H + FE-G | 全部功能门禁通过后 | 迁移、真机联调，最后开启 feature |
+
+前端可以先写本地领域类型、Mock 和 UI 骨架，但不得自行把文档示意当成已发布机器契约；后端也不得因前端已写 UI 就提前置 feature=true。
+
 ---
 
 ## 18. 测试策略
@@ -1681,8 +1910,12 @@ Module/system_prompt/
 
 - Pydantic → schema → TS 生成无 drift；
 - 新字段迁移期 optional，feature 开启后服务端真实填充；
+- `CharacterStatePolicy` 只接受 `preserve/reset_evolution`；绑定、generation 和 public state 只使用 `characterRevision`；
+- character list/revision list 锁定 `{items,has_more,cursor?}`，Main mapper fixture 锁定 `{items,hasMore,nextCursor?}`；
+- create/clone、update/rollback、archive、validate/preview、reset 的响应分别锁定为 §11.0 的不同 DTO，禁止通用任意 dict；
 - `ServerMessage` 判别联合包含新事件；
-- 旧客户端忽略 additive 字段；
+- generation 三终态、state、expression/directive、audio_start 的 identity golden frame 齐全；
+- strict 旧客户端在能力协商下不接收未知字段；新前端能接收 feature=false 时的 optional additive 字段；
 - 错误码、HTTP 和 WS error envelope 一致；
 - 不在 schema 中暴露 Prompt 全文、内部路径或 L2/L3 debug 数据。
 
