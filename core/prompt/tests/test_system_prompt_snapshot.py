@@ -39,8 +39,8 @@ async def test_snapshot_matches_current(cold_config, cold_engine_mock, mock_long
 
 
 @pytest.mark.asyncio
-async def test_12_section_order(cold_config, cold_engine_mock, mock_long_term, mock_session):
-    """结果按 _RENDER_ORDER 顺序出现（只含确定渲染的 section）。
+async def test_12_section_order(elysia_config, cold_engine_mock, mock_long_term, mock_session):
+    """结果按 _RENDER_ORDER 顺序出现（Elysia C6 非空，12 段顺序含 speaking_style）。
 
     注意：C9 self_perception（awareness_text 空）与 C8 own_life（session 空）
     在本配置下渲染为空，<self_perception>/<own_life> 标签不出现；
@@ -48,7 +48,7 @@ async def test_12_section_order(cold_config, cold_engine_mock, mock_long_term, m
     标签：conflict_rules→output_format→tts_markup→relationship→proactive→
     speaking_style→personality→emotion→sensory_input（Memory/C8/C9 略去）。
     """
-    rendered = await render_system_prompt(make_assembler(cold_config, cold_engine_mock, mock_long_term, mock_session))
+    rendered = await render_system_prompt(make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session))
     ordered_tags = [
         "conflict_rules", "output_format", "tts_markup", "relationship",
         "proactive", "speaking_style", "personality",
@@ -62,12 +62,12 @@ async def test_12_section_order(cold_config, cold_engine_mock, mock_long_term, m
 
 
 @pytest.mark.asyncio
-async def test_frame_wrappers_present(cold_config, cold_engine_mock, mock_long_term, mock_session):
-    """关键 XML wrapper 标签都在（仅限确定渲染的 section）。
+async def test_frame_wrappers_present(elysia_config, cold_engine_mock, mock_long_term, mock_session):
+    """关键 XML wrapper 标签都在（Elysia C6 非空，speaking_style wrapper 在）。
 
     不做 memory_bank/self_perception/own_life 断言——本配置下它们不渲染。
     """
-    rendered = await render_system_prompt(make_assembler(cold_config, cold_engine_mock, mock_long_term, mock_session))
+    rendered = await render_system_prompt(make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session))
     for tag in ["conflict_rules", "output_format", "tts_markup", "relationship",
                 "proactive", "speaking_style", "personality", "emotion",
                 "sensory_input"]:

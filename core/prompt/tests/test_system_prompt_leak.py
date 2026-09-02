@@ -11,7 +11,7 @@
 import pytest
 
 from core.prompt.tests.conftest import (  # noqa: F401
-    cold_config, cold_engine_mock, make_assembler, mock_long_term,
+    cold_config, cold_engine_mock, elysia_config, make_assembler, mock_long_term,
     mock_session, render_system_prompt,
 )
 from core.prompt.tests.scenarios import SCENARIOS
@@ -28,16 +28,16 @@ async def test_leak_tone_marker(cold_config, cold_engine_mock, mock_long_term, m
 
 
 @pytest.mark.asyncio
-async def test_leak_speaking_mode_structure(cold_config, cold_engine_mock, mock_long_term, mock_session):
-    """C6 泄漏五模式切换。"""
-    rendered = await render_system_prompt(make_assembler(cold_config, cold_engine_mock, mock_long_term, mock_session))
+async def test_leak_speaking_mode_structure(elysia_config, cold_engine_mock, mock_long_term, mock_session):
+    """C6 泄漏五模式切换（Elysia 专属——冷角色 C6 消失后不裂）。"""
+    rendered = await render_system_prompt(make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session))
     assert "五模式切换" in rendered
 
 
 @pytest.mark.asyncio
-async def test_leak_fixed_persona(cold_config, cold_engine_mock, mock_long_term, mock_session):
+async def test_leak_fixed_persona(elysia_config, cold_engine_mock, mock_long_term, mock_session):
     """C6 泄漏固定人设（明快/可爱的女孩子）。"""
-    rendered = await render_system_prompt(make_assembler(cold_config, cold_engine_mock, mock_long_term, mock_session))
+    rendered = await render_system_prompt(make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session))
     assert "明快" in rendered
     assert "可爱的女孩子" in rendered
 

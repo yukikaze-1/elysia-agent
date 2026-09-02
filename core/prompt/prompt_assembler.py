@@ -83,7 +83,7 @@ class PromptAssembler:
             self._memory_section,
             self._personality_section,
             RelationshipSection(f"{_SECTION}/c2_relationship.j2", character.name),
-            SpeakingStyleSection(f"{_SECTION}/c6_speaking_style.j2"),
+            SpeakingStyleSection(f"{_SECTION}/c6_speaking_style.j2", speaking_style=character.speaking_style),
             ProactiveSection(f"{_SECTION}/c7_proactive.j2"),
             self._own_life_section,
             self._self_perception_section,
