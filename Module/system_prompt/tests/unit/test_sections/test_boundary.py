@@ -249,6 +249,22 @@ def test_speaking_style_bare_construct_renders():
     assert "五模式切换" in result   # 旧模板 else 分支内容（Task 1 未改模板）
 
 
+def test_c6_way_b_renders_l1_default():
+    """方式 B：speaking_style=_C6_L1_DEFAULT 渲染 L1 默认（裸构造）。"""
+    sec = SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2")   # 裸构造 → 回退常量
+    result = asyncio.run(sec.render())
+    assert "五模式切换" in result
+    assert "明快" in result
+
+
+def test_c6_way_b_speaking_style_empty_disappears():
+    """方式 B：speaking_style="" 且 speaking_style_c6="" → C6 段真消失。"""
+    sec = SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2", speaking_style="")
+    sec.set_context(user_name="", speaking_style_c6="")
+    result = asyncio.run(sec.render())
+    assert result == ""
+
+
 class TestOutputFormatSection:
     def test_renders_protocol(self):
         """F2 inner_voice 协议正常渲染。"""
