@@ -6,6 +6,7 @@
 夹具，辅助 Prompt 泄漏测试需各自定义本地夹具（见 Task 3/4）。
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from core.config.character_config import CharacterConfig
 from core.memory.session import SessionMemory
 from core.personality.engine import C1Data, C6Data, C9Data
+from Module.system_prompt.sections.speaking_style import _C6_L1_DEFAULT
 
 
 # ReservedColdCharacter 的基准人格文本——不含任何 Elysia 词汇
@@ -65,6 +67,19 @@ def mock_session() -> SessionMemory:
 
 
 # ---- 共享 helper（供泄漏测试 + 快照测试复用）----
+
+
+@pytest.fixture
+def elysia_config() -> CharacterConfig:
+    """构造 Elysia 正角色 CharacterConfig（speaking_style 复用 _C6_L1_DEFAULT）。"""
+    return CharacterConfig(
+        name="Elysia",
+        user_pronoun="她",
+        base_personality=Path("character/elysia/personality.md").read_text("utf-8").strip(),
+        personality={
+            "speaking_style": _C6_L1_DEFAULT,
+        },
+    )
 
 
 def make_assembler(cold_config, cold_engine_mock, mock_long_term, mock_session):

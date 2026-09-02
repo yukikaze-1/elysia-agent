@@ -11,13 +11,14 @@ from pathlib import Path
 import pytest
 
 from core.prompt.tests.conftest import (  # noqa: F401
-    cold_config, cold_engine_mock, make_assembler, mock_long_term,
-    mock_session, render_system_prompt,
+    cold_config, cold_engine_mock, elysia_config, make_assembler,
+    mock_long_term, mock_session, render_system_prompt,
 )
 
 pytestmark = pytest.mark.service
 
 _FIXTURE = Path(__file__).with_name("fixtures") / "system_prompt_snapshot_e793a782.txt"
+_ELYSIA_FIXTURE = Path(__file__).with_name("fixtures") / "system_prompt_snapshot_elysia_cf4bc008.txt"
 
 
 def normalize_snapshot(text: str) -> str:
@@ -71,3 +72,13 @@ async def test_frame_wrappers_present(cold_config, cold_engine_mock, mock_long_t
                 "proactive", "speaking_style", "personality", "emotion",
                 "sensory_input"]:
         assert tag in rendered
+
+
+@pytest.mark.asyncio
+async def test_elysia_snapshot_unchanged(elysia_config, cold_engine_mock, mock_long_term, mock_session):
+    """Elysia 专属快照：现网 Elysia 渲染结果 byte-for-byte 不变。"""
+    rendered = await render_system_prompt(
+        make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session)
+    )
+    expected = _ELYSIA_FIXTURE.read_text(encoding="utf-8")
+    assert normalize_snapshot(rendered) == normalize_snapshot(expected)
