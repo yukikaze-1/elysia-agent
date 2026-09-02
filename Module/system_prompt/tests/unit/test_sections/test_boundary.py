@@ -13,7 +13,7 @@ from Module.system_prompt.sections.personality import PersonalitySection
 from Module.system_prompt.sections.relationship import RelationshipSection
 from Module.system_prompt.sections.proactive import ProactiveSection
 from Module.system_prompt.sections.conflict_rules import ConflictRulesSection
-from Module.system_prompt.sections.speaking_style import SpeakingStyleSection
+from Module.system_prompt.sections.speaking_style import SpeakingStyleSection, _C6_L1_DEFAULT
 from Module.system_prompt.sections.output_format import OutputFormatSection
 from Module.system_prompt.sections.tts_markup import TTSMarkupSection
 from core.memory.session import SessionMemory
@@ -233,6 +233,20 @@ class TestSpeakingStyleSectionDynamic:
         result = asyncio.run(sec.render())
         assert "自定义说话风格文本" in result
         assert "五模式切换" not in result     # 不使用 L1 默认
+
+
+def test_speaking_style_accepts_param():
+    """构造器接受 speaking_style 参数（签名验证，不测私有属性）。"""
+    sec = SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2", speaking_style="x")
+    result = asyncio.run(sec.render())   # 构造 + render 不抛错即可（旧模板忽略该变量）
+    assert isinstance(result, str)
+
+
+def test_speaking_style_bare_construct_renders():
+    """裸构造（不传 speaking_style）仍可渲染（旧模板忽略变量，走 else）。"""
+    sec = SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2")
+    result = asyncio.run(sec.render())
+    assert "五模式切换" in result   # 旧模板 else 分支内容（Task 1 未改模板）
 
 
 class TestOutputFormatSection:
