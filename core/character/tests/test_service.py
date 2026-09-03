@@ -85,6 +85,60 @@ class TestCharacterService:
             await svc.update(cid, _draft(displayName="v3"), expected_revision=1)
 
     @pytest.mark.asyncio
+    async def test_rollback_preserves_description_and_aliases(self):
+        """C2 修复：rollback 复制旧版本为新 revision 必须透传 description/aliases。"""
+        svc = _make_service()
+        await svc.repo.connect()
+        await svc.rev_repo.connect()
+        d = _draft(description="角色描述", aliases=["别名A", "别名B"])
+        detail = await svc.create(d, owner_user_id="usr_local_default")
+        cid = detail.summary.characterId
+        # 更新到 rev 2（改 displayName），再 rollback 到 rev 1
+        await svc.update(cid, _draft(displayName="v2"), expected_revision=1)
+        result = await svc.rollback(cid, target_revision=1, expected_revision=2)
+        rolled = await svc.get(cid)
+        assert rolled is not None
+        assert rolled.current.description == "角色描述"   # 透传
+        assert rolled.current.aliases == ["别名A", "别名B"]  # 透传
+
+    @pytest.mark.asyncio
+    async def test_lazy_connect_on_first_op(self):
+        """B1 修复：create_app 同步不能 await——服务首次操作应懒连 repo。
+
+        用带 connect 计数的 repo 替身，验证 _ensure_connected 在首次 repo 操作前触发 connect()。
+        """
+        from unittest.mock import AsyncMock, MagicMock
+        from core.character.revision import CharacterRevision
+
+        class _ConnectTrackingRepo:
+            def __init__(self):
+                self.connect_called = 0
+                self.connected = False
+            async def connect(self):
+                self.connect_called += 1
+                self.connected = True
+                return True
+            async def list_definitions(self, **kw):
+                assert self.connected, "首次操作前未 connect（B1 回归）"
+                return []
+
+        class _ConnectTrackingRevRepo:
+            def __init__(self):
+                self.connect_called = 0
+                self.connected = False
+            async def connect(self):
+                self.connect_called += 1
+                self.connected = True
+                return True
+
+        repo = _ConnectTrackingRepo()
+        rev_repo = _ConnectTrackingRevRepo()
+        svc = CharacterService(repo=repo, rev_repo=rev_repo,
+                               catalog=None, user_identity_store=UserIdentityStore())
+        await svc.list(source="custom")  # 仅走 custom 分支，不触 catalog
+        assert repo.connect_called == 1 and rev_repo.connect_called == 1
+
+    @pytest.mark.asyncio
     async def test_archive_builtin_immutable(self):
         svc = _make_service()
         # builtin elysia 不可归档

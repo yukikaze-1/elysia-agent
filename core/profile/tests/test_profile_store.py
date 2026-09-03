@@ -47,3 +47,24 @@ def test_update_if_revision_conflict():
     store.bootstrap("妖梦")
     result = store.update_if_revision(99, {"displayName": "x"})  # 过期 revision
     assert result is None
+
+
+def test_update_if_revision_unknown_field_skipped():
+    """C3 修复：未知/非白名单字段跳过（而非 setattr 抛 ValueError → 500）。"""
+    store = UserIdentityStore(storage_path=None)
+    store.bootstrap("妖梦")
+    result = store.update_if_revision(1, {"displayName": "妖梦2", "bogus_field": 123})
+    assert result is not None
+    assert result.displayName == "妖梦2"   # 合法字段已应用
+    assert result.revision == 2            # touch 正常
+    assert not hasattr(result, "bogus_field")  # 未知字段未写入
+
+
+def test_update_if_revision_readonly_fields_skipped():
+    """userId/revision/createdAt/updatedAt 只读——更新时跳过。"""
+    store = UserIdentityStore(storage_path=None)
+    store.bootstrap("妖梦")
+    result = store.update_if_revision(1, {"userId": "usr_hacked", "revision": 999})
+    assert result is not None
+    assert result.userId == "usr_local_default"  # 未篡改
+    assert result.revision == 2                   # 只 touch 递增，未被 999 覆盖

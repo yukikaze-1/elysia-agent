@@ -65,6 +65,22 @@ class CharacterService:
         self.rev_repo = rev_repo
         self.catalog = catalog
         self.user_identity_store = user_identity_store
+        self._connected = False
+
+    async def _ensure_connected(self) -> None:
+        """懒连接 repo（B1 修复：create_app 是同步函数不能 await，首次操作时建连）。
+
+        对齐 `_lifecycle_persistence._start_persistence` 对 message/token/version 等 repo
+        的 connect() 语义：建真实 Mongo + ensure_index；失败抛 StorageUnavailableError
+        （fail-closed → 503），不静默降级。注入 fake 的 connect() 短接返回 True 保留测试行为。
+        """
+        if self._connected:
+            return
+        if not await self.repo.connect():
+            raise CharacterStorageUnavailableError("CharacterRepository 连接失败")
+        if not await self.rev_repo.connect():
+            raise CharacterStorageUnavailableError("CharacterRevisionRepository 连接失败")
+        self._connected = True
 
     async def validate(self, draft: CharacterDraft) -> CharacterValidationResult:
         """纯校验（无副作用）；供 POST /api/characters/validate 复用。"""
@@ -73,7 +89,9 @@ class CharacterService:
         profile = draft.promptProfile
         for field, text in (("corePersonality", profile.corePersonality),
                             ("relationshipStyle", profile.relationshipStyle),
-                            ("speakingStyle", profile.speakingStyle)):
+                            ("speakingStyle", profile.speakingStyle),
+                            ("emotionStyle", profile.emotionStyle),
+                            ("conversationInitiative", profile.conversationInitiative)):
             for iss in _semantic_issues(text, f"/promptProfile/{field}"):
                 issues.append(iss)
         valid = not any(i.severity == "error" for i in issues)
@@ -81,6 +99,7 @@ class CharacterService:
 
     async def create(self, draft: CharacterDraft, *, owner_user_id: str,
                      created_by: str = "user") -> CharacterDetail:
+        await self._ensure_connected()
         err = await self._raise_on_validation(draft)
         if err:
             raise err
@@ -99,6 +118,7 @@ class CharacterService:
         return _detail(defn, rev)
 
     async def get(self, character_id: str) -> CharacterDetail | None:
+        await self._ensure_connected()
         pair = await self._get_definition_and_revision(character_id)
         if pair is None:
             return None
@@ -108,6 +128,7 @@ class CharacterService:
     async def list(self, *, source: str | None = None, status: str = "active",
                    search: str | None = None, cursor: str | None = None,
                    limit: int = 50) -> CharacterListResponse:
+        await self._ensure_connected()
         # 自定义：Definition 无 displayName——需读 current Revision 解析 displayName 做摘要。
         # builtin：catalog.list() 返回内置 Definition；displayName 从 BuiltinCharacterSource.load 的 revision 取。
         custom = await self.repo.list_definitions(source=source, status=status,
@@ -121,14 +142,17 @@ class CharacterService:
             for d in self.catalog.list():
                 if d.status == status:
                     try:
-                        _, rev, _ = self.catalog._source.load(d.slug)  # noqa: SLF001 内置定义 displayName 从 revision 取
-                        items.append(_summary(d, display_name=rev.displayName))
+                        # A5 修复：用 catalog 公开的 get_revision()，不摸私有 _source。
+                        pair = self.catalog.get_revision(d.characterId)
+                        rev = pair[1] if pair else None
+                        items.append(_summary(d, display_name=rev.displayName if rev else d.slug))
                     except Exception:
                         items.append(_summary(d, display_name=d.slug))
         return CharacterListResponse(items=items, has_more=False)
 
     async def update(self, character_id: str, draft: CharacterDraft, *,
                      expected_revision: int, state_policy: str = "preserve") -> CharacterMutationResult:
+        await self._ensure_connected()
         err = await self._raise_on_validation(draft)
         if err:
             raise err
@@ -181,6 +205,7 @@ class CharacterService:
         return await self.create(new_draft, owner_user_id="usr_local_default")
 
     async def archive(self, character_id: str) -> CharacterArchiveResult:
+        await self._ensure_connected()
         defn = await self._get_definition(character_id)
         if defn is None:
             raise CharacterNotFoundError(character_id)
@@ -192,17 +217,26 @@ class CharacterService:
 
     async def rollback(self, character_id: str, *, target_revision: int,
                        expected_revision: int, state_policy: str = "preserve") -> CharacterMutationResult:
+        await self._ensure_connected()
         old = await self.rev_repo.get_revision(character_id, target_revision)
         if old is None:
             raise CharacterNotFoundError(character_id)
         new_rev = await self.rev_repo.max_revision(character_id) + 1
+        # C2 修复：rollback 复制旧版本为新 revision——必须透传 description/aliases/
+        # schemaVersion/compilerVersion，否则回滚丢失这些字段（数据丢失 + 版本元数据错误）。
         content = CharacterRevision(characterId=character_id, revision=new_rev,
+                                    schemaVersion=old.schemaVersion,
                                     displayName=old.displayName,
+                                    description=old.description,
+                                    aliases=old.aliases,
                                     promptProfile=old.promptProfile,
                                     runtimeDefaults=old.runtimeDefaults,
                                     presentation=old.presentation,
                                     openingMessage=old.openingMessage,
-                                    checksum=old.checksum, createdBy="user")
+                                    checksum=old.checksum,
+                                    compilerVersion=old.compilerVersion,
+                                    createdBy="user")
+        # Revision-first：先 append 新 revision（durable），再 CAS 指针
         await self.rev_repo.append_revision(content)
         ok = await self.repo.cas_revision_pointer(character_id, expected_revision, new_rev,
                                                    updated_at=now_iso())

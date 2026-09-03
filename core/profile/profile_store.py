@@ -57,16 +57,25 @@ class UserIdentityStore:
         defaultCharacterId/initialized；不接收 userId/revision/createdAt/updatedAt。
         冲突返回 None（调用方抛 USER_PROFILE_REVISION_CONFLICT）；成功返回新 UserIdentity。
         单进程下用内存锁 + revision 比对实现原子 CAS（JSONL 单文件）。
+
+        C3 fix：对非白名单/未知字段**跳过**而非 setattr——直接 setattr 一个 UserIdentity
+        不存在的字段会抛 ValueError（pydantic strict）→ 500；正确行为是忽略未知输入
+        （前端可能带多余字段），不阻断合法更新。
         """
         cur = self.get()
         if cur is None:
             return None
         if cur.revision != expected_revision:
             return None
+        # 白名单：仅 UserIdentity 可更新字段；userId/revision/createdAt/updatedAt 只读
+        _UPDATABLE = (
+            "displayName", "preferredAddress", "pronouns", "locale",
+            "timezone", "defaultCharacterId", "initialized",
+        )
         new = cur.model_copy(deep=True)
         for k, v in updates.items():
-            if k in ("userId", "revision", "createdAt", "updatedAt"):
-                continue
+            if k not in _UPDATABLE:
+                continue  # C3：未知/只读字段跳过，不 setattr（避免 pydantic ValueError → 500）
             if k == "initialized":
                 v = True  # 只能置 true，不能改回 false
             setattr(new, k, v)
