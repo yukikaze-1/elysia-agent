@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Plan 状态：** reviewed（终审通过，B1-B9 全部修复，无 blocking/correctness 级遗留）
+> **Plan 状态：** 完成（Final Review PASS ×2 轮，Acceptance ACCEPTED。B1-B9 全修复 + Final Review 4 项 B1/C2/C3/A5 修复 + 回归测试）
 
 **Goal:** 把「用户可自定义角色」从只读内置提升到「Mongo 持久化 + CRUD + 版本 append-only + expectedRevision/CAS 并发控制 + 双层校验」，通过 REST `/api/me`、`/api/characters*` 暴露——但 `character_profiles=false` 恒抑制，custom 不参与真实聊天。
 
