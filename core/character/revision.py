@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from core.schema.utils import now_iso
 
 REVISION_PROMPT_PROFILE_KEYS = ("corePersonality", "relationshipStyle", "emotionStyle",
-                              "speakingStyle", "conversationInitiative")
+                              "speakingStyle", "conversationInitiative", "examples")
 
 
 class CharacterRevision(BaseModel):
