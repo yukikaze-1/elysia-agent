@@ -4,6 +4,8 @@
   1. state_history 新增 >= COMPRESSION_COUNT_THRESHOLD 条
   2. 距上次压缩 > COMPRESSION_TIME_THRESHOLD 秒
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
@@ -17,6 +19,7 @@ from paths import ProjectPath
 
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
+    from core.config.character_config import CharacterConfig
     from core.schema.character import CharacterState, StateHistoryEntry
     from core.storage.character_version_repo import CharacterVersionRepository
     from Module.system_prompt import PromptManager
@@ -45,7 +48,7 @@ class CompressionManager:
         l1_core: str,
         pm: "PromptManager | None",
         version_repo: "CharacterVersionRepository | None",
-        character_config: object,  # CharacterConfig — 拿 emotion.idle_expressions
+        character_config: CharacterConfig,  # CharacterConfig — 拿 emotion.idle_expressions / speaking_style
     ):
         """初始化压缩管理器。
 
@@ -265,8 +268,12 @@ class CompressionManager:
         if not current:
             # 首次：渲染 L1 默认模板获取基准文本
             try:
-                from Module.system_prompt.sections.speaking_style import SpeakingStyleSection
-                sec = SpeakingStyleSection(str(ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve() / "c6_speaking_style.j2"))
+                from Module.system_prompt.sections.speaking_style import SpeakingStyleSection, _C6_L1_DEFAULT
+                speaking_style = self._character.speaking_style or _C6_L1_DEFAULT
+                sec = SpeakingStyleSection(
+                    str(ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve() / "c6_speaking_style.j2"),
+                    speaking_style=speaking_style,
+                )
                 sec.set_context(user_name="")
                 current = await sec.render()
             except Exception:

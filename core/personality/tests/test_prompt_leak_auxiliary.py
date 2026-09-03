@@ -43,7 +43,7 @@ def test_character_reflector_leak_pronoun():
 
 
 def test_speaking_style_edit_leak_forced_structure():
-    """SpeakingStyleEdit 强制保留 Elysia 五模式结构。"""
+    """SpeakingStyleEdit 不再强制保留 Elysia 五模式结构（Task 6 去 Elysia 化）。"""
     pm = _pm()
     result = pm.render(
         "SpeakingStyleEdit.j2",
@@ -51,12 +51,12 @@ def test_speaking_style_edit_leak_forced_structure():
         self_l2="我说话冷静、正式、克制。",
         current_speaking_style="你说话冷静、正式、克制。",
     )
-    assert "五模式切换" in result
-    assert "♪" in result
+    assert "五模式切换" not in result
+    assert "♪" not in result
 
 
 def test_speaking_style_edit_leak_immutable_color():
-    """SpeakingStyleEdit 强制「明快、柔和、自信、亲昵」不可变底色。"""
+    """SpeakingStyleEdit 不再强制「明快、柔和、自信、亲昵」不可变底色（Task 6 去 Elysia 化）。"""
     pm = _pm()
     result = pm.render(
         "SpeakingStyleEdit.j2",
@@ -64,4 +64,4 @@ def test_speaking_style_edit_leak_immutable_color():
         self_l2="我说话冷静、正式、克制。",
         current_speaking_style="你说话冷静、正式、克制。",
     )
-    assert "明快、柔和、自信、亲昵" in result
+    assert "明快、柔和、自信、亲昵" not in result
