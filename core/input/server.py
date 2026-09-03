@@ -29,7 +29,6 @@ from core.input.tools_routes import register_tools_routes
 from core.input.chat_routes import register_chat_routes
 from core.input.attachment_routes import register_attachment_routes
 from core.input.session_routes import register_session_routes
-from core.input.character_routes import register_character_routes
 from core.input.debug_routes import register_debug_routes
 from core.input.errors import _protocol_error_response
 from core.input.health import health_handler, ready_handler
@@ -278,7 +277,36 @@ def create_app(
     register_chat_routes(app)
     register_attachment_routes(app)
     register_session_routes(app)
+
+    # ---- 阶段 D Custom Character 装配（插在 register_session_routes 之后、register_debug_routes 之前）----
+    # 注意：create_app 是同步函数（def，非 async def）——不能 await。repo 连接是惰性的：
+    # connect() 由首次 CRUD 操作的 fail-closed 路径触发（未连接即抛 StorageUnavailableError → 503）。
+    from core.character.service import CharacterService
+    from core.profile.profile_store import UserIdentityStore
+    from core.storage.character_repo import CharacterRepository
+    from core.storage.character_revision_repo import CharacterRevisionRepository
+    from core.character.catalog import CharacterCatalog
+    from core.character.builtin_source import BuiltinCharacterSource
+    from core.input.character_routes import register_character_routes
+
+    # 复用 agent 已建的用户身份存储（agent._user_identity_store）——
+    # 不能用新的 UserIdentityStore()（会让 /api/me 更新与 cognitive loop 渲染用的 store 脱节，
+    # 用户改别名/代词后实际聊天不生效）。server 装配层允许 # noqa: SLF001 访私有（同 loop.configure 的用法）。
+    app["user_identity_store"] = getattr(agent, "_user_identity_store", None) or UserIdentityStore()
+    if app["user_identity_store"].get() is None:
+        agent_config = getattr(agent, "config", None)
+        app["user_identity"] = app["user_identity_store"].bootstrap(
+            (agent_config.agent.user_name if agent_config and getattr(agent_config, "agent", None)
+             else "用户"))
+    # CharacterService：repo 无 db 参数时 connect 建真实 Mongo（首次操作 fail-closed）；
+    # 与 idempotency_repo 一样在 create_app 注入。
+    app["character_service"] = CharacterService(
+        repo=CharacterRepository(), rev_repo=CharacterRevisionRepository(),
+        catalog=CharacterCatalog(source=BuiltinCharacterSource()),
+        user_identity_store=getattr(agent, "_user_identity_store", None) or UserIdentityStore(),
+    )
     register_character_routes(app, _check_auth)
+
     register_debug_routes(app, _check_auth)
 
     _IMAGES_DIR = ProjectPath.DATA_UPLOADS_IMAGES.resolve()

@@ -103,6 +103,85 @@ async def _characters_validate(request: web.Request) -> web.Response:
     return web.json_response(result.wire_dict(), status=200)
 
 
+async def _characters_get(request: web.Request) -> web.Response:
+    cid = request.match_info["id"]
+    svc = _service(request.app)
+    try:
+        detail = await svc.get(cid)
+    except Exception as e:
+        err = _character_error_response(e)
+        return err if err else _protocol_error_response("INTERNAL_ERROR", "内部错误", 500)
+    if detail is None:
+        return _protocol_error_response("CHARACTER_NOT_FOUND", "角色不存在", 404)
+    return web.json_response(detail.wire_dict(), status=200)
+
+
+async def _characters_update(request: web.Request) -> web.Response:
+    cid = request.match_info["id"]
+    body = await request.json()
+    svc = _service(request.app)
+    try:
+        draft = _draft_from_body(body)
+        result = await svc.update(cid, draft, expected_revision=int(body.get("expectedRevision", 1)))
+        return web.json_response(result.wire_dict(), status=200)
+    except ValidationError as e:
+        return _protocol_error_response("CHARACTER_VALIDATION", "角色内容校验失败", 400)
+    except Exception as e:
+        err = _character_error_response(e)
+        return err if err else _protocol_error_response("INTERNAL_ERROR", "内部错误", 500)
+
+
+async def _characters_delete(request: web.Request) -> web.Response:
+    cid = request.match_info["id"]
+    svc = _service(request.app)
+    try:
+        result = await svc.archive(cid)
+        return web.json_response(result.wire_dict(), status=200)
+    except Exception as e:
+        err = _character_error_response(e)
+        return err if err else _protocol_error_response("INTERNAL_ERROR", "内部错误", 500)
+
+
+async def _characters_clone(request: web.Request) -> web.Response:
+    cid = request.match_info["id"]
+    body = await request.json() or {}
+    svc = _service(request.app)
+    try:
+        detail = await svc.clone(cid, display_name=body.get("displayName"))
+        return web.json_response(detail.wire_dict(), status=201)
+    except Exception as e:
+        err = _character_error_response(e)
+        return err if err else _protocol_error_response("INTERNAL_ERROR", "内部错误", 500)
+
+
+async def _characters_revisions(request: web.Request) -> web.Response:
+    cid = request.match_info["id"]
+    svc = _service(request.app)
+    try:
+        revs = await svc.rev_repo.list_revisions(cid, limit=int(request.query.get("limit", 50)))
+        from frontend_contract.rest import CharacterRevisionListResponse, CharacterRevisionSummary
+        items = [CharacterRevisionSummary(characterId=r.characterId, revision=r.revision,
+                                          displayName=r.displayName, createdAt=r.createdAt,
+                                          createdBy=r.createdBy) for r in revs]
+        return web.json_response(CharacterRevisionListResponse(items=items).wire_dict(), status=200)
+    except Exception as e:
+        err = _character_error_response(e)
+        return err if err else _protocol_error_response("INTERNAL_ERROR", "内部错误", 500)
+
+
+async def _characters_rollback(request: web.Request) -> web.Response:
+    cid = request.match_info["id"]
+    body = await request.json()
+    svc = _service(request.app)
+    try:
+        result = await svc.rollback(cid, target_revision=int(body["targetRevision"]),
+                                    expected_revision=int(body.get("expectedRevision", 1)))
+        return web.json_response(result.wire_dict(), status=200)
+    except Exception as e:
+        err = _character_error_response(e)
+        return err if err else _protocol_error_response("INTERNAL_ERROR", "内部错误", 500)
+
+
 def register_character_routes(app: web.Application, check_auth: Callable | None = None) -> None:
     """注册角色/身份 REST 路由（对齐 server.py 既有 register_xxx_routes 模式）。"""
     app.router.add_get("/api/me", _me_get)
@@ -110,4 +189,11 @@ def register_character_routes(app: web.Application, check_auth: Callable | None 
     app.router.add_get("/api/characters", _characters_list)
     app.router.add_post("/api/characters", _characters_create)
     app.router.add_post("/api/characters/validate", _characters_validate)
-    # 其余 {id} 路由在 Task 7 补齐（GET/PUT/DELETE/clone/revisions/rollback）
+    # {id} 路由必须在 validate 之后注册（aiohttp 按注册顺序匹配，/api/characters/validate
+    # 会被 /api/characters/{id} 的 GET 遮蔽）；Task 7 补齐 GET/PUT/DELETE/clone/revisions/rollback
+    app.router.add_get("/api/characters/{id}", _characters_get)
+    app.router.add_put("/api/characters/{id}", _characters_update)
+    app.router.add_delete("/api/characters/{id}", _characters_delete)
+    app.router.add_post("/api/characters/{id}/clone", _characters_clone)
+    app.router.add_get("/api/characters/{id}/revisions", _characters_revisions)
+    app.router.add_post("/api/characters/{id}/rollback", _characters_rollback)
