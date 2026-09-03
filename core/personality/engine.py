@@ -83,6 +83,8 @@ class CharacterEngine:
         output: OutputManager,
         prompt_dir: str | None = None,
         version_repo: "CharacterVersionRepository | None" = None,
+        instance_id: str | None = None,
+        character_revision: int = 1,
     ):
         """初始化角色引擎。
 
@@ -96,8 +98,12 @@ class CharacterEngine:
             output: 输出管理器。
             prompt_dir: prompt 模板目录路径，None 时使用默认路径。
             version_repo: 角色版本仓库，用于 L2/C6 版本历史持久化。
+            instance_id: 角色实例标识（M1/M2 仅记录标记，不绑定 CharacterRuntime）。
+            character_revision: 角色版本号（M1/M2 仅记录标记）。
         """
         self._llm = llm
+        self._instance_id = instance_id
+        self._character_revision = character_revision
         self.state = state
         self._character_name = character_name
         self._user_name = user_name
@@ -339,10 +345,13 @@ class CharacterEngine:
             self.state.reflector_context = list(self._reflector._context)
 
     def attach_session(self, session: "SessionMemory") -> None:
-        """会话切换时重绑 state 视图到新会话的 character_state。
+        """会话切换时重绑 state 视图（M1/M2 阶段）。
 
-        批次 3 (multi-session): session switching 时把 engine 的 state 视图切到新会话，
-        使每会话的 character_state 隔离生效。重绑:
+        本批（M1/M2）保留为 state 视图换绑 shim——batch-3 多会话 state 隔离依赖它。
+        角色身份（instance_id/character_revision）由构造时绑定，attach_session 不再代表
+        角色身份切换。完整删除并改由多 instance engine 替代，是 M3 语义。
+
+        具体重绑:
           - self.state 与三个子组件（compression/emotion/awareness）的 _state
           - session._pre_save_hook = sync_reflector_to_state
           - _last_awareness_time（新会话的 awareness 冷却计时，经 property 代理到

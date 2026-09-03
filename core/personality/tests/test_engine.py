@@ -69,6 +69,29 @@ class TestCharacterEngineInit:
         engine = _make_engine()
         assert engine.render_c1().self_personality == ""
 
+    def test_engine_instance_identity(self):
+        """构造可传 instance_id/character_revision 身份标记（M1/M2 仅记录，不绑定 runtime）。"""
+        s = CharacterState(session_id=SessionId("test-sid"))
+        m = MagicMock()
+        m.think = AsyncMock(return_value=ThoughtResult(text=""))
+        o = MagicMock()
+        o.expression = MagicMock(return_value=MagicMock())
+        from core.config import CharacterConfig
+        char = CharacterConfig(name="Elysia")
+        engine = CharacterEngine(
+            llm=m,
+            state=s,
+            character_name="Elysia",
+            user_name="妖梦",
+            base_personality="你是 Elysia。温柔底色。",
+            character_config=char,
+            output=o,
+            instance_id="chi_builtin_elysia",
+            character_revision=1,
+        )
+        assert engine._instance_id == "chi_builtin_elysia"
+        assert engine._character_revision == 1
+
 
 @pytest.mark.unit
 class TestCharacterEngineC9:
