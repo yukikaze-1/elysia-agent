@@ -52,6 +52,8 @@ class UserIdentityStore:
     # ---- 持久化 ----
 
     def _load_from_file(self) -> UserIdentity | None:
+        if self._storage_path is None:
+            return None
         try:
             data = json.loads(self._storage_path.read_text("utf-8"))
             return UserIdentity.model_validate(data)
