@@ -556,3 +556,50 @@ class StickerListResponse(ContractModel):
     """表情列表响应（GET /api/stickers）。"""
 
     stickers: list[StickerEntry] = Field(description="内置表情列表")
+
+
+# ─────────────── 阶段 C+E 多角色 Profile（Task 9；本批仅契约建模，wire 由 build_server_info flag 抑制） ───────────────
+
+
+class UserIdentityProfile(ContractModel):
+    """用户最小身份（阶段 C+E；GET /api/me / PUT /api/me）。"""
+
+    userId: str = Field(default="usr_local_default", description="用户 ID（本地默认单用户）")
+    displayName: str = Field(default="", description="展示名")
+    preferredAddress: Optional[str] = Field(
+        default=None, description="用户希望被称呼的方式（可缺省）")
+    pronouns: str = Field(default="她", description="代词（称呼第三人称）")
+    locale: str = Field(default="zh-CN", description="语言区域")
+    timezone: str = Field(default="Asia/Shanghai", description="时区")
+    initialized: bool = Field(default=False, description="是否已完成初始化引导")
+    defaultCharacterId: Optional[str] = Field(
+        default=None, description="默认角色 ID（可缺省）")
+    revision: int = Field(default=1, description="版本号（乐观并发）")
+
+
+class CharacterSummary(ContractModel):
+    """内置角色摘要（阶段 C+E，角色列表）。"""
+
+    characterId: str = Field(description="角色 ID")
+    displayName: str = Field(description="展示名")
+    source: str = Field(default="builtin", description="角色来源")
+    status: str = Field(default="active", description="角色状态")
+
+
+class CharacterInstanceSummary(ContractModel):
+    """角色实例摘要（阶段 C+E，会话绑定展示）。"""
+
+    instanceId: str = Field(description="实例 ID")
+    characterId: str = Field(description="角色 ID")
+    revision: int = Field(default=1, description="角色修订号")
+    stateVersion: int = Field(default=1, description="实例状态版本")
+
+
+class CharacterPublicState(ContractModel):
+    """角色产品态（阶段 C+E/general，feature flag 开启后走 wire）。"""
+
+    characterId: str = Field(description="角色 ID")
+    instanceId: str = Field(description="实例 ID")
+    characterRevision: int = Field(default=1, description="角色修订号")
+    mood: str = Field(default="平静", description="当前心情")
+    stateVersion: int = Field(default=1, description="实例状态版本")

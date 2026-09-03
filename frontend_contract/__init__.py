@@ -84,6 +84,10 @@ from frontend_contract.rest import (  # noqa: F401
     DesktopCallStatus,
     ToolMetadata,
     ToolRegistryResponse,
+    UserIdentityProfile,
+    CharacterSummary,
+    CharacterInstanceSummary,
+    CharacterPublicState,
 )
 from frontend_contract.ws_message import (  # noqa: F401
     ActionMessage,
@@ -311,6 +315,11 @@ __all__ = [
     "AttachmentSignResponse",
     "StickerEntry",
     "StickerListResponse",
+    # 阶段 C+E 多角色 Profile（rest.py）
+    "UserIdentityProfile",
+    "CharacterSummary",
+    "CharacterInstanceSummary",
+    "CharacterPublicState",
     # Debug API 契约（debug.py）
     "DebugData",
     "DebugContentPart",

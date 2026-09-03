@@ -272,6 +272,7 @@ class ServerInfoFeatures(ContractModel):
     voice_realtime: bool = Field(default=False, description="实时语音会话（批次 6）")
     media_upload: bool = Field(default=False, description="附件上传（批次 7，POST /api/uploads）")
     idempotency_durable: bool = Field(default=False, description="幂等 claim 跨重启持久化（D6c，true=durable / false=内存降级非 durable 窗口）")
+    character_profiles: bool = Field(default=False, description="多角色 Profile（阶段 C+E；本批次恒 false，架构稿决策 #12）")
 
 
 class ServerInfoMessage(ContractModel):
