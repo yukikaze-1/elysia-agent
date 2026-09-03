@@ -28,6 +28,7 @@ from core.schema.types import MessageId, RequestId, SessionId
 from core.cognitive.generation import GenerationContext
 from core.cognitive.generation_registry import GenerationRegistry
 from core.cognitive.timing import TimingClock
+from core.cognitive.turn_context import TurnCharacterContext
 
 from Module.output import OutputManager
 from Module.tts import TTSBackend
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
     from core.personality.engine import CharacterEngine
+    from core.profile.profile_store import UserIdentityStore
     from core.adapter.tool_adapter import ToolAdapter
     from core.memory.memory_reflector import MemoryReflector
 
@@ -211,6 +213,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._delegation_preparer: DelegationPreparer | None = None  # 由 configure() 注入
         self._on_background_task: Callable | None = None  # Agent 注入的回调
         self._user_profile: UserProfile | None = None         # 由 configure() 注入
+        self._user_identity_store: "UserIdentityStore | None" = None  # 由 configure() 注入（Task 7 B1）
+        self._turn_context: TurnCharacterContext | None = None  # Task 7：本回合冻结的角色/用户上下文
         self._clock: TimingClock | None = None # 当前轮次的计时器（process() 设置，finally 清除）
         self._phase: TurnPhase | None = None   # 当前轮次处理阶段（供 debug 面板）
         self._phases = None  # CognitivePhaseController（由 agent.py 注入，或懒加载）
@@ -312,6 +316,15 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             if name == "tts":
                 self._tts_mgr.set_backend(value)
 
+    def _resolve_pronouns(self) -> str:
+        """读 UserIdentity.pronouns（B1 全局唯一「她」）。无 store 时兜底「她」。"""
+        store = getattr(self, "_user_identity_store", None)
+        if store is not None:
+            identity = store.get()
+            if identity is not None and identity.pronouns:
+                return identity.pronouns
+        return "她"
+
     # ---- Main entry ----
 
     async def _prepare_turn(
@@ -340,6 +353,26 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             self._character_engine.attach_session(target)
         self._session = target
         self._prompt.set_session(target)
+        # Task 7（B1 闭环）：attach_session 之后冻结本回合角色/用户上下文，并传给 prompt。
+        # characterInstanceId 取 engine._instance_id（agent 注入恒 chi_builtin_*）；本批不读
+        # session.character_binding 解析 instance（M1/M2 单例 engine + 标记，inert，可接受）。
+        self._turn_context = TurnCharacterContext(
+            conversationId=gen_conversation_id,
+            characterInstanceId=(
+                (self._character_engine._instance_id or "chi_default")  # noqa: SLF001
+                if self._character_engine is not None else "chi_default"
+            ),
+            characterId=(
+                self._character_engine._character.name.lower()  # noqa: SLF001
+                if self._character_engine is not None else "agent"
+            ),
+            characterRevision=(
+                self._character_engine._character_revision  # noqa: SLF001
+                if self._character_engine is not None else 1
+            ),
+            userPronoun=self._resolve_pronouns(),
+        )
+        self._prompt._turn_context = self._turn_context
         if self._tool_adapter is not None:
             svc = self._tool_adapter.tool_context.services
             svc["session"] = target

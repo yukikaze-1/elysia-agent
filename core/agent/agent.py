@@ -83,6 +83,7 @@ from core.memory.memory_reflector import MemoryReflector
 from core.storage.character_version_repo import CharacterVersionRepository
 from core.schema.types import IsoTimestamp, MessageId, SessionId
 from core.schema.character import CharacterState
+from core.profile.profile_store import UserIdentityStore
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
@@ -114,6 +115,10 @@ class Agent(AgentLifecycle, AgentServer):
         self._config = config
         self._config_path = config_path
         self._user_name = config.agent.user_name
+        # Task 7（B1）：用户身份存储——启动用 config.agent.user_name 建 bootstrap profile，
+        # 供 _prepare_turn 读 pronouns（全局唯一「她」）。Mongo profile 就绪后为权威。
+        self._user_identity_store = UserIdentityStore()
+        self._user_identity = self._user_identity_store.bootstrap(user_name=self._user_name)
 
         # ---- L0: Infrastructure (from Module/) ----
         self._output = OutputManager()
@@ -207,6 +212,10 @@ class Agent(AgentLifecycle, AgentServer):
             character_config=self._character,
             output=self._output,
             version_repo=self._version_repo,
+            # Task 7（B1）：engine 构造传 instance 身份（恒 chi_builtin_<name>/rev=1；
+            # M1/M2 仅记录标记，不绑定 CharacterRuntime）
+            instance_id="chi_builtin_" + self._character.name.lower(),
+            character_revision=1,
         )
         # bind 时对 active(default) 调 attach_session：绑定 state 视图 + 设 pre_save_hook
         self._session_manager.bind_character_engine(self._character_engine)
@@ -272,6 +281,8 @@ class Agent(AgentLifecycle, AgentServer):
         )
         self._cognitive.configure(
             memory_reflector=self._memory_reflector,
+            # Task 7（B1）：把用户身份存储传给 loop——_prepare_turn 读 store.pronouns 得 userPronoun
+            user_identity_store=self._user_identity_store,
             # _after_response 是独立 task，主 process 返回后仍会保存 SessionMemory；
             # 给它单独一份引用，避免删除后晚到 save upsert 复活幽灵会话。
             session_work_reserver=lambda sid: self._session_manager.reserve_work(sid, 2),

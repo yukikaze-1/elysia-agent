@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.personality.engine import CharacterEngine
+    from core.cognitive.turn_context import TurnCharacterContext
 
 from core.prompt.message_builder import MessageBuilder
 from Module.system_prompt.system_prompt_manager import SystemPromptManager
@@ -60,6 +61,8 @@ class PromptAssembler:
         self._session = session
         self._long_term = long_term
         self._personality_engine = personality_engine
+        # Task 7（B1）：_prepare_turn 冻结的回合上下文（含 userPronoun），由 loop 注入
+        self._turn_context: TurnCharacterContext | None = None
 
         self._personality_section = PersonalitySection(
             f"{_SECTION}/c1_personality.j2",
