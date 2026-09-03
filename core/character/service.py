@@ -9,6 +9,7 @@ from core.character.definition import CharacterDefinition
 from core.character.draft import CharacterDraft, Presentation, PromptProfile, RuntimeDefaults
 from core.character.revision import CharacterRevision
 from core.profile.profile_store import UserIdentityStore
+from core.storage.base import StorageUnavailableError
 from core.storage.character_repo import CharacterRepository
 from core.storage.character_revision_repo import CharacterRevisionRepository
 from core.schema.utils import now_iso
@@ -25,7 +26,10 @@ class CharacterImmutableError(CharacterError): ...
 class CharacterArchivedError(CharacterError): ...
 class CharacterValidationError(CharacterError): ...
 class RevisionConflictError(CharacterError): ...
-class CharacterStorageUnavailableError(CharacterError): ...
+# 继承 StorageUnavailableError（而非仅 CharacterError）——使 _character_error_response 的
+# isinstance(exc, StorageUnavailableError) 分支能映射 connect 失败 → 503（不变式 #7）。
+# 若仅继承 CharacterError，connect 失败会落到 500 INTERNAL_ERROR，违反 fail-closed。
+class CharacterStorageUnavailableError(StorageUnavailableError): ...
 
 
 def _summary(defn: CharacterDefinition, display_name: str | None = None) -> CharacterSummary:

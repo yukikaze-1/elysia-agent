@@ -6,7 +6,7 @@
 from core.input.character_routes import _character_error_response
 from core.character.service import (
     CharacterNotFoundError, CharacterImmutableError, CharacterArchivedError,
-    CharacterValidationError, RevisionConflictError,
+    CharacterValidationError, RevisionConflictError, CharacterStorageUnavailableError,
 )
 from core.storage.base import StorageUnavailableError
 
@@ -33,6 +33,14 @@ def test_validation_maps_to_400():
 
 def test_storage_unavailable_maps_to_503():
     r = _character_error_response(StorageUnavailableError("x"))
+    assert r is not None and r.status == 503
+
+
+def test_character_storage_unavailable_maps_to_503():
+    """不变式 #7 回归：connect 失败抛 CharacterStorageUnavailableError（继承
+    StorageUnavailableError）→ 503，而非 500。B1 修复曾使其落 500。"""
+    assert issubclass(CharacterStorageUnavailableError, StorageUnavailableError)
+    r = _character_error_response(CharacterStorageUnavailableError("x"))
     assert r is not None and r.status == 503
 
 
