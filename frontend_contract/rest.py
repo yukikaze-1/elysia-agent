@@ -603,3 +603,88 @@ class CharacterPublicState(ContractModel):
     characterRevision: int = Field(default=1, description="角色修订号")
     mood: str = Field(default="平静", description="当前心情")
     stateVersion: int = Field(default=1, description="实例状态版本")
+
+
+# ─────────────── Stage D 自定义角色持久化契约 DTO（Task 4A） ───────────────
+
+
+class CharacterListResponse(ContractModel):
+    """角色列表（分页沿用 has_more + cursor 约定）。"""
+    items: list[CharacterSummary]
+    has_more: bool = Field(default=False, description="是否还有更多")
+    cursor: Optional[str] = Field(default=None, description="不透明游标，客户端不得解析")
+
+
+class CharacterRevisionSummary(ContractModel):
+    """角色版本摘要（列表）。"""
+    characterId: str
+    revision: int = Field(default=1, ge=1)
+    displayName: str
+    createdAt: str
+    createdBy: str = "system"
+
+
+class CharacterRevisionResponse(ContractModel):
+    """当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。"""
+    characterId: str
+    revision: int = Field(default=1, ge=1)
+    schemaVersion: int = Field(default=1, ge=1)
+    displayName: str
+    description: str = ""
+    aliases: list[str] = Field(default_factory=list)
+    promptProfile: dict[str, Any] = Field(default_factory=dict)
+    runtimeDefaults: dict[str, Any] = Field(default_factory=dict)
+    presentation: dict[str, Any] = Field(default_factory=dict)
+    openingMessage: Optional[str] = None
+    checksum: str = ""
+    compilerVersion: int = Field(default=1, ge=1)
+    createdBy: str = "system"
+    createdAt: str
+
+
+class CharacterDetail(ContractModel):
+    """角色详情（summary + 当前 revision）。"""
+    summary: CharacterSummary
+    current: CharacterRevisionResponse
+
+
+class CharacterStateImpact(ContractModel):
+    """编辑/回滚的状态影响。"""
+    statePolicy: str = "preserve"
+    affectedInstances: int = 0
+    pendingInstances: int = 0
+    resetFields: list[str] = Field(default_factory=list)
+
+
+class CharacterMutationResult(ContractModel):
+    """角色变更结果（新详情 + 状态影响）。"""
+    character: CharacterDetail
+    stateImpact: CharacterStateImpact
+
+
+class CharacterValidationIssue(ContractModel):
+    """校验问题（severity/code/path/message）。"""
+    severity: str
+    code: str
+    path: str
+    message: str
+
+
+class CharacterValidationResult(ContractModel):
+    """角色草稿校验结果（无效草稿也是 200+valid=false）。"""
+    valid: bool
+    issues: list[CharacterValidationIssue]
+    estimatedPromptChars: Optional[int] = None
+
+
+class CharacterRevisionListResponse(ContractModel):
+    """角色版本列表（分页）。"""
+    items: list[CharacterRevisionSummary]
+    has_more: bool = Field(default=False, description="是否还有更多")
+    cursor: Optional[str] = Field(default=None, description="不透明游标，客户端不得解析")
+
+
+class CharacterArchiveResult(ContractModel):
+    """归档结果。"""
+    character: CharacterSummary
+    userProfile: Optional[UserIdentityProfile] = Field(default=None, description="归档默认角色时返回新档案")

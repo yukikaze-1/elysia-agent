@@ -1311,6 +1311,284 @@
       "title": "CapabilitiesMessage",
       "type": "object"
     },
+    "CharacterArchiveResult": {
+      "$defs": {
+        "CharacterSummary": {
+          "description": "内置角色摘要（阶段 C+E，角色列表）。",
+          "properties": {
+            "characterId": {
+              "description": "角色 ID",
+              "title": "Characterid",
+              "type": "string"
+            },
+            "displayName": {
+              "description": "展示名",
+              "title": "Displayname",
+              "type": "string"
+            },
+            "source": {
+              "default": "builtin",
+              "description": "角色来源",
+              "title": "Source",
+              "type": "string"
+            },
+            "status": {
+              "default": "active",
+              "description": "角色状态",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "characterId",
+            "displayName"
+          ],
+          "title": "CharacterSummary",
+          "type": "object"
+        },
+        "UserIdentityProfile": {
+          "description": "用户最小身份（阶段 C+E；GET /api/me / PUT /api/me）。",
+          "properties": {
+            "defaultCharacterId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "默认角色 ID（可缺省）",
+              "title": "Defaultcharacterid"
+            },
+            "displayName": {
+              "default": "",
+              "description": "展示名",
+              "title": "Displayname",
+              "type": "string"
+            },
+            "initialized": {
+              "default": false,
+              "description": "是否已完成初始化引导",
+              "title": "Initialized",
+              "type": "boolean"
+            },
+            "locale": {
+              "default": "zh-CN",
+              "description": "语言区域",
+              "title": "Locale",
+              "type": "string"
+            },
+            "preferredAddress": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "用户希望被称呼的方式（可缺省）",
+              "title": "Preferredaddress"
+            },
+            "pronouns": {
+              "default": "她",
+              "description": "代词（称呼第三人称）",
+              "title": "Pronouns",
+              "type": "string"
+            },
+            "revision": {
+              "default": 1,
+              "description": "版本号（乐观并发）",
+              "title": "Revision",
+              "type": "integer"
+            },
+            "timezone": {
+              "default": "Asia/Shanghai",
+              "description": "时区",
+              "title": "Timezone",
+              "type": "string"
+            },
+            "userId": {
+              "default": "usr_local_default",
+              "description": "用户 ID（本地默认单用户）",
+              "title": "Userid",
+              "type": "string"
+            }
+          },
+          "title": "UserIdentityProfile",
+          "type": "object"
+        }
+      },
+      "description": "归档结果。",
+      "properties": {
+        "character": {
+          "$ref": "#/$defs/CharacterSummary"
+        },
+        "userProfile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserIdentityProfile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "归档默认角色时返回新档案"
+        }
+      },
+      "required": [
+        "character"
+      ],
+      "title": "CharacterArchiveResult",
+      "type": "object"
+    },
+    "CharacterDetail": {
+      "$defs": {
+        "CharacterRevisionResponse": {
+          "description": "当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。",
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Aliases",
+              "type": "array"
+            },
+            "characterId": {
+              "title": "Characterid",
+              "type": "string"
+            },
+            "checksum": {
+              "default": "",
+              "title": "Checksum",
+              "type": "string"
+            },
+            "compilerVersion": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Compilerversion",
+              "type": "integer"
+            },
+            "createdAt": {
+              "title": "Createdat",
+              "type": "string"
+            },
+            "createdBy": {
+              "default": "system",
+              "title": "Createdby",
+              "type": "string"
+            },
+            "description": {
+              "default": "",
+              "title": "Description",
+              "type": "string"
+            },
+            "displayName": {
+              "title": "Displayname",
+              "type": "string"
+            },
+            "openingMessage": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Openingmessage"
+            },
+            "presentation": {
+              "additionalProperties": true,
+              "title": "Presentation",
+              "type": "object"
+            },
+            "promptProfile": {
+              "additionalProperties": true,
+              "title": "Promptprofile",
+              "type": "object"
+            },
+            "revision": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Revision",
+              "type": "integer"
+            },
+            "runtimeDefaults": {
+              "additionalProperties": true,
+              "title": "Runtimedefaults",
+              "type": "object"
+            },
+            "schemaVersion": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Schemaversion",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "characterId",
+            "displayName",
+            "createdAt"
+          ],
+          "title": "CharacterRevisionResponse",
+          "type": "object"
+        },
+        "CharacterSummary": {
+          "description": "内置角色摘要（阶段 C+E，角色列表）。",
+          "properties": {
+            "characterId": {
+              "description": "角色 ID",
+              "title": "Characterid",
+              "type": "string"
+            },
+            "displayName": {
+              "description": "展示名",
+              "title": "Displayname",
+              "type": "string"
+            },
+            "source": {
+              "default": "builtin",
+              "description": "角色来源",
+              "title": "Source",
+              "type": "string"
+            },
+            "status": {
+              "default": "active",
+              "description": "角色状态",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "characterId",
+            "displayName"
+          ],
+          "title": "CharacterSummary",
+          "type": "object"
+        }
+      },
+      "description": "角色详情（summary + 当前 revision）。",
+      "properties": {
+        "current": {
+          "$ref": "#/$defs/CharacterRevisionResponse"
+        },
+        "summary": {
+          "$ref": "#/$defs/CharacterSummary"
+        }
+      },
+      "required": [
+        "summary",
+        "current"
+      ],
+      "title": "CharacterDetail",
+      "type": "object"
+    },
     "CharacterEngineInfo": {
       "description": "4 层性格引擎面板 props（面板 16）。",
       "properties": {
@@ -1406,6 +1684,266 @@
         "characterId"
       ],
       "title": "CharacterInstanceSummary",
+      "type": "object"
+    },
+    "CharacterListResponse": {
+      "$defs": {
+        "CharacterSummary": {
+          "description": "内置角色摘要（阶段 C+E，角色列表）。",
+          "properties": {
+            "characterId": {
+              "description": "角色 ID",
+              "title": "Characterid",
+              "type": "string"
+            },
+            "displayName": {
+              "description": "展示名",
+              "title": "Displayname",
+              "type": "string"
+            },
+            "source": {
+              "default": "builtin",
+              "description": "角色来源",
+              "title": "Source",
+              "type": "string"
+            },
+            "status": {
+              "default": "active",
+              "description": "角色状态",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "characterId",
+            "displayName"
+          ],
+          "title": "CharacterSummary",
+          "type": "object"
+        }
+      },
+      "description": "角色列表（分页沿用 has_more + cursor 约定）。",
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "不透明游标，客户端不得解析",
+          "title": "Cursor"
+        },
+        "has_more": {
+          "default": false,
+          "description": "是否还有更多",
+          "title": "Has More",
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/CharacterSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "CharacterListResponse",
+      "type": "object"
+    },
+    "CharacterMutationResult": {
+      "$defs": {
+        "CharacterDetail": {
+          "description": "角色详情（summary + 当前 revision）。",
+          "properties": {
+            "current": {
+              "$ref": "#/$defs/CharacterRevisionResponse"
+            },
+            "summary": {
+              "$ref": "#/$defs/CharacterSummary"
+            }
+          },
+          "required": [
+            "summary",
+            "current"
+          ],
+          "title": "CharacterDetail",
+          "type": "object"
+        },
+        "CharacterRevisionResponse": {
+          "description": "当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。",
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Aliases",
+              "type": "array"
+            },
+            "characterId": {
+              "title": "Characterid",
+              "type": "string"
+            },
+            "checksum": {
+              "default": "",
+              "title": "Checksum",
+              "type": "string"
+            },
+            "compilerVersion": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Compilerversion",
+              "type": "integer"
+            },
+            "createdAt": {
+              "title": "Createdat",
+              "type": "string"
+            },
+            "createdBy": {
+              "default": "system",
+              "title": "Createdby",
+              "type": "string"
+            },
+            "description": {
+              "default": "",
+              "title": "Description",
+              "type": "string"
+            },
+            "displayName": {
+              "title": "Displayname",
+              "type": "string"
+            },
+            "openingMessage": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Openingmessage"
+            },
+            "presentation": {
+              "additionalProperties": true,
+              "title": "Presentation",
+              "type": "object"
+            },
+            "promptProfile": {
+              "additionalProperties": true,
+              "title": "Promptprofile",
+              "type": "object"
+            },
+            "revision": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Revision",
+              "type": "integer"
+            },
+            "runtimeDefaults": {
+              "additionalProperties": true,
+              "title": "Runtimedefaults",
+              "type": "object"
+            },
+            "schemaVersion": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Schemaversion",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "characterId",
+            "displayName",
+            "createdAt"
+          ],
+          "title": "CharacterRevisionResponse",
+          "type": "object"
+        },
+        "CharacterStateImpact": {
+          "description": "编辑/回滚的状态影响。",
+          "properties": {
+            "affectedInstances": {
+              "default": 0,
+              "title": "Affectedinstances",
+              "type": "integer"
+            },
+            "pendingInstances": {
+              "default": 0,
+              "title": "Pendinginstances",
+              "type": "integer"
+            },
+            "resetFields": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Resetfields",
+              "type": "array"
+            },
+            "statePolicy": {
+              "default": "preserve",
+              "title": "Statepolicy",
+              "type": "string"
+            }
+          },
+          "title": "CharacterStateImpact",
+          "type": "object"
+        },
+        "CharacterSummary": {
+          "description": "内置角色摘要（阶段 C+E，角色列表）。",
+          "properties": {
+            "characterId": {
+              "description": "角色 ID",
+              "title": "Characterid",
+              "type": "string"
+            },
+            "displayName": {
+              "description": "展示名",
+              "title": "Displayname",
+              "type": "string"
+            },
+            "source": {
+              "default": "builtin",
+              "description": "角色来源",
+              "title": "Source",
+              "type": "string"
+            },
+            "status": {
+              "default": "active",
+              "description": "角色状态",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "characterId",
+            "displayName"
+          ],
+          "title": "CharacterSummary",
+          "type": "object"
+        }
+      },
+      "description": "角色变更结果（新详情 + 状态影响）。",
+      "properties": {
+        "character": {
+          "$ref": "#/$defs/CharacterDetail"
+        },
+        "stateImpact": {
+          "$ref": "#/$defs/CharacterStateImpact"
+        }
+      },
+      "required": [
+        "character",
+        "stateImpact"
+      ],
+      "title": "CharacterMutationResult",
       "type": "object"
     },
     "CharacterPublicState": {
@@ -1523,6 +2061,234 @@
       "title": "CharacterReflectorInfo",
       "type": "object"
     },
+    "CharacterRevisionListResponse": {
+      "$defs": {
+        "CharacterRevisionSummary": {
+          "description": "角色版本摘要（列表）。",
+          "properties": {
+            "characterId": {
+              "title": "Characterid",
+              "type": "string"
+            },
+            "createdAt": {
+              "title": "Createdat",
+              "type": "string"
+            },
+            "createdBy": {
+              "default": "system",
+              "title": "Createdby",
+              "type": "string"
+            },
+            "displayName": {
+              "title": "Displayname",
+              "type": "string"
+            },
+            "revision": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Revision",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "characterId",
+            "displayName",
+            "createdAt"
+          ],
+          "title": "CharacterRevisionSummary",
+          "type": "object"
+        }
+      },
+      "description": "角色版本列表（分页）。",
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "不透明游标，客户端不得解析",
+          "title": "Cursor"
+        },
+        "has_more": {
+          "default": false,
+          "description": "是否还有更多",
+          "title": "Has More",
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/CharacterRevisionSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "CharacterRevisionListResponse",
+      "type": "object"
+    },
+    "CharacterRevisionResponse": {
+      "description": "当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。",
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases",
+          "type": "array"
+        },
+        "characterId": {
+          "title": "Characterid",
+          "type": "string"
+        },
+        "checksum": {
+          "default": "",
+          "title": "Checksum",
+          "type": "string"
+        },
+        "compilerVersion": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Compilerversion",
+          "type": "integer"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "createdBy": {
+          "default": "system",
+          "title": "Createdby",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "openingMessage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Openingmessage"
+        },
+        "presentation": {
+          "additionalProperties": true,
+          "title": "Presentation",
+          "type": "object"
+        },
+        "promptProfile": {
+          "additionalProperties": true,
+          "title": "Promptprofile",
+          "type": "object"
+        },
+        "revision": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtimeDefaults": {
+          "additionalProperties": true,
+          "title": "Runtimedefaults",
+          "type": "object"
+        },
+        "schemaVersion": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Schemaversion",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "characterId",
+        "displayName",
+        "createdAt"
+      ],
+      "title": "CharacterRevisionResponse",
+      "type": "object"
+    },
+    "CharacterRevisionSummary": {
+      "description": "角色版本摘要（列表）。",
+      "properties": {
+        "characterId": {
+          "title": "Characterid",
+          "type": "string"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "createdBy": {
+          "default": "system",
+          "title": "Createdby",
+          "type": "string"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "revision": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "characterId",
+        "displayName",
+        "createdAt"
+      ],
+      "title": "CharacterRevisionSummary",
+      "type": "object"
+    },
+    "CharacterStateImpact": {
+      "description": "编辑/回滚的状态影响。",
+      "properties": {
+        "affectedInstances": {
+          "default": 0,
+          "title": "Affectedinstances",
+          "type": "integer"
+        },
+        "pendingInstances": {
+          "default": 0,
+          "title": "Pendinginstances",
+          "type": "integer"
+        },
+        "resetFields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Resetfields",
+          "type": "array"
+        },
+        "statePolicy": {
+          "default": "preserve",
+          "title": "Statepolicy",
+          "type": "string"
+        }
+      },
+      "title": "CharacterStateImpact",
+      "type": "object"
+    },
     "CharacterSummary": {
       "description": "内置角色摘要（阶段 C+E，角色列表）。",
       "properties": {
@@ -1554,6 +2320,100 @@
         "displayName"
       ],
       "title": "CharacterSummary",
+      "type": "object"
+    },
+    "CharacterValidationIssue": {
+      "description": "校验问题（severity/code/path/message）。",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "severity",
+        "code",
+        "path",
+        "message"
+      ],
+      "title": "CharacterValidationIssue",
+      "type": "object"
+    },
+    "CharacterValidationResult": {
+      "$defs": {
+        "CharacterValidationIssue": {
+          "description": "校验问题（severity/code/path/message）。",
+          "properties": {
+            "code": {
+              "title": "Code",
+              "type": "string"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            },
+            "path": {
+              "title": "Path",
+              "type": "string"
+            },
+            "severity": {
+              "title": "Severity",
+              "type": "string"
+            }
+          },
+          "required": [
+            "severity",
+            "code",
+            "path",
+            "message"
+          ],
+          "title": "CharacterValidationIssue",
+          "type": "object"
+        }
+      },
+      "description": "角色草稿校验结果（无效草稿也是 200+valid=false）。",
+      "properties": {
+        "estimatedPromptChars": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimatedpromptchars"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/CharacterValidationIssue"
+          },
+          "title": "Issues",
+          "type": "array"
+        },
+        "valid": {
+          "title": "Valid",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "valid",
+        "issues"
+      ],
+      "title": "CharacterValidationResult",
       "type": "object"
     },
     "CharacterVersionListResponse": {
@@ -19032,6 +19892,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "ae0407ef9ab7b4ae",
+  "schemaHash": "37385337fe2e7075",
   "transportVersion": "2"
 }

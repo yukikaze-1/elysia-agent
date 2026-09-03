@@ -1725,6 +1725,93 @@ export interface CharacterPublicState {
   stateVersion: number
 }
 
+/** 角色列表（分页沿用 has_more + cursor 约定）。 */
+export interface CharacterListResponse {
+  items: CharacterSummary[]
+  /** 是否还有更多 */
+  has_more: boolean
+  /** 不透明游标，客户端不得解析 */
+  cursor?: string
+}
+
+/** 角色版本摘要（列表）。 */
+export interface CharacterRevisionSummary {
+  characterId: string
+  revision: number
+  displayName: string
+  createdAt: string
+  createdBy: string
+}
+
+/** 当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。 */
+export interface CharacterRevisionResponse {
+  characterId: string
+  revision: number
+  schemaVersion: number
+  displayName: string
+  description: string
+  aliases: string[]
+  promptProfile: Record<string, unknown>
+  runtimeDefaults: Record<string, unknown>
+  presentation: Record<string, unknown>
+  openingMessage?: string
+  checksum: string
+  compilerVersion: number
+  createdBy: string
+  createdAt: string
+}
+
+/** 角色详情（summary + 当前 revision）。 */
+export interface CharacterDetail {
+  summary: CharacterSummary
+  current: CharacterRevisionResponse
+}
+
+/** 编辑/回滚的状态影响。 */
+export interface CharacterStateImpact {
+  statePolicy: string
+  affectedInstances: number
+  pendingInstances: number
+  resetFields: string[]
+}
+
+/** 角色变更结果（新详情 + 状态影响）。 */
+export interface CharacterMutationResult {
+  character: CharacterDetail
+  stateImpact: CharacterStateImpact
+}
+
+/** 校验问题（severity/code/path/message）。 */
+export interface CharacterValidationIssue {
+  severity: string
+  code: string
+  path: string
+  message: string
+}
+
+/** 角色草稿校验结果（无效草稿也是 200+valid=false）。 */
+export interface CharacterValidationResult {
+  valid: boolean
+  issues: CharacterValidationIssue[]
+  estimatedPromptChars?: number
+}
+
+/** 角色版本列表（分页）。 */
+export interface CharacterRevisionListResponse {
+  items: CharacterRevisionSummary[]
+  /** 是否还有更多 */
+  has_more: boolean
+  /** 不透明游标，客户端不得解析 */
+  cursor?: string
+}
+
+/** 归档结果。 */
+export interface CharacterArchiveResult {
+  character: CharacterSummary
+  /** 归档默认角色时返回新档案 */
+  userProfile?: UserIdentityProfile
+}
+
 /** 单轮 token 消耗（debug 面板 current_turn 条目）。 */
 export interface TokenRoundItem {
   /** 模型名 */

@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: ae0407ef9ab7b4ae
+// schemaHash: 37385337fe2e7075
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -1727,6 +1727,93 @@ export interface CharacterPublicState {
   mood: string
   /** 实例状态版本 */
   stateVersion: number
+}
+
+/** 角色列表（分页沿用 has_more + cursor 约定）。 */
+export interface CharacterListResponse {
+  items: CharacterSummary[]
+  /** 是否还有更多 */
+  has_more: boolean
+  /** 不透明游标，客户端不得解析 */
+  cursor?: string
+}
+
+/** 角色版本摘要（列表）。 */
+export interface CharacterRevisionSummary {
+  characterId: string
+  revision: number
+  displayName: string
+  createdAt: string
+  createdBy: string
+}
+
+/** 当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。 */
+export interface CharacterRevisionResponse {
+  characterId: string
+  revision: number
+  schemaVersion: number
+  displayName: string
+  description: string
+  aliases: string[]
+  promptProfile: Record<string, unknown>
+  runtimeDefaults: Record<string, unknown>
+  presentation: Record<string, unknown>
+  openingMessage?: string
+  checksum: string
+  compilerVersion: number
+  createdBy: string
+  createdAt: string
+}
+
+/** 角色详情（summary + 当前 revision）。 */
+export interface CharacterDetail {
+  summary: CharacterSummary
+  current: CharacterRevisionResponse
+}
+
+/** 编辑/回滚的状态影响。 */
+export interface CharacterStateImpact {
+  statePolicy: string
+  affectedInstances: number
+  pendingInstances: number
+  resetFields: string[]
+}
+
+/** 角色变更结果（新详情 + 状态影响）。 */
+export interface CharacterMutationResult {
+  character: CharacterDetail
+  stateImpact: CharacterStateImpact
+}
+
+/** 校验问题（severity/code/path/message）。 */
+export interface CharacterValidationIssue {
+  severity: string
+  code: string
+  path: string
+  message: string
+}
+
+/** 角色草稿校验结果（无效草稿也是 200+valid=false）。 */
+export interface CharacterValidationResult {
+  valid: boolean
+  issues: CharacterValidationIssue[]
+  estimatedPromptChars?: number
+}
+
+/** 角色版本列表（分页）。 */
+export interface CharacterRevisionListResponse {
+  items: CharacterRevisionSummary[]
+  /** 是否还有更多 */
+  has_more: boolean
+  /** 不透明游标，客户端不得解析 */
+  cursor?: string
+}
+
+/** 归档结果。 */
+export interface CharacterArchiveResult {
+  character: CharacterSummary
+  /** 归档默认角色时返回新档案 */
+  userProfile?: UserIdentityProfile
 }
 
 /** 单轮 token 消耗（debug 面板 current_turn 条目）。 */

@@ -459,3 +459,37 @@ class TestRestEnums:
 
     def test_role(self):
         assert {m.value for m in Role} == {"user", "assistant", "tool"}
+
+
+# ── 阶段 D 自定义角色持久化契约 DTO（plan Task 4A） ──────────────────────────
+
+
+@pytest.mark.unit
+def test_character_list_response_has_more_cursor():
+    from frontend_contract.rest import CharacterListResponse, CharacterSummary
+    resp = CharacterListResponse(items=[CharacterSummary(characterId="a", displayName="A")],
+                                 has_more=False).wire_dict()
+    assert resp["has_more"] is False and "cursor" not in resp  # cursor 缺省省略
+
+
+@pytest.mark.unit
+def test_character_mutation_result_shape():
+    from frontend_contract.rest import (CharacterMutationResult, CharacterDetail,
+                                        CharacterSummary, CharacterRevisionResponse,
+                                        CharacterStateImpact)
+    detail = CharacterDetail(summary=CharacterSummary(characterId="a", displayName="A"),
+                             current=CharacterRevisionResponse(characterId="a", revision=1,
+                                                               displayName="A", createdAt="2026-09-04T00:00:00Z"))
+    m = CharacterMutationResult(character=detail,
+                                stateImpact=CharacterStateImpact(statePolicy="preserve",
+                                                                  affectedInstances=0, pendingInstances=0,
+                                                                  resetFields=[])).wire_dict()
+    assert m["stateImpact"]["statePolicy"] == "preserve"
+    assert m["character"]["current"]["revision"] == 1
+
+
+@pytest.mark.unit
+def test_character_archive_result_character_summary():
+    from frontend_contract.rest import CharacterArchiveResult, CharacterSummary
+    a = CharacterArchiveResult(character=CharacterSummary(characterId="a", displayName="A")).wire_dict()
+    assert a["character"]["characterId"] == "a"
