@@ -82,6 +82,12 @@ def elysia_config() -> CharacterConfig:
     )
 
 
+@pytest.fixture
+def cyrene_config() -> CharacterConfig:
+    """构造 Cyrene 正角色 CharacterConfig（speaking_style 从 config.yaml 读）。"""
+    return CharacterConfig.from_yaml(Path("character/cyrene/config.yaml"))
+
+
 def make_assembler(cold_config, cold_engine_mock, mock_long_term, mock_session):
     """构造用冷角色 + mock 引擎的 PromptAssembler。"""
     from core.prompt.prompt_assembler import PromptAssembler
