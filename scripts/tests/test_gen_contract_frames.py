@@ -68,7 +68,10 @@ def test_cancel_and_fail_are_current_contract_goldens(name: str):
     """取消/失败文件由当前契约生成：能力全开、ACK/生成归属完整、父终态唯一。"""
     frames = _frames(name)
     info = next(f for f in frames if f["type"] == "server_info")
-    assert all(info["features"].values()), f"{name} 不应保留旧 features=false 快照"
+    # 除 character_profiles 外能力全开——character_profiles 是阶段 C+E 刻意 false
+    # （架构稿决策 #12「严禁超前声明」：多角色隔离链路未全过，不开启），其余能力如实 true。
+    features = {k: v for k, v in info["features"].items() if k != "character_profiles"}
+    assert all(features.values()), f"{name} 不应保留旧 features=false 快照"
     ack = next(f for f in frames if f["type"] == "user_message.ack")
     assert ack["conversationId"] == "default"
     terminals = [f for f in frames
