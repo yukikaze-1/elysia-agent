@@ -6,7 +6,7 @@ import uuid
 
 from core.character.catalog import CharacterCatalog
 from core.character.definition import CharacterDefinition
-from core.character.draft import CharacterDraft
+from core.character.draft import CharacterDraft, Presentation, PromptProfile, RuntimeDefaults
 from core.character.revision import CharacterRevision
 from core.profile.profile_store import UserIdentityStore
 from core.storage.character_repo import CharacterRepository
@@ -166,16 +166,16 @@ class CharacterService:
             displayName=display_name or src.summary.displayName,
             description=src.current.description,
             aliases=src.current.aliases,
-            promptProfile={
-                "corePersonality": profile.get("corePersonality") or "暂无核心人格。",
-                "relationshipStyle": profile.get("relationshipStyle") or "保持友好而自然的互动。",
-                "speakingStyle": profile.get("speakingStyle") or "用日常口语对话。",
-                "emotionStyle": profile.get("emotionStyle", ""),
-                "conversationInitiative": profile.get("conversationInitiative", ""),
-                "examples": profile.get("examples", []),
-            },
-            runtimeDefaults=src.current.runtimeDefaults,
-            presentation=src.current.presentation,
+            promptProfile=PromptProfile(
+                corePersonality=profile.get("corePersonality") or "暂无核心人格。",
+                relationshipStyle=profile.get("relationshipStyle") or "保持友好而自然的互动。",
+                speakingStyle=profile.get("speakingStyle") or "用日常口语对话。",
+                emotionStyle=profile.get("emotionStyle", ""),
+                conversationInitiative=profile.get("conversationInitiative", ""),
+                examples=profile.get("examples", []),
+            ),
+            runtimeDefaults=RuntimeDefaults(**src.current.runtimeDefaults),
+            presentation=Presentation(**src.current.presentation),
             openingMessage=src.current.openingMessage,
         )
         return await self.create(new_draft, owner_user_id="usr_local_default")
@@ -210,6 +210,8 @@ class CharacterService:
             await self.rev_repo.delete_revision(character_id, new_rev)
             raise RevisionConflictError(character_id)
         defn = await self.repo.get_definition(character_id)
+        if defn is None:  # CAS 成功但 definition 缺失（异常态）——防御
+            raise CharacterNotFoundError(character_id)
         defn.currentRevision = new_rev
         return CharacterMutationResult(
             character=_detail(defn, content),
