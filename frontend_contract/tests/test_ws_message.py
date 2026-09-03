@@ -89,6 +89,7 @@ def test_server_info_message_wire():
         "voice_recording": False, "voice_realtime": False,
         "media_upload": False,
         "idempotency_durable": False,  # D6c：默认非持久化
+        "character_profiles": False,   # 阶段 C+E：多角色隔离链路未全过，恒 false（架构稿决策 #12）
     }
     assert d["services"]["llm"]["model"] == "fake/test"
 

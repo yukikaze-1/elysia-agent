@@ -57,6 +57,7 @@ class TestVersionNegotiation:
                 "voice_realtime": True,
                 "media_upload": True,
                 "idempotency_durable": False,
+                "character_profiles": False,  # 阶段 C+E：多角色隔离链路未全过，恒 false（决策 #12）
             }
             # services 复用 per-service 形状
             assert "llm" in info["services"]
