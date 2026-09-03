@@ -214,7 +214,7 @@ async def session_detail_handler(request: web.Request) -> web.Response:
     async def _get_character_state(sid: SessionId) -> dict:
         result = await agent.session_repo.load(sid)
         if result is not None:
-            _, character_state, _, _ = result  # (messages, CharacterState, MemoryReflectorState, ServiceState)
+            _, character_state, _, _, _ = result  # (messages, CharacterState, MemoryReflectorState, ServiceState, character_binding)
             return character_state.model_dump(mode="json")
         return {}
 
@@ -244,7 +244,7 @@ async def session_detail_handler(request: web.Request) -> web.Response:
                 params=agent.session.character_state.model_dump(mode="json"))
             return web.json_response(data.wire_dict())
         return _protocol_error_response("SESSION_NOT_FOUND", "会话不存在", 404)
-    raw_msgs, character_state, _, _ = result
+    raw_msgs, character_state, _, _, _ = result
     formatted = sessions_to_client(raw_msgs)
     messages = [contract.SessionDetailMessage.model_validate(m) for m in formatted]
     data = contract.SessionDetailResponse(

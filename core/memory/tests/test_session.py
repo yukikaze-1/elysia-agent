@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.memory.session import SessionMemory
+from core.schema.character import CharacterState
 from core.schema.types import MessageId, SessionId
 
 
@@ -154,7 +155,7 @@ class TestSessionMemorySaveLoad:
         cs = CharacterState(session_id=SessionId("test-load"), mood="happy")
         mock_repo = MagicMock()
         mock_repo._db = object()  # 模拟已连接
-        mock_repo.load = AsyncMock(return_value=([msg], cs, MemoryReflectorState(), ServiceState()))
+        mock_repo.load = AsyncMock(return_value=([msg], cs, MemoryReflectorState(), ServiceState(), {}))
         sm = SessionMemory(session_id=SessionId("test-load"), repo=mock_repo)
         result = await sm.load(SessionId("test-load"))
         assert result is True
@@ -312,12 +313,14 @@ async def test_service_state_roundtrip():
     """ServiceState 经 save/load 4 元组回显，重启后仍可恢复；默认实例三态为 None。"""
     repo = MagicMock()
     doc: dict = {}
-    async def fake_save(sid, msgs, *, character_state=None, reflector_state=None, service_state=None, **kw):
+    async def fake_save(sid, msgs, *, character_state=None, reflector_state=None, service_state=None, character_binding=None, **kw):
         doc.update(messages=list(msgs), character_state=character_state,
-                   reflector_state=reflector_state, service_state=service_state)
+                   reflector_state=reflector_state, service_state=service_state,
+                   character_binding=character_binding)
     async def fake_load(sid):
         return (doc.get("messages", []), doc.get("character_state"),
-                doc.get("reflector_state"), doc.get("service_state"))   # 回显 4 元组
+                doc.get("reflector_state"), doc.get("service_state"),
+                doc.get("character_binding"))   # 回显 5 元组
     repo.save = fake_save
     repo.load = fake_load
 
@@ -335,3 +338,65 @@ async def test_service_state_roundtrip():
     fresh = SessionMemory(session_id="fresh")
     assert fresh.service_state.stt_enabled is None   # 默认实例三态 None，非 True
     assert fresh.service_state.tts_voice is None      # 默认实例无声音覆盖
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_character_binding_roundtrip_mock_mongo():
+    """character_binding 经 save/load 5 元组回显（Mongo mock 路径），重启后仍可恢复。"""
+    binding = {"instanceId": "chi_legacy_abc", "characterId": "legacy"}
+    repo = MagicMock()
+    doc: dict = {}
+
+    async def fake_save(sid, msgs, *, character_state=None, reflector_state=None,
+                        service_state=None, character_binding=None, **kw):
+        doc.update(messages=list(msgs), character_state=character_state,
+                   reflector_state=reflector_state, service_state=service_state,
+                   character_binding=character_binding)
+
+    async def fake_load(sid):
+        return (doc.get("messages", []), doc.get("character_state"),
+                doc.get("reflector_state"), doc.get("service_state"),
+                doc.get("character_binding"))   # 回显 5 元组
+
+    repo.save = fake_save
+    repo.load = fake_load
+
+    s = SessionMemory(session_id="t", repo=repo)
+    s.character_binding = binding
+    await s.save()
+    loaded = SessionMemory(session_id="t", repo=repo)
+    await loaded.load("t")
+    assert loaded.character_binding == binding
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_character_binding_roundtrip_jsonl(tmp_path):
+    """character_binding 经 JSONL save/load 往返（Mongo 离线 fallback 路径）。"""
+    import json
+    binding = {"instanceId": "chi_legacy_def", "characterId": "legacy"}
+    pending = os.path.join(str(tmp_path), "session_cb.json")
+    s = SessionMemory(session_id=SessionId("cb"))
+    s._pending_file = pending  # noqa: SLF001
+    s.character_binding = binding
+    assert await s.save() is True
+
+    loaded = SessionMemory(session_id=SessionId("cb"))
+    loaded._pending_file = pending  # noqa: SLF001
+    assert await loaded.load_from_jsonl() is True
+    assert loaded.character_binding == binding
+    # 清理
+    os.remove(pending)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_character_binding_defaults_none_when_absent():
+    """无 character_binding 的 session 加载后为 None（向后兼容）。"""
+    repo = MagicMock()
+    mock_cs = CharacterState(session_id=SessionId("t"))
+    repo.load = AsyncMock(return_value=([], mock_cs, None, None, None))
+    sm = SessionMemory(session_id=SessionId("t"), repo=repo)
+    await sm.load("t")
+    assert sm.character_binding is None

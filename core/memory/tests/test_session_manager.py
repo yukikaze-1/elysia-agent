@@ -48,13 +48,15 @@ class FakeSessionRepo:
         return self._connected
 
     async def save(self, session_id, messages, *,
-                   character_state=None, reflector_state=None, service_state=None):
+                   character_state=None, reflector_state=None, service_state=None,
+                   character_binding=None):
         self.save_calls.append(session_id)
         doc = self.sessions.setdefault(session_id, {})
         doc["messages"] = list(messages)
         doc["cs"] = character_state
         doc["rs"] = reflector_state
         doc["ss"] = service_state
+        doc["cb"] = character_binding
         doc["updated_at"] = f"2026-08-04T00:00:{len(self.save_calls):02d}Z"
         doc.setdefault("title", "")
 
@@ -66,7 +68,8 @@ class FakeSessionRepo:
         return (list(doc.get("messages", [])),
                 doc.get("cs") or CharacterState(session_id=sid),
                 doc.get("rs") or MemoryReflectorState(),
-                doc.get("ss") or ServiceState())
+                doc.get("ss") or ServiceState(),
+                doc.get("cb") or {})
 
     async def create(self, sid, title=""):
         self.created.append((sid, title))

@@ -112,7 +112,8 @@ class SessionRepository(Repository):
     async def save(self, session_id: SessionId, messages: Sequence[Message],
                    character_state: CharacterState,
                    reflector_state: MemoryReflectorState | None = None,
-                   service_state: ServiceState | None = None) -> None:
+                   service_state: ServiceState | None = None,
+                   character_binding: dict | None = None) -> None:
         """保存或更新 session。
 
         Args:
@@ -121,6 +122,7 @@ class SessionRepository(Repository):
             character_state: 角色状态。
             reflector_state: 记忆反射器状态，为 None 时写入空对象。
             service_state: 服务运行时状态，为 None 时写入空对象。
+            character_binding: 会话绑定的角色实例（架构稿 §15.3），为 None 时写入空对象。
 
         Raises:
             StorageUnavailableError: MongoDB 未连接（B2/P1-01——禁止静默
@@ -137,6 +139,7 @@ class SessionRepository(Repository):
             "character_state": character_state.model_dump(mode="json"),
             "reflector_state": reflector_state.model_dump(mode="json") if reflector_state else {},
             "service_state": service_state.model_dump(mode="json") if service_state else {},
+            "character_binding": character_binding or {},
             "updated_at": now_iso(),
         }
         # 标题语义：显式 title（create/rename 写入）必须保留；
@@ -255,14 +258,15 @@ class SessionRepository(Repository):
         return result > 0
 
     async def load(self, session_id: SessionId
-                   ) -> tuple[list[Message], CharacterState, MemoryReflectorState, ServiceState] | None:
+                   ) -> tuple[list[Message], CharacterState, MemoryReflectorState, ServiceState, dict] | None:
         """加载 session。
 
         Args:
             session_id: 会话 ID。
 
         Returns:
-            (消息列表, 角色状态, 记忆反射器状态, 服务运行时状态) 元组，不存在返回 None。
+            (消息列表, 角色状态, 记忆反射器状态, 服务运行时状态, 角色绑定) 元组，
+            不存在返回 None。
 
         Raises:
             StorageUnavailableError: MongoDB 未连接（B2/P1-01——区分「不可用」
@@ -289,7 +293,8 @@ class SessionRepository(Repository):
         rs = MemoryReflectorState.model_validate(rs_data) if rs_data else MemoryReflectorState()
         ss_data = doc.get("service_state", {})
         ss = ServiceState.model_validate(ss_data) if ss_data else ServiceState()
-        return messages, cs, rs, ss
+        cb_data = doc.get("character_binding") or {}
+        return messages, cs, rs, ss, cb_data
 
     async def delete(self, session_id: SessionId) -> int:
         """删除指定会话。
