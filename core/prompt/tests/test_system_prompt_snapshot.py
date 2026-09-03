@@ -90,3 +90,31 @@ def test_elysia_config_speaking_style_matches_template():
     from core.config.character_config import CharacterConfig
     cfg = CharacterConfig.from_yaml(Path("character/elysia/config.yaml"))
     assert cfg.speaking_style == _C6_L1_DEFAULT
+
+
+def test_elysia_templates_byte_identical():
+    """templates/elysia/* 与共享原版字节相同（Elysia byte-for-byte 保护）。"""
+    base = Path("Module/system_prompt/templates")
+    for name in ["c2_relationship.j2", "c3_emotion.j2", "c7_proactive.j2"]:
+        shared = (base / name).read_bytes()
+        elysia = (base / "elysia" / name).read_bytes()
+        assert elysia == shared, f"{name} elysia 副本 != 共享原版"
+
+
+def test_cyrene_config_speaking_style_nonempty():
+    """Cyrene config.yaml 的 speaking_style 非空（per-role C6 有内容）。"""
+    from core.config.character_config import CharacterConfig
+    cfg = CharacterConfig.from_yaml(Path("character/cyrene/config.yaml"))
+    assert cfg.speaking_style.strip(), "Cyrene speaking_style 不能为空"
+
+
+def test_cyrene_per_role_templates_exist():
+    """templates/cyrene/ 下 C2/C3/C7 模板存在且含 wrapper。"""
+    base = Path("Module/system_prompt/templates/cyrene")
+    for name, tag in [("c2_relationship.j2", "relationship"),
+                      ("c3_emotion.j2", "emotion"),
+                      ("c7_proactive.j2", "proactive")]:
+        f = base / name
+        assert f.exists(), f"{name} 不存在"
+        content = f.read_text("utf-8")
+        assert f"<{tag}>" in content and f"</{tag}>" in content
