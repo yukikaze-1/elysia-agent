@@ -263,6 +263,8 @@ export interface ServerInfoFeatures {
   media_upload: boolean
   /** 幂等 claim 跨重启持久化（D6c，true=durable / false=内存降级非 durable 窗口） */
   idempotency_durable: boolean
+  /** 多角色 Profile（阶段 C+E；本批次恒 false，架构稿决策 #12） */
+  character_profiles: boolean
 }
 
 /** 协议版本 + 服务器能力声明（仅 v2 客户端；取代 capabilities，避免重复帧）。
@@ -1661,6 +1663,66 @@ export interface StickerEntry {
 export interface StickerListResponse {
   /** 内置表情列表 */
   stickers: StickerEntry[]
+}
+
+/** 用户最小身份（阶段 C+E；GET /api/me / PUT /api/me）。 */
+export interface UserIdentityProfile {
+  /** 用户 ID（本地默认单用户） */
+  userId: string
+  /** 展示名 */
+  displayName: string
+  /** 用户希望被称呼的方式（可缺省） */
+  preferredAddress?: string
+  /** 代词（称呼第三人称） */
+  pronouns: string
+  /** 语言区域 */
+  locale: string
+  /** 时区 */
+  timezone: string
+  /** 是否已完成初始化引导 */
+  initialized: boolean
+  /** 默认角色 ID（可缺省） */
+  defaultCharacterId?: string
+  /** 版本号（乐观并发） */
+  revision: number
+}
+
+/** 内置角色摘要（阶段 C+E，角色列表）。 */
+export interface CharacterSummary {
+  /** 角色 ID */
+  characterId: string
+  /** 展示名 */
+  displayName: string
+  /** 角色来源 */
+  source: string
+  /** 角色状态 */
+  status: string
+}
+
+/** 角色实例摘要（阶段 C+E，会话绑定展示）。 */
+export interface CharacterInstanceSummary {
+  /** 实例 ID */
+  instanceId: string
+  /** 角色 ID */
+  characterId: string
+  /** 角色修订号 */
+  revision: number
+  /** 实例状态版本 */
+  stateVersion: number
+}
+
+/** 角色产品态（阶段 C+E/general，feature flag 开启后走 wire）。 */
+export interface CharacterPublicState {
+  /** 角色 ID */
+  characterId: string
+  /** 实例 ID */
+  instanceId: string
+  /** 角色修订号 */
+  characterRevision: number
+  /** 当前心情 */
+  mood: string
+  /** 实例状态版本 */
+  stateVersion: number
 }
 
 /** 单轮 token 消耗（debug 面板 current_turn 条目）。 */
