@@ -32,3 +32,18 @@ def test_save_touch_increments_revision(tmp_path):
     # 改断言确定性递增的 revision（save 后 = 2，且 == 保存前 revision + 1）。
     assert saved.revision == ui.revision    # save 返回同一对象，revision 已递增到 2
     assert saved.revision == 2
+
+
+def test_update_if_revision_success():
+    store = UserIdentityStore(storage_path=None)
+    store.bootstrap("妖梦")
+    # bootstrap 后 revision=1
+    result = store.update_if_revision(1, {"displayName": "妖梦2"})
+    assert result is not None and result.displayName == "妖梦2" and result.revision == 2
+
+
+def test_update_if_revision_conflict():
+    store = UserIdentityStore(storage_path=None)
+    store.bootstrap("妖梦")
+    result = store.update_if_revision(99, {"displayName": "x"})  # 过期 revision
+    assert result is None

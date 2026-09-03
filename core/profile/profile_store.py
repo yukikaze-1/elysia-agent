@@ -49,6 +49,32 @@ class UserIdentityStore:
         self._persist(identity)
         return identity
 
+    def update_if_revision(self, expected_revision: int,
+                           updates: dict[str, object]) -> UserIdentity | None:
+        """CAS 更新：仅当当前 revision == expected_revision 时应用 updates 并 touch()。
+
+        Updates 白名单为 displayName/preferredAddress/pronouns/locale/timezone/
+        defaultCharacterId/initialized；不接收 userId/revision/createdAt/updatedAt。
+        冲突返回 None（调用方抛 USER_PROFILE_REVISION_CONFLICT）；成功返回新 UserIdentity。
+        单进程下用内存锁 + revision 比对实现原子 CAS（JSONL 单文件）。
+        """
+        cur = self.get()
+        if cur is None:
+            return None
+        if cur.revision != expected_revision:
+            return None
+        new = cur.model_copy(deep=True)
+        for k, v in updates.items():
+            if k in ("userId", "revision", "createdAt", "updatedAt"):
+                continue
+            if k == "initialized":
+                v = True  # 只能置 true，不能改回 false
+            setattr(new, k, v)
+        new.touch()
+        self._cached = new
+        self._persist(new)
+        return new
+
     # ---- 持久化 ----
 
     def _load_from_file(self) -> UserIdentity | None:

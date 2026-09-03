@@ -29,6 +29,7 @@ from core.input.tools_routes import register_tools_routes
 from core.input.chat_routes import register_chat_routes
 from core.input.attachment_routes import register_attachment_routes
 from core.input.session_routes import register_session_routes
+from core.input.character_routes import register_character_routes
 from core.input.debug_routes import register_debug_routes
 from core.input.errors import _protocol_error_response
 from core.input.health import health_handler, ready_handler
@@ -277,6 +278,7 @@ def create_app(
     register_chat_routes(app)
     register_attachment_routes(app)
     register_session_routes(app)
+    register_character_routes(app, _check_auth)
     register_debug_routes(app, _check_auth)
 
     _IMAGES_DIR = ProjectPath.DATA_UPLOADS_IMAGES.resolve()
