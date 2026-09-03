@@ -149,10 +149,17 @@ class PromptAssembler:
             mood = self._personality_engine.state.mood
             c6 = self._personality_engine.render_c6()
             speaking_style_c6 = c6.speaking_style_c6
+        # B1 正位：优先读 _turn_context.userPronoun（Task 6/7 冻结的全局唯一她），
+        # 否则兜底常量「她」——不回退 _character.user_pronoun（spec §5.2 无 per-role 回退）。
+        user_pronoun = (
+            self._turn_context.userPronoun
+            if self._turn_context is not None and self._turn_context.userPronoun
+            else "她"
+        )
         self._manager.set_context(
             user_message=user_message,
             user_name=user_name,
-            user_pronoun=self._character.user_pronoun,
+            user_pronoun=user_pronoun,
             stt_emotion=stt_emotion,
             stt_events=stt_events or [],
             tts_provider=tts_provider,

@@ -26,7 +26,8 @@ class ProactiveConfig:
 class CharacterConfig:
     name: str = "Agent"
     voice: str = "default"
-    user_pronoun: str = "她"
+    user_pronoun: str = "她"   # DEPRECATED（阶段 C+E）：已被 UserIdentity.pronouns 权威替代（B1）；
+                               # 保留仅供测试夹具构造，阶段 D 删除。
     base_personality_file: str = ""     # 新增：L1 Core 文件路径
     personality: dict[str, object] = field(default_factory=dict)
     emotion: EmotionConfig = field(default_factory=EmotionConfig)
