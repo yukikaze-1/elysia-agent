@@ -107,8 +107,6 @@ class TestCharacterService:
 
         用带 connect 计数的 repo 替身，验证 _ensure_connected 在首次 repo 操作前触发 connect()。
         """
-        from unittest.mock import AsyncMock, MagicMock
-        from core.character.revision import CharacterRevision
 
         class _ConnectTrackingRepo:
             def __init__(self):
