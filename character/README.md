@@ -31,7 +31,6 @@ character/<角色名>/
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | `name` | string | ✓ | 角色显示名（注入 system prompt） |
-| `user_pronoun` | string | — | 用户人称代词，默认 "她" |
 | `base_personality_file` | string | ✓ | L1 Core 文本文件名，相对于 config.yaml 目录 |
 | `voice` | string | — | [占位] TTS voice ID。MiniMax/GPT-SoVits 音色由各自的 voices.yaml 管理 |
 | `emotion.thresholds` | dict | — | 情绪触发阈值（excitement/sadness 等） |

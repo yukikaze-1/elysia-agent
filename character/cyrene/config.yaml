@@ -6,7 +6,6 @@
 
 # ---- 基本标识 ----
 name: Cyrene              # 角色名（全局引用）
-user_pronoun: 你          # 用户人称代词（注入 system prompt）
 
 # ---- 语音（待启用） ----
 voice: cyrene_v2          # [占位] TTS voice ID

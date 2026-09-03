@@ -6,7 +6,6 @@
 
 # ---- 基本标识 ----
 name: Elysia                          # 角色名（全局引用）
-user_pronoun: 她                      # 用户人称代词（注入 system prompt）
 
 # ---- 语音（待启用） ----
 # 当前 TTS 音色由 Module/tts/minimax_voices.yaml 管理（按角色名映射 voice_id）

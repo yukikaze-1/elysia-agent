@@ -30,7 +30,6 @@ def cold_config() -> CharacterConfig:
     """构造 ReservedColdCharacter 反例角色的 CharacterConfig。"""
     return CharacterConfig(
         name="ReservedColdCharacter",
-        user_pronoun="你",
         base_personality=COLDSHARD_BASE_PERSONALITY,
     )
 
@@ -74,7 +73,6 @@ def elysia_config() -> CharacterConfig:
     """构造 Elysia 正角色 CharacterConfig（speaking_style 复用 _C6_L1_DEFAULT）。"""
     return CharacterConfig(
         name="Elysia",
-        user_pronoun="她",
         base_personality=Path("character/elysia/personality.md").read_text("utf-8").strip(),
         personality={
             "speaking_style": _C6_L1_DEFAULT,
