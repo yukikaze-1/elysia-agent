@@ -363,7 +363,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 if self._character_engine is not None else "chi_default"
             ),
             characterId=(
-                self._character_engine._character.name.lower()  # noqa: SLF001
+                (self._character_engine._character.name.lower()  # noqa: SLF001
+                 if self._character_engine._character is not None  # noqa: SLF001
+                 else "agent")
                 if self._character_engine is not None else "agent"
             ),
             characterRevision=(

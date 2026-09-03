@@ -101,7 +101,7 @@ async def test_prepare_turn_freezes_turn_context():
     assert ctx.characterInstanceId == "chi_builtin_testbot"
     assert ctx.characterId == "testbot"
     assert ctx.characterRevision == 1
-    assert ctx.userPronoun == "她"       # 缺 identity → 兜底「她」
+    assert ctx.userPronoun == "她"       # store 注入 identity.pronouns="她"
     assert loop._prompt._turn_context is ctx   # B1 闭环关键：同一对象传给 prompt
     await loop._output.close()
 
