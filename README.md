@@ -221,6 +221,8 @@ bash scripts/setup.sh
 L0  Module/              无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/, system_prompt, tool
 L1  core/                认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
 L2  core/memory/         记忆与工具 — SessionMemory, LongTermMemory, ToolAdapter (Plugin 架构)
+L2  core/character/      角色域 — Definition/Revision/Instance + RuntimeRegistry（阶段 C+E）
+L2  core/profile/        用户最小身份 — UserIdentity（阶段 C+E）
 L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
 
@@ -277,6 +279,8 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Adapter | [core/adapter/README.md](core/adapter/README.md) | 适配器层（LLM + TTS + Tool） |
 | Task | [core/task/README.md](core/task/README.md) | 任务数据模型 + Worker Pool 调度器 |
 | Prompt | [core/prompt/README.md](core/prompt/README.md) | System prompt 组装层（MessageBuilder + PromptAssembler） |
+| Character | [core/character/README.md](core/character/README.md) | 角色域领域模型 + 运行时容器（Definition/Revision/Instance + Registry，阶段 C+E） |
+| Profile | [core/profile/README.md](core/profile/README.md) | 用户最小身份 UserIdentity（user_pronoun 正位，阶段 C+E） |
 | Providers | [core/providers/README.md](core/providers/README.md) | Provider 元数据与自定义 provider |
 | Services | [core/services/README.md](core/services/README.md) | 服务能力声明与广播（capabilities） |
 | Network | [core/network/README.md](core/network/README.md) | 传输无关限流（rate limiter） |
