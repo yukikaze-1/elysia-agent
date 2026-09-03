@@ -8,6 +8,7 @@ from core.memory.session import SessionMemory
 from Module.system_prompt.sections.emotion import EmotionSection
 from Module.system_prompt.sections.memory import MemorySection
 from Module.system_prompt.sections.own_life import OwnLifeSection
+from core.prompt.tests.conftest import cold_config, elysia_config, make_assembler, mock_long_term, mock_session  # noqa
 
 
 def _make_assembler():
@@ -42,3 +43,19 @@ class TestPromptAssemblerSetSession:
         assert len(sections) == 3
         for section in sections:
             assert section._session is new_session
+
+
+def test_resolve_template_uses_role_dir(elysia_config, mock_long_term, mock_session):
+    """角色名有角色目录时用 per-role 路径。"""
+    from core.prompt.prompt_assembler import PromptAssembler
+    a = PromptAssembler(elysia_config, mock_session, mock_long_term)
+    path = a._resolve_template("c2_relationship.j2")
+    assert "elysia" in path and path.endswith("c2_relationship.j2")
+
+
+def test_resolve_template_falls_back_to_shared(cold_config, mock_long_term, mock_session):
+    """无角色目录时回退共享路径。"""
+    from core.prompt.prompt_assembler import PromptAssembler
+    a = PromptAssembler(cold_config, mock_session, mock_long_term)
+    path = a._resolve_template("c2_relationship.j2")
+    assert "/templates/c2_relationship.j2" in path

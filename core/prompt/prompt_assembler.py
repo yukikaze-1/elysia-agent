@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -70,7 +71,7 @@ class PromptAssembler:
         )
 
         # 会话依赖的 section — set_session 时重绑 session 引用
-        self._emotion_section = EmotionSection(f"{_SECTION}/c3_emotion.j2", session)
+        self._emotion_section = EmotionSection(self._resolve_template("c3_emotion.j2"), session)
         self._memory_section = MemorySection(f"{_SECTION}/c4_memory.j2", long_term, session)
         self._own_life_section = OwnLifeSection(f"{_SECTION}/c8_own_life.j2", session)
 
@@ -82,14 +83,21 @@ class PromptAssembler:
             self._emotion_section,
             self._memory_section,
             self._personality_section,
-            RelationshipSection(f"{_SECTION}/c2_relationship.j2", character.name),
+            RelationshipSection(self._resolve_template("c2_relationship.j2"), character.name),
             SpeakingStyleSection(f"{_SECTION}/c6_speaking_style.j2", speaking_style=character.speaking_style),
-            ProactiveSection(f"{_SECTION}/c7_proactive.j2"),
+            ProactiveSection(self._resolve_template("c7_proactive.j2")),
             self._own_life_section,
             self._self_perception_section,
         ]
         self._manager = SystemPromptManager(sections)
         self._builder = MessageBuilder()
+
+    def _resolve_template(self, name: str) -> str:
+        """按角色名解析模板路径：角色目录存在则用，否则回退共享。"""
+        role_dir = f"{_SECTION}/{self._character.name.lower()}/{name}"
+        if Path(role_dir).exists():
+            return role_dir
+        return f"{_SECTION}/{name}"
 
     def set_session(self, session: SessionMemory) -> None:
         """会话切换时重绑 session 引用（本对象 + 三个会话依赖 section）。
