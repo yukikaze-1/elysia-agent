@@ -29,12 +29,12 @@ Module/system_prompt/
 │   ├── proactive.py           #   C7 主动性 (骨架)
 │   ├── own_life.py            #   C8 自己的生活
 │   └── self_perception.py     #   C9 自我认知
-├── templates/                 # 12 个独立 .j2 模板
+├── templates/                 # 共享 .j2 模板 + per-role 角色子目录（阶段 B-2）
 │   ├── f1_conflict_rules.j2
 │   ├── f2_output_format.j2
 │   ├── f3_tts_markup.j2
 │   ├── c1_personality.j2
-│   ├── c2_relationship.j2
+│   ├── c2_relationship.j2     # 共享（角色无专属模板时回退到这些）
 │   ├── c3_emotion.j2
 │   ├── c4_memory.j2
 │   ├── c5_sensory.j2
@@ -42,6 +42,14 @@ Module/system_prompt/
 │   ├── c7_proactive.j2
 │   ├── c8_own_life.j2
 │   ├── c9_self_perception.j2
+│   ├── elysia/                # Elysia 专属 C2/C3/C7（字节 == 共享原版，byte-for-byte 保护）
+│   │   ├── c2_relationship.j2
+│   │   ├── c3_emotion.j2
+│   │   └── c7_proactive.j2
+│   └── cyrene/                # Cyrene 专属 C2/C3/C7（去 Elysia 化，阶段 B-2 新建角色）
+│       ├── c2_relationship.j2
+│       ├── c3_emotion.j2
+│       └── c7_proactive.j2
 └── tests/
     ├── test_prompt.py
     ├── unit/

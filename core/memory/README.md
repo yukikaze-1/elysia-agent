@@ -88,6 +88,7 @@
 - 聚类算法：KMeans（n_clusters = ceil(记忆数 / CLUSTER_SIZE)，CLUSTER_SIZE = 20，单组最多约 20 条）
 - LLM 审查后决定合并 / 去噪 / 删除
 - `_reflect_lock` 防并发
+- **构造参数**（阶段 B-2 新增）：`MemoryReflector(llm, memory, session, character_name, user_name)`——`character_name`/`user_name` 替换 prompt 中的 `{character_name}`/`{user_name}` 占位符（去 Elysia 化；agent.py 构造时传 `self._character.name`/`self._user_name`）。
 
 ## 文件布局
 
