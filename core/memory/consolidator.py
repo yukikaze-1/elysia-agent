@@ -269,6 +269,10 @@ class MemoryConsolidator:
         logger.debug("Consolidation: 开始提取 (%d turns)", len(turns))
 
         prompt = _get_extraction_prompt().replace(
+            "{character_name}", self._character_name,
+        ).replace(
+            "{user_name}", self._user_name,
+        ).replace(
             "{conversation}", conversation_text[-2000:],
         )
 
@@ -338,6 +342,10 @@ class MemoryConsolidator:
             # 2. LLM 比对
             prompt_template = _get_compare_prompt()
             compare_prompt = prompt_template.replace(
+                "{character_name}", self._character_name,
+            ).replace(
+                "{user_name}", self._user_name,
+            ).replace(
                 "{new_items}", json.dumps(
                     [item.model_dump() for item in new_items],
                     ensure_ascii=False, indent=2,

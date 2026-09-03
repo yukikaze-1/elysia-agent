@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from core.memory.long_term import MemoryEntry
-from core.memory.memory_reflector import MemoryReflector
+from core.memory.memory_reflector import MemoryReflector, _get_reflector_prompt
 from core.schema.memory_reflector import ReflectorActions
 
 
@@ -221,3 +221,27 @@ class TestDoReflect:
         assert summary["merges"] == 0
         assert r._round_count == 0          # 计数器复位
         mem.delete.assert_awaited_once_with("b1")
+
+
+@pytest.mark.unit
+class TestPromptPlaceholder:
+    """B-2 Task 5：MemoryReflector prompt 占位符替换，无 Elysia/妖梦 字面。"""
+
+    def test_reflector_prompt_placeholder_replaced(self):
+        """MemoryReflector prompt 的 {character_name}/{user_name} 被替换，无 Elysia/妖梦。"""
+        p = _get_reflector_prompt()
+        assert "Elysia" not in p and "妖梦" not in p, "MemoryReflector 仍含 Elysia/妖梦"
+        assert "{character_name}" in p and "{user_name}" in p
+
+    def test_reflector_prompt_no_elysia_render(self):
+        """MemoryReflector 渲染后无 Elysia/妖梦（replace 已传 character_name/user_name）。"""
+        p = _get_reflector_prompt().replace(
+            "{character_name}", "Cyrene",
+        ).replace(
+            "{user_name}", "用户",
+        ).replace(
+            "{memories}", "[]",
+        ).replace(
+            "{last_summary}", "{}",
+        )
+        assert "Elysia" not in p and "妖梦" not in p

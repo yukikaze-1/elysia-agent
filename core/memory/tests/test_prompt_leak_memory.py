@@ -1,9 +1,10 @@
 # core/memory/tests/test_prompt_leak_memory.py
 """记忆 Prompt（ExtractMemory/ConsolidationCompare/MemoryReflector）的 Elysia 泄漏基线。
 
-关键：这三个 prompt 用 str.replace() 注入变量（只替换 {conversation}/{memories}/
-{new_items}/{existing_items}），{character_name}/{user_name}/妖梦/Elysia/女性AI伴侣
-是写死在正文里的，不会被替换——这就是泄漏。
+B-2 Task 5：这三个 prompt 从硬编码 Elysia/妖梦/女性AI伴侣 改为占位符
+（{character_name}/{user_name}）注入。本文件翻转 Stage A 的泄漏基线——
+不再断言 Elysia/妖梦/女性AI伴侣 出现在正文，而是断言占位符存在且无角色泄漏，
+并在真实 consolidate()/prompt 加载路径上验证 replace 已注入值、占位符不复现。
 """
 
 import pytest
@@ -48,42 +49,54 @@ def _cold_consolidator() -> MemoryConsolidator:
     )
 
 
-def test_extract_memory_leak_placeholder_unreplaced():
-    """ExtractMemory.j2 的 {character_name}/{user_name} 占位符未被替换。"""
+def test_extract_memory_leak_placeholder_present():
+    """ExtractMemory.j2 用 {character_name}/{user_name} 占位符（正文不再硬编码角色名）。"""
     text = _get_extraction_prompt()
     assert "{character_name}" in text
     assert "{user_name}" in text
+    # 翻转：正文不再硬编码 Elysia/妖梦/女性AI伴侣
+    assert "Elysia" not in text
+    assert "妖梦" not in text
 
 
-def test_extract_memory_leak_identity():
-    """ExtractMemory.j2 正文硬编码「女性 AI 伴侣」（即使角色是 cold 也写入 prompt）。"""
+def test_extract_memory_leak_identity_flipped():
+    """ExtractMemory.j2 正文不再硬编码「女性 AI 伴侣」（角色无关，cold 也不写死）。"""
     text = _get_extraction_prompt()
-    assert "女性 AI 伴侣" in text
+    assert "女性 AI 伴侣" not in text
+    assert "俏皮" not in text and "柔软而直接" not in text
 
 
 @pytest.mark.asyncio
-async def test_extract_memory_prompt_sent_to_llm_leaks():
-    """走真实 consolidate()，捕获发给 LLM 的 prompt，仍含硬编码女性 AI 伴侣。"""
+async def test_extract_memory_prompt_sent_to_llm_no_leak():
+    """走真实 consolidate()，捕获发给 LLM 的 prompt：占位符被替换，无角色泄漏。"""
     c = _cold_consolidator()
     results = await c.consolidate("用户：我养了一只猫。", "ReservedColdCharacter：好的。")
     assert len(c._llm.prompts) >= 1  # 触发提取（由于 get_all 空，走 insert 分支，无 compare）
     prompt = c._llm.prompts[0]
-    assert "女性 AI 伴侣" in prompt
+    # 占位符已被 character_name/user_name 注入
+    assert "ReservedColdCharacter" in prompt
+    assert "{character_name}" not in prompt and "{user_name}" not in prompt
+    # 无 Elysia/妖梦 字面泄漏
+    assert "Elysia" not in prompt and "妖梦" not in prompt
+    assert "女性 AI 伴侣" not in prompt
 
 
-def test_consolidation_compare_leak_identity():
-    """ConsolidationCompare.j2 硬编码 Elysia 身份。"""
+def test_consolidation_compare_leak_identity_flipped():
+    """ConsolidationCompare.j2 用 {character_name} 占位符，不再硬编码 Elysia。"""
     text = _get_compare_prompt()
-    assert "你是 Elysia 的记忆一致性检查器" in text
+    assert "你是 {character_name} 的记忆一致性检查器" in text
+    assert "Elysia" not in text
+    assert "妖梦" not in text
 
 
-def test_memory_reflector_leak_identity():
-    """MemoryReflector.j2 文件正文硬编码 Elysia/妖梦。"""
+def test_memory_reflector_leak_identity_flipped():
+    """MemoryReflector.j2 文件正文用 {character_name}/{user_name}，不再硬编码 Elysia/妖梦。"""
     content = REFLECTOR_PROMPT_PATH.read_text(encoding="utf-8")
-    assert "Elysia 是妖梦的女性 AI 伴侣" in content
+    assert "{character_name}" in content and "{user_name}" in content
+    assert "Elysia" not in content and "妖梦" not in content
 
 
-def test_memory_reflector_leak_user_reference():
-    """MemoryReflector.j2 全篇硬编码妖梦（用户指代）。"""
+def test_memory_reflector_leak_user_reference_flipped():
+    """MemoryReflector.j2 全篇用 {user_name}，不再硬编码妖梦（用户指代）。"""
     content = REFLECTOR_PROMPT_PATH.read_text(encoding="utf-8")
-    assert "妖梦" in content
+    assert "妖梦" not in content

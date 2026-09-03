@@ -71,6 +71,8 @@ class MemoryReflector:
         llm: MemoryLLM,
         memory: "LongTermMemory",
         session: "SessionMemory",
+        character_name: str = "Agent",  # 角色名（占位符替换；默认中性，agent.py 恒传 self._character.name）
+        user_name: str = "用户",          # 用户名（占位符替换；默认中性，agent.py 恒传 self._user_name）
     ):
         """初始化记忆反射器。
 
@@ -78,10 +80,14 @@ class MemoryReflector:
             llm: 记忆域 LLM 窄接口（MemoryLLM），用于审查记忆。
             memory: 长期记忆后端。
             session: 会话记忆，用于访问 character_state 等。
+            character_name: 角色名，用于替换 prompt 中的 {character_name} 占位符。
+            user_name: 用户名，用于替换 prompt 中的 {user_name} 占位符。
         """
         self._llm = llm
         self._memory = memory
         self._session = session
+        self._character_name = character_name  # 新增
+        self._user_name = user_name            # 新增
         self._lock = asyncio.Lock()
         self._round_count = 0
         self._new_memory_count = 0
@@ -256,6 +262,10 @@ class MemoryReflector:
             for e in group
         ]
         prompt = _get_reflector_prompt().replace(
+            "{character_name}", self._character_name,
+        ).replace(
+            "{user_name}", self._user_name,
+        ).replace(
             "{memories}", json.dumps(entries_json, ensure_ascii=False, indent=2),
         ).replace(
             "{last_summary}", json.dumps(self._last_summary, ensure_ascii=False),

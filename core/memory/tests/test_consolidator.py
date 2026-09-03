@@ -13,6 +13,8 @@ import pytest
 from core.memory.consolidator import (
     MemoryConsolidator,
     _JsonArrayParseError,
+    _get_compare_prompt,
+    _get_extraction_prompt,
     _parse_extraction,
     _parse_compare_actions,
 )
@@ -362,3 +364,17 @@ class TestConsolidatorThreshold:
         for i in range(6):
             await consolidator.consolidate(f"msg{i}", "reply")
         assert len(consolidator._buffer) == 0
+
+
+# ============================================================================
+# 6. 辅助 prompt 参数化（B-2 Task 5）— 无 Elysia/妖梦
+# ============================================================================
+
+@pytest.mark.unit
+class TestPromptPlaceholder:
+    """B-2 Task 5：ConsolidationCompare/ExtractMemory prompt 无 Elysia/妖梦。"""
+
+    def test_consolidation_prompt_no_elysia(self):
+        """ConsolidationCompare/ExtractMemory prompt 无 Elysia/妖梦。"""
+        for p in [_get_compare_prompt(), _get_extraction_prompt()]:
+            assert "Elysia" not in p and "妖梦" not in p, "consolidation prompt 仍含 Elysia/妖梦"
