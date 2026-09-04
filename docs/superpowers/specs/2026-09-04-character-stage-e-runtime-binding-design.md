@@ -309,6 +309,10 @@ class TurnCharacterContext:
 - `finalize._apply_final_mood_fallback`（finalize.py:63-64）+ `turn_completed` 的 mood（:192-193）→ 改读 `self._engine.state.mood`（实例权威）。
 - 这些引擎子组件(mood 等)经 `_engine`(实例)读写，不再碰 `target.character_state`。
 
+**⚠️ F1-b 语义澄清（plan review 发现）**：streaming.py:60 的 `state = target_session.character_state if target_session is not None else engine.state` 是**批次 3 的 F1-b 修复**——防「全局单例 engine 经 attach_session 换绑到会话 B 时，in-flight 生成仍写 engine.state → 污染 B」。M3 下 `engine` 是 **per-instance 永不换绑**（§7.2 删 attach_session），该跨会话污染**风险源已消除**——`self._engine` 就是本回合 instance 的 engine，`_apply_mood` 写 `engine.state`(实例权威) 正确且安全。
+
+**⚠️ 需翻转现有测试**：`core/cognitive/tests/test_mood_engine.py::TestApplyMood::test_apply_mood_writes_target_session_state`（:87-115，F1-b）断言 `_apply_mood` 写 `target.character_state`（`assert target.character_state.mood == "开心"` + `assert engine.state.mood == "平静"`）。M3 改写 `engine.state` 后该测试断言**必然翻转**（engine.state.mood 变"开心"、target.character_state.mood 不变）。Task 8 必须**显式更新/翻转此测试**为「写 engine.state(实例权威)，target.character_state 不再权威」的断言——不能只加新测试而留旧测试失败（否则 Task 8 Step 4 跑 `core/cognitive/tests/ -q` 挂）。
+
 ### 6.4 GenerationContext + wire 审计字段（generation.py + frontend_contract）
 
 - `GenerationContext` 加 `characterId: str` / `characterInstanceId: str` / `characterRevision: int`。
