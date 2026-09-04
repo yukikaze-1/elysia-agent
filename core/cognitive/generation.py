@@ -33,6 +33,9 @@ class GenerationContext:
         channel / kind: 当前分段通道/类型（无活动分段为 None）。
         protocol_version: 来源协议版本（1=v1，2=v2）。批次 8b D5：空响应兜底按
             协议版本分支——v2 发 segment 帧，v1 保持 MessageObj。默认 1（既有构造兼容）。
+        character_id: 参与生成的角色 ID（审计字段，阶段 E）。
+        character_instance_id: 参与生成的角色实例 ID（审计字段，阶段 E）。
+        character_revision: 参与生成的角色版本号（审计字段，阶段 E）。
     """
 
     generation_id: GenerationId
@@ -48,6 +51,9 @@ class GenerationContext:
     current_segment_index: int | None = None
     channel: MessageChannel | None = None
     kind: SegmentKind | None = None
+    character_id: str = ""
+    character_instance_id: str = ""
+    character_revision: int = 0
 
     def open_segment(self, channel: MessageChannel, kind: SegmentKind = SegmentKind.TEXT) -> SegmentId:
         """打开一个新分段：分配 seg_ ID、全局序号递增、重置段内 delta。

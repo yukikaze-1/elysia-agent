@@ -6,15 +6,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from core.schema.character import CharacterRuntimeState
 
 
 @dataclass(frozen=True)
 class TurnCharacterContext:
-    """不可变回合上下文。"""
+    """不可变回合上下文（M3：memoryScope 预埋 F + voice/displayName/stateSnapshot）。"""
 
     conversationId: str
     characterInstanceId: str
     characterId: str
     characterRevision: int
     userPronoun: str   # 来自 UserIdentity.pronouns（B1 全局唯一「她」）
+    memoryScope: str = ""
+    voice: dict = field(default_factory=dict)
+    displayName: str = ""
+    stateSnapshot: CharacterRuntimeState | None = None
