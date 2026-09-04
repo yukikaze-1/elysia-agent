@@ -84,36 +84,30 @@ class TestApplyMood:
         # mood 不变，output.mood 未被调用
         output.mood.assert_not_called()
 
-    def test_apply_mood_writes_target_session_state(self):
-        """批次 3 review 修复（F1）：_apply_mood 写 target.character_state 而非 engine.state。
-
-        attach_session 换绑期间若 in-flight 生成延续仍执行 _apply_mood，mood 必须
-        落在发起会话的 character_state——引擎全局单例 state 已换绑到 B 时不污染 B。
-        """
+    def test_apply_mood_writes_engine_state(self):
+        """M3: _apply_mood 写 engine.state(实例权威), 不再写 target.character_state(F1-b 翻转, spec §6.3)。"""
         from unittest.mock import AsyncMock, MagicMock
 
-        from core.schema.character import CharacterState
+        from core.schema.character import CharacterRuntimeState
         from core.schema.types import SessionId
         from core.cognitive.loop import _apply_mood
 
         engine = MagicMock()
-        engine.state = CharacterState(session_id=SessionId("engine-state"))
+        engine.state = CharacterRuntimeState(instance_id="chi_x", session_id=SessionId("engine-state"))
         engine.state.mood = "平静"
         target = MagicMock()
-        target.character_state = CharacterState(session_id=SessionId("target-state"))
+        target.character_state = MagicMock()
         target.character_state.mood = "平静"
         tts_mgr = MagicMock()
         output = AsyncMock()
 
         asyncio.run(_apply_mood("开心|0.8", engine, tts_mgr, output, target))
 
-        assert target.character_state.mood == "开心"
-        assert target.character_state.mood_intensity == 0.8
-        # 未写 engine.state（换绑竞态下防跨会话污染）——mood 文本与默认强度均不变
-        assert engine.state.mood == "平静"
-        assert engine.state.mood_intensity == 0.5  # CharacterState 默认强度
+        assert engine.state.mood == "开心"
+        assert engine.state.mood_intensity == 0.8
+        # 不再写 session state
+        assert target.character_state.mood != "开心"
         output.mood.assert_called_once_with("开心", 0.8)
-        tts_mgr.set_emotion.assert_called_once_with("开心")
 
 
 @pytest.mark.unit

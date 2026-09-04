@@ -38,7 +38,7 @@ async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamMan
     """解析 <mood> 标签内容，更新 CharacterState + 统一心情发射 + TTS emotion。
 
     支持格式: "情绪文本" 或 "情绪文本|强度"（强度 0.1–1.0）。
-    更新目标会话 character_state 的 mood / mood_intensity（而非 engine.state），
+    更新实例权威 engine.state 的 mood / mood_intensity（F1-b 翻转，spec §6.3），
     经 output.mood() 统一发射（v1 发 expression、v2 捕获不发——mood 由 turn_completed 落位），
     设置 TTS 情绪参数。
     """
@@ -57,7 +57,7 @@ async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamMan
         logger.debug("心情: <mood> 标签为空，跳过")
         return
 
-    state = target_session.character_state if target_session is not None else engine.state
+    state = engine.state
     prev = state.mood
     state.mood = mood_text
     state.mood_intensity = intensity
