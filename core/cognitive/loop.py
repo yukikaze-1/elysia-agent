@@ -20,7 +20,7 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Awaitable, Any, Callable, TYPE_CHECKING
+from typing import Awaitable, Any, Callable, cast, TYPE_CHECKING
 
 from core.utils import new_message_id, new_generation_id
 from core.schema.types import MessageId, RequestId, SessionId
@@ -80,6 +80,11 @@ _EMPTY_RESPONSE_FALLBACK = "抱歉，我刚才走神了，你能再说一遍吗�
 # 空响应兜底累计计数器——连续多轮兜底说明系统性异常（LLM 持续空响应），
 # 超阈值升 error，避免「走神」回复静默刷屏不升级告警。
 _EMPTY_RESPONSE_THRESHOLD = 5
+
+# Task 8（B1 闭环）：session.character_binding 缺 instance_id/character_id 时的回退。
+# 与内置 Elysia 角色快照对齐（core/character 默认角色），见 core/character 批。
+DEFAULT_INSTANCE_ID = "chi_builtin_elysia"
+DEFAULT_CHARACTER_ID = "chr_builtin_elysia"
 
 
 def _is_llm_layer_error(exc: BaseException) -> bool:
@@ -360,32 +365,33 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             return None
 
         gen_conversation_id = conversation_id or target.session_id
-        if self._engine is not None:
-            self._engine.attach_session(target)
+        # Task 8（B1 闭环）：从 session.character_binding 解析 instance_id，
+        # 经 registry.get（同步，不 await）→ runtime.ensure_engine → self._engine。
+        # binding 缺 instance_id/character_id 时回退内置 Elysia。
+        binding = target.character_binding or {}
+        instance_id = binding.get("instance_id") or DEFAULT_INSTANCE_ID
+        registry = cast("CharacterRuntimeRegistry", self._registry)
+        runtime = registry.get(instance_id, self._runtime_factory)  # type: ignore[arg-type]
+        engine = runtime.ensure_engine(lambda: self._engine_factory(runtime))  # type: ignore[call-optional]
         self._session = target
         self._prompt.set_session(target)
-        # Task 7（B1 闭环）：attach_session 之后冻结本回合角色/用户上下文，并传给 prompt。
-        # characterInstanceId 取 engine._instance_id（agent 注入恒 chi_builtin_*）；本批不读
-        # session.character_binding 解析 instance（M1/M2 单例 engine + 标记，inert，可接受）。
+        self._engine = engine
+        # Task 7（B1 闭环）：冻结本回合角色/用户上下文，并传给 prompt。
+        # characterInstanceId 来自 binding 的 instance_id，characterId 来自 runtime.definition。
         self._turn_context = TurnCharacterContext(
             conversationId=gen_conversation_id,
-            characterInstanceId=(
-                (self._engine._instance_id or "chi_default")  # noqa: SLF001
-                if self._engine is not None else "chi_default"
-            ),
-            characterId=(
-                (self._engine._character.name.lower()  # noqa: SLF001
-                 if self._engine._character is not None  # noqa: SLF001
-                 else "agent")
-                if self._engine is not None else "agent"
-            ),
-            characterRevision=(
-                self._engine._character_revision  # noqa: SLF001
-                if self._engine is not None else 1
-            ),
+            characterInstanceId=instance_id,
+            characterId=runtime.definition.characterId,
+            characterRevision=runtime.revision.revision,
             userPronoun=self._resolve_pronouns(),
+            memoryScope=instance_id,
+            voice=cast(dict, runtime.revision.runtimeDefaults.get("voice", {})),
+            displayName=runtime.revision.displayName,
+            stateSnapshot=runtime.snapshot_state(),
         )
         self._prompt._turn_context = self._turn_context
+        self._prompt.set_personality_engine(engine)
+        self._prompt.set_character(runtime.definition.characterId, runtime.revision.displayName)
         if self._tool_adapter is not None:
             svc = self._tool_adapter.tool_context.services
             svc["session"] = target
