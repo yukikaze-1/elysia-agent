@@ -1,0 +1,98 @@
+"""CharacterInstanceRepository — character_instances 集合的 instance 持久化。"""
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
+from core.schema.utils import now_iso
+from core.storage.base import Repository, StorageUnavailableError
+from core.character.instance import CharacterInstance
+
+if TYPE_CHECKING:
+    from core.schema.character import CharacterRuntimeState
+
+logger = logging.getLogger(__name__)
+COLLECTION = "character_instances"
+_TOP_LEVEL_KEYS = {
+    "instanceId": "instance_id", "characterId": "character_id",
+    "ownerUserId": "owner_user_id", "stateVersion": "state_version",
+    "createdAt": "created_at", "updatedAt": "updated_at",
+}
+
+
+class CharacterInstanceRepository(Repository):
+    """character_instances 集合 instance CRUD + state_version CAS（fail-closed）。"""
+
+    def __init__(self, db: DocumentDBBackend | None = None, *, base_url: str | None = None):
+        self._db = db
+        self._base_url = base_url
+        self._injected_db = db is not None
+
+    async def connect(self) -> bool:
+        if self._db is not None:
+            return True
+        try:
+            self._db = DocumentDBFactory.create("mongodb/default", base_url=self._base_url)
+            await self._db.ensure_index(COLLECTION, [("instance_id", 1)], unique=True)
+            return True
+        except Exception as e:
+            logger.warning("CharacterInstanceRepository: MongoDB unavailable (%s)", e)
+            self._db = None
+            return False
+
+    async def close(self) -> None:
+        if self._db:
+            await self._db.close()
+            self._db = None
+
+    async def health_check(self) -> bool:
+        return await self._health_check()
+
+    async def get(self, instance_id: str) -> CharacterInstance | None:
+        if self._db is None:
+            raise StorageUnavailableError("CharacterInstanceRepository 未连接")
+        db = self._db
+        docs = await self._call(lambda: db.find(COLLECTION, {"instance_id": instance_id}, limit=1))
+        if not docs:
+            return None
+        return CharacterInstance.model_validate(self._from_doc(docs[0]))
+
+    async def save(self, instance: CharacterInstance) -> None:
+        if self._db is None:
+            raise StorageUnavailableError("CharacterInstanceRepository 未连接")
+        # $set 包装——update_one 的 update 参数要求 Mongo 更新操作符文档(fake 只识别 $set)。
+        db = self._db
+        await self._call(lambda: db.update_one(
+            COLLECTION, {"instance_id": instance.instanceId}, {"$set": self._to_doc(instance)}, upsert=True))
+
+    async def cas_state_version(self, instance_id: str, *, expected: int,
+                                new_state: "CharacterRuntimeState", new_version: int) -> bool:
+        """CAS state_version：filter 恒含 state_version==expected + updated_at 必变。"""
+        if self._db is None:
+            raise StorageUnavailableError("CharacterInstanceRepository 未连接")
+        db = self._db
+        mod = await self._call(lambda: db.update_one(
+            COLLECTION,
+            {"instance_id": instance_id, "state_version": expected},
+            {"$set": {"state": new_state.model_dump(mode="json"), "state_version": new_version,
+                      "updated_at": now_iso()}},
+        ))
+        return mod > 0
+
+    @staticmethod
+    def _to_doc(inst: CharacterInstance) -> dict:
+        doc = {}
+        for k, v in inst.model_dump(mode="json").items():
+            doc[_TOP_LEVEL_KEYS.get(k, k)] = v
+        return doc
+
+    @staticmethod
+    def _from_doc(doc: dict) -> dict:
+        data = {}
+        for k, v in doc.items():
+            if k == "_id":
+                continue
+            rev_key = next((dk for dk, dk_v in _TOP_LEVEL_KEYS.items() if dk_v == k), k)
+            data[rev_key] = v
+        return data
