@@ -78,7 +78,7 @@ class CognitiveStreaming:
     _token_tracker: "TokenTracker | None"
     _mood_applied: bool
     _ttft_start: float
-    _character_engine: "CharacterEngine | None"
+    _engine: "CharacterEngine | None"
     _tts_mgr: TTSStreamManager
     _output: OutputManager
     _generation_ctx: GenerationContext | None
@@ -239,8 +239,8 @@ class CognitiveStreaming:
         ttft → clock span, sentence → TTS/UI, text_delta → 纯文本模式输出。
         """
         if event.type == StreamEventType.MOOD:
-            if self._character_engine:
-                await _apply_mood(event.text, self._character_engine, self._tts_mgr,
+            if self._engine:
+                await _apply_mood(event.text, self._engine, self._tts_mgr,
                                   self._output, session)
             self._mood_applied = True
 

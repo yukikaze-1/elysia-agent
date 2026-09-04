@@ -25,7 +25,8 @@ pytestmark = pytest.mark.service
 
 
 def _make_loop(*, engine=None, user_identity_store=None,
-               on_store: bool = True) -> CognitiveLoop:
+               on_store: bool = True, runtime_registry=None,
+               runtime_factory=None, engine_factory=None) -> CognitiveLoop:
     """构造最小 CognitiveLoop（不跑 process，仅测 _prepare_turn）。
 
     resolver 恒返回 default 会话；prompt 用 MagicMock（set_session 为同步方法）。
@@ -53,6 +54,9 @@ def _make_loop(*, engine=None, user_identity_store=None,
         llm=llm, fsm=fsm, event_bus=bus, output=output,
         prompt=prompt, session_resolver=resolver,
         character_engine=engine,
+        runtime_registry=runtime_registry,
+        runtime_factory=runtime_factory,
+        engine_factory=engine_factory,
     )
     if on_store:
         loop.configure(user_identity_store=user_identity_store)
@@ -154,3 +158,14 @@ async def test_prepare_turn_without_store_falls_back_to_default_pronoun():
     assert setup is not None
     assert loop._turn_context.userPronoun == "她"
     await loop._output.close()
+
+
+def test_loop_injects_runtime_registry():
+    """Task 7（B1）：__init__ 注入 runtime_registry/runtime_factory/engine_factory，
+    且 mixin 改名 _engine —— 不再有 _character_engine 属性。"""
+    from core.character.registry import CharacterRuntimeRegistry
+    reg = CharacterRuntimeRegistry()
+    loop = _make_loop(runtime_registry=reg, runtime_factory=lambda iid: None, engine_factory=lambda rt: None)
+    assert loop._registry is reg
+    assert loop._runtime_factory is not None and loop._engine_factory is not None
+    assert not hasattr(loop, "_character_engine")   # B1: mixin 改名 _engine

@@ -53,6 +53,8 @@ if TYPE_CHECKING:
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
     from core.personality.engine import CharacterEngine
+    from core.character.registry import CharacterRuntimeRegistry
+    from core.character.runtime import CharacterRuntime
     from core.profile.profile_store import UserIdentityStore
     from core.adapter.tool_adapter import ToolAdapter
     from core.memory.memory_reflector import MemoryReflector
@@ -139,6 +141,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         token_tracker: "TokenTracker | None" = None,
         prompt_recorder: "PromptRecorder | None" = None,
         generation_registry: "GenerationRegistry | None" = None,
+        runtime_registry: "CharacterRuntimeRegistry | None" = None,
+        runtime_factory: "Callable[[str], CharacterRuntime] | None" = None,
+        engine_factory: "Callable[[CharacterRuntime], CharacterEngine] | None" = None,
     ):
         """初始化认知循环。
 
@@ -169,7 +174,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # 解析本轮目标会话后动态赋值（CognitiveTools mixin 经 self._session 自动跟随）。
         self._tool_adapter = tool_adapter
         self._req_counter: int = 0
-        self._character_engine = character_engine
+        self._engine = character_engine
         self._consolidator = consolidator
         self._memory_reflector: MemoryReflector | None = None  # 由 configure() 注入
         self._tts = tts  # 保留供 agent.py stop() 读取
@@ -180,6 +185,12 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._generation_registry = (generation_registry
                                      if generation_registry is not None
                                      else GenerationRegistry())
+        # Task 7（B1）：character runtime 绑定层注入——registry 按 instance_id 解析
+        # runtime，runtime_factory 构造 CharacterRuntime，engine_factory 由 runtime
+        # 构造 CharacterEngine（本批：单例 engine + 标记，inert，可接受）。
+        self._registry = runtime_registry
+        self._runtime_factory = runtime_factory
+        self._engine_factory = engine_factory
         # 批次 2：当前回合 GenerationContext（process() 创建，_dispatch_stream_event/
         # _finalize_turn/错误路径使用）；无活动回合为 None
         self._generation_ctx: GenerationContext | None = None
@@ -349,8 +360,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             return None
 
         gen_conversation_id = conversation_id or target.session_id
-        if self._character_engine is not None:
-            self._character_engine.attach_session(target)
+        if self._engine is not None:
+            self._engine.attach_session(target)
         self._session = target
         self._prompt.set_session(target)
         # Task 7（B1 闭环）：attach_session 之后冻结本回合角色/用户上下文，并传给 prompt。
@@ -359,18 +370,18 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._turn_context = TurnCharacterContext(
             conversationId=gen_conversation_id,
             characterInstanceId=(
-                (self._character_engine._instance_id or "chi_default")  # noqa: SLF001
-                if self._character_engine is not None else "chi_default"
+                (self._engine._instance_id or "chi_default")  # noqa: SLF001
+                if self._engine is not None else "chi_default"
             ),
             characterId=(
-                (self._character_engine._character.name.lower()  # noqa: SLF001
-                 if self._character_engine._character is not None  # noqa: SLF001
+                (self._engine._character.name.lower()  # noqa: SLF001
+                 if self._engine._character is not None  # noqa: SLF001
                  else "agent")
-                if self._character_engine is not None else "agent"
+                if self._engine is not None else "agent"
             ),
             characterRevision=(
-                self._character_engine._character_revision  # noqa: SLF001
-                if self._character_engine is not None else 1
+                self._engine._character_revision  # noqa: SLF001
+                if self._engine is not None else 1
             ),
             userPronoun=self._resolve_pronouns(),
         )
@@ -598,9 +609,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         task_result_context: dict | None,
     ) -> str:
         """think_loop 前置：STT 情绪分析 + 后台任务结果唤醒消息。"""
-        if self._character_engine:
+        if self._engine:
             if stt_emotion and stt_emotion != "NEUTRAL":
-                self._character_engine.analyze_user_stt(stt_emotion, stt_events)
+                self._engine.analyze_user_stt(stt_emotion, stt_events)
         if is_task_result and task_result_context:
             return self._build_wake_up_message(task_result_context)
         return user_message
@@ -751,7 +762,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             session: 批次 3 本轮目标会话（局部捕获——save 归属，防 active 切换后
                 in-flight 异步延续落错会话；None 时回退 self._session）
             engine: 批次 3 本轮 CharacterEngine（局部捕获——buffer_message 归属；
-                None 时回退 self._character_engine）
+                None 时回退 self._engine）
         """
         # shutdown 门禁——stop() 开始后（cognitive task 已 cancel、LLM/session repo 将关闭），
         # 本轮 turn 收尾新创建的 after_response task 立即退出，避免与已关闭资源并发。
@@ -760,10 +771,10 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             logger.debug("after_response 跳过——agent 正在关闭")
             return
 
-        # 局部捕获：不读 self._session / self._character_engine——resolver 切走后
+        # 局部捕获：不读 self._session / self._engine——resolver 切走后
         # 本轮 in-flight 异步延续仍写发起会话 / 发起引擎。
         target_session = session if session is not None else self._session
-        target_engine = engine if engine is not None else self._character_engine
+        target_engine = engine if engine is not None else self._engine
         # C3/P1-10：在首个 await 前固化发起会话的 reflector——consolidate await 期间
         # session switch 会 rebind engine._reflector，晚读会写到新会话的 reflector。
         target_reflector = getattr(target_engine, "_reflector", None) if target_engine else None

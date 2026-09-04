@@ -36,7 +36,7 @@ class CognitiveFinalize:
     """轮次收尾阶段 mixin。"""
 
     # 类型占位：运行时由 CognitiveLoop.__init__ / configure() 初始化
-    _character_engine: "CharacterEngine | None"
+    _engine: "CharacterEngine | None"
     _mood_applied: bool
     _tts_mgr: "TTSStreamManager"
     _output: "OutputManager"
@@ -56,12 +56,12 @@ class CognitiveFinalize:
     def _apply_final_mood_fallback(self, target: "SessionMemory",
                                     user_message: str) -> None:
         """LLM 未输出 <mood> 时关键词检测并设置 TTS 情绪。"""
-        if not self._character_engine or self._mood_applied:
+        if not self._engine or self._mood_applied:
             return
         logger.debug("心情: <mood> 未检测到，使用关键词 fallback")
-        self._character_engine.analyze_user(user_message)
+        self._engine.analyze_user(user_message)
         fallback_mood = (target.character_state.mood
-                         if target is not None else self._character_engine.state.mood)
+                         if target is not None else self._engine.state.mood)
         self._tts_mgr.set_emotion(fallback_mood)
 
     async def _emit_final_public_text(self, public_text: str,
@@ -69,8 +69,8 @@ class CognitiveFinalize:
         """公开文本的最终发射：personality 分析 + v2 segment / v1 message。"""
         if not public_text.strip():
             return
-        if self._character_engine:
-            self._character_engine.analyze_assistant(public_text)
+        if self._engine:
+            self._engine.analyze_assistant(public_text)
         if speaking_started:
             return
         await self._output.typing(False)
@@ -134,7 +134,7 @@ class CognitiveFinalize:
             try:
                 await self._after_response(
                     user_message, public_text,
-                    session=target, engine=self._character_engine)
+                    session=target, engine=self._engine)
             finally:
                 if background_reserved and self._session_work_releaser is not None:
                     self._session_work_releaser(target.session_id)
@@ -190,8 +190,8 @@ class CognitiveFinalize:
                     logger.debug("get_session_stats 失败，conversation_usage=None",
                                  exc_info=True)
             mood = (target.character_state.mood if target is not None else (
-                self._character_engine.state.mood
-                if self._character_engine is not None else None))
+                self._engine.state.mood
+                if self._engine is not None else None))
             await self._output.turn_completed(
                 "stop", usage, self._generation_ctx.model_id, mood, self._generation_ctx,
                 conversation_id=conversation_id or target.session_id,
