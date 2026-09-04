@@ -47,7 +47,7 @@ import time
 import os
 from dataclasses import asdict
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable
 
 if TYPE_CHECKING:
     from core.monitoring.token_tracker import TokenTracker
@@ -78,11 +78,14 @@ from core.monitoring.idle_monitor import IdleMonitor
 from core.adapter.llm_adapter import LLMAdapter
 from core.memory.consolidator import MemoryConsolidator
 from core.personality import CharacterEngine
-from core.personality.reflector import CharacterReflector
 from core.memory.memory_reflector import MemoryReflector
+from core.character.registry import CharacterRuntimeRegistry
+from core.character.runtime import CharacterRuntime
+from core.storage.character_instance_repo import CharacterInstanceRepository
 from core.storage.character_version_repo import CharacterVersionRepository
 from core.schema.types import IsoTimestamp, MessageId, SessionId
-from core.schema.character import CharacterState
+from core.schema.utils import now_iso
+from core.schema.character import CharacterRuntimeState
 from core.profile.profile_store import UserIdentityStore
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
@@ -199,33 +202,90 @@ class Agent(AgentLifecycle, AgentServer):
         self._fsm = AgentFSM()
         self._llm = LLMAdapter(model=config.llm.model)
 
-        # ---- 性格 + 情绪引擎（合并）----
-        # 与 active session 的 character_state 共用同一对象 — engine 写入 mood 等，
-        # session 持久化 + debug 读取。构造顺序（D-l）：SessionManager(eager default)
-        # → CharacterEngine(state=default.character_state) → bind_character_engine。
-        self._character_engine = CharacterEngine(
-            llm=self._llm,
-            state=self._session_manager.active.character_state,
-            character_name=self._character.name,
-            user_name=self._user_name,
-            base_personality=self._character.base_personality,
-            character_config=self._character,
-            output=self._output,
-            version_repo=self._version_repo,
-            # Task 7（B1）：engine 构造传 instance 身份（恒 chi_builtin_<name>/rev=1；
-            # M1/M2 仅记录标记，不绑定 CharacterRuntime）
-            instance_id="chi_builtin_" + self._character.name.lower(),
-            character_revision=1,
-        )
-        # bind 时对 active(default) 调 attach_session：绑定 state 视图 + 设 pre_save_hook
-        self._session_manager.bind_character_engine(self._character_engine)
+        # ---- 性格 + 情绪引擎（M3: engine per-instance + RuntimeRegistry）----
+        # Task 11（A3 修复）：不再 eager 构造全局 _character_engine——改注册 runtime
+        # registry + 默认会话 binding（→ 内置 Elysia instance）。engine 经 registry 按
+        # instance 懒建：回合边界由 _prepare_turn 解析（registry.get → runtime.engine），
+        # 公开只读接口 agent.character_engine 同样经 registry 解析当前 instance。
+        # 默认 instance 需恒 pre-seed（PromptAssembler 快照路径 + 默认会话 binding），
+        # 因此在此构造 default runtime + engine 并注册入 registry。
+        from core.character.builtin_source import BuiltinCharacterSource
 
-        # 保存 reflector 引用供 debug_info 使用
-        self._character_reflector = self._character_engine._reflector
+        self._runtime_registry = CharacterRuntimeRegistry()
+        self._instance_repo = CharacterInstanceRepository(
+            base_url=db_cfg.mongodb_uri,
+        )
+        # 默认会话 binding（内置 Elysia）——M3：binding 不再指 session.character_state，
+        # 而是 instance 身份；_prepare_turn/character_engine 经此解析 runtime。
+        self._default_binding: dict = {
+            "character_id": "chr_builtin_elysia",
+            "instance_id": "chi_builtin_elysia",
+        }
+        self._builtin_source = BuiltinCharacterSource()
+
+        def _make_runtime(instance_id: str) -> CharacterRuntime:
+            """按 instance_id 构造 CharacterRuntime（内置角色经 BuiltinCharacterSource）。
+
+            非内置 instance 当前由 character_profiles gate（阶段 D+ 才启用），此路径
+            只服务内置 elysia/cyrene —— 角色名从 instance_id 前缀剥离回 role_name。
+            """
+            role_name = instance_id.removeprefix("chi_builtin_")
+            definition, revision, instance = self._builtin_source.load(role_name)
+            return CharacterRuntime(
+                instance=instance,
+                definition=definition,
+                revision=revision,
+                user_identity=self._user_identity,
+            )
+
+        def _make_engine(runtime: CharacterRuntime) -> CharacterEngine:
+            """从 runtime 构造 CharacterEngine（M3: 每 instance 一个 engine，state 权威 =
+            runtime.state，与 runtime.state 共享同一引用）。
+            """
+            return CharacterEngine(
+                llm=self._llm,
+                state=runtime.state,
+                character_name=self._character.name,
+                user_name=self._user_name,
+                base_personality=self._character.base_personality,
+                character_config=self._character,
+                output=self._output,
+                version_repo=self._version_repo,
+                instance_id=runtime.instance.instanceId,
+                character_revision=runtime.revision.revision,
+            )
+
+        self._make_runtime = _make_runtime
+        self._make_engine = _make_engine
+
+        # 默认 instance（内置 Elysia）：构造 runtime + engine 并注册入 registry。
+        # PromptAssembler 快照路径需要默认 persona engine（保留）。
+        # 先建 runtime 再以其 state 建 engine——engine.state 与 runtime.state 共享同一
+        # 引用（_make_engine 传 runtime.state）；次序颠倒会令 engine 挂到被丢弃 runtime 的 state。
+        default_runtime = self._runtime_registry.get(
+            self._default_binding["instance_id"],
+            lambda: _make_runtime(self._default_binding["instance_id"]),
+        )
+        default_engine = _make_engine(default_runtime)
+        default_runtime.bind_engine(default_engine)
+        self._default_engine = default_engine
+        # M3：runtime.flush() 经 persist_fn 把 runtime.state 持久化到 instance repo。
+        # registry.close_all()（shutdown）逐 runtime flush 据此落库。
+        def _persist_runtime(state: CharacterRuntimeState) -> Awaitable[None]:
+            async def _do() -> None:
+                inst = default_runtime.instance
+                inst.state = state
+                inst.stateVersion += 1
+                inst.updatedAt = now_iso()
+                await self._instance_repo.save(inst)
+            return _do()
+        default_runtime.set_persist_fn(_persist_runtime)
+        # 默认会话 binding 指向内置 Elysia instance（M3 权威）。
+        self._session_manager.active.character_binding = dict(self._default_binding)
 
         self._prompt = PromptAssembler(
             self._character, self._session_manager.active, self._long_term,
-            personality_engine=self._character_engine,
+            personality_engine=self._default_engine,
         )
 
         self._tts = None  # 在 _start_tts() 中创建
@@ -273,11 +333,16 @@ class Agent(AgentLifecycle, AgentServer):
             prompt=self._prompt,
             session_resolver=lambda c, p: self.resolve_session(c, p),  # 批次 3：按 conversation_id + protocol_version 解析目标会话
             tool_adapter=self._tool_adapter,
-            character_engine=self._character_engine,
+            character_engine=self._default_engine,
             consolidator=self._consolidator,
             tts=self._tts,
             token_tracker=self._token_tracker,
             generation_registry=self._generation_registry,
+            # Task 11（M3）：注入 runtime registry + factory——_prepare_turn 经
+            # binding → registry.get(instance_id) → runtime.engine 解析当前回合引擎。
+            runtime_registry=self._runtime_registry,
+            runtime_factory=self._make_runtime,
+            engine_factory=self._make_engine,
         )
         self._cognitive.configure(
             memory_reflector=self._memory_reflector,
@@ -957,13 +1022,21 @@ class Agent(AgentLifecycle, AgentServer):
 
     @property
     def character_engine(self):
-        """角色引擎。"""
-        return self._character_engine
+        """角色引擎（当前 instance）。Task 11（M3）：经 registry 解析，非全局单例。
+
+        当前活动会话的 binding → instance_id → registry.get(instance_id).engine。
+        binding 缺失回退默认内置 Elysia instance。
+        """
+        binding = self._session_manager.active.character_binding or self._default_binding
+        instance_id = binding.get("instance_id") or self._default_binding["instance_id"]
+        runtime = self._runtime_registry.get(
+            instance_id, lambda: self._make_runtime(instance_id))
+        return runtime.ensure_engine(lambda: self._make_engine(runtime))
 
     @property
     def character_reflector(self):
-        """角色反思器。"""
-        return self._character_reflector
+        """角色反思器（当前 instance engine.reflector）。"""
+        return self.character_engine._reflector
 
     @property
     def character(self):

@@ -14,6 +14,8 @@ pytestmark = pytest.mark.service
 
 # (property 名, 内部属性名, 是否启动期创建)
 # 注：session 特例——批次 3 起直通 session_manager.active，单独测试
+# 注：character_engine/character_reflector 为 M3 computed（经 registry 解析 instance），
+#    非 attr 直通——下方 TestCharacterM3Properties 单独验证。
 SUBSYSTEM_PROPS = [
     ("long_term", "_long_term", False),
     ("message_repo", "_message_repo", False),
@@ -31,8 +33,6 @@ SUBSYSTEM_PROPS = [
     ("scheduler", "_scheduler", False),
     ("consolidator", "_consolidator", False),
     ("memory_reflector", "_memory_reflector", False),
-    ("character_engine", "_character_engine", False),
-    ("character_reflector", "_character_reflector", False),
     ("character", "_character", False),
 ]
 STARTUP_PROPS = [
@@ -58,6 +58,28 @@ class TestSubsystemProperties:
         """批次 3：session property 直通 session_manager.active。"""
         assert agent.session is agent.session_manager.active
         assert agent.active_session_id == "default"
+
+
+class TestCharacterM3Properties:
+    """M3（Task 11）：character_engine/character_reflector 经 registry 解析 instance。
+
+    非 attr 直通（此前 _character_engine 全局单例已删）——character_engine 返回
+    当前 instance 的 engine，character_reflector 返回其 engine.reflector。
+    """
+
+    def test_character_engine_resolves_via_registry(self, agent):
+        """character_engine 返回 registry 中默认 instance 的 engine（非全局单例）。"""
+        binding = agent.session_manager.active.character_binding
+        assert binding == {"character_id": "chr_builtin_elysia",
+                           "instance_id": "chi_builtin_elysia"}
+        engine = agent.character_engine
+        assert engine is not None
+        # 经 registry 解析 → 同一 instance 命中同一 runtime，多次访问同 engine
+        assert agent.character_engine is engine
+
+    def test_character_reflector_resolves_from_engine(self, agent):
+        """character_reflector 返回当前 instance engine 的 reflector。"""
+        assert agent.character_reflector is agent.character_engine._reflector
 
 
 class TestStartupProperties:

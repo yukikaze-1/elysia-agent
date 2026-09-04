@@ -124,16 +124,6 @@ def _make_manager(repo=None, msg_repo=None, **kw) -> SessionManager:
     return SessionManager(repo or FakeSessionRepo(), msg_repo or FakeMsgRepo(), **kw)
 
 
-class FakeEngine:
-    """记录 attach_session 调用的 fake character engine。"""
-
-    def __init__(self):
-        self.attached: list = []
-
-    def attach_session(self, session) -> None:
-        self.attached.append(session)
-
-
 # ───────────────────────── eager default ─────────────────────────
 
 
@@ -555,24 +545,15 @@ async def test_switch_swaps_active_and_returns_target():
 
 
 @pytest.mark.asyncio
-async def test_switch_calls_outgoing_pre_save_hook():
-    """switch 先调 outgoing._pre_save_hook()（同步 reflector buffer）。"""
-    m = _make_manager()
-    await m.ensure_loaded("default")
-    calls = []
-    m.active._pre_save_hook = lambda: calls.append("outgoing")
-    await m.switch("conv_hook")
-    assert calls == ["outgoing"]
+async def test_switch_no_attach():
+    """M3: bind_character_engine 已删, switch 不再 attach_session / _pre_save_hook。
 
-
-@pytest.mark.asyncio
-async def test_switch_attaches_character_engine():
-    """switch 后 bind 的 engine 对 target 调用 attach_session。"""
+    switch 只换 active 指针；instance-scoped 状态经 runtime 权威，session 切换不重绑 engine。
+    """
     m = _make_manager()
-    engine = FakeEngine()
-    m.bind_character_engine(engine)
+    # M3: bind_character_engine 已删, switch 不再 attach_session
     target = await m.switch("conv_eng")
-    assert engine.attached[-1] is target
+    assert target is not None and m.active_id == "conv_eng"
 
 
 @pytest.mark.asyncio
@@ -714,11 +695,9 @@ async def test_delete_default_rejected():
 
 
 @pytest.mark.asyncio
-async def test_delete_active_conv_rebinds_engine_to_default():
-    """删除活动会话：active 回落 default + 重绑 engine（attach_session(default)）。"""
+async def test_delete_active_conv_rebinds_active_to_default():
+    """删除活动会话：active 回落 default。M3 不再重绑 engine（attach_session 已删）。"""
     m = _make_manager()
-    engine = FakeEngine()
-    m.bind_character_engine(engine)
     await m.ensure_loaded("default")
     summary = await m.create(title="del-active")
     await m.switch(summary.session_id)
@@ -726,7 +705,7 @@ async def test_delete_active_conv_rebinds_engine_to_default():
     n = await m.delete(summary.session_id)
     assert n == 0
     assert m.active_id == "default"
-    assert engine.attached[-1] is m.get("default")  # 重绑到 default，非孤儿 state
+    assert m.active.session_id == "default"
 
 
 # ───────────────────────── list ─────────────────────────

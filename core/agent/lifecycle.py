@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from core.memory.session_manager import SessionManager
     from core.memory.long_term import LongTermMemory
     from core.memory.consolidator import MemoryConsolidator
-    from core.personality import CharacterEngine
     from core.task import TaskScheduler
     from core.monitoring.event_bus import EventBus
     from core.status.agent_fsm import AgentFSM
@@ -99,7 +98,8 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _long_term: LongTermMemory
         _message_repo: MessageRepository
         _version_repo: CharacterVersionRepository
-        _character_engine: CharacterEngine
+        _runtime_registry: Any
+        _consolidator: MemoryConsolidator
         _token_repo: TokenRepository
         _output: OutputManager
         _cognitive: CognitiveLoop
@@ -108,7 +108,6 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _config: AppConfig
         _bus: EventBus
         _idle: IdleMonitor
-        _consolidator: MemoryConsolidator
         _session_repo: SessionRepository
         _session_manager: SessionManager
         _attachment_repo: AttachmentRepository | None
@@ -242,22 +241,40 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
                 logger.warning("Consolidator flush failed", exc_info=True)
 
     async def _flush_reflector(self) -> None:
-        """CharacterReflector buffer 落盘，防止未持久化的性格反思丢失。"""
-        if self._character_engine:
+        """CharacterReflector buffer 落盘，防止未持久化的性格反思丢失。
+
+        Task 11（M3）：不再全局 _character_engine——经 RuntimeRegistry 遍历各 instance
+        runtime 的 engine，对每个 engine 触发 reflector flush（engine per-instance）。
+        """
+        registry = getattr(self, "_runtime_registry", None)
+        if registry is None:
+            return
+        for rt in registry._runtimes.values():  # noqa: SLF001 — 组合根遍历 registry 持有的 runtime
+            engine = rt.engine
+            if engine is None:
+                continue
             try:
-                await asyncio.wait_for(self._character_engine.flush_reflector(), timeout=5.0)
+                await asyncio.wait_for(engine.flush_reflector(), timeout=5.0)
             except asyncio.TimeoutError:
                 logger.warning("CharacterReflector flush timed out during shutdown")
             except Exception:
                 logger.warning("CharacterReflector flush failed", exc_info=True)
 
     async def _flush_compression(self) -> None:
-        """L3→L2 性格压缩 flush — 如有未处理的 state_history 条目，触发压缩。"""
-        if self._character_engine:
+        """L3→L2 性格压缩 flush — 如有未处理的 state_history 条目，触发压缩。
+
+        Task 11（M3）：不再全局 _character_engine——经 RuntimeRegistry 遍历各 instance
+        runtime 的 engine，对每个 engine 触发 compression flush（engine per-instance）。
+        """
+        registry = getattr(self, "_runtime_registry", None)
+        if registry is None:
+            return
+        for rt in registry._runtimes.values():  # noqa: SLF001 — 组合根遍历 registry 持有的 runtime
+            engine = rt.engine
+            if engine is None:
+                continue
             try:
-                await asyncio.wait_for(
-                    self._character_engine.flush_compression(), timeout=5.0
-                )
+                await asyncio.wait_for(engine.flush_compression(), timeout=5.0)
             except asyncio.TimeoutError:
                 logger.warning("CharacterEngine compression flush timed out")
             except Exception:

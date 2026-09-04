@@ -39,7 +39,6 @@ from core.storage.message_repo import MessageRepository
 from core.memory.session import SessionMemory
 
 if TYPE_CHECKING:
-    from core.personality.engine import CharacterEngine
     from core.memory.memory_reflector import MemoryReflector
 
 logger = logging.getLogger(__name__)
@@ -110,7 +109,6 @@ class SessionManager:
         # 仅成功后加入 _loaded，失败移除 future 允许重试。
         self._load_futures: dict[SessionId, asyncio.Future[SessionMemory]] = {}
         self._active_id = DEFAULT_SESSION
-        self._character_engine = None
         # F1(a)：switch 忙时拒绝的检查回调（agent 注入 `not status.is_accepting_input`）
         self._busy_check = None
         # 会话生命周期锁 + accepted work 引用计数：消息在 ACK 前预占目标会话，
@@ -340,8 +338,10 @@ class SessionManager:
     async def switch(self, sid: SessionId) -> SessionMemory:
         """切换到目标会话。
 
-        顺序：busy check（F1-a）→ resolve/ensure-loaded → outgoing._pre_save_hook()
-        （同步 reflector buffer）→ 换 active 指针 → bind 的 engine.attach_session(target)。
+        顺序：busy check（F1-a）→ resolve/ensure-loaded → 换 active 指针。
+        Task 11（M3）：不再 bind engine.attach_session / outgoing._pre_save_hook——
+        instance-scoped 状态按 runtime 权威，回合边界经 CharacterRuntime.flush()
+        （registry）持久化，session 切换不重绑 engine。
 
         Raises:
             SessionBusyError: 已注入 busy check 且 agent 忙（生成/TTS 中）时拒绝切换。
@@ -354,18 +354,8 @@ class SessionManager:
             if sid in self._deleting or sid in self._deleted:
                 raise SessionNotFoundError(sid)
             target = await self.ensure_loaded(sid)
-            outgoing = self._sessions.get(self._active_id)
-            if outgoing is not None and outgoing._pre_save_hook is not None:
-                outgoing._pre_save_hook()
             self._active_id = sid
-            if self._character_engine is not None:
-                self._character_engine.attach_session(target)
             return target
-
-    def bind_character_engine(self, engine: "CharacterEngine") -> None:
-        """绑定 CharacterEngine；切换会话时对 target 调用 attach_session。"""
-        self._character_engine = engine
-        engine.attach_session(self._sessions[self._active_id])
 
     # ---- CRUD ----
 
@@ -510,9 +500,9 @@ class SessionManager:
         """删除会话：提交点前置（先删会话 doc）+ 提交后清理（附件 refs + 归档）。
 
         保护（review 修复）：默认会话（"default"）不可删除——拒绝并返回 0。
-        若删除的是活动会话，active 回落 "default" 并重绑 CharacterEngine
-        （attach_session(default)），防 F4 孤儿 state（engine.state 仍挂在
-        已删会话的 character_state 上）。返回删除的归档消息数。
+        若删除的是活动会话，active 回落 "default"。Task 11（M3）不再重绑
+        CharacterEngine（attach_session 已删）——instance-scoped 状态按 runtime
+        权威，孤儿 state 由 registry/runtime 清除边界承担。返回删除的归档消息数。
 
         review 复核 #5 D2（提交点前置）：会话 doc 删除是持久化确认（commit），
         先执行——失败即回滚（重开归档 + 释放 tombstone），未破坏任何数据；
@@ -575,10 +565,9 @@ class SessionManager:
             self._deleted.add(sid)
             if sid == self._active_id:
                 self._active_id = DEFAULT_SESSION
-                # F4 修复：重绑 engine 到 default——防 _active_id 已回落但
-                # engine.state 视图仍挂在已删会话的 character_state 上（孤儿 state）。
-                if self._character_engine is not None:
-                    self._character_engine.attach_session(self._sessions[DEFAULT_SESSION])
+                # Task 11（M3）：不再重绑 engine.attach_session(default)——instance-scoped
+                # 状态按 runtime 权威，F4 孤儿 state 由 registry/runtime 清除边界承担。
+                # active 指针已回落 default（v1 锚点），default 会话的 runtime 绑定不变。
         return deleted_messages
 
     # ---- 持久化编排 ----

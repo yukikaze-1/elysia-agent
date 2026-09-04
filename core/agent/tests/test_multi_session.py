@@ -49,27 +49,30 @@ class TestSessionProperty:
 
 class TestSwitchSession:
     @pytest.mark.asyncio
-    async def test_switch_updates_active_and_attaches_engine(self, agent):
-        """switch_session 后 active_session_id 更新 + 绑定的 engine 收到 attach_session。"""
+    async def test_switch_updates_active(self, agent):
+        """switch_session 后 active_session_id 更新。M3：不再 attach engine（engine per-instance）。"""
         conv = agent.session_manager.get("conv_x")  # 预建缓存，跳过 DB load
         agent.session_manager._loaded.add("conv_x")  # noqa: SLF001 — 测试确定性：避免 JSONL fallback
-        mock_engine = MagicMock()
-        agent.session_manager._character_engine = mock_engine  # noqa: SLF001 — mock engine 断言
 
         result = await agent.switch_session("conv_x")
 
         assert result is conv
         assert agent.active_session_id == "conv_x"
         assert agent.session is conv
-        mock_engine.attach_session.assert_called_once_with(conv)
 
     @pytest.mark.asyncio
-    async def test_switch_real_engine_rebinds_state(self, agent):
-        """真实引擎：switch 后 engine.state 指向新会话的 character_state。"""
+    async def test_switch_keeps_engine_state_on_default_instance(self, agent):
+        """真实引擎：switch 不重绑 engine.state（M3：engine per-instance 恒定）。
+
+        agent.character_engine 经 registry 解析默认 instance——切换会话后仍返回同一
+        (default Elysia) engine；state 视图不随 session 切换改绑。
+        """
         conv = agent.session_manager.get("conv_y")
         agent.session_manager._loaded.add("conv_y")  # noqa: SLF001
+        engine_before = agent.character_engine
         await agent.switch_session("conv_y")
-        assert agent.character_engine.state is conv.character_state
+        # M3：engine 恒定（default instance），state 不随 session 切换改绑
+        assert agent.character_engine is engine_before
 
 
 class TestResolveSession:

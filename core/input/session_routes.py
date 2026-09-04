@@ -525,9 +525,8 @@ async def sessions_delete_handler(request: web.Request) -> web.Response:
     if not await _session_exists(agent, sid):
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
     # review 修复（批次 C）：删除活动会话且 agent 忙（生成/TTS 中）→ 409 AGENT_BUSY。
-    # 删活动会话会 attach_session(default) 重绑 engine——忙时换绑与在途生成/TTS
-    # 竞态，门禁与 activate 一致（防未保护 engine 换绑向量）。非活动会话删除
-    # 无 engine 换绑，不设门禁。
+    # Task 11（M3）：engine per-instance 后删活动会话无 attach_session(default) 重绑
+    # 向量，但忙时仍拒绝——防与在途生成/TTS 竞态。非活动会话删除不设门禁。
     if str(agent.active_session_id) == str(sid):
         status = getattr(agent, "status", None)
         if status is not None and not status.is_accepting_input:

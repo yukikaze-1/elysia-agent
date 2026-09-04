@@ -13,6 +13,7 @@ from Module.embedding import EmbeddingFactory
 from core.schema.adapters import attachment_resolver
 from core.storage.attachment_gc import run_attachment_gc
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
+from core.character.registry import CharacterRuntimeRegistry
 
 if TYPE_CHECKING:
     from core.storage.character_version_repo import CharacterVersionRepository
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
     from core.personality import CharacterEngine
     from core.cognitive.generation_registry import GenerationRegistry
     from core.desktop.bridge import DesktopToolBridge
+    from core.character.runtime import CharacterRuntime
+    from core.storage.character_instance_repo import CharacterInstanceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +43,11 @@ class _LifecyclePersistence:
         _long_term: LongTermMemory
         _message_repo: MessageRepository
         _version_repo: CharacterVersionRepository
-        _character_engine: CharacterEngine
+        _runtime_registry: CharacterRuntimeRegistry
+        _instance_repo: CharacterInstanceRepository
+        _make_runtime: Callable[[str], CharacterRuntime]
+        _make_engine: Callable[[CharacterRuntime], CharacterEngine]
+        _default_binding: dict
         _mongo_ok: bool
         _milvus_ok: bool
         _mongo_available: bool
@@ -88,6 +95,17 @@ class _LifecyclePersistence:
         # L2 版本历史
         if not await self._version_repo.connect():
             logger.warning("CharacterVersionRepository 离线")
+        # Task 11（M3）：instance repo 建连——runtime.flush() 依赖它把 CharacterInstanceState
+        # 持久化到 character_instances 集合；Mongo 离线时 save fail-closed → 关机 flush 降级。
+        # getattr guard：MagicMock agent（_start_persistence 单测）未设 _instance_repo 时跳过。
+        instance_repo = getattr(self, "_instance_repo", None)
+        if instance_repo is not None:
+            try:
+                if not await instance_repo.connect():
+                    logger.warning("CharacterInstanceRepository 离线（runtime state 不持久化）")
+            except TypeError:
+                # MagicMock agent：connect() 返回非 awaitable——跳过（单测不测此挂点）
+                logger.debug("_instance_repo 未接线（test mock），跳过 connect")
         # D6c：幂等 claim 仓库建连（失败记警告不阻塞启动——产品模式幂等将
         # fail-closed/503，dev 模式走内存降级；Mongo 恢复由健康循环重连）
         try:
@@ -120,10 +138,31 @@ class _LifecyclePersistence:
         except Exception:
             logger.warning("pending 会话扫描/导入失败", exc_info=True)
         if mongo_ok:
-            # CharacterState 已由 load() 原地恢复到 engine.state（active=default）
-            if self._character_engine.state.last_awareness_time:
-                self._character_engine._last_awareness_time = self._character_engine.state.last_awareness_time
-            self._character_engine._reflector._restore_from_state()
+            # Task 11（M3）：不再经全局 _character_engine——为默认 instance 读
+            # CharacterInstance.state（persisted）装载到 runtime.state + engine，
+            # 并恢复 reflector buffer/context（engine._reflector 自 state 恢复）。
+            # getattr guard：MagicMock agent（_start_persistence 单测）未接 runtime registry。
+            default_binding = getattr(self, "_default_binding", None) or {}
+            runtime_registry = getattr(self, "_runtime_registry", None)
+            if default_binding and isinstance(runtime_registry, CharacterRuntimeRegistry):
+                instance_id = default_binding.get("instance_id", "chi_builtin_elysia")
+                runtime = runtime_registry.get(
+                    instance_id, lambda: self._make_runtime(instance_id))
+                engine = runtime.ensure_engine(lambda: self._make_engine(runtime))
+                try:
+                    inst = await self._instance_repo.get(instance_id)
+                except Exception:
+                    inst = None
+                if inst is not None and inst.state is not None:
+                    # engine.state 与 runtime.state 共享引用（engine 构造即传 runtime.state），
+                    # engine 子组件（compression/emotion/awareness）也持有同一引用——因此
+                    # 原地按字段更新共享 state 对象，而非重新赋值（重赋值会使子组件指向旧对象）。
+                    for field in type(inst.state).model_fields:
+                        setattr(runtime.state, field, getattr(inst.state, field))
+                    runtime.stateVersion = inst.stateVersion
+                    if runtime.state.last_awareness_time:
+                        engine._last_awareness_time = runtime.state.last_awareness_time
+                    engine._reflector._restore_from_state()
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             active = self._session_manager.active
             if os.path.exists(active.pending_file):
@@ -381,6 +420,17 @@ class _LifecyclePersistence:
                 logger.warning("Desktop bridge save timed out")
             except Exception:
                 logger.error("Desktop bridge save failed on shutdown", exc_info=True)
+
+        # Task 11（M3）：instance runtime 关机 flush——registry.close_all() 逐 runtime
+        # flush（persist_fn 落 CharacterInstanceState），而非全局 _character_engine。
+        registry = getattr(self, "_runtime_registry", None)
+        if registry is not None:
+            try:
+                await asyncio.wait_for(registry.close_all(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("CharacterRuntime registry flush timed out")
+            except Exception:
+                logger.error("CharacterRuntime registry flush failed on shutdown", exc_info=True)
 
         logger.debug("Closing long-term memory...")
         try:

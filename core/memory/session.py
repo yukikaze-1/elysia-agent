@@ -11,7 +11,6 @@ import json
 import logging
 import os
 from collections import deque
-from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 from paths import ProjectPath
@@ -104,7 +103,6 @@ class SessionMemory:
         self.character_binding: dict | None = None
         self.own_life: str = ""
         self._memory_reflector = None
-        self._pre_save_hook: Callable[[], None] | None = None
         # B2/P1-01：最近一次 load 是否因存储不可用而失败（区别于「not found 新会话」）。
         # ensure_loaded 据此决定是否标记 loaded（存储不可用 → 不标记，允许重试；
         # not found → 合法新会话，标记 loaded 以便 save_all 持久化）。
@@ -296,9 +294,8 @@ class SessionMemory:
             True 表示保存成功（Mongo 或 JSONL 至少一种 durable），
             False 表示所有存储方式均失败。
         """
-        # 同步子系统的内存状态到 character_state（reflector buffer 等）
-        if self._pre_save_hook:
-            self._pre_save_hook()
+        # Task 11（M3）：不再经 _pre_save_hook 同步 reflector buffer——instance-scoped
+        # 状态的同步与持久化改由 CharacterRuntime.flush()（经 registry）在回合边界承担。
         # 尝试通过 Repository 保存到 MongoDB
         if self._repo is not None:
             try:

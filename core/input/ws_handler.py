@@ -1034,8 +1034,8 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
 
     批次 3 review 修复（F1-a）：切换前 FSM 门禁——agent 忙（生成/TTS 中，
     is_accepting_input=False）→ 拒绝 AGENT_BUSY（retryable 语义由码名表达），
-    不执行切换。防 engine 全局单例 attach_session 换绑与一次 v2 生成流式/TTS
-    并发 → mood/L3 跨会话污染。
+    不执行切换。Task 11（M3）：engine per-instance 后无全局单例 attach_session
+    换绑向量，但忙时切换仍拒绝——防与一次 v2 生成流式/TTS 并发 → mood/L3 跨会话污染。
     """
     sid = data.get("conversationId", "")
     if not sid:

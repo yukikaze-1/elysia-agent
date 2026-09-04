@@ -29,7 +29,11 @@ class TestUserIdentityStoreInjection:
 
 class TestCharacterEngineInstanceIdentity:
     def test_engine_gets_builtin_instance_id(self, agent):
-        """engine 以 instance_id='chi_builtin_<name>' + revision=1 构造。"""
-        engine = agent._character_engine
+        """engine 以 instance_id='chi_builtin_<name>' + revision=1 构造（M3 经 registry 解析）。
+
+        Task 11：agent.character_engine 经 registry 解析当前 instance（默认 Elysia），
+        其 engine 以 chi_builtin_<name>/rev=1 构造。
+        """
+        engine = agent.character_engine
         assert engine._instance_id == "chi_builtin_" + agent._character.name.lower()
         assert engine._character_revision == 1
