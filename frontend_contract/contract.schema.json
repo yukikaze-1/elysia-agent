@@ -6214,6 +6214,45 @@
           "title": "Channel",
           "type": "string"
         },
+        "characterId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色 ID（character_profiles=true 后必填）",
+          "title": "Characterid"
+        },
+        "characterInstanceId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色实例 ID",
+          "title": "Characterinstanceid"
+        },
+        "characterRevision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色修订号",
+          "title": "Characterrevision"
+        },
         "completeness": {
           "const": "complete",
           "default": "complete",
@@ -6360,6 +6399,45 @@
     "GenerationFailedMessage": {
       "description": "父失败（v2）——取消/错误统一终态。code 用统一错误码目录。",
       "properties": {
+        "characterId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色 ID（character_profiles=true 后必填）",
+          "title": "Characterid"
+        },
+        "characterInstanceId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色实例 ID",
+          "title": "Characterinstanceid"
+        },
+        "characterRevision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色修订号",
+          "title": "Characterrevision"
+        },
         "code": {
           "description": "稳定错误码（GENERATION_PROVIDER_UNAVAILABLE/GENERATION_TIMEOUT/GENERATION_CANCELLED/INTERNAL 等）",
           "title": "Code",
@@ -6779,6 +6857,45 @@
     "GenerationStartedMessage": {
       "description": "生成开始（v2）。messageId = assistant 父消息 ID（generation 开始预分配）。",
       "properties": {
+        "characterId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色 ID（character_profiles=true 后必填）",
+          "title": "Characterid"
+        },
+        "characterInstanceId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色实例 ID",
+          "title": "Characterinstanceid"
+        },
+        "characterRevision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色修订号",
+          "title": "Characterrevision"
+        },
         "conversationId": {
           "anyOf": [
             {
@@ -10801,6 +10918,45 @@
               "title": "Channel",
               "type": "string"
             },
+            "characterId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色 ID（character_profiles=true 后必填）",
+              "title": "Characterid"
+            },
+            "characterInstanceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色实例 ID",
+              "title": "Characterinstanceid"
+            },
+            "characterRevision": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色修订号",
+              "title": "Characterrevision"
+            },
             "completeness": {
               "const": "complete",
               "default": "complete",
@@ -10947,6 +11103,45 @@
         "GenerationFailedMessage": {
           "description": "父失败（v2）——取消/错误统一终态。code 用统一错误码目录。",
           "properties": {
+            "characterId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色 ID（character_profiles=true 后必填）",
+              "title": "Characterid"
+            },
+            "characterInstanceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色实例 ID",
+              "title": "Characterinstanceid"
+            },
+            "characterRevision": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色修订号",
+              "title": "Characterrevision"
+            },
             "code": {
               "description": "稳定错误码（GENERATION_PROVIDER_UNAVAILABLE/GENERATION_TIMEOUT/GENERATION_CANCELLED/INTERNAL 等）",
               "title": "Code",
@@ -11156,6 +11351,45 @@
         "GenerationStartedMessage": {
           "description": "生成开始（v2）。messageId = assistant 父消息 ID（generation 开始预分配）。",
           "properties": {
+            "characterId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色 ID（character_profiles=true 后必填）",
+              "title": "Characterid"
+            },
+            "characterInstanceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色实例 ID",
+              "title": "Characterinstanceid"
+            },
+            "characterRevision": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色修订号",
+              "title": "Characterrevision"
+            },
             "conversationId": {
               "anyOf": [
                 {
@@ -19892,6 +20126,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "37385337fe2e7075",
+  "schemaHash": "27bb5dde8f300a5e",
   "transportVersion": "2"
 }

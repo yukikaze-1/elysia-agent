@@ -403,6 +403,68 @@ def test_three_start_frames_have_audio_field():
     assert w.AudioInputDescriptor.model_fields["channels"].annotation is int
 
 
+# ── 阶段 E Task 13：generation 角色审计字段（optional characterId/characterInstanceId/characterRevision） ──
+
+
+@pytest.mark.unit
+def test_generation_events_have_character_audit_fields():
+    """3 个 generation 消息均带 optional 角色审计字段（characterId/characterInstanceId/characterRevision）。"""
+    for cls in (w.GenerationStartedMessage, w.GenerationCompletedMessage, w.GenerationFailedMessage):
+        for field in ("characterId", "characterInstanceId", "characterRevision"):
+            assert field in cls.model_fields, f"{cls.__name__}.{field} 缺失"
+            assert cls.model_fields[field].is_required() is False, f"{cls.__name__}.{field} 应可缺省"
+
+
+@pytest.mark.unit
+def test_generation_character_audit_wire_omitted_when_none():
+    """角色审计字段 None 缺省省略（向后兼容，X?）。"""
+    usage = w.TokenUsage(rounds=[], turn_total=0)
+    started = w.GenerationStartedMessage(
+        generationId="gen_1", messageId="msg_1").wire_dict()
+    assert "characterId" not in started
+    assert "characterInstanceId" not in started
+    assert "characterRevision" not in started
+    completed = w.GenerationCompletedMessage(
+        generationId="gen_1", messageId="msg_1", channel=MessageChannel.PUBLIC_REPLY,
+        finishReason="stop", usage=usage, model="fake/test").wire_dict()
+    assert "characterId" not in completed
+    assert "characterInstanceId" not in completed
+    assert "characterRevision" not in completed
+    failed = w.GenerationFailedMessage(
+        generationId="gen_1", code="GENERATION_CANCELLED",
+        message="已取消", retryable=False).wire_dict()
+    assert "characterId" not in failed
+    assert "characterInstanceId" not in failed
+    assert "characterRevision" not in failed
+
+
+@pytest.mark.unit
+def test_generation_character_audit_wire_present_when_set():
+    """角色审计字段显式赋值 → wire_dict 保留（camel 键）。"""
+    usage = w.TokenUsage(rounds=[], turn_total=0)
+    started = w.GenerationStartedMessage(
+        generationId="gen_1", messageId="msg_1",
+        characterId="chr_builtin_elysia", characterInstanceId="chi_1",
+        characterRevision=7).wire_dict()
+    assert started["characterId"] == "chr_builtin_elysia"
+    assert started["characterInstanceId"] == "chi_1"
+    assert started["characterRevision"] == 7
+    completed = w.GenerationCompletedMessage(
+        generationId="gen_1", messageId="msg_1", channel=MessageChannel.PUBLIC_REPLY,
+        finishReason="stop", usage=usage, model="fake/test",
+        characterId="chr_builtin_elysia", characterInstanceId="chi_1",
+        characterRevision=7).wire_dict()
+    assert completed["characterId"] == "chr_builtin_elysia"
+    assert completed["characterRevision"] == 7
+    failed = w.GenerationFailedMessage(
+        generationId="gen_1", code="GENERATION_CANCELLED",
+        message="已取消", retryable=False,
+        characterId="chr_builtin_elysia", characterInstanceId="chi_1",
+        characterRevision=7).wire_dict()
+    assert failed["characterInstanceId"] == "chi_1"
+    assert failed["characterRevision"] == 7
+
+
 @pytest.mark.unit
 def test_audio_descriptor_wire_camel_keys():
     """AudioInputDescriptor wire 键为 camelCase；audio 缺省省略。"""

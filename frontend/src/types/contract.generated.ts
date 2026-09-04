@@ -361,6 +361,12 @@ export interface GenerationStartedMessage {
   requestId?: string
   /** 实际模型，可缺省 */
   model?: string
+  /** 角色 ID（character_profiles=true 后必填） */
+  characterId?: string
+  /** 角色实例 ID */
+  characterInstanceId?: string
+  /** 角色修订号 */
+  characterRevision?: number
 }
 
 /** 分段开始（v2）。 */
@@ -439,6 +445,12 @@ export interface GenerationCompletedMessage {
   conversationId?: string
   /** 会话级 token 累计（get_session_stats 填充），可缺省 */
   conversationUsage?: ConversationUsage
+  /** 角色 ID（character_profiles=true 后必填） */
+  characterId?: string
+  /** 角色实例 ID */
+  characterInstanceId?: string
+  /** 角色修订号 */
+  characterRevision?: number
 }
 
 /** 父失败（v2）——取消/错误统一终态。code 用统一错误码目录。 */
@@ -460,6 +472,12 @@ export interface GenerationFailedMessage {
   details: Record<string, unknown>
   /** 会话 ID，可缺省 */
   conversationId?: string
+  /** 角色 ID（character_profiles=true 后必填） */
+  characterId?: string
+  /** 角色实例 ID */
+  characterInstanceId?: string
+  /** 角色修订号 */
+  characterRevision?: number
 }
 
 /** 流式文字增量。 */

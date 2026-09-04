@@ -369,6 +369,9 @@ class GenerationStartedMessage(ContractModel):
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
     requestId: Optional[str] = Field(default=None, description="回显 request_id（日志关联），可缺省")
     model: Optional[str] = Field(default=None, description="实际模型，可缺省")
+    characterId: Optional[str] = Field(default=None, description="角色 ID（character_profiles=true 后必填）")
+    characterInstanceId: Optional[str] = Field(default=None, description="角色实例 ID")
+    characterRevision: Optional[int] = Field(default=None, description="角色修订号")
 
 
 class GenerationSegmentStartedMessage(ContractModel):
@@ -424,6 +427,9 @@ class GenerationCompletedMessage(ContractModel):
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
     conversationUsage: Optional[ConversationUsage] = Field(
         default=None, description="会话级 token 累计（get_session_stats 填充），可缺省")
+    characterId: Optional[str] = Field(default=None, description="角色 ID（character_profiles=true 后必填）")
+    characterInstanceId: Optional[str] = Field(default=None, description="角色实例 ID")
+    characterRevision: Optional[int] = Field(default=None, description="角色修订号")
 
 
 class GenerationFailedMessage(ContractModel):
@@ -438,6 +444,9 @@ class GenerationFailedMessage(ContractModel):
     retryable: bool = Field(description="是否可重试")
     details: dict[str, Any] = Field(default_factory=dict, description="公开安全详情，可缺省")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
+    characterId: Optional[str] = Field(default=None, description="角色 ID（character_profiles=true 后必填）")
+    characterInstanceId: Optional[str] = Field(default=None, description="角色实例 ID")
+    characterRevision: Optional[int] = Field(default=None, description="角色修订号")
 
 
 class DeltaMessage(ContractModel):
