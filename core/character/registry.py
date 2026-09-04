@@ -20,6 +20,7 @@ class CharacterRuntimeRegistry:
     def __init__(self, *, max_size: int = 32):
         self._max_size = max_size
         self._runtimes: OrderedDict[str, CharacterRuntime] = OrderedDict()
+        self._session_binding_index: set[str] | None = None   # M3 激活
 
     def get(self, instance_id: str, factory: Callable[[], CharacterRuntime]) -> CharacterRuntime:
         if instance_id in self._runtimes:
@@ -29,6 +30,16 @@ class CharacterRuntimeRegistry:
         self._runtimes[instance_id] = rt
         self._evict_if_needed()
         return rt
+
+    def mark_busy(self, instance_id: str, busy: bool) -> None:
+        """M3：标记 runtime 为 busy（生成/反思/压缩中），防驱逐。"""
+        rt = self._runtimes.get(instance_id)
+        if rt is not None:
+            setattr(rt, "_busy", busy)
+
+    def set_session_binding_index(self, idx: set[str] | None) -> None:
+        """M2：SessionManager 注入绑定索引；被绑定 instance 的 runtime 不驱逐。"""
+        self._session_binding_index = idx
 
     def invalidate(self, instance_id: str, reason: str) -> None:
         if instance_id in self._runtimes:
