@@ -41,6 +41,7 @@ async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamMan
     更新实例权威 engine.state 的 mood / mood_intensity（F1-b 翻转，spec §6.3），
     经 output.mood() 统一发射（v1 发 expression、v2 捕获不发——mood 由 turn_completed 落位），
     设置 TTS 情绪参数。
+    （target_session 保留因签名稳定——调用点 + loop.py re-export 仍传；本函数不再读它。）
     """
     if "|" in raw:
         mood_text, intensity_str = raw.rsplit("|", 1)
@@ -101,7 +102,7 @@ class CognitiveStreaming:
             tool_defs: 工具定义列表（OpenAI function calling 格式）
             round_num: 当前工具调用轮次（0 = 首轮）
             session_id: 本轮目标会话 ID（token record 归属）
-            session: 本轮目标会话（F1-b 捕获——_apply_mood 写 target.character_state）
+            session: 本轮目标会话（F1-b——_apply_mood 写 engine.state, 实例权威; session 传递保持签名）
 
         Returns:
             (acc_text, raw_tool_calls, speaking_started, all_sentences,
