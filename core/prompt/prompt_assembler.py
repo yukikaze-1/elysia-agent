@@ -102,6 +102,19 @@ class PromptAssembler:
             return role_dir
         return f"{_SECTION}/{name}"
 
+    def set_personality_engine(self, engine: "CharacterEngine") -> None:
+        """更换人格引擎实例（会话切换后 C1/C6/C9 数据来源随角色更新）。"""
+        self._personality_engine = engine
+
+    def set_character(self, character_id: str, display_name: str) -> None:
+        """更新 C1 name(spec §6.1/§13 主诉求——#9 双角色 C1 "你是 {{ name }}" 不串)。
+
+        review 第 4 轮 re-scope: 本批**只路由 C1 name**(经 _personality_section._name, 渲染时生效)。
+        模板目录 c2/c3/c7 的 per-role 路由 defer——_resolve_template 仅在 __init__ 求值,
+        set_character 改 _character.name 不重绑已建 section, 故不声称模板目录路由(阶段 F/H 再实现)。
+        """
+        self._personality_section._name = display_name
+
     def set_session(self, session: SessionMemory) -> None:
         """会话切换时重绑 session 引用（本对象 + 三个会话依赖 section）。
 

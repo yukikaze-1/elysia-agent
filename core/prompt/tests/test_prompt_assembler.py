@@ -93,3 +93,18 @@ async def test_user_pronoun_no_context_fallback_she(
     rendered = await assembler.build_system_prompt(user_message="hi", user_name="xx")
     assert "此刻她只注视着我" in rendered
     assert "此刻你只注视着我" not in rendered
+
+
+def test_set_personality_engine(elysia_config, cold_engine_mock, mock_long_term, mock_session):
+    """set_personality_engine 设 self._personality_engine。"""
+    a = make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session)
+    a.set_personality_engine(cold_engine_mock)
+    assert a._personality_engine is cold_engine_mock
+
+
+def test_set_character_updates_name(elysia_config, cold_engine_mock, mock_long_term, mock_session):
+    """set_character 更新 _personality_section._name(修正 review: 用真实 fixture + "Cyrene" 有区分度)。"""
+    a = make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session)
+    assert a._personality_section._name == "Elysia"   # 初始(elysia_config.name)
+    a.set_character("chr_builtin_cyrene", "Cyrene")
+    assert a._personality_section._name == "Cyrene"   # 有区分度——set_character 真改 name
