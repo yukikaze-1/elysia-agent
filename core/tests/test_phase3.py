@@ -15,6 +15,7 @@ from Module.tool.protocol import ToolPlugin
 from Module.tool.safety import SafetyProfile
 
 from core.cognitive import CognitiveLoop
+from core.cognitive.tests.conftest import make_default_registry
 from core.utils.text_utils import MessageObj
 from core.adapter.tool_call_parser import merge_stream_tool_calls, normalize_tool_calls
 from core.schema.tool import ToolCall, ToolCallFunction
@@ -174,6 +175,7 @@ class TestCognitiveLoopMethods:
             prompt=prompt, session_resolver=functools.partial(_fixed_session_resolver, session),
             tool_adapter=tools,
             character_engine=char_engine, consolidator=consolidator, tts=tts,
+            runtime_registry=make_default_registry(),
         )
         # 批次 3：直接调用 _after_response 的测试需显式注入 _session（process 才解析 target）
         loop._session = session
@@ -342,6 +344,7 @@ class TestCognitiveLoopTTS:
             llm=llm, fsm=fsm, event_bus=bus, output=output,
             prompt=prompt, session_resolver=functools.partial(_fixed_session_resolver, session),
             tool_adapter=tools, tts=tts,
+            runtime_registry=make_default_registry(),
         )
 
     @pytest.mark.asyncio
@@ -441,6 +444,7 @@ class TestCognitiveLoopSync:
             llm=llm, fsm=fsm, event_bus=bus, output=output,
             prompt=prompt, session_resolver=functools.partial(_fixed_session_resolver, session),
             tool_adapter=tools, tts=None,
+            runtime_registry=make_default_registry(),
         )
 
     @pytest.mark.asyncio
@@ -1754,6 +1758,7 @@ class TestHandleSubmitTask:
         loop = CognitiveLoop(
             llm=llm, fsm=fsm, event_bus=bus, output=output,
             prompt=prompt, session_resolver=functools.partial(_fixed_session_resolver, session),
+            runtime_registry=make_default_registry(),
         )
         # 批次 3：loop 不再持有固定 session——_handle_submit_task 直接调用的测试显式注入
         loop._session = session
@@ -1854,6 +1859,7 @@ class TestWakeUpMessage:
             llm=MagicMock(), fsm=AgentFSM(), event_bus=EventBus(),
             output=OutputManager(), prompt=MagicMock(),
             session_resolver=AsyncMock(),
+            runtime_registry=make_default_registry(),
         )
         ctx = {
             "original_intent": "查天气",

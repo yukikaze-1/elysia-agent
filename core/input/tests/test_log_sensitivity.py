@@ -20,6 +20,7 @@ import pytest
 from Module.output import OutputManager
 from core.adapter.llm_adapter import LLMAdapter
 from core.cognitive import CognitiveLoop
+from core.cognitive.tests.conftest import make_default_registry
 from core.input.ws_handler import handle_json_message
 from core.memory.session import SessionMemory
 from core.monitoring.event_bus import EventBus
@@ -108,6 +109,7 @@ def _make_loop(default_session: SessionMemory) -> CognitiveLoop:
     return CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
         prompt=prompt, session_resolver=resolver,
+        runtime_registry=make_default_registry(),
     )
 
 

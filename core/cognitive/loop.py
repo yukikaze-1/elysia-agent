@@ -81,8 +81,10 @@ _EMPTY_RESPONSE_FALLBACK = "抱歉，我刚才走神了，你能再说一遍吗�
 # 超阈值升 error，避免「走神」回复静默刷屏不升级告警。
 _EMPTY_RESPONSE_THRESHOLD = 5
 
-# Task 8（B1 闭环）：session.character_binding 缺 instance_id/character_id 时的回退。
-# 与内置 Elysia 角色快照对齐（core/character 默认角色），见 core/character 批。
+# Task 8（B1 闭环）：binding 缺 instance_id 时回退内置 Elysia 的 default instance。
+# DEFAULT_INSTANCE_ID 是「无 binding → 哪个 instance」的兜底；DEFAULT_CHARACTER_ID 仅
+# 供 Task 11 agent 构造默认会话 binding 用（本批 character_id 权威来自 runtime.definition，
+# 不在此常量——见 _prepare_turn 的 set_character 调用）。
 DEFAULT_INSTANCE_ID = "chi_builtin_elysia"
 DEFAULT_CHARACTER_ID = "chr_builtin_elysia"
 
@@ -341,6 +343,35 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 return identity.pronouns
         return "她"
 
+    # ---- Task 8（B1 闭环）：registry/runtime/engine factory 延迟 guard ----
+    # factory 是「延迟触发」依赖：registry.get 命中/engine 已建时不调用；仅
+    # miss/需新建时触发。None guard 须放在 lambda 内部（调用点），不能前置——
+    # 否则破坏「pre-seed runtime、不传 factory」的测试路径。
+
+    def _require_runtime_registry(self) -> "CharacterRuntimeRegistry":
+        """返回注入的 registry；未注入（_prepare_turn 依赖它）→ 清晰 RuntimeError。"""
+        if self._registry is None:
+            raise RuntimeError(
+                "CharacterRuntimeRegistry 未注入——_prepare_turn 需从 binding 解析 instance 到 runtime"
+            )
+        return self._registry
+
+    def _require_runtime_factory(self, instance_id: str) -> CharacterRuntime:
+        """registry 未命中时构造 runtime；factory 未注入 → 清晰 RuntimeError。"""
+        if self._runtime_factory is None:
+            raise RuntimeError(
+                f"runtime_factory 未注入——registry 未命中 {instance_id} 时无法构造 runtime"
+            )
+        return self._runtime_factory(instance_id)
+
+    def _require_engine_factory(self, runtime: CharacterRuntime) -> CharacterEngine:
+        """runtime 无 engine 时构造；engine_factory 未注入 → 清晰 RuntimeError。"""
+        if self._engine_factory is None:
+            raise RuntimeError(
+                f"engine_factory 未注入——runtime {runtime.instance.instanceId} 无 engine 时无法构造"
+            )
+        return self._engine_factory(runtime)
+
     # ---- Main entry ----
 
     async def _prepare_turn(
@@ -370,13 +401,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # binding 缺 instance_id/character_id 时回退内置 Elysia。
         binding = target.character_binding or {}
         instance_id = binding.get("instance_id") or DEFAULT_INSTANCE_ID
-        if self._registry is None:
-            raise RuntimeError(
-                "CharacterRuntimeRegistry 未注入——_prepare_turn 需从 binding 解析 instance 到 runtime"
-            )
-        registry = self._registry
-        runtime = registry.get(instance_id, self._runtime_factory)  # type: ignore[arg-type]
-        engine = runtime.ensure_engine(lambda: self._engine_factory(runtime))  # type: ignore[call-optional]
+        registry = self._require_runtime_registry()
+        runtime = registry.get(instance_id, lambda: self._require_runtime_factory(instance_id))
+        engine = runtime.ensure_engine(lambda: self._require_engine_factory(runtime))
         self._session = target
         self._prompt.set_session(target)
         self._engine = engine
