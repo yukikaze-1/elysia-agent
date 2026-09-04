@@ -4,7 +4,7 @@
 
 角色域的领域模型 + 多角色运行时容器骨架。渐进式——在现有 `character/{name}/config.yaml` + `personality.md` 之上**加一层薄壳**（Pydantic 模型），不重写 manifest v2。
 
-**阶段：** M1/M2（阶段 `stage-ce` + `stage-d`）。`stage-ce` 建领域模型 + 运行时容器骨架，engine 仍为**全局单例**；`stage-d` 新增 Custom Character CRUD（`CharacterDraft`/`CharacterService`/持久化仓储 + REST `character_routes`），但 `character_profiles=false` 恒抑制，custom 不参与真实聊天。**多 instance engine（M3/阶段 E）不在本批**。
+**阶段：** M1/M2（`stage-ce` + `stage-d`）+ **M3 目标态（阶段 E）**。`stage-ce` 建领域模型 + 运行时容器骨架，engine 仍为**全局单例**；`stage-d` 新增 Custom Character CRUD（`CharacterDraft`/`CharacterService`/持久化仓储 + REST `character_routes`），但 `character_profiles=false` 恒抑制，custom 不参与真实聊天。**阶段 E（2026-09）重构为 M3 目标态：Engine per-instance + `CharacterRuntimeRegistry` + instance-scoped `CharacterRuntimeState`**——`_prepare_turn` 从会话 binding 解析 instance → registry → runtime.engine，状态权威从 `session.character_state` 切换到 `runtime.state`（且 `CharacterInstance.state` 持久化落点）。此批**删除了 `attach_session`/`sync_reflector_to_state`/`bind_character_engine`/`_pre_save_hook` 耦合**。
 
 ## 文件布局
 
@@ -17,8 +17,8 @@ core/character/
 ├── service.py            # CharacterService — CRUD 业务编排 + CAS 冲突（阶段 D）
 ├── builtin_source.py     # BuiltinCharacterSource — 从 character/{name}/config.yaml 构建内置角色
 ├── catalog.py            # CharacterCatalog — 只读内置角色目录（无 Mongo 也能列/校验）+ get_revision
-├── runtime.py            # CharacterRuntime — 单实例运行时容器（快照 + 懒 engine + lock/dirty）
-├── registry.py           # CharacterRuntimeRegistry — LRU 缓存 + invalidate/release/close_all
+├── runtime.py            # CharacterRuntime — 单实例运行时容器（快照 + 懒 engine + lock/dirty）【阶段 E 激活】
+├── registry.py           # CharacterRuntimeRegistry — LRU 缓存 + _busy/_session_binding_index + flush_all/close_all【阶段 E 激活】
 ├── migration.py          # 旧会话 shadow migration（legacy instance，架构稿 §15.3）
 └── tests/
     ├── test_models.py
@@ -30,13 +30,15 @@ core/character/
     └── test_migration.py
 ```
 
+> 相关配套：`CharacterRuntimeState`（instance-scoped 状态模型）在 [core/schema/character.py](../schema/character.py)；`CharacterInstanceRepository`（`character_instances` 集合持久化 + `state_version` CAS）在 [core/storage/character_instance_repo.py](../../storage/character_instance_repo.py)。
+
 ## 核心概念
 
 ### CharacterDefinition / CharacterRevision / CharacterInstance（架构稿 §5）
 
 - **Definition**：稳定角色身份（characterId/slug/source/status），不存 Prompt 正文/状态/session。
 - **Revision**：不可变角色设定快照（displayName/promptProfile/runtimeDefaults/checksum）。本批 `promptProfile` 承载有源字段（`corePersonality`/`speakingStyle`/`relationshipStyle`/`emotionStyle`/`conversationInitiative`/`examples`）；内置角色仍只填 `corePersonality`/`speakingStyle`（其余渲染走模板）。
-- **Instance**：用户正在相处并持续演化的角色（instanceId/characterId/revision/stateVersion）。
+- **Instance**：用户正在相处并持续演化的角色（instanceId/characterId/revision/stateVersion）。**阶段 E** 加 `state: CharacterRuntimeState | None` 字段——instance-scoped 状态权威的持久化落点（`stateVersion` 作 CAS 乐观锁）。
 
 ### CharacterDraft + CharacterService（阶段 D：Custom CRUD）
 
@@ -49,13 +51,45 @@ core/character/
 
 从现有 `character/{name}/config.yaml` + `personality.md` 构建内置角色（`corePersonality` 从 personality.md、`speakingStyle` 从 config personality.speaking_style），**不重写 manifest v2**。
 
-### CharacterRuntimeRegistry（架构稿 §7.1）
+### CharacterRuntimeState（阶段 E，instance-scoped 权威状态）
 
-`get(instance_id, factory)` 按 instance_id 解析 runtime；`invalidate`/`release`/`flush_all`/`close_all`。LRU 缓存，驱逐前检查 dirty/busy/session-liveness（M2 耦合，本批为骨架占位）。**M1/M2 不驱动多 instance engine**（runtime engine 懒建但保持单例）。
+[core/schema/character.py](../schema/character.py) 的 `CharacterRuntimeState`——**扁平** Pydantic 模型，与旧 `CharacterState` **字段同构**（子组件 0 改动），仅做两处身份/语义调整：
+
+- **`instance_id`**：instance-scoped **权威身份**。
+- **`session_id`**：**保留**作版本历史键（`CompressionManager` 版本历史 `append_version` 读 `state.session_id`，见 compression.py:248/332——保留使子组件扁平字段读取 0 改动，避免 AttributeError）。
+- `source_revision`：记录状态基于哪版 L1 演化。
+
+承载 L2/L3/L4 + awareness/compression/reflector + mood。**`CharacterState` 标记退役**（保留兼容导入，不物理删）；`session.character_state` 不再权威——新会话用 `CharacterRuntimeState`。
+
+### CharacterRuntime（阶段 E 激活，[runtime.py](runtime.py)）
+
+单实例运行时容器，装载 `Definition`/`Revision`/`UserIdentity` 快照 + `CharacterRuntimeState`。**M3：engine 懒建为 per-instance**（`ensure_engine(factory)` 真绑定，非 M1/M2 占位；`bind_engine` 注入）；`snapshot_state()` 返回真实 `CharacterRuntimeState`（deep copy）；`flush()` 经 `persist_fn` 把 `runtime.state` 持久化到 `CharacterInstance.state`。持有 per-instance `Lock` + `dirty`/`stateVersion`。**状态权威：`runtime.state`**——engine 构造时传 `runtime.state`（与 runtime 共享同一引用），`_apply_mood`/`_finalize_turn` 写/读 `engine.state` 即 runtime.state（F1-b 正确语义：engine per-instance 永不换绑消除跨会话污染风险源）。
+
+### CharacterRuntimeRegistry（阶段 E 激活，[registry.py](registry.py)）
+
+`get(instance_id, factory)` 按 instance_id 解析/懒建 per-instance runtime（factory 从 agent 注入，构造 instance/defn/revision/user_identity + 经 `CharacterInstanceRepository.get(instance_id)` 加载 `CharacterInstance.state`；为空时空态起步）。LRU（`max_size=32`）驱逐前检查受保护状态：
+
+- `dirty`：未 flush 不驱逐。
+- `_busy`：生成/反思/压缩中不驱逐（M3 预留）。
+- `_session_binding_index`：仍被 SessionManager 缓存池中 live session 绑定的 instance 不驱逐（`set_session_binding_index` 注入索引 + `release` 在 session 逐出后清）。
+
+另有 `mark_busy`/`invalidate`/`flush`/`flush_all`/`close_all`（关机 flush 全部走这里，A1——非单 engine）。
+
+### CharacterInstanceRepository（阶段 E 新增，[core/storage/character_instance_repo.py](../../storage/character_instance_repo.py)）
+
+`character_instances` 集合的 instance CRUD + `state_version` CAS（fail-closed）。`get(instance_id)` → `CharacterInstance | None`（含 `state: CharacterRuntimeState`）；`save(instance)` upsert；`cas_state_version(instance_id, expected, new_state, new_version)` 用 `state_version==expected` filter 做乐观锁。**区别于** `CharacterRepository`（后者是 `characters` 集合 + CharacterDefinition CRUD，无 instance 能力）。
+
+### CharacterRuntimeRegistry 的 M3 生命周期接入（agent 侧）
+
+`Agent.__init__` 不再 eager 构造全局 `_character_engine`——改注册 `CharacterRuntimeRegistry` + 默认会话 binding `{character_id: chr_builtin_elysia, instance_id: chi_builtin_elysia}`；预 seed 默认 Elysia runtime + engine 入 registry（PromptAssembler 快照路径）。`agent.character_engine`/`character_reflector` 经 registry 按当前会话 binding → instance_id → runtime.engine 解析（不再是全局单例）。`_start_persistence` 把持久化 `CharacterInstance.state` 装载到 runtime.state + engine（原地按字段更新共享 state 引用）；`_stop_persistence` 经 `registry.close_all()` 逐 runtime flush 落库。
+
+### 去 attach_session（阶段 E，M3）
+
+`engine.attach_session` / `engine.sync_reflector_to_state` / `session_manager.bind_character_engine` / `session._pre_save_hook` **全部删除**。reflector buffer 落盘改由 runtime 在回合边界统一持久化到 `CharacterRuntimeState`（`engine.sync_reflector_to_runtime_state`），不再借 `session.save()` 的 hook。会话切换不再有「单例 engine attach 新 session」的换绑动作——engine per-instance 永不换绑。
 
 ### 旧会话 shadow migration（架构稿 §15.3）
 
-每个旧 session 建确定性 legacy instance（sessionId 哈希），`character_binding` 指向它；旧会话行为/状态不变。迁移期 legacy `character_state` 仍权威（M1），M3 才切换。
+每个旧 session 建确定性 legacy instance（sessionId 哈希），`character_binding` 指向它；旧会话行为/状态不变。迁移期 legacy `character_state` 仍权威（M1）；**阶段 E 后 M3 切换已生效**——一律经 `CharacterRuntimeState`（instance-scoped），`session.character_state` 退役不作权威读取。
 
 ---
 
@@ -66,4 +100,6 @@ core/character/
 | [项目 README](../README.md) | 快速开始 + 完整文档导航 |
 | [Core 层](../README.md) | Core 层总览 |
 | [Profile 包](../profile/README.md) | UserIdentity 用户最小身份 |
+| [阶段 E Spec](../../docs/superpowers/specs/2026-09-04-character-stage-e-runtime-binding-design.md) | CharacterRuntime 与会话绑定设计（M3：engine per-instance + RuntimeRegistry + CharacterRuntimeState） |
+| [阶段 E Plan](../../docs/superpowers/plans/2026-09-04-character-stage-e-runtime-binding-plan.md) | 阶段 E 实施计划（14 Task） |
 | [架构稿](../../docs/2026-08-30-character-prompt-customization-backend-architecture-design.md) | 角色域完整设计（§5 领域模型 / §7 运行时 / §15 迁移） |

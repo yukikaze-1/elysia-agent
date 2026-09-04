@@ -54,6 +54,38 @@ LLM stream
 
 ## 关键机制
 
+### 回合角色解析（阶段 E，M3：engine per-instance）
+
+`_prepare_turn()`（`loop.py`，Task 8）在每个回合解析当前会话绑定的角色 instance 并冻结本回合角色上下文——**不再有全局单例 engine attach 会话的换绑**：
+
+```
+session.character_binding → instance_id（缺省回退 DEFAULT_INSTANCE_ID=chi_builtin_elysia）
+  → CharacterRuntimeRegistry.get(instance_id, factory)   # 同步，不 await
+  → runtime.ensure_engine(factory) → self._engine        # per-instance engine 懒建
+```
+
+- 三个 `_require_*` 私有方法做**延迟 factory None guard**（registry/runtime_factory/engine_factory 未注入时抛清晰 `RuntimeError`，消除 `# type: ignore`）。
+- `self._engine` 是**本回合实例引擎**——streaming `_apply_mood`（`streaming.py:61`）写 `engine.state`，finalize `_apply_final_mood_fallback`/`turn_completed`（`finalize.py`）读 `self._engine.state.mood`。**状态权威 = `runtime.state`（instance-scoped，F1-b 正确语义：engine per-instance 永不换绑消除跨会话污染风险源）**。
+- `DEFAULT_INSTANCE_ID`/`DEFAULT_CHARACTER_ID` 常量是「无 binding → 哪个 instance」兜底；权威 characterId 来自 `runtime.definition.characterId`（`DEFAULT_CHARACTER_ID` 供 agent 默认 binding 用）。
+
+### TurnCharacterContext 扩展（阶段 E）
+
+`_prepare_turn()` 把解析结果冻结为不可变 `TurnCharacterContext`（`turn_context.py`），此后 Prompt/TTS/mood/记忆/generation 全用同一 context，**不能在回合中重新读取『当前活动角色』**。阶段 E 字段扩展：
+
+| 字段 | 来源 | 说明 |
+|------|------|------|
+| `conversationId` | `gen_conversation_id` | 本回合会话 |
+| `characterInstanceId` | binding 的 `instance_id` | 角色实例身份 |
+| `characterId` | `runtime.definition.characterId` | 角色 ID（权威） |
+| `characterRevision` | `runtime.revision.revision` | 角色修订号 |
+| `userPronoun` | `_resolve_pronouns()` | UserIdentity.pronouns（B1 全局唯一「她」） |
+| `memoryScope` | `instance_id` | 预埋 F（= instanceId） |
+| `voice` | `runtime.revision.runtimeDefaults["voice"]` | 供 TTS 消费 |
+| `displayName` | `runtime.revision.displayName` | 供角色显示 |
+| `stateSnapshot` | `runtime.snapshot_state()` | frozen `CharacterRuntimeState` |
+
+`_prepare_turn` 同时 `set_personality_engine(engine)` + `set_character(characterId, displayName)` 到 PromptAssembler。
+
 ### 批次 2：v2 结构化事件（generation.*）
 
 `process()` 每回合创建 `GenerationContext`（`core/cognitive/generation.py`，generation_id/assistant_message_id/conversation_id 预分配贯通，ID 字段用 NewType：`GenerationId`/`MessageId`/`SegmentId`/`RequestId`；`channel`/`kind` 对齐契约层枚举——`from frontend_contract.ws_message import MessageChannel, SegmentKind`，经 `open_segment(channel, kind)` 打开分段）；`_dispatch_stream_event` 经 `OutputManager` 统一回合事件发射（单一语义源、双 wire 呈现）——v1 通道复刻现状 wire（delta/message/command/expression），v2 通道发 `generation.started/segment.*/delta/completed/failed`（握手 `X-Protocol-Version: 2`）。`_finalize_turn` 用预分配 assistant 父消息 ID 落库；错误路径发 `turn_failed`、打断发 `turn_cancelled`（终态唯一）。详见 [docs/electron-backend-protocol-v2.md](../../docs/electron-backend-protocol-v2.md)。
@@ -106,10 +138,11 @@ THINKING → LLM 返回 tool_calls → EXECUTING → 工具结果注入 → THIN
 ```
 core/cognitive/
 ├── __init__.py    — 重导出 CognitiveLoop
-├── loop.py               — CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt）
-├── streaming.py           — CognitiveStreaming mixin：_stream_llm_response + _dispatch_stream_event + _apply_mood（CORE-MOD-P1-04）
+├── loop.py               — CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt）+ _prepare_turn 回合角色解析（binding→registry→runtime.engine，阶段 E）
+├── streaming.py           — CognitiveStreaming mixin：_stream_llm_response + _dispatch_stream_event + _apply_mood（写 engine.state，CORE-MOD-P1-04）
 ├── tool_phase.py          — CognitiveToolPhase(CognitiveTools) mixin：_execute_tool_round + _build_tool_result_parts（CORE-MOD-P1-04）
-├── finalize.py            — CognitiveFinalize mixin：_finalize_turn（mood fallback/归档/block/generation 终态，CORE-MOD-P1-04）
+├── finalize.py            — CognitiveFinalize mixin：_finalize_turn（mood fallback 读 engine.state/归档/block/generation 终态，CORE-MOD-P1-04）
+├── turn_context.py       — TurnCharacterContext: 单回合冻结角色/用户/状态/版本快照（阶段 E 扩展 memoryScope/voice/displayName/stateSnapshot）
 ├── tools.py              — CognitiveTools mixin: _execute_tools_directly + _handle_submit_task
 ├── timing.py      — Timer + TimingClock 延迟统计
 ├── generation.py  — GenerationContext: generation_id/assistant_message_id/conversation_id 预分配贯通（ID NewType；channel/kind 对齐契约枚举 MessageChannel/SegmentKind，批次 2）
@@ -160,3 +193,4 @@ Module/
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 并发模型 |
 | [core/text/README.md](../text/README.md) | 文本流处理管线（tags + tokenizer + splitter + parts + 协调器） |
 | [core/memory/README.md](../memory/README.md) | 记忆子系统（_after_response 触发沉淀） |
+| [阶段 E Spec](../../docs/superpowers/specs/2026-09-04-character-stage-e-runtime-binding-design.md) | CharacterRuntime 与会话绑定设计（M3：_prepare_turn 回合解析 + engine per-instance） |

@@ -221,7 +221,7 @@ bash scripts/setup.sh
 L0  Module/              无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/, system_prompt, tool
 L1  core/                认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
 L2  core/memory/         记忆与工具 — SessionMemory, LongTermMemory, ToolAdapter (Plugin 架构)
-L2  core/character/      角色域 — Definition/Revision/Instance + RuntimeRegistry + Custom CRUD（C+E/D）
+L2  core/character/      角色域 — Definition/Revision/Instance + RuntimeRegistry + RuntimeState + Custom CRUD（C+E/D/E）
 L2  core/profile/        用户最小身份 — UserIdentity + Store CAS（C+E/D）
 L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
@@ -268,7 +268,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Core 总览 | [core/README.md](core/README.md) | 认知中枢架构 + 组件详解 |
 | Input | [core/input/README.md](core/input/README.md) | AudioBuffer + WebSocket 服务器 + Debug API |
 | Agent | [core/agent/README.md](core/agent/README.md) | 组装入口 + 生命周期管理 |
-| CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + 工具执行 + 计时（流式解析见 core/text） |
+| CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + 工具执行 + 计时 + 回合角色解析（_prepare_turn，阶段 E）（流式解析见 core/text） |
 | Memory | [core/memory/README.md](core/memory/README.md) | 记忆子系统（Session + LTM + EmbeddingProvider + 沉淀 + 去重） |
 | Monitoring | [core/monitoring/README.md](core/monitoring/README.md) | 运行时可观测性（EventBus + IdleMonitor + TokenTracker） |
 | Debug | [core/debug/README.md](core/debug/README.md) | 调试仪表板数据层（16 panel + 录制） |
@@ -279,7 +279,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Adapter | [core/adapter/README.md](core/adapter/README.md) | 适配器层（LLM + TTS + Tool） |
 | Task | [core/task/README.md](core/task/README.md) | 任务数据模型 + Worker Pool 调度器 |
 | Prompt | [core/prompt/README.md](core/prompt/README.md) | System prompt 组装层（MessageBuilder + PromptAssembler） |
-| Character | [core/character/README.md](core/character/README.md) | 角色域领域模型 + 运行时容器 + Custom CRUD（Definition/Revision/Instance + Registry + Draft/Service，C+E/D） |
+| Character | [core/character/README.md](core/character/README.md) | 角色域领域模型 + 运行时容器 + Custom CRUD + instance-scoped RuntimeState + RuntimeRegistry（Definition/Revision/Instance + Runtime/Registry + Draft/Service，C+E/D/E） |
 | Profile | [core/profile/README.md](core/profile/README.md) | 用户最小身份 UserIdentity + Store CAS（user_pronoun 正位 + update_if_revision，C+E/D） |
 | Providers | [core/providers/README.md](core/providers/README.md) | Provider 元数据与自定义 provider |
 | Services | [core/services/README.md](core/services/README.md) | 服务能力声明与广播（capabilities） |
@@ -313,6 +313,8 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | [docs/code-style-guide.md](docs/code-style-guide.md) | 代码风格与类型约束（ID NewType 体系 + 权威归属 + StrEnum/coerce + getattr 纪律） |
 | [docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md) | Agent 公开接口设计（薄 getter + 写方法；当前 39 个 @property） |
 | [docs/superpowers/specs/2026-08-02-service-runtime-state-design.md](docs/superpowers/specs/2026-08-02-service-runtime-state-design.md) | 服务运行时状态 + 热插拔设计（ServiceState + set_service + capabilities 嵌套） |
+| [docs/superpowers/specs/2026-09-04-character-stage-e-runtime-binding-design.md](docs/superpowers/specs/2026-09-04-character-stage-e-runtime-binding-design.md) | 阶段 E CharacterRuntime 与会话绑定设计（M3：engine per-instance + RuntimeRegistry + CharacterRuntimeState） |
+| [docs/superpowers/plans/2026-09-04-character-stage-e-runtime-binding-plan.md](docs/superpowers/plans/2026-09-04-character-stage-e-runtime-binding-plan.md) | 阶段 E 实施计划（14 Task：RuntimeState/Repo/Runtime/Registry → _prepare_turn 回合解析 → 接线 → 读端 → README） |
 | [docs/review/doc-review-2026-07-18.md](docs/review/doc-review-2026-07-18.md) | 文档审查报告（2026-07-18） |
 | [docs/archive/](docs/archive/) | 归档文档（历史记录，不再随代码库更新）：electron 基线/迁移/进度/审计、经验与同步笔记、数据结构普查、前端交接包、WorkflowEngine 历史设计 |
 
