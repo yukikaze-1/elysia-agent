@@ -23,6 +23,7 @@ from Module.output.websocket import WebSocketChannel
 from core.memory.session import SessionMemory
 from core.cognitive import CognitiveLoop
 from core.cognitive.generation_registry import GenerationRegistry
+from core.cognitive.tests.conftest import make_default_registry
 from core.storage.generation_repo import GenerationRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 from core.adapter.llm_adapter import LLMAdapter
@@ -70,6 +71,7 @@ def _make_loop(stream_impl=None):
         llm=llm, fsm=fsm, event_bus=bus, output=output,
         prompt=prompt, session_resolver=resolver,
         generation_registry=registry,
+        runtime_registry=make_default_registry(),
     )
     return loop, ws, registry
 

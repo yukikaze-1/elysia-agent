@@ -26,8 +26,34 @@ from core.cognitive.generation_registry import GenerationRegistry
 from core.storage.generation_repo import GenerationRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 from core.adapter.llm_adapter import LLMAdapter
+from core.cognitive.loop import DEFAULT_INSTANCE_ID
+from core.character.registry import CharacterRuntimeRegistry
+from core.character.runtime import CharacterRuntime
+from core.character.instance import CharacterInstance
+from core.character.definition import CharacterDefinition
+from core.character.revision import CharacterRevision
+from core.profile.user_identity import UserIdentity
 
 pytestmark = pytest.mark.service
+
+
+def _default_rt() -> CharacterRuntime:
+    """构造 elysia default runtime（registry 预置用，测试不关心角色值）。"""
+    rt = CharacterRuntime(
+        instance=CharacterInstance(instanceId=DEFAULT_INSTANCE_ID, characterId="chr_builtin_elysia"),
+        definition=CharacterDefinition(characterId="chr_builtin_elysia"),
+        revision=CharacterRevision(characterId="chr_builtin_elysia", revision=1, displayName="Elysia"),
+        user_identity=UserIdentity(userId="usr_local_default", displayName="妖梦"),
+    )
+    rt.ensure_engine(lambda: MagicMock())   # 预置 engine：_prepare_turn 不再触发 engine_factory
+    return rt
+
+
+def _default_registry() -> CharacterRuntimeRegistry:
+    """registry 预置 default runtime（Task 8 后 _prepare_turn 需 registry.get）。"""
+    reg = CharacterRuntimeRegistry()
+    reg.get(DEFAULT_INSTANCE_ID, lambda: _default_rt())
+    return reg
 
 
 def _make_loop(sessions: dict, default_session: SessionMemory,
@@ -64,6 +90,7 @@ def _make_loop(sessions: dict, default_session: SessionMemory,
         llm=llm, fsm=fsm, event_bus=bus, output=output,
         prompt=prompt, session_resolver=resolver,
         generation_registry=registry,
+        runtime_registry=_default_registry(),
     )
     return loop
 

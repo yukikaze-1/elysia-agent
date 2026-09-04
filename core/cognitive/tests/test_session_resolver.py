@@ -22,6 +22,7 @@ from core.memory.session_manager import (
     SessionBusyError, SessionManager, SessionNotFoundError,
 )
 from core.cognitive import CognitiveLoop
+from core.cognitive.tests.conftest import make_default_registry
 from core.schema import MessageId, SessionId
 from core.adapter.llm_adapter import LLMAdapter
 
@@ -70,6 +71,7 @@ def _make_loop(sessions: dict, default_session: SessionMemory) -> CognitiveLoop:
     loop = CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
         prompt=prompt, session_resolver=resolver,
+        runtime_registry=make_default_registry(),
     )
     loop._resolver_calls = calls
     return loop

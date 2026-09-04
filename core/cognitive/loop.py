@@ -370,7 +370,11 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # binding 缺 instance_id/character_id 时回退内置 Elysia。
         binding = target.character_binding or {}
         instance_id = binding.get("instance_id") or DEFAULT_INSTANCE_ID
-        registry = cast("CharacterRuntimeRegistry", self._registry)
+        if self._registry is None:
+            raise RuntimeError(
+                "CharacterRuntimeRegistry 未注入——_prepare_turn 需从 binding 解析 instance 到 runtime"
+            )
+        registry = self._registry
         runtime = registry.get(instance_id, self._runtime_factory)  # type: ignore[arg-type]
         engine = runtime.ensure_engine(lambda: self._engine_factory(runtime))  # type: ignore[call-optional]
         self._session = target

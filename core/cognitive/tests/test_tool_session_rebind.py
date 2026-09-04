@@ -21,10 +21,17 @@ from core.memory.session import SessionMemory
 from core.cognitive import CognitiveLoop
 from core.cognitive.generation_registry import GenerationRegistry
 from core.cognitive.timing import TimingClock
+from core.cognitive.loop import DEFAULT_INSTANCE_ID
 from core.storage.generation_repo import GenerationRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 from core.schema.message import UserMessage
 from core.schema.types import MessageId
+from core.character.registry import CharacterRuntimeRegistry
+from core.character.runtime import CharacterRuntime
+from core.character.instance import CharacterInstance
+from core.character.definition import CharacterDefinition
+from core.character.revision import CharacterRevision
+from core.profile.user_identity import UserIdentity
 
 pytestmark = pytest.mark.service
 
@@ -84,6 +91,18 @@ class _ToolCallingLLM:
         yield {"content": None, "tool_calls": None}
 
 
+def _default_rt() -> CharacterRuntime:
+    """构造 elysia default runtime（registry 预置用，测试不关心角色值）。"""
+    rt = CharacterRuntime(
+        instance=CharacterInstance(instanceId=DEFAULT_INSTANCE_ID, characterId="chr_builtin_elysia"),
+        definition=CharacterDefinition(characterId="chr_builtin_elysia"),
+        revision=CharacterRevision(characterId="chr_builtin_elysia", revision=1, displayName="Elysia"),
+        user_identity=UserIdentity(userId="usr_local_default", displayName="妖梦"),
+    )
+    rt.ensure_engine(lambda: MagicMock())   # 预置 engine：_prepare_turn 不再触发 engine_factory
+    return rt
+
+
 async def _build_loop(session_a: SessionMemory, session_b: SessionMemory,
                       tmp_path, monkeypatch):
     """最小 CognitiveLoop + 真实 ToolAdapter（describe_image + stub 视觉后端）。
@@ -112,6 +131,8 @@ async def _build_loop(session_a: SessionMemory, session_b: SessionMemory,
         {"role": "user", "content": "hello"},
     ])
     registry = GenerationRegistry(repo=GenerationRepository(db=FakeDocumentDBBackend()))
+    rt_reg = CharacterRuntimeRegistry()
+    rt_reg.get(DEFAULT_INSTANCE_ID, lambda: _default_rt())
 
     async def resolver(conversation_id, protocol_version):
         if conversation_id == "A":
@@ -131,6 +152,7 @@ async def _build_loop(session_a: SessionMemory, session_b: SessionMemory,
         llm=llm, fsm=fsm, event_bus=bus, output=output,
         prompt=prompt, session_resolver=resolver,
         generation_registry=registry,
+        runtime_registry=rt_reg,
     )
     loop.configure(tool_adapter=adapter)
     return loop, ws, adapter, vision
