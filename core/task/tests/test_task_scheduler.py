@@ -773,6 +773,7 @@ async def test_cognitive_loop_callback_wired():
     from Module.output import OutputManager
     from core.memory.session import SessionMemory
     from core.cognitive import CognitiveLoop
+    from core.cognitive.tests.conftest import make_default_registry
     from core.adapter.llm_adapter import LLMAdapter
 
     llm = MagicMock(spec=LLMAdapter)
@@ -797,12 +798,14 @@ async def test_cognitive_loop_callback_wired():
     ])
     session = MagicMock(spec=SessionMemory)
     session.recent_messages.return_value = []
+    session.character_binding = {}
 
     loop = CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
         prompt=prompt,
         session_resolver=functools.partial(_fixed_session_resolver, session),
         tool_adapter=tm,
+        runtime_registry=make_default_registry(),
     )
 
     callback_called = []
@@ -832,6 +835,7 @@ async def test_cognitive_loop_no_callback_backward_compat():
     from Module.output import OutputManager
     from core.memory.session import SessionMemory
     from core.cognitive import CognitiveLoop
+    from core.cognitive.tests.conftest import make_default_registry
     from core.adapter.llm_adapter import LLMAdapter
 
     llm = MagicMock(spec=LLMAdapter)
@@ -856,12 +860,14 @@ async def test_cognitive_loop_no_callback_backward_compat():
     ])
     session = MagicMock(spec=SessionMemory)
     session.recent_messages.return_value = []
+    session.character_binding = {}
 
     loop = CognitiveLoop(
         llm=llm, fsm=fsm, event_bus=bus, output=output,
         prompt=prompt,
         session_resolver=functools.partial(_fixed_session_resolver, session),
         tool_adapter=tm,
+        runtime_registry=make_default_registry(),
     )
 
     await loop.process("hello")
