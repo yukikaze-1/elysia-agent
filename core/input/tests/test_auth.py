@@ -62,6 +62,10 @@ def make_auth_app():
         agent.character_engine.state.state_history = []
         agent.character_engine.state.last_awareness_time = 0.0
         agent.character_engine.state.self_perception_history = []
+        # Task 12（§6.5 读端迁移）：debug/info.py 读当前 instance engine.state 的
+        # mood / model_dump（替代旧 session.character_state 读路径）——stub 补齐。
+        agent.character_engine.state.mood = "calm"
+        agent.character_engine.state.model_dump.return_value = {}
         agent.character_engine._version_repo = None
         agent.character_reflector.buffer_size = 50
         agent.character_reflector.last_reflection_at = 0.0

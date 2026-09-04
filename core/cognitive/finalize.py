@@ -60,8 +60,10 @@ class CognitiveFinalize:
             return
         logger.debug("心情: <mood> 未检测到，使用关键词 fallback")
         self._engine.analyze_user(user_message)
-        fallback_mood = (target.character_state.mood
-                         if target is not None else self._engine.state.mood)
+        # M3（Task 12，plan-defect 修正）：mood 读端迁移——读 self._engine.state
+        # （实例权威）。此前回退读 target.character_state.mood（非权威——Task 10
+        # 后 _apply_mood 写 engine.state），导致 LLM 未输出 <mood> 时读到 stale/default。
+        fallback_mood = self._engine.state.mood if self._engine else None
         self._tts_mgr.set_emotion(fallback_mood)
 
     async def _emit_final_public_text(self, public_text: str,
@@ -189,9 +191,11 @@ class CognitiveFinalize:
                 except Exception:
                     logger.debug("get_session_stats 失败，conversation_usage=None",
                                  exc_info=True)
-            mood = (target.character_state.mood if target is not None else (
-                self._engine.state.mood
-                if self._engine is not None else None))
+            # M3（Task 12，plan-defect 修正）：mood 读端迁移——读 self._engine.state
+            # （实例权威）。此前回退读 target.character_state.mood（非权威——Task 10
+            # 后 _apply_mood 写 engine.state），导致 completed.mood 读到 stale/default（"平静"）。
+            mood = (self._engine.state.mood
+                    if self._engine is not None else None)
             await self._output.turn_completed(
                 "stop", usage, self._generation_ctx.model_id, mood, self._generation_ctx,
                 conversation_id=conversation_id or target.session_id,

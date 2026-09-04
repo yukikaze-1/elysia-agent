@@ -99,7 +99,8 @@ def _default_rt() -> CharacterRuntime:
         revision=CharacterRevision(characterId="chr_builtin_elysia", revision=1, displayName="Elysia"),
         user_identity=UserIdentity(userId="usr_local_default", displayName="妖梦"),
     )
-    rt.ensure_engine(lambda: MagicMock())   # 预置 engine：_prepare_turn 不再触发 engine_factory
+    from core.cognitive.tests.conftest import mock_engine_with_state
+    rt.ensure_engine(lambda: mock_engine_with_state(instance_id=DEFAULT_INSTANCE_ID))   # 预置 engine：_prepare_turn 不再触发 engine_factory
     return rt
 
 

@@ -18,6 +18,22 @@ from core.character.instance import CharacterInstance
 from core.character.definition import CharacterDefinition
 from core.character.revision import CharacterRevision
 from core.profile.user_identity import UserIdentity
+from core.schema.character import CharacterRuntimeState
+from core.schema.types import SessionId
+
+
+def mock_engine_with_state(*, instance_id: str = DEFAULT_INSTANCE_ID) -> MagicMock:
+    """构造带真实 CharacterRuntimeState 的 engine 替身。
+
+    Task 12（§6.5）读端迁移后 finalize.turn_completed 读 `engine.state.mood`（实例
+    权威）；纯 MagicMock 自动 mock 的 `state.mood` 是 MagicMock（非 str）会令
+    contract 校验失败吞帧。给真实 state 使 `state.mood` 返回合法字符串，供
+    各类直接构造 loop 的测试复用。
+    """
+    engine = MagicMock()
+    engine.state = CharacterRuntimeState(
+        instance_id=instance_id, session_id=SessionId(instance_id))
+    return engine
 
 
 def make_default_rt(*, instance_id: str = DEFAULT_INSTANCE_ID,
@@ -25,7 +41,8 @@ def make_default_rt(*, instance_id: str = DEFAULT_INSTANCE_ID,
                     revision: int = 1, display_name: str = "Elysia") -> CharacterRuntime:
     """构造带 engine 替身的 elysia default CharacterRuntime（registry 预置用）。
 
-    测试不关心角色值，只需一个能通过 `_prepare_turn` 的 runtime。
+    测试不关心角色值，只需一个能通过 `_prepare_turn` 的 runtime。engine 设为
+    MagicMock + 真实 state（见 mock_engine_with_state）。
     """
     rt = CharacterRuntime(
         instance=CharacterInstance(instanceId=instance_id, characterId=character_id),
@@ -34,7 +51,7 @@ def make_default_rt(*, instance_id: str = DEFAULT_INSTANCE_ID,
             characterId=character_id, revision=revision, displayName=display_name),
         user_identity=UserIdentity(userId="usr_local_default", displayName="妖梦"),
     )
-    rt.ensure_engine(lambda: MagicMock())   # 预置 engine：_prepare_turn 不再触发 engine_factory
+    rt.ensure_engine(lambda: mock_engine_with_state(instance_id=instance_id))
     return rt
 
 

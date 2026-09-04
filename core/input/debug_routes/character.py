@@ -42,6 +42,10 @@ async def _list_character_versions(agent: "Agent", content_type: str,
     Returns:
         tuple: (CharacterVersionListResponse | None, error_str | None, error_code | None, http_status_code)
     """
+    # Task 12（§6.5 读端迁移）：_list_character_versions 经 agent.character_engine
+    # 解析当前会话绑定 instance 的 engine（非全局单例）——Task 11 后该 property
+    # 经 registry.get(binding.instance_id).ensure_engine() 解析；版本历史键 `sid`
+    # 仍为 state.session_id（§5.1 保留作版本键）。
     engine = getattr(agent, "character_engine", None)
     if not engine or not getattr(engine, "_version_repo", None):
         return None, "版本历史不可用", "STORAGE_UNAVAILABLE", 503

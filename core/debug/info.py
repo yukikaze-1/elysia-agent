@@ -172,7 +172,10 @@ async def _collect_session_and_memory(agent: "Agent", info: DebugInfo) -> None:
         }
         for m in msgs[-5:]
     ]
-    info.character_state_raw = agent.session.character_state.model_dump(mode="json")
+    # Task 12（§6.5 读端迁移）：character_state_raw 读当前 instance engine.state
+    # （实例权威）。此前读 session.character_state——M3 后 state 权威在 runtime.state，
+    # session.character_state 不再被写（stale）。
+    info.character_state_raw = agent.character_engine.state.model_dump(mode="json")
 
     info.lt_count = agent.long_term.count
     info.lt_recent = [
@@ -299,7 +302,8 @@ def _collect_runtime_stats(agent: "Agent", info: DebugInfo) -> None:
     info.consolidator_threshold = cons._threshold  # noqa: SLF001
 
     try:
-        info.mood = agent.session.character_state.mood
+        # Task 12（§6.5 读端迁移）：mood 读当前 instance engine.state（实例权威）。
+        info.mood = agent.character_engine.state.mood
     except Exception:
         pass
 

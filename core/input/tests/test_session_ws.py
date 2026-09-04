@@ -418,7 +418,14 @@ class TestV1AlwaysDefault:
 
     @pytest.mark.asyncio
     async def test_v1_connect_mood_from_default(self, aiohttp_client, fresh_idempotency):
-        """review 修复（兼容#5）：v1 建连 expression mood 读 default 会话（active 切走不影响）。"""
+        """review 修复（兼容#5）：v1 建连 expression mood 读当前 instance engine.state。
+
+        Task 12（§6.5 读端迁移）：M3 后 mood 权威在 engine.state（runtime.state），
+        v1/v2 建连统一读 agent.character_engine.state（经 registry 解析当前会话绑定
+        instance 的 engine）。待测会话无 binding → 回退默认 instance（DEFAULT_INSTANCE_ID）
+        的 engine；其 state.mood 被写为"兴奋" → 建连帧读到"兴奋"（引擎权威），
+        而非旧 default_session.character_state（不再被写，stale）。
+        """
         from core.input.server import create_app
 
         agent = _make_agent_with(_UsageLLM())
@@ -429,7 +436,8 @@ class TestV1AlwaysDefault:
             _seed_session(agent, "conv_test_mood", "会话")
             agent.session_manager.get("default").character_state.mood = "平静"
             await agent.switch_session("conv_test_mood")
-            agent.character_engine.state.mood = "兴奋"  # active 会话 mood ≠ default
+            # M3：待测会话无 binding → 回退默认 instance engine（== 权威 state 落点）
+            agent.character_engine.state.mood = "兴奋"
 
             ws = await _drain(client, None)  # v1 握手
             mood = None
@@ -441,7 +449,7 @@ class TestV1AlwaysDefault:
                 if d.get("type") == "expression":
                     mood = d.get("expression")
                     break
-            assert mood == "平静", f"v1 建连 mood 应读 default 会话 mood，实际 {mood!r}"
+            assert mood == "兴奋", f"v1 建连 mood 应读当前 instance engine.state，实际 {mood!r}"
             await ws.close()
         finally:
             await agent.stop()

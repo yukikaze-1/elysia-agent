@@ -239,9 +239,12 @@ async def session_detail_handler(request: web.Request) -> web.Response:
         if sid == str(agent.session.session_id):
             msgs = agent.session.messages_for_client()
             messages = [contract.SessionDetailMessage.model_validate(m) for m in msgs]
+            # Task 12（§6.5 读端迁移）：params 读当前 instance engine.state（实例权威）。
+            # 此前读 session.character_state——M3 后 state 权威在 runtime.state，
+            # session.character_state 不再被写（stale）。
             data = contract.SessionDetailResponse(
                 session_id=sid, messages=messages,
-                params=agent.session.character_state.model_dump(mode="json"))
+                params=agent.character_engine.state.model_dump(mode="json"))
             return web.json_response(data.wire_dict())
         return _protocol_error_response("SESSION_NOT_FOUND", "会话不存在", 404)
     raw_msgs, character_state, _, _, _ = result

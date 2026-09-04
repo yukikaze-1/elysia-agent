@@ -83,7 +83,8 @@ def _make_rt(*, instance_id: str = "chi_builtin_elysia",
             characterId=character_id, revision=revision, displayName=display_name),
         user_identity=UserIdentity(userId="usr_local_default", displayName="妖梦"),
     )
-    rt.ensure_engine(lambda: MagicMock())   # 预置 engine：_prepare_turn 不再触发 engine_factory
+    from core.cognitive.tests.conftest import mock_engine_with_state
+    rt.ensure_engine(lambda: mock_engine_with_state(instance_id=instance_id))   # 预置 engine：_prepare_turn 不再触发 engine_factory
     return rt
 
 

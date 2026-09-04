@@ -232,11 +232,11 @@ async def _open_ws_connection(
         logger.debug("Failed to send capabilities on connect", exc_info=True)
 
     try:
-        if protocol_version >= 2:
-            cs = agent.character_engine.state
-        else:
-            default_session = await agent.resolve_session(None, 1)
-            cs = default_session.character_state
+        # Task 12（§6.5 读端迁移）：v1/v2 统一读当前 instance 的 engine.state（实例权威）。
+        # 此前 v2 读 agent.character_engine.state、v1 读 default_session.character_state
+        # （非权威——M3 后 state 权威在 runtime.state，session.character_state 不再被写）。
+        # agent.character_engine 经 registry 解析当前会话绑定 instance 的 engine（Task 11）。
+        cs = agent.character_engine.state
         await ws.send_json(ExpressionMessage(
             expression=cs.mood, intensity=cs.mood_intensity,
         ).wire_dict())

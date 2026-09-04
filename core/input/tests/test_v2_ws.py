@@ -189,6 +189,62 @@ class TestV2AckIdempotency:
             await agent.stop()
 
 
+@pytest.mark.service
+class TestV2MoodConnectInstanceState:
+    """Task 12（§6.5 读端迁移）：WS 建连 expression(mood) 帧读 instance engine.state。
+
+    M3 后 mood 权威在 engine.state（runtime.state）；建连帧须从当前实例
+    engine.state 读，而非 session.character_state（非权威，stale）。覆盖
+    ws_handler._open_ws_connection 的 mood connect 读端迁移（v1/v2 统一读
+    agent.character_engine.state——Task 11 后经 registry 解析当前绑定 instance 的 engine）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_v2_mood_connect_reads_instance_engine_state(
+            self, aiohttp_client, fresh_idempotency):
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        agent.session._messages.clear()  # noqa: SLF001 空会话
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            # 先触发一次生成：_UsageLLM 返回 <mood>开心|0.8</mood> → 写 engine.state
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            await ws.send_json({"type": "text", "content": "你好",
+                                "clientRequestId": f"req_mood_{time.monotonic_ns()}"})
+            # 等生成完成（收到 idle 帧）
+            for _ in range(30):
+                m = await asyncio.wait_for(ws.receive(), timeout=10)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "state" and d.get("state") == "idle":
+                        break
+            # 读端迁移后当前实例 engine.state 已写入 mood（实例权威）。
+            # 注意：强度经 analyze_assistant 每轮衰减（0.8 → 0.65），只需断言 mood
+            # 已读自 engine.state（非默认"平静"）而非精确强度。
+            assert agent.character_engine.state.mood == "开心"
+            await ws.close()
+
+            # 重连：读建连 expression 帧 → 应为 instance engine.state 的 mood
+            ws2 = await client.session.ws_connect(
+                client.make_url("/ws"), headers={"X-Protocol-Version": "2"})
+            expr = None
+            for _ in range(6):
+                m = await asyncio.wait_for(ws2.receive(), timeout=5)
+                if m.type == WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("type") == "expression":
+                        expr = d
+                        break
+            assert expr is not None, "重连未收到 expression 帧"
+            assert expr["expression"] == "开心"
+            await ws2.close()
+        finally:
+            await agent.stop()
+
+
 class _FakeTtsBackend:
     """假 TTS 后端：list_voices 返回固定列表（set_tts_voice 校验用）。"""
 
