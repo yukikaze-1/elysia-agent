@@ -11,7 +11,7 @@ from core.personality._utils import _extract_tag, _schedule
 
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
-    from core.schema.character import CharacterState
+    from core.schema.character import CharacterRuntimeState
     from Module.system_prompt import PromptManager
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class AwarenessJudge:
         self,
         *,
         llm: "LLMAdapter",
-        state: "CharacterState",
+        state: "CharacterRuntimeState",
         character_name: str,
         user_name: str,
         pm: "PromptManager | None",

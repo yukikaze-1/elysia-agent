@@ -568,119 +568,6 @@ class TestAwarenessJudge:
         assert result.awareness_text == ""
 
 
-@pytest.mark.unit
-class TestCharacterEngineAttachSession:
-    """attach_session: 会话切换时重绑 state 视图 + 子组件 + pre-save 钩子。"""
-
-    @staticmethod
-    def _make_session(state=None, last_awareness_time=None):
-        """构造 fake session：character_state + _pre_save_hook 可写。"""
-        cs = state or CharacterState(session_id=SessionId("session-b"))
-        if last_awareness_time is not None:
-            cs.last_awareness_time = last_awareness_time
-        session = MagicMock()
-        session.character_state = cs
-        session._pre_save_hook = None
-        return session
-
-    def test_attach_rebinds_state(self):
-        """attach 后 engine.state 指向新会话的 character_state。"""
-        engine = _make_engine()
-        session_b = self._make_session()
-        engine.attach_session(session_b)
-        assert engine.state is session_b.character_state
-
-    def test_attach_rebinds_subcomponent_states(self):
-        """三个子组件（awareness/compression/emotion）的 _state 全部重绑。"""
-        engine = _make_engine()
-        session_b = self._make_session()
-        engine.attach_session(session_b)
-        assert engine._awareness._state is session_b.character_state
-        assert engine._compression._state is session_b.character_state
-        assert engine._emotion._state is session_b.character_state
-
-    def test_attach_sets_pre_save_hook(self):
-        """attach 后 session._pre_save_hook 绑定到 sync_reflector_to_state。"""
-        engine = _make_engine()
-        session_b = self._make_session()
-        engine.attach_session(session_b)
-        # 绑定的方法是新创建的 bound method，is 恒 False；== 比较 __func__ + __self__
-        assert session_b._pre_save_hook == engine.sync_reflector_to_state
-
-    def test_attach_syncs_last_awareness_time(self):
-        """attach 同步新会话的 last_awareness_time 到 awareness 冷却计时。"""
-        engine = _make_engine()
-        session_b = self._make_session(last_awareness_time=1234.5)
-        engine.attach_session(session_b)
-        assert engine._awareness._last_awareness_time == 1234.5
-        assert engine._last_awareness_time == 1234.5
-
-    def test_attach_calls_restore_from_state(self):
-        """D-o 修正：attach 换绑后调用 _restore_from_state 恢复 incoming buffer（flush+clear+restore）。
-
-        原 spec D-o 声明"不 restore"（基于 load 已恢复假设）；多会话切换下
-        flush+clear+restore 只迁移在途 buffer 不覆盖，恢复调用是安全的。
-        """
-        engine = _make_engine()
-        with patch.object(engine._reflector, "_restore_from_state") as mock_restore:
-            session_b = self._make_session()
-            engine.attach_session(session_b)
-            mock_restore.assert_called_once()
-
-    def test_attach_flushes_outgoing_buffer_to_outgoing_state(self):
-        """换绑前 flush：A 会话在途 buffer 落 A.character_state，内存 buffer 清空不残留 A。"""
-        from core.schema.types import SessionId
-
-        engine = _make_engine()
-        cs_a = CharacterState(session_id=SessionId("session-a"))
-        engine.attach_session(self._make_session(state=cs_a))
-        # 模拟 A 会话在途 buffer
-        engine._reflector._buffer.append(("你好", "你好呀"))
-        engine._reflector._context.append({"role": "u", "content": "你好", "inner_voice": "", "timestamp": 1.0})
-        session_b = self._make_session()
-        engine.attach_session(session_b)
-        # A 的 buffer 已 flush 到 A.character_state（不丢失）
-        assert cs_a.reflector_buffer == [("你好", "你好呀")]
-        assert cs_a.reflector_context == [{"role": "u", "content": "你好", "inner_voice": "", "timestamp": 1.0}]
-        # 内存 buffer 已清空（不残留 A 的 buffer）
-        assert engine._reflector._buffer == []
-        assert engine._reflector._context == []
-
-    def test_attach_restores_incoming_buffer(self):
-        """换绑后 restore：incoming.character_state.reflector_buffer 恢复到 live buffer。"""
-        from core.schema.types import SessionId
-
-        engine = _make_engine()
-        cs_b = CharacterState(session_id=SessionId("session-b"))
-        cs_b.reflector_buffer = [("B问", "B答")]
-        cs_b.reflector_context = [{"role": "u", "content": "B问", "inner_voice": "", "timestamp": 2.0}]
-        engine.attach_session(self._make_session(state=cs_b))
-        assert engine._reflector._buffer == [("B问", "B答")]
-        assert engine._reflector._context == [{"role": "u", "content": "B问", "inner_voice": "", "timestamp": 2.0}]
-
-    def test_alternating_sessions_save_each_own_buffer(self):
-        """两会话交替 save 各写各的：A.save 写 A.cs、B.save 写 B.cs，互不串。"""
-        from core.schema.types import SessionId
-
-        engine = _make_engine()
-        cs_a = CharacterState(session_id=SessionId("session-a"))
-        cs_b = CharacterState(session_id=SessionId("session-b"))
-        engine.attach_session(self._make_session(state=cs_a))
-        # A 会话缓冲 + save（sync_reflector_to_state 即 _pre_save_hook）
-        engine._reflector._buffer.append(("A问", "A答"))
-        engine.sync_reflector_to_state()
-        assert cs_a.reflector_buffer == [("A问", "A答")]
-        # 切到 B：flush A → 清空 → restore B（空）
-        engine.attach_session(self._make_session(state=cs_b))
-        assert cs_a.reflector_buffer == [("A问", "A答")]  # A 的数据不被覆盖
-        assert engine._reflector._buffer == []            # 内存清空不残留 A
-        # B 会话缓冲 + save
-        engine._reflector._buffer.append(("B问", "B答"))
-        engine.sync_reflector_to_state()
-        assert cs_b.reflector_buffer == [("B问", "B答")]
-        assert cs_a.reflector_buffer == [("A问", "A答")]  # 各写各的
-
-
 @pytest.mark.asyncio
 async def test_buffer_message_fixed_reflector_not_rebound():
     """C3/P1-10：显式 reflector 固化——session switch 后 engine._reflector 变了，
@@ -717,3 +604,36 @@ async def test_buffer_message_returns_trackable_task():
     assert task is not None and not task.done()
     await task
     refl.buffer.assert_awaited_once()
+
+
+"""去 attach_session 后 engine 构造不变 + sync_reflector_to_runtime_state。"""
+from unittest.mock import MagicMock, AsyncMock
+from core.schema.character import CharacterRuntimeState
+from core.schema.types import SessionId
+from core.personality.engine import CharacterEngine
+from core.config import CharacterConfig
+
+
+def _make_runtime_engine(state: CharacterRuntimeState | None = None) -> CharacterEngine:
+    s = state or CharacterRuntimeState(instance_id="chi_x", session_id=SessionId("test-sid"))
+    m = MagicMock(); m.think = AsyncMock(return_value=MagicMock(text="test"))
+    o = MagicMock(); o.expression = MagicMock(return_value=MagicMock())
+    return CharacterEngine(
+        llm=m, state=s, character_name="Elysia", user_name="妖梦",
+        base_personality="你是 Elysia。温柔底色。", character_config=CharacterConfig(name="Elysia"), output=o,
+    )
+
+
+def test_engine_no_attach_session():
+    assert not hasattr(_make_runtime_engine(), "attach_session")
+
+
+def test_engine_state_is_runtime_state():
+    assert isinstance(_make_runtime_engine().state, CharacterRuntimeState)
+
+
+def test_sync_reflector_to_runtime_state():
+    eng = _make_runtime_engine()
+    eng._reflector._buffer = [("u", "a")]
+    eng.sync_reflector_to_runtime_state()
+    assert eng.state.reflector_buffer == [("u", "a")]

@@ -5,7 +5,7 @@
 import logging
 import random
 
-from core.schema.character import CharacterState
+from core.schema.character import CharacterRuntimeState
 from Module.output import OutputManager
 from core.personality._utils import _schedule
 
@@ -62,7 +62,7 @@ class EmotionDetector:
     def __init__(
         self,
         *,
-        state: CharacterState,
+        state: CharacterRuntimeState,
         output: OutputManager,
         idle_expressions: list[str],
     ):

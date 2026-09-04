@@ -31,9 +31,8 @@ from core.schema.utils import now_iso
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.config.character_config import CharacterConfig
-    from core.memory.session import SessionMemory
     from core.personality.reflector import CharacterReflector
-    from core.schema.character import CharacterState
+    from core.schema.character import CharacterRuntimeState
     from core.storage.character_version_repo import CharacterVersionRepository
 
 logger = logging.getLogger(__name__)
@@ -75,7 +74,7 @@ class CharacterEngine:
         self,
         *,
         llm: "LLMAdapter",
-        state: "CharacterState",
+        state: "CharacterRuntimeState",
         character_name: str,
         user_name: str,
         base_personality: str,
@@ -336,56 +335,11 @@ class CharacterEngine:
 
     # ---- 持久化 ----
 
-    def sync_reflector_to_state(self) -> None:
-        """同步 reflector 内部 buffer 到 CharacterState，供 session.save() 前调用。"""
-        if self._reflector:
-            self.state.reflector_buffer = [
-                (u, a) for u, a in self._reflector._buffer
-            ]
-            self.state.reflector_context = list(self._reflector._context)
-
-    def attach_session(self, session: "SessionMemory") -> None:
-        """会话切换时重绑 state 视图（M1/M2 阶段）。
-
-        本批（M1/M2）保留为 state 视图换绑 shim——batch-3 多会话 state 隔离依赖它。
-        角色身份（instance_id/character_revision）由构造时绑定，attach_session 不再代表
-        角色身份切换。完整删除并改由多 instance engine 替代，是 M3 语义。
-
-        具体重绑:
-          - self.state 与三个子组件（compression/emotion/awareness）的 _state
-          - session._pre_save_hook = sync_reflector_to_state
-          - _last_awareness_time（新会话的 awareness 冷却计时，经 property 代理到
-            _awareness._last_awareness_time）
-
-        批次 3 review 修复（F2）：换绑前 flush outgoing 的 reflector buffer 到其
-        character_state → 清空 live buffer/context → 重绑 → _restore_from_state
-        恢复 incoming。flush+clear+restore 只**迁移**在途 buffer，不覆盖——多会话
-        常规交替下 A.save()/B.save() 各写各的（A 的 buffer 落 A.cs、B 的落 B.cs），
-        杜绝「A.save() 的 _pre_save_hook 把 A 的 buffer 写进 B.character_state」。
-        修正原 spec D-o「不 restore」注释（基于 load 已恢复假设；多会话切换下
-        flush 后清空使整体替换等价于 restore）。
-        """
-        # F2：换绑前 flush outgoing 的 reflector buffer/context 到其 character_state
-        if self.state is not None and self._reflector is not None:
-            self.state.reflector_buffer = [(u, a) for u, a in self._reflector._buffer]
-            self.state.reflector_context = list(self._reflector._context)
-        # 清空 live buffer/context——随后 restore 整体替换，不残留 outgoing 在途数据
+    def sync_reflector_to_runtime_state(self) -> None:
+        """reflector buffer/context → runtime.state（回合边界由 Runtime.flush 持久化）。"""
         if self._reflector is not None:
-            self._reflector._buffer.clear()
-            self._reflector._context.clear()
-
-        new_state = session.character_state
-        self.state = new_state
-        self._compression._state = new_state
-        self._emotion._state = new_state
-        self._awareness._state = new_state
-        session._pre_save_hook = self.sync_reflector_to_state
-        # 同步新会话的 awareness 冷却状态
-        self._last_awareness_time = new_state.last_awareness_time or 0.0
-        # F2：换绑后从 incoming.character_state 恢复 buffer/context（live 已清空，
-        # 恢复只迁移不覆盖）
-        if self._reflector is not None and hasattr(self._reflector, "_restore_from_state"):
-            self._reflector._restore_from_state()
+            self.state.reflector_buffer = list(self._reflector._buffer)
+            self.state.reflector_context = list(self._reflector._context)
 
     # ---- Reflector 代理 ----
 

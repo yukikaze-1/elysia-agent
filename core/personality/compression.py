@@ -20,7 +20,7 @@ from paths import ProjectPath
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.config.character_config import CharacterConfig
-    from core.schema.character import CharacterState, StateHistoryEntry
+    from core.schema.character import CharacterRuntimeState, StateHistoryEntry
     from core.storage.character_version_repo import CharacterVersionRepository
     from Module.system_prompt import PromptManager
 
@@ -43,7 +43,7 @@ class CompressionManager:
         self,
         *,
         llm: "LLMAdapter",
-        state: "CharacterState",
+        state: "CharacterRuntimeState",
         character_name: str,
         l1_core: str,
         pm: "PromptManager | None",
