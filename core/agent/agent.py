@@ -47,7 +47,7 @@ import time
 import os
 from dataclasses import asdict
 import logging
-from typing import TYPE_CHECKING, Awaitable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 if TYPE_CHECKING:
     from core.monitoring.token_tracker import TokenTracker
@@ -231,12 +231,18 @@ class Agent(AgentLifecycle, AgentServer):
             """
             role_name = instance_id.removeprefix("chi_builtin_")
             definition, revision, instance = self._builtin_source.load(role_name)
-            return CharacterRuntime(
+            rt = CharacterRuntime(
                 instance=instance,
                 definition=definition,
                 revision=revision,
                 user_identity=self._user_identity,
             )
+            # M3（C1 修复）：每个 runtime 都接 persist_fn——否则 registry 经此构造出的
+            # 非 default instance runtime 的 _persist_fn=None，flush() no-op，状态永不落库。
+            # persist_fn 捕获本 runtime 自身 instance（不再硬编码 default_runtime.instance），
+            # 并走 CharacterInstanceRepository.cas_state_version（I1：CAS 路径激活）。
+            rt.set_persist_fn(self._persist_runtime_factory(rt))
+            return rt
 
         def _make_engine(runtime: CharacterRuntime) -> CharacterEngine:
             """从 runtime 构造 CharacterEngine（M3: 每 instance 一个 engine，state 权威 =
@@ -269,17 +275,6 @@ class Agent(AgentLifecycle, AgentServer):
         default_engine = _make_engine(default_runtime)
         default_runtime.bind_engine(default_engine)
         self._default_engine = default_engine
-        # M3：runtime.flush() 经 persist_fn 把 runtime.state 持久化到 instance repo。
-        # registry.close_all()（shutdown）逐 runtime flush 据此落库。
-        def _persist_runtime(state: CharacterRuntimeState) -> Awaitable[None]:
-            async def _do() -> None:
-                inst = default_runtime.instance
-                inst.state = state
-                inst.stateVersion += 1
-                inst.updatedAt = now_iso()
-                await self._instance_repo.save(inst)
-            return _do()
-        default_runtime.set_persist_fn(_persist_runtime)
         # 默认会话 binding 指向内置 Elysia instance（M3 权威）。
         self._session_manager.active.character_binding = dict(self._default_binding)
 
@@ -402,6 +397,43 @@ class Agent(AgentLifecycle, AgentServer):
         self._db_health_task: asyncio.Task | None = None
         self._embed_task: asyncio.Task | None = None
         self._attachment_gc_task: asyncio.Task | None = None
+
+    # ---- CharacterRuntime 持久化（M3：per-instance persist_fn 闭合，C1/I1 修复）----
+
+    def _persist_runtime_factory(
+        self, runtime: CharacterRuntime,
+    ) -> Callable[[CharacterRuntimeState], Awaitable[None]]:
+        """构造 runtime 的 persist_fn（C1：捕获该 runtime 自身 instance，非硬编码 default）。
+
+        flush 时把内存 CharacterRuntimeState 经 CharacterInstanceRepository
+        .cas_state_version 写回 CharacterInstance.state（I1：CAS 路径激活——此前仅
+        save 被调用，cas_state_version 是死代码）。CAS 失败（state_version 冲突/
+        runtime 未落库）时回退 save（upsert 兜底建档），保证新 instance 也能落库。
+        repo 连接在 _start_persistence（start()）完成，而 flush 在回合边界/shutdown
+        触发——故此处经 self._instance_repo 延迟访问，不在此构造时断言已连接。
+        """
+        async def _persist(state: CharacterRuntimeState) -> None:
+            inst = runtime.instance
+            inst.state = state
+            inst.stateVersion += 1
+            runtime.stateVersion = inst.stateVersion  # 与 runtime 跟踪字段保持一致（_lifecycle restore 亦同步）
+            inst.updatedAt = now_iso()
+            repo = self._instance_repo
+            try:
+                ok = await repo.cas_state_version(
+                    inst.instanceId,
+                    expected=inst.stateVersion - 1,
+                    new_state=state,
+                    new_version=inst.stateVersion,
+                )
+            except Exception:
+                logger.debug("cas_state_version 失败，回退 save", exc_info=True)
+                ok = False
+            if not ok:
+                # CAS 未命中：文档不存在（首次落库）或 state_version 冲突。作为兜底
+                # 走 upsert save，保持权威状态不丢；真实并发冲突由下次 CAS 拦截。
+                await repo.save(inst)
+        return _persist
 
     # ---- process_message ----
 

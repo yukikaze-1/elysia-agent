@@ -423,6 +423,10 @@ class OutputManager:
             conversation_id=ctx.conversation_id,
             request_id=ctx.request_id,
             model=ctx.model_id or None,
+            # M3（I2）：generation 审计字段贯通到 wire（None 时省略）。
+            character_id=ctx.character_id or None,
+            character_instance_id=ctx.character_instance_id or None,
+            character_revision=ctx.character_revision or None,
             channels=v2,
         )
 
@@ -550,6 +554,10 @@ class OutputManager:
             generation_id=ctx.generation_id, message_id=ctx.assistant_message_id,
             finish_reason=finish_reason, usage=usage, model=model, mood=mood,
             conversation_id=conversation_id, conversation_usage=conversation_usage,
+            # M3（I2）：generation 审计字段贯通到 wire（None 时省略）。
+            character_id=ctx.character_id or None,
+            character_instance_id=ctx.character_instance_id or None,
+            character_revision=ctx.character_revision or None,
             channels=v2,
         )
 
@@ -578,6 +586,10 @@ class OutputManager:
             code=code, message=message, retryable=retryable,
             model=ctx.model_id or None,
             conversation_id=ctx.conversation_id,
+            # M3（I2）：generation 审计字段贯通到 wire（None 时省略）。
+            character_id=ctx.character_id or None,
+            character_instance_id=ctx.character_instance_id or None,
+            character_revision=ctx.character_revision or None,
             channels=v2,
         )
 
@@ -595,6 +607,10 @@ class OutputManager:
             code="GENERATION_CANCELLED", message="已取消", retryable=False,
             model=ctx.model_id or None,
             conversation_id=ctx.conversation_id,
+            # M3（I2）：generation 审计字段贯通到 wire（None 时省略）。
+            character_id=ctx.character_id or None,
+            character_instance_id=ctx.character_instance_id or None,
+            character_revision=ctx.character_revision or None,
             channels=v2,
         )
 

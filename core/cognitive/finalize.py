@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from core.monitoring.token_tracker import TokenTracker
     from core.personality.engine import CharacterEngine
     from core.prompt.prompt_assembler import PromptAssembler
+    from core.character.runtime import CharacterRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class CognitiveFinalize:
     _response_recorder: "ResponseRecorder | None"
     _prompt: "PromptAssembler"
     _session: "SessionMemory"
+    _current_runtime: "CharacterRuntime | None"  # M3（I1）：回合边界 flush 用（loop _prepare_turn 设置）
     _session_work_reserver: Callable[[SessionId], Awaitable["SessionMemory"]] | None
     _session_work_releaser: Callable[[SessionId], None] | None
     _pending_after_response: list[asyncio.Task]
@@ -224,4 +226,28 @@ class CognitiveFinalize:
                 public_text, user_message, round_num, target)
         await self._mark_generation_completed()
         await self._emit_turn_completed(conversation_id, target)
+        await self._flush_runtime_at_turn_boundary()
         await self._transition_idle()
+
+    async def _flush_runtime_at_turn_boundary(self) -> None:
+        """M3（I1 修复）：回合边界持久化 runtime 状态。
+
+        spec §5.2：回合结束 runtime.flush() 把内存 CharacterRuntimeState 经
+        CharacterInstanceRepository 写回 CharacterInstance.state（CAS state_version）。
+        修复前 flush 仅发生在 shutdown（registry.close_all）——turn 结束后
+        reflector 缓冲与 engine.state 变化从不落库，重启即丢。此处先同步
+        reflector → runtime.state（engine.sync_reflector_to_runtime_state），再 flush
+        当前 runtime（persist_fn 已由 _make_runtime 于 agent 侧接好）。
+
+        防御：无 runtime / 无 engine 时静默跳过（直接构造 loop 的测试路径无 persist，
+        不应抛）。flush 失败记日志，不中断 turn（持久化失败不应让用户对话挂掉）。
+        """
+        runtime = self._current_runtime
+        if runtime is None:
+            return
+        try:
+            if self._engine is not None:
+                self._engine.sync_reflector_to_runtime_state()
+            await runtime.flush()
+        except Exception:
+            logger.debug("回合边界 runtime flush 失败", exc_info=True)

@@ -237,3 +237,58 @@ async def test_prepare_turn_resolves_from_binding():
     assert loop._turn_context.characterInstanceId == rt.instance.instanceId
     assert loop._turn_context.characterId == rt.definition.characterId
     await loop._output.close()
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_sets_current_runtime_for_turn_boundary_flush():
+    """M3（I1）：_prepare_turn 记录 self._current_runtime——回合边界 flush 据此触发。"""
+    reg = CharacterRuntimeRegistry()
+    rt = _make_rt()
+    _seed_registry(reg, rt, rt.instance.instanceId)
+    loop = _make_loop(runtime_registry=reg)
+    sm = SessionMemory(session_id=SessionId("default"))
+    loop._session_resolver = AsyncMock(return_value=sm)
+    await loop._prepare_turn(
+        user_message="你好", user_name="妖梦", stt_emotion="", content=None,
+        message_id=None, conversation_id=None, protocol_version=1,
+    )
+    assert loop._current_runtime is rt
+    await loop._output.close()
+
+
+@pytest.mark.asyncio
+async def test_turn_boundary_flush_syncs_reflector_and_persists():
+    """M3（I1）：_flush_runtime_at_turn_boundary 同步 reflector→runtime.state 并 flush。
+
+    runtime 带 mock persist_fn，engine 为 mock（sync_reflector_to_runtime_state 可断言）。
+    """
+    reg = CharacterRuntimeRegistry()
+    rt = _make_rt()
+    _seed_registry(reg, rt, rt.instance.instanceId)
+    persist = AsyncMock()
+    rt.set_persist_fn(persist)
+    loop = _make_loop(runtime_registry=reg)
+    sm = SessionMemory(session_id=SessionId("default"))
+    loop._session_resolver = AsyncMock(return_value=sm)
+    await loop._prepare_turn(
+        user_message="你好", user_name="妖梦", stt_emotion="", content=None,
+        message_id=None, conversation_id=None, protocol_version=1,
+    )
+    loop._current_runtime = rt
+    loop._engine.sync_reflector_to_runtime_state = MagicMock()
+    await loop._flush_runtime_at_turn_boundary()
+    loop._engine.sync_reflector_to_runtime_state.assert_called_once()  # 同步方法
+    persist.assert_awaited_once()  # runtime.flush() 经 persist_fn 落库
+    await loop._output.close()
+
+
+@pytest.mark.asyncio
+async def test_turn_boundary_flush_no_runtime_is_safe():
+    """M3（I1）：无 _current_runtime（直接构造 loop 的测试路径）时 _flush 静默跳过。"""
+    reg = CharacterRuntimeRegistry()
+    rt = _make_rt()
+    _seed_registry(reg, rt, rt.instance.instanceId)
+    loop = _make_loop(runtime_registry=reg)
+    loop._current_runtime = None
+    await loop._flush_runtime_at_turn_boundary()  # 不抛
+    await loop._output.close()

@@ -233,6 +233,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._user_profile: UserProfile | None = None         # 由 configure() 注入
         self._user_identity_store: "UserIdentityStore | None" = None  # 由 configure() 注入（Task 7 B1）
         self._turn_context: TurnCharacterContext | None = None  # Task 7：本回合冻结的角色/用户上下文
+        self._current_runtime: "CharacterRuntime | None" = None  # M3（I1）：本回合 runtime（回合边界 flush 用）
         self._clock: TimingClock | None = None # 当前轮次的计时器（process() 设置，finally 清除）
         self._phase: TurnPhase | None = None   # 当前轮次处理阶段（供 debug 面板）
         self._phases = None  # CognitivePhaseController（由 agent.py 注入，或懒加载）
@@ -407,6 +408,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._session = target
         self._prompt.set_session(target)
         self._engine = engine
+        # M3（I1）：记录本回合 runtime——回合边界 flush 经 self._current_runtime 触发，
+        # 使 reflector 缓冲与 runtime.state 经 persist_fn 落库（不再是仅 shutdown 才 flush）。
+        self._current_runtime = runtime
         # Task 7（B1 闭环）：冻结本回合角色/用户上下文，并传给 prompt。
         # characterInstanceId 来自 binding 的 instance_id，characterId 来自 runtime.definition。
         self._turn_context = TurnCharacterContext(
@@ -466,6 +470,11 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             model_id=self._llm.model,
             request_id=RequestId(rid),
             protocol_version=protocol_version,
+            # M3（I2 修复）：generation 审计字段贯通——runtime 在 scope，逐项填
+            # characterId / characterInstanceId / characterRevision，落到 wire 帧。
+            character_id=runtime.definition.characterId,
+            character_instance_id=instance_id,
+            character_revision=runtime.revision.revision,
         )
         self._turn_failed_emitted = False
         if self._generation_registry is not None:
