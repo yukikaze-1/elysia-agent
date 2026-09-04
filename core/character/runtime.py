@@ -2,30 +2,28 @@
 
 装载 Definition/Revision 快照 + UserIdentity 快照 + CharacterRuntimeState，
 持有 per-instance Lock + dirty/stateVersion。
-engine 懒建（M1/M2：不绑 runtime，engine 仍全局单例；「每 instance 一个 engine、
-去掉 attach_session」是 M3 语义）。M1/M2 阶段 state 写入仍走
-session.character_state（本 runtime 的 state 只做快照/读对比，不切换权威）。
+engine 懒建（M3：每 instance 一个 engine；state 权威已切换至
+runtime.state，flush 经 persist_fn 引擎持久化）。
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Awaitable
 
 from core.character.definition import CharacterDefinition
 from core.character.revision import CharacterRevision
 from core.character.instance import CharacterInstance
 from core.profile.user_identity import UserIdentity
+from core.schema.character import CharacterRuntimeState
+from core.schema.types import SessionId
 
 if TYPE_CHECKING:
     from core.personality.engine import CharacterEngine
 
-# CharacterRuntimeState：本批占位（M1 阶段权威仍是 session.character_state）
-# 架构稿 §7 / §15.4：backfill + 读对比（不启用），M3 才切换权威。
-
 
 class CharacterRuntime:
-    """单实例运行时容器。"""
+    """单实例运行时容器（M3：engine per-instance + state 真实化）。"""
 
     def __init__(
         self,
@@ -42,23 +40,34 @@ class CharacterRuntime:
         self.lock = asyncio.Lock()
         self.dirty = False
         self.stateVersion = instance.stateVersion
+        self.state: CharacterRuntimeState = instance.state or CharacterRuntimeState(
+            instance_id=instance.instanceId,
+            session_id=SessionId(instance.instanceId),
+            source_revision=revision.revision,
+        )
+        self._persist_fn: Callable[[CharacterRuntimeState], Awaitable[None]] | None = None
 
     @property
     def engine(self) -> "CharacterEngine | None":
         return self._engine
 
+    def ensure_engine(self, factory: Callable[[], "CharacterEngine"]) -> "CharacterEngine":
+        if self._engine is None:
+            self._engine = factory()
+        engine = self._engine
+        assert engine is not None
+        return engine
+
     def bind_engine(self, engine: "CharacterEngine") -> None:
         self._engine = engine
 
-    def snapshot_state(self) -> dict:
-        """返回运行时状态快照（本批占位，M1 权威在 session.character_state）。"""
-        return {
-            "instanceId": self.instance.instanceId,
-            "stateVersion": self.stateVersion,
-            "dirty": self.dirty,
-        }
+    def set_persist_fn(self, fn: Callable[[CharacterRuntimeState], Awaitable[None]] | None) -> None:
+        self._persist_fn = fn
+
+    def snapshot_state(self) -> CharacterRuntimeState:
+        return self.state.model_copy(deep=True)
 
     async def flush(self) -> None:
-        # M1 阶段：state 权威仍在 session.character_state，runtime 不写独立 state。
-        # 仅标记 dirty=False（真实 flush 逻辑留 M3）。
+        if self._persist_fn is not None:
+            await self._persist_fn(self.state)
         self.dirty = False
