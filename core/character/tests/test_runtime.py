@@ -82,3 +82,15 @@ async def test_flush_sets_dirty_false_and_persist():
     await rt.flush()
     assert rt.dirty is False
     assert calls == ["v2"]
+
+
+def test_runtime_holds_memory_components():
+    rt = CharacterRuntime(
+        instance=CharacterInstance(instanceId="chi_a", characterId="chr_a"),
+        definition=CharacterDefinition(characterId="chr_a"),
+        revision=CharacterRevision(characterId="chr_a", revision=1, displayName="A"),
+        user_identity=UserIdentity(userId="usr_a", displayName="you"),
+    )
+    assert rt.memory_view is None
+    assert rt.consolidator is None
+    assert rt.reflector is None
