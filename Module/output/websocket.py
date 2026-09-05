@@ -41,6 +41,8 @@ from frontend_contract import (
     AcceptedUserAckMessage,
     RejectedUserAckMessage,
     AckError,
+    CharacterStateChangedMessage,
+    CharacterPublicStateView,
 )
 from frontend_contract.rest import FinishReason
 from frontend_contract.ws_message import (AudioFormat, MessageChannel, SegmentKind,
@@ -357,6 +359,25 @@ class WebSocketChannel(OutputChannel):
             conversationId=conversation_id,
             characterId=character_id, characterInstanceId=character_instance_id,
             characterRevision=character_revision,
+        ).wire_dict())
+
+    async def on_character_state_changed(self, *, conversation_id: str | None = None,
+                                         character_id: str,
+                                         character_instance_id: str,
+                                         character_revision: int,
+                                         state_version: int,
+                                         state: "CharacterPublicStateView") -> None:
+        """发送 character.state.changed（架构稿 §12.4）。
+
+        guard: 仅 protocol_version >= 2（防御——Task 6 已经 _split_versions 过滤 v2 通道）。
+        """
+        if self.protocol_version < 2:
+            return
+        await self._send_json(CharacterStateChangedMessage(
+            conversationId=conversation_id, characterId=character_id,
+            characterInstanceId=character_instance_id,
+            characterRevision=character_revision, stateVersion=state_version,
+            state=state,
         ).wire_dict())
 
     async def on_message(self, msg: Any) -> None:

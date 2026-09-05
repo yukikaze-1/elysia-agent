@@ -969,3 +969,55 @@ async def test_tool_started_v1_suppress_no_v1_frame():
                            v1_args={}, input_summary="intent=<str:3>", v1_suppress=True)
     assert not ch1.events
     assert ch2.events and ch2.events[0][0] == "tool_started"
+
+
+# ============================================================
+# 阶段 G（Task 7）：on_character_state_changed — v2 发 character.state.changed（B2 guard）
+# ============================================================
+
+def _character_state_kwargs():
+    """构造 on_character_state_changed 的标准 kwargs（对齐 Task 6 _broadcast 参数名）。"""
+    return {
+        "conversation_id": "conv_1",
+        "character_id": "char_elysia",
+        "character_instance_id": "inst_1",
+        "character_revision": 3,
+        "state_version": 2,
+        "state": {
+            "mood": {"label": "开心", "intensity": 0.7, "updatedAt": "2026-09-05T00:00:00Z"},
+            "currentActivity": None,
+            "lastInteractionAt": "2026-09-05T00:00:00Z",
+            "proactiveEnabled": False,
+            "updatedAt": "2026-09-05T00:00:00Z",
+        },
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_on_character_state_changed_v2_sends_wire_frame():
+    """v2 通道调 on_character_state_changed → _send_json 收到 character.state.changed wire 帧。"""
+    from Module.output import WebSocketChannel
+    ws = _FakeWS()
+    ch = WebSocketChannel(ws, protocol_version=2)
+    await ch.on_character_state_changed(**_character_state_kwargs())
+    assert ws.sent, "v2 通道应发送一帧"
+    sent = ws.sent[0]
+    assert sent["type"] == "character.state.changed"
+    assert sent["characterId"] == "char_elysia"
+    assert sent["characterInstanceId"] == "inst_1"
+    assert sent["characterRevision"] == 3
+    assert sent["stateVersion"] == 2
+    assert sent["conversationId"] == "conv_1"
+    assert sent["state"]["mood"]["label"] == "开心"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_on_character_state_changed_v1_ignores():
+    """v1 通道（protocol_version=1）调 on_character_state_changed → 不发送（B2 guard 防泄 v2 帧）。"""
+    from Module.output import WebSocketChannel
+    ws = _FakeWS()
+    ch = WebSocketChannel(ws, protocol_version=1)
+    await ch.on_character_state_changed(**_character_state_kwargs())
+    assert not ws.sent, "v1 通道不应发送 character.state.changed"

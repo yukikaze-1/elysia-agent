@@ -157,6 +157,9 @@ class OutputChannel(ABC):
                                    **kwargs: Any) -> None:
         """v2 父失败（wire generation.failed）。"""
 
+    async def on_character_state_changed(self, **kwargs: Any) -> None:  # pragma: no cover - 默认 no-op
+        """角色状态变化（架构稿 §12.4；v2，character_state_stream=true 后发送）。"""
+
     @abstractmethod
     async def on_message(self, msg: Any) -> None:
         """完整消息 — 流式结束后发送，或非流式消息直接发送。
