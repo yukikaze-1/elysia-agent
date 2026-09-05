@@ -177,6 +177,38 @@ class _WsConnection:
     monitor_task: asyncio.Task | None = None
 
 
+async def _emit_state_snapshot(agent: "Agent", ws: "web.WebSocketResponse") -> None:
+    """发当前活动会话 instance 的产品态快照(character.state.changed)。
+
+    取活动会话的 runtime → make_public_state → CharacterStateChangedMessage。
+    建连时强制发射(客户端刚连上需要初始态);失败静默(不影响握手)。
+    """
+    try:
+        from core.character.public_state import make_public_state
+        from frontend_contract.ws_message import CharacterStateChangedMessage
+        registry = getattr(agent, "character_runtime_registry", None)
+        if registry is None:
+            return
+        # 当前活动会话的 binding → instance_id → runtime
+        binding = getattr(agent.session_manager.active, "character_binding", None) or {}
+        instance_id = binding.get("instance_id") or "chi_builtin_elysia"
+        runtime = registry.get_existing(instance_id)
+        if runtime is None:
+            return
+        view = make_public_state(runtime)
+        msg = CharacterStateChangedMessage(
+            conversationId=str(agent.session.session_id),
+            characterId=runtime.definition.characterId,
+            characterInstanceId=runtime.instance.instanceId,
+            characterRevision=runtime.revision.revision,
+            stateVersion=runtime.stateVersion,
+            state=view,
+        )
+        await ws.send_json(msg.wire_dict())
+    except Exception:
+        logger.debug("emit state snapshot 失败", exc_info=True)
+
+
 async def _open_ws_connection(
     request: web.Request,
     agent: "Agent",
@@ -226,6 +258,9 @@ async def _open_ws_connection(
             from core.services.capabilities import build_server_info
             await ws.send_json(
                 build_server_info(agent, connection_id=desktop_conn_id).wire_dict())
+            # 阶段 G(§7.1):v2 + character_state_stream=true 时发角色状态快照(强制,不看 last)
+            if getattr(agent, "character_state_stream", False):
+                await _emit_state_snapshot(agent, ws)
         else:
             await ws.send_json(build_capabilities(agent).wire_dict())
     except Exception:
@@ -1064,6 +1099,9 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
             return
         target = await agent.switch_session(SessionId(sid))
         await _send_session_replay(ws, agent, target)
+        # 阶段 G(§7.1):v2 + character_state_stream=true 时发角色状态快照(强制,不看 last)
+        if getattr(agent, "character_state_stream", False):
+            await _emit_state_snapshot(agent, ws)
         logger.info("WS activate_session: 已切到会话 %s", sid)
     except SessionBusyError:
         # review 修复（批次 C）：switch() 双保险 busy check 抛 SessionBusyError——
