@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from Module.embedding import EmbeddingFactory
 
 from core.schema.adapters import attachment_resolver
+from core.schema.memory_reflector import MemoryReflectorState
 from core.storage.attachment_gc import run_attachment_gc
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.character.registry import CharacterRuntimeRegistry
@@ -163,6 +164,21 @@ class _LifecyclePersistence:
                     if runtime.state.last_awareness_time:
                         engine._last_awareness_time = runtime.state.last_awareness_time
                     engine._reflector._restore_from_state()
+                    # 阶段 F（§2.6/架构稿 §8.5）：MemoryReflector 计数器恢复——state 加载后
+                    # 从 runtime.state.MemoryReflector 字段 restore 进 runtime.reflector，
+                    # 避免 dedupe 阈值重启后重置（reflector per-runtime 后 session 不再承载）。
+                    if runtime.reflector is not None and (
+                        runtime.state.mr_round_count
+                        or runtime.state.mr_new_memory_count
+                        or runtime.state.mr_last_summary
+                    ):
+                        runtime.reflector.restore_state(
+                            MemoryReflectorState(
+                                mr_round_count=runtime.state.mr_round_count,
+                                mr_new_memory_count=runtime.state.mr_new_memory_count,
+                                mr_last_summary=runtime.state.mr_last_summary,
+                            )
+                        )
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             active = self._session_manager.active
             if os.path.exists(active.pending_file):

@@ -81,7 +81,6 @@ from core.adapter.llm_adapter import LLMAdapter
 from core.memory.consolidator import MemoryConsolidator
 from core.personality import CharacterEngine
 from core.memory.memory_reflector import MemoryReflector
-from core.schema.memory_reflector import MemoryReflectorState
 from core.character.registry import CharacterRuntimeRegistry
 from core.character.runtime import CharacterRuntime
 from core.storage.character_instance_repo import CharacterInstanceRepository
@@ -264,23 +263,12 @@ class Agent(AgentLifecycle, AgentServer):
                     user_name=self._user_name,
                 ),
             )
-            # 阶段 F（§2.6/架构稿 §8.5）：load 恢复——runtime.state 内嵌的 MemoryReflector
-            # 计数器若存在（重启前回合边界 flush 落库），恢复进 runtime.reflector，避免
-            # dedupe 阈值重启后重置。新实例 state 无此字段（默认 0），不 restore。
-            if rt.reflector is not None and (
-                rt.state.mr_round_count or rt.state.mr_new_memory_count or rt.state.mr_last_summary
-            ):
-                rt.reflector.restore_state(
-                    MemoryReflectorState(
-                        mr_round_count=rt.state.mr_round_count,
-                        mr_new_memory_count=rt.state.mr_new_memory_count,
-                        mr_last_summary=rt.state.mr_last_summary,
-                    )
-                )
             # M3（C1 修复）：每个 runtime 都接 persist_fn——否则 registry 经此构造出的
             # 非 default instance runtime 的 _persist_fn=None，flush() no-op，状态永不落库。
             # persist_fn 捕获本 runtime 自身 instance（不再硬编码 default_runtime.instance），
             # 并走 CharacterInstanceRepository.cas_state_version（I1：CAS 路径激活）。
+            # 注：MemoryReflector 计数器 restore 由 _start_persistence 在 state 加载后恢复
+            # （此处 _make_runtime 构造时 instance.state 为 fresh，不触发 restore——见 _lifecycle_persistence.py）。
             rt.set_persist_fn(self._persist_runtime_factory(rt))
             return rt
 
