@@ -267,6 +267,8 @@ class TestV2GenerationSequence:
             assert types[-1] == "state"   # 终态 idle
             # v1 不应收到任何 v2 generation 帧
             assert not any("generation" in t or t == "user_message.ack" for t in types)
+            # v1 不应收到 character.state.changed（阶段 G 只 v2 + character_state_stream=true）
+            assert "character.state.changed" not in types
         finally:
             await agent.stop()
 
