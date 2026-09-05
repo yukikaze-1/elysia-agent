@@ -40,4 +40,15 @@ async def test_insert_search_scope_filter():
         output_fields=["id", "text", "user_id", "character_instance_id", "visibility"],
     )
     assert len(res) >= 1
+    # 关键回归断言：操作必须路由到 v2 collection（非 v1 long_term_memory）。
+    # 父类 MemoryRepository 方法用 self.COLLECTION，v2 子类遮蔽为 long_term_memory_v2；
+    # 若父类用模块级 COLLECTION（裸名），子类 override 永不生效 → 静默写 v1。
+    insert_call = db.insert.call_args[0]
+    assert insert_call[0] == "long_term_memory_v2", (
+        f"insert 未路由到 v2 collection, 实际={insert_call[0]!r}"
+    )
+    search_call = db.search.call_args[0]
+    assert search_call[0] == "long_term_memory_v2", (
+        f"search 未路由到 v2 collection, 实际={search_call[0]!r}"
+    )
     await repo.close()

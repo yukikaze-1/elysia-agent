@@ -17,6 +17,10 @@ DIMENSION = 1024
 class MemoryRepository(Repository):
     """长期记忆存储 — Milvus 向量数据库。"""
 
+    # collection 名（实例级——v2 子类 MemoryRepositoryV2 遮蔽为 long_term_memory_v2；
+    # 模块级 COLLECTION 保留兼容外部 import，但方法内一律 self.COLLECTION 以支持子类遮蔽）
+    COLLECTION = "long_term_memory"
+
     def __init__(self, db: VectorDBBackend | None = None, *,
                  base_url: str | None = None,
                  token: str | None = None):
@@ -44,10 +48,10 @@ class MemoryRepository(Repository):
                 base_url=self._base_url,
                 token=self._token,
             )
-            if not await self._db.collection_exists(COLLECTION):
-                await self._db.create_collection(COLLECTION, DIMENSION)
+            if not await self._db.collection_exists(self.COLLECTION):
+                await self._db.create_collection(self.COLLECTION, DIMENSION)
             else:
-                await self._db.load_collection(COLLECTION)
+                await self._db.load_collection(self.COLLECTION)
             logger.info("MemoryRepository: Milvus connected")
             return True
         except Exception as e:
@@ -82,7 +86,7 @@ class MemoryRepository(Repository):
         """
         if self._db is None:
             return []
-        return await self._db.insert(COLLECTION, vectors, metadata)
+        return await self._db.insert(self.COLLECTION, vectors, metadata)
 
     async def search(self, vector: list[float], *,
                      top_k: int = 10, filter_expr: str | None = None,
@@ -105,7 +109,7 @@ class MemoryRepository(Repository):
         if filter_expr is not None:
             kwargs["filter_expr"] = filter_expr
         return await self._db.search(
-            COLLECTION, vector, top_k=top_k, **kwargs,
+            self.COLLECTION, vector, top_k=top_k, **kwargs,
         )
 
     async def query(self, *, filter_expr: str | None = None,
@@ -126,7 +130,7 @@ class MemoryRepository(Repository):
         kwargs: dict = {"output_fields": output_fields, "limit": limit}
         if filter_expr is not None:
             kwargs["filter_expr"] = filter_expr
-        return await self._db.query(COLLECTION, **kwargs)
+        return await self._db.query(self.COLLECTION, **kwargs)
 
     async def delete(self, ids: list[int]) -> int:
         """按主键删除记忆。
@@ -139,7 +143,7 @@ class MemoryRepository(Repository):
         """
         if self._db is None:
             return 0
-        result = await self._db.delete(COLLECTION, ids)
+        result = await self._db.delete(self.COLLECTION, ids)
         logger.info("MemoryRepository delete: ids=%s, count=%d", ids[:5], result)
         return result
 
@@ -152,7 +156,7 @@ class MemoryRepository(Repository):
         if self._db is None:
             return 0
         results = await self._db.query(
-            COLLECTION, filter_expr="id >= 0", output_fields=["id"], limit=10000,
+            self.COLLECTION, filter_expr="id >= 0", output_fields=["id"], limit=10000,
         )
         return len(results)
 
@@ -160,6 +164,6 @@ class MemoryRepository(Repository):
         """清空所有记忆，删除并重建 collection。"""
         if self._db is None:
             return
-        logger.warning("MemoryRepository clear_all: dropping + recreating collection %s", COLLECTION)
-        await self._db.drop_collection(COLLECTION)
-        await self._db.create_collection(COLLECTION, DIMENSION)
+        logger.warning("MemoryRepository clear_all: dropping + recreating collection %s", self.COLLECTION)
+        await self._db.drop_collection(self.COLLECTION)
+        await self._db.create_collection(self.COLLECTION, DIMENSION)
