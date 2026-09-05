@@ -176,7 +176,9 @@ async def test_insert_search_scope_filter():
     db.create_collection = AsyncMock()
     db.load_collection = AsyncMock()
     repo = MemoryRepositoryV2(db=db)
-    await repo.connect()
+    # 不调 repo.connect()——MemoryRepository.connect() 无条件 self._db = VectorDBFactory.create(...)
+    # 覆盖注入的 db（现有 test_memory_repo.py 同模式：跳过 connect，直接用注入的 _db）。
+    repo._db = db
     await repo.insert(vectors=[[0.1] * 8], metadata=[{
         "entry_id": "m_1", "text": "hello",
         "user_id": "usr_a", "character_instance_id": "chi_a",
@@ -193,12 +195,12 @@ async def test_insert_search_scope_filter():
     await repo.close()
 ```
 
-（注：测试须用 FakeVectorDBBackend——先确认 `core/storage/tests/` 是否存在 fake；若不存在则用 `unittest.mock` stub。Milvus filter 表达式语义在测试层以「传对 filter_expr 字符串」为准，不强制真实 Milvus 执行。）
+（注：`test_memory_repo.py` 现有模式即 `repo._db.insert = AsyncMock(...)` 不调 connect。`MemoryRepository.connect()` 会无条件覆盖 `_db`——测试务必跳过 connect 或 override。若需测 `connect()`，须在 `MemoryRepositoryV2` override `connect()` 尊重注入 db。）
 
 - [ ] **Step 2: 运行确认失败**
 
 Run: `conda run -n Elysia python -m pytest core/storage/tests/test_memory_repo_v2.py -v`
-Expected: FAIL（ModuleNotFoundError）
+Expected: FAIL（ModuleNotFoundError: core.storage.memory_repo_v2）
 
 - [ ] **Step 3: 写最小实现**
 
@@ -473,6 +475,15 @@ class ScopedLongTermMemory:
 
     async def delete(self, entry_id) -> bool:
         return await self._long_term.delete(entry_id, scope=self._scope)
+
+    async def mark_absorbed(self, entry_id) -> None:
+        """标记条目已被 merge 吸收（memory_reflector._execute_actions:342 调用）。
+
+        注意：ScopedLongTermMemory **必须**暴露 mark_absorbed——MemoryReflector 以
+        scoped view 为 _memory 时，merge 分支调 mark_absorbed(absorbed_id)。缺失会
+        AttributeError（被 _execute_actions 的 except 捕获，merge 的 originals 不被隐藏）。
+        """
+        await self._long_term.mark_absorbed(entry_id)
 ```
 
 （注：`LongTermMemory.search/update_text/delete` 需接受 scope 参数并**验证 entry 在 scope 内**——见 Task 3/9 补 `_ensure_in_scope`。`get_all()` 在 `LongTermMemory` 收窄为 admin 后，`ScopedLongTermMemory` 是产品唯一读入口。）
@@ -743,8 +754,11 @@ lifecycle.py:231：
 
 ```python
 async def _flush_consolidator(self) -> None:
-    runtimes = list(self._registry._runtimes.values())  # registry 无 all_loaded()，直接迭代 _runtimes
-    for rt in runtimes:
+    # 与 _flush_reflector 同模式：getattr(self, "_runtime_registry", None)（agent 属性是 _runtime_registry，非 _registry）
+    registry = getattr(self, "_runtime_registry", None)
+    if registry is None:
+        return
+    for rt in registry._runtimes.values():  # noqa: SLF001
         if rt.consolidator:
             try:
                 items = await asyncio.wait_for(rt.consolidator.flush(), timeout=5.0)
@@ -767,12 +781,13 @@ def consolidator(self):
     """当前实例的 memory consolidator（debug 展示用）。"""
     # 不调 registry.get(..., lambda: None)——get 会把 factory() 结果存入 dict，
     # lambda: None 会污染 _runtimes（后续 _evict_if_needed 访问 rt.dirty 崩溃）。
-    rt = self._registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001
+    # 注意：agent 属性是 _runtime_registry（非 _registry）。
+    rt = self._runtime_registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001
     return rt.consolidator if rt else None
 
 @property
 def memory_reflector(self):
-    rt = self._registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001
+    rt = self._runtime_registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001
     return rt.reflector if rt else None
 ```
 
