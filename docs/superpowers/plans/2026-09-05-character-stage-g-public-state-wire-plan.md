@@ -811,19 +811,71 @@ git commit -m "feat(stage-g): WS 连接/激活发 character.state.changed 快照
 
 - [ ] **Step 1: Write failing test**
 
-In `core/cognitive/tests/test_finalize.py`, add:
+Create `core/cognitive/tests/test_finalize.py`:
 
 ```python
+"""阶段 G:回合边界 state change 发射(service)。
+
+用最小宿主(CognitiveFinalize mixin unbound)直接调 _emit_state_change_if_needed,
+mock _output —— 不跑完整 turn(完整链路由 Task 5 snapshot 测试 + test_v2_empty_response 覆盖)。
+"""
+import pytest
+from unittest.mock import MagicMock
+
+from core.cognitive.finalize import CognitiveFinalize
+from core.schema.types import SessionId
+
+pytestmark = pytest.mark.service
+
+
+def _host(protocol_version=2):
+    """构造 CognitiveFinalize mixin 宿主(mock _output/_generation_ctx/_current_runtime)。"""
+    host = MagicMock(spec=CognitiveFinalize)
+    host._generation_ctx = MagicMock(protocol_version=protocol_version)
+    host._current_runtime = MagicMock()
+    v2_channel = MagicMock()
+    host._output._split_versions.return_value = ([], [v2_channel])
+    return host, v2_channel
+
+
 @pytest.mark.asyncio
-async def test_finalize_emits_state_on_mood_change(fake_agent):
-    """回合边界 mood 变化时发 character.state.changed;无变化不发。"""
-    from core.cognitive.finalize import CognitiveFinalize
-    ...
+async def test_v2_mood_change_emits_state():
+    """v2 + mood 变化 → 经 _broadcast(on_character_state_changed, channels=v2)发射。"""
+    host, v2_channel = _host(protocol_version=2)
+    runtime = host._current_runtime
+    runtime.public_state.return_value = MagicMock()
+    runtime.has_public_state_changed.return_value = True
+    runtime.definition.characterId = "chr_elysia"
+    runtime.instance.instanceId = "chi_elysia"
+    runtime.revision.revision = 1
+    runtime.stateVersion = 3
+
+    await CognitiveFinalize._emit_state_change_if_needed(host, SessionId("default"))
+
+    host._output._broadcast.assert_awaited_once()
+    args = host._output._broadcast.await_args
+    assert args.kwargs["channels"] == [v2_channel]
+    assert args.kwargs["character_id"] == "chr_elysia"
+
+
+@pytest.mark.asyncio
+async def test_v1_does_not_emit():
+    """v1(protocol_version=1)不发射——不调用 _broadcast。"""
+    host, _ = _host(protocol_version=1)
+    await CognitiveFinalize._emit_state_change_if_needed(host, SessionId("default"))
+    host._output._broadcast.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_no_mood_change_does_not_emit():
+    """mood 无变化(has_public_state_changed=False)不发射。"""
+    host, v2_channel = _host(protocol_version=2)
+    host._current_runtime.has_public_state_changed.return_value = False
+    await CognitiveFinalize._emit_state_change_if_needed(host, SessionId("default"))
+    host._output._broadcast.assert_not_awaited()
 ```
 
-(Use `fake_agent` fixture pattern from test_multi_session.py. The emission goes through `self._output`. Mock `_output` on the loop and assert `_output` broadcast called.)
-
-Note: `_finalize_turn` needs `_current_runtime`. Use `fake_agent` and set `. _current_runtime` to a mock runtime with `public_state()`/`has_public_state_changed()`.
+Note: `CognitiveFinalize` 是 mixin(`finalize.py:36 class CognitiveFinalize`),用 `spec=CognitiveFinalize` 的 MagicMock + unbound 方法调用(`CognitiveFinalize._emit_state_change_if_needed(host, ...)`)最直接——`_emit_state_change_if_needed` 只依赖 `_generation_ctx`/`_current_runtime`/`_output`(都是宿主属性,已 mock)。
 
 - [ ] **Step 2: Run to verify fails**
 
@@ -846,19 +898,26 @@ Add method:
         发射点:flush 调完之后(stateVersion 已 CAS 递增,见 spec §3.3/§7.2)。
         仅 v2 + character_state_stream=true 且 mood 真变化时发射——不比较 updated_at
         (展示字段)/proactiveEnabled(immutable 常量)。
+
+        [B2 修复] 必须 gate protocol_version >= 2(对齐 finalize.py:82 现有 turn_completed
+        模式)——否则 v1 turn 也会进此广播,破坏 v1 wire 不变性。channels 用
+        self._output._split_versions() 取 v2 通道(不广播到 v1)。
+        [B1 修复] OutputManager 只有私有 _broadcast(无公开 broadcast),且是 async——
+        需 await self._output._broadcast(...)。
         """
+        ctx = self._generation_ctx
+        if ctx is None or ctx.protocol_version < 2:
+            return
         runtime = self._current_runtime
         if runtime is None:
-            return
-        if not getattr(self, "_character_state_stream", True):
             return
         try:
             view = runtime.public_state()
             if not runtime.has_public_state_changed(view):
                 return
             runtime._last_public_state = view  # noqa: SLF001
-            from frontend_contract.ws_message import CharacterStateChangedMessage
-            self._output.broadcast(
+            _v1, v2 = self._output._split_versions()  # noqa: SLF001 —— OutputManager 无公开 broadcast
+            await self._output._broadcast(  # noqa: SLF001
                 "on_character_state_changed",
                 conversation_id=conversation_id,
                 character_id=runtime.definition.characterId,
@@ -866,14 +925,13 @@ Add method:
                 character_revision=runtime.revision.revision,
                 state_version=runtime.stateVersion,
                 state=view,
+                channels=v2,
             )
         except Exception:
             logger.debug("回合边界 state change 发射失败", exc_info=True)
 ```
 
-Note: needs `self._character_state_stream` — wire it in loop.configure or default True. And `_output` needs `on_character_state_changed` broadcast handler → Task 7.
-
-Set `_character_state_stream` default in `_finalize_turn` call; simplest: read `getattr(self, "_character_state_stream", True)`. But to be config-clean, configure it from agent in loop.configure. Defer to Task 7 where OutputManager gets `on_character_state_changed` handler. In Task 6, hardcode `True` (test patches `_character_state_stream=False` to verify suppression).
+Note: `_output._split_versions()` 返回 `(v1, v2)` 通道列表(manager.py:405-410 的 `_split_versions`)。传 `channels=v2` 过滤到 v2 通道。`_broadcast` 是 async 需 await。这是最终实现——不再依赖 `_character_state_stream` 魔术默认(已由 protocol_version gate 替代安全,character_state_stream 本批恒 true 不移除)。
 
 - [ ] **Step 4: Run tests**
 
@@ -901,22 +959,27 @@ git commit -m "feat(stage-g): 回合边界按 mood 变化发射 character.state.
 - Modify: `Module/output/websocket.py`(WebSocketChannel.on_character_state_changed)
 
 **Interfaces:**
-- Consumes: Task 6 的 `self._output.broadcast("on_character_state_changed", ...)`
-- Produces: WebSocketChannel `on_character_state_changed` → 构建 `CharacterStateChangedMessage` wire_dict 发送
+- Consumes: Task 6 的 `_output._broadcast("on_character_state_changed", ..., channels=v2)`(OutputManager 私有 broadcast,经 _split_versions 取 v2 通道)
+- Produces: WebSocketChannel `on_character_state_changed` → 构建 `CharacterStateChangedMessage` wire_dict 发送(仅 v2)
 
-- [ ] **Step 1: Write failing test** — a unit test on WebSocketChannel or OutputManager that `on_character_state_changed` builds a wire frame.
+- [ ] **Step 1: Write failing test** — a unit test on WebSocketChannel that `on_character_state_changed` builds a wire frame, and ignores when protocol_version < 2.
 
 - [ ] **Step 2: Run to verify fails**
 
 - [ ] **Step 3: Implement**
 
-In `Module/output/websocket.py`, add method `on_character_state_changed`:
+In `Module/output/websocket.py`, add method `on_character_state_changed` [B2 修复:加 v2 guard 防 v1 channel 收到——Task 6 已经 _split_versions 只传 v2 通道,但 WebSocketChannel 自身也按 protocol_version 防御]:
 
 ```python
     async def on_character_state_changed(self, *, conversation_id=None,
                                          character_id, character_instance_id,
                                          character_revision, state_version, state) -> None:
-        """发送 character.state.changed(架构稿 §12.4)。"""
+        """发送 character.state.changed(架构稿 §12.4)。
+
+        guard: 仅 protocol_version >= 2(防御——Task 6 已经 _split_versions 过滤 v2 通道)。
+        """
+        if self.protocol_version < 2:
+            return
         await self._send_json(CharacterStateChangedMessage(
             conversationId=conversation_id, characterId=character_id,
             characterInstanceId=character_instance_id,
@@ -991,9 +1054,14 @@ In `scripts/gen_contract_frames.py` `_chat()` (:73-130), after `idle = wm.StateM
         conversationId="default", characterId="chr_builtin_elysia",
         characterInstanceId="chi_builtin_elysia", characterRevision=1,
         stateVersion=1,
-        state=wm.CharacterPublicStateView(
-            mood=wm.MoodState(label="开心", intensity=0.72, updatedAt=_TS),
+        state=rest.CharacterPublicStateView(
+            mood=rest.MoodState(label="开心", intensity=0.72, updatedAt=_TS),
             proactiveEnabled=False, updatedAt=_TS))
+```
+
+[C3 修复] 用 `rest.CharacterPublicStateView`/`rest.MoodState`——gen_contract_frames.py:28 `from frontend_contract import rest, ws_message as wm`,故 `rest.*` 可用;而 `wm.MoodState` 不在 ws_message 命名空间(MoodState 定义于 rest.py,ws_message 只 import CharacterPublicStateView)。`wm.CharacterStateChangedMessage` 在 ws_message(符合——它定义于 ws_message.py)。
+
+Verify: gen_contract_frames.py:28 `from frontend_contract import rest, ws_message as wm`。`rest.MoodState`/`rest.CharacterPublicStateView` 经 rest 模块属性可访问,无 AttributeError。
 ```
 
 And add `state_changed` to the `_f(...)` return list (after `idle`).
