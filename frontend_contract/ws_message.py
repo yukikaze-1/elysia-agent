@@ -13,7 +13,7 @@ from typing import Annotated, Any, Literal, Optional, Union
 from pydantic import ConfigDict, Discriminator, Field
 
 from frontend_contract.base import ContractModel, TsNull
-from frontend_contract.rest import ConversationUsage, FinishReason
+from frontend_contract.rest import CharacterPublicStateView, ConversationUsage, FinishReason
 from frontend_contract.version import PROTOCOL_VERSION
 
 # ────────────────────── 非判别受限字段枚举（plan Task 6，StrEnum） ──────────────────────
@@ -273,6 +273,7 @@ class ServerInfoFeatures(ContractModel):
     media_upload: bool = Field(default=False, description="附件上传（批次 7，POST /api/uploads）")
     idempotency_durable: bool = Field(default=False, description="幂等 claim 跨重启持久化（D6c，true=durable / false=内存降级非 durable 窗口）")
     character_profiles: bool = Field(default=False, description="多角色 Profile（阶段 C+E；本批次恒 false，架构稿决策 #12）")
+    character_state_stream: bool = Field(default=False, description="角色状态流（阶段 G；character.state.changed 事件；character_profiles=false 时独立可用）")
 
 
 class ServerInfoMessage(ContractModel):
@@ -447,6 +448,21 @@ class GenerationFailedMessage(ContractModel):
     characterId: Optional[str] = Field(default=None, description="角色 ID（character_profiles=true 后必填）")
     characterInstanceId: Optional[str] = Field(default=None, description="角色实例 ID")
     characterRevision: Optional[int] = Field(default=None, description="角色修订号")
+
+
+class CharacterStateChangedMessage(ContractModel):
+    """角色状态变化事件(架构稿 §12.4;v2,character_state_stream=true 后发送)。
+
+    只含产品态字段;state 是完整 CharacterPublicStateView,不是 patch;未知 optional 字段省略。
+    客户端只按同一 instance 内严格递增的 stateVersion 应用事件,不能用时间字符串替代顺序。
+    """
+    type: Literal["character.state.changed"] = "character.state.changed"
+    conversationId: Optional[str] = Field(default=None, description="会话 ID(可缺省)")
+    characterId: str = Field(description="角色 ID")
+    characterInstanceId: str = Field(description="角色实例 ID")
+    characterRevision: int = Field(default=1, description="角色修订号")
+    stateVersion: int = Field(default=1, description="实例状态版本")
+    state: "CharacterPublicStateView" = Field(description="完整产品态视图(非 patch)")
 
 
 class DeltaMessage(ContractModel):
@@ -1067,6 +1083,8 @@ ServerMessage = Annotated[Union[
     GenerationCompletedMessage,
     GenerationFailedMessage,
     ToolRequestMessage,
+    # 阶段 G(CharacterPublicState 实际发送)
+    CharacterStateChangedMessage,
     # 批次 6 三种语音（BE-060/061/062）
     VoiceTranscriptMessage,
     VoiceSessionStartedMessage,

@@ -595,14 +595,37 @@ class CharacterInstanceSummary(ContractModel):
     stateVersion: int = Field(default=1, description="实例状态版本")
 
 
-class CharacterPublicState(ContractModel):
-    """角色产品态（阶段 C+E/general，feature flag 开启后走 wire）。"""
+class MoodState(ContractModel):
+    """心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。"""
+    label: str = Field(description="心情标签")
+    intensity: float = Field(default=0.5, description="心情强度 0-1")
+    updatedAt: str = Field(description="心情更新时间(ISO)")
 
+
+class CharacterPublicStateView(ContractModel):
+    """角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。
+
+    mood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt
+    可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。
+    """
+    mood: MoodState = Field(description="当前心情")
+    currentActivity: Optional[str] = Field(default=None, description="当前活动(可缺省)")
+    lastInteractionAt: Optional[str] = Field(default=None, description="最近交互时间(可缺省)")
+    proactiveEnabled: bool = Field(default=False, description="主动搭话是否开启")
+    updatedAt: str = Field(description="产品态更新时间(ISO)")
+
+
+class CharacterPublicState(ContractModel):
+    """角色产品态(REST GET /api/character-instances/{id}/state)。
+
+    由阶段 C+E 扁平 mood:str + instanceId 泛化而来——flat mood 移除、instanceId 改名
+    characterInstanceId(对齐 WS CharacterStateChangedMessage 与架构稿 §12.4)。
+    """
     characterId: str = Field(description="角色 ID")
-    instanceId: str = Field(description="实例 ID")
+    characterInstanceId: str = Field(description="角色实例 ID")
     characterRevision: int = Field(default=1, description="角色修订号")
-    mood: str = Field(default="平静", description="当前心情")
     stateVersion: int = Field(default=1, description="实例状态版本")
+    state: CharacterPublicStateView = Field(description="产品态视图")
 
 
 # ─────────────── Stage D 自定义角色持久化契约 DTO（Task 4A） ───────────────

@@ -88,6 +88,8 @@ from frontend_contract.rest import (  # noqa: F401
     CharacterSummary,
     CharacterInstanceSummary,
     CharacterPublicState,
+    CharacterPublicStateView,
+    MoodState,
 )
 from frontend_contract.ws_message import (  # noqa: F401
     ActionMessage,
@@ -176,6 +178,7 @@ from frontend_contract.ws_message import (  # noqa: F401
     VoiceSessionStopMessage,
     VoiceSessionTurnMessage,
     VoiceTranscriptMessage,
+    CharacterStateChangedMessage,
 )
 
 __all__ = [
@@ -272,6 +275,7 @@ __all__ = [
     "VoiceSessionStopMessage",
     "VoiceSessionTurnMessage",
     "VoiceTranscriptMessage",
+    "CharacterStateChangedMessage",
     # 业务 REST 契约（rest.py）
     "ProviderEntry",
     "ProvidersResponse",
@@ -320,6 +324,8 @@ __all__ = [
     "CharacterSummary",
     "CharacterInstanceSummary",
     "CharacterPublicState",
+    "CharacterPublicStateView",
+    "MoodState",
     # Debug API 契约（debug.py）
     "DebugData",
     "DebugContentPart",

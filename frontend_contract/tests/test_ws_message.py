@@ -26,7 +26,7 @@ def test_server_message_members():
     models, discriminated = main_mod._collect()
     members = discriminated["ServerMessage"]
     names = {m.__name__ for m in members}
-    assert len(members) == 41  # 41 具名 + UnknownMessage（发射器追加）
+    assert len(members) == 42  # 41 具名 + CharacterStateChangedMessage（阶段 G）+ UnknownMessage（发射器追加）
     assert "UnknownMessage" not in names
     assert "AcceptedUserAckMessage" in names
     assert "RejectedUserAckMessage" in names
@@ -90,6 +90,7 @@ def test_server_info_message_wire():
         "media_upload": False,
         "idempotency_durable": False,  # D6c：默认非持久化
         "character_profiles": False,   # 阶段 C+E：多角色隔离链路未全过，恒 false（架构稿决策 #12）
+        "character_state_stream": False,  # 阶段 G：角色状态流默认 false（character.state.changed 事件）
     }
     assert d["services"]["llm"]["model"] == "fake/test"
 
@@ -303,7 +304,7 @@ def test_heartbeat_ack_removed_from_union():
     from frontend_contract.tests.test_batch6_contract import _union_members
     members = _union_members()
     assert "HeartbeatAckMessage" not in members
-    assert len(members) == 41
+    assert len(members) == 42  # 41 既有 + CharacterStateChangedMessage（阶段 G）
 
 
 @pytest.mark.unit

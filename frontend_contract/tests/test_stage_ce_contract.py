@@ -12,7 +12,9 @@ from frontend_contract.ws_message import ServerInfoFeatures
 from frontend_contract.rest import (
     CharacterInstanceSummary,
     CharacterPublicState,
+    CharacterPublicStateView,
     CharacterSummary,
+    MoodState,
     UserIdentityProfile,
 )
 
@@ -70,11 +72,14 @@ def test_character_instance_summary_dto():
 
 
 def test_character_public_state_dto():
-    dto = CharacterPublicState(characterId="elysia", instanceId="inst_1")
+    dto = CharacterPublicState(characterId="elysia", characterInstanceId="inst_1",
+                               state=CharacterPublicStateView(
+                                   mood=MoodState(label="平静", intensity=0.5, updatedAt="t"),
+                                   proactiveEnabled=False, updatedAt="t"))
     assert dto.characterId == "elysia"
-    assert dto.instanceId == "inst_1"
+    assert dto.characterInstanceId == "inst_1"
     assert dto.characterRevision == 1
-    assert dto.mood == "平静"
+    assert dto.state.mood.label == "平静"
     assert dto.stateVersion == 1
     # wire_dict 同步可用（lib 序列化路径）
     assert dto.wire_dict()["characterId"] == "elysia"
