@@ -19,6 +19,7 @@ from core.schema.character import CharacterRuntimeState
 from core.schema.types import SessionId
 
 if TYPE_CHECKING:
+    from frontend_contract.rest import CharacterPublicStateView
     from core.personality.engine import CharacterEngine
     from core.memory.scoped_long_term import ScopedLongTermMemory
     from core.memory.consolidator import MemoryConsolidator
@@ -55,6 +56,7 @@ class CharacterRuntime:
             source_revision=revision.revision,
         )
         self._persist_fn: Callable[[CharacterRuntimeState], Awaitable[None]] | None = None
+        self._last_public_state: "CharacterPublicStateView | None" = None
 
     @property
     def engine(self) -> "CharacterEngine | None":
@@ -75,6 +77,23 @@ class CharacterRuntime:
 
     def snapshot_state(self) -> CharacterRuntimeState:
         return self.state.model_copy(deep=True)
+
+    def public_state(self) -> "CharacterPublicStateView":
+        """当前产品态视图(经 make_public_state)。不做变化检测——仅计算视图。"""
+        from core.character.public_state import make_public_state
+        return make_public_state(self)
+
+    def has_public_state_changed(self, new_view: "CharacterPublicStateView") -> bool:
+        """对比 _last_public_state,仅 mood.label/mood.intensity 视为变化信号。
+
+        不比较 updated_at(展示字段,每次 flush 都变)、proactiveEnabled(immutable 配置常量)。
+        首次(_last_public_state None)视为有变化(供第一次发射)。
+        """
+        last = self._last_public_state
+        if last is None:
+            return True
+        return (last.mood.label != new_view.mood.label
+                or last.mood.intensity != new_view.mood.intensity)
 
     async def flush(self) -> None:
         if self._persist_fn is not None:

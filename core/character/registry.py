@@ -31,6 +31,13 @@ class CharacterRuntimeRegistry:
         self._evict_if_needed()
         return rt
 
+    def get_existing(self, instance_id: str) -> "CharacterRuntime | None":
+        """只读解析已构建 runtime——不懒建(区别于 get,后者 factory 会建)。
+
+        REST 只读端点用:registry 命中即读、未命中返回 None(fail-closed 语义)。
+        """
+        return self._runtimes.get(instance_id)
+
     def mark_busy(self, instance_id: str, busy: bool) -> None:
         """M3：标记 runtime 为 busy（生成/反思/压缩中），防驱逐。"""
         rt = self._runtimes.get(instance_id)
