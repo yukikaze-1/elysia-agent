@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from core.personality.engine import CharacterEngine
@@ -125,6 +125,15 @@ class PromptAssembler:
         self._emotion_section._session = session
         self._memory_section._session = session
         self._own_life_section._session = session
+
+    def set_memory_view(self, view: Any) -> None:
+        """_prepare_turn 注入本回合 scoped memory view（阶段 F §2.4 C4）。
+
+        与 set_session 重绑 _memory_section._session 同构，这里重绑 _long_term 为
+        runtime.memory_view（ScopedLongTermMemory，按本回合 instance scope 过滤）。
+        MemorySection 保持 duck-typed（不 import core.memory），search 签名兼容。
+        """
+        self._memory_section._long_term = view  # noqa: SLF001 — MemorySection 字段
 
     def _refresh_personality_data(self) -> None:
         """从 PersonalityEngine 拉取最新数据，更新 C1/C9 section。"""

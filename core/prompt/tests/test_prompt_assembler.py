@@ -108,3 +108,12 @@ def test_set_character_updates_name(elysia_config, cold_engine_mock, mock_long_t
     assert a._personality_section._name == "Elysia"   # 初始(elysia_config.name)
     a.set_character("chr_builtin_cyrene", "Cyrene")
     assert a._personality_section._name == "Cyrene"   # 有区分度——set_character 真改 name
+
+
+def test_set_memory_view_rebinds_long_term(elysia_config, cold_engine_mock, mock_long_term, mock_session):
+    """set_memory_view 重绑 _memory_section._long_term 为 scoped view（Task 8）。"""
+    a = make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session)
+    assert a._memory_section._long_term is mock_long_term  # 初值 = 构造时注入
+    view = MagicMock()
+    a.set_memory_view(view)
+    assert a._memory_section._long_term is view            # 重绑为本回合 scoped view

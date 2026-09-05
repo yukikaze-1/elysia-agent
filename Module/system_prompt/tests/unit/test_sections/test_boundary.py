@@ -91,6 +91,19 @@ class TestMemorySectionBoundary:
         assert result == ""
 
 
+def test_c4_receives_scoped_view():
+    """C4 MemorySection 接收 per-turn scoped view（Task 8，阶段 F §2.4 C4）。
+
+    stub 用 MagicMock——MemorySection 保持 duck-typed Any，不 import core.memory。
+    search 签名兼容 ScopedLongTermMemory.search(query_text, top_k)；断言 _long_term
+    即注入的 scoped view（PromptAssembler.set_memory_view 重绑的引用）。
+    """
+    view = MagicMock()
+    view.search = AsyncMock(return_value=[])
+    sec = MemorySection(f"{_TEMPLATES}/c4_memory.j2", long_term=view, session=None)
+    assert sec._long_term is view  # noqa: SLF001 — 注入的 scoped view
+
+
 # ── SensorySection ──
 
 class TestSensorySectionBoundary:
