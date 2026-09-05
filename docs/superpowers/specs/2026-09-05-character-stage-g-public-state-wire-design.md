@@ -16,7 +16,7 @@
 
 阶段 E(`main@4089d30f`→`2ee1453d` 前)+ 阶段 F 已交付:
 
-- **`CharacterRuntimeState`**(core/schema/character.py:37)**instance-scoped 权威态**:`mood` / `mood_intensity` / `updated_at`(IsoTimestamp)/ `proactive` 相关;扁平字段与 `CharacterState` 同构,子组件 0 改动。
+- **`CharacterRuntimeState`**(core/schema/character.py:37)**instance-scoped 权威态**:`mood` / `mood_intensity` / `updated_at`(IsoTimestamp)等扁平字段与 `CharacterState` 同构,子组件 0 改动。**无 proactive 字段**(proactive 是角色配置,在 revision.runtimeDefaults,见 §5.2/D6)。
 - **`CharacterPublicState` DTO**(frontend_contract/rest.py:598)已契约建模:扁平 `characterId/instanceId/characterRevision/mood/stateVersion`。**仅契约建模,无 wire 用途**。
 - **generation 审计字段已完整接线**(阶段 E):`GenerationContext.character_id/character_instance_id/character_revision`(loop.py:482-484)→ `OutputManager.turn_*` 透传(manager.py:427/558/590)→ websocket.py 构造进 `generation.started/completed/failed` 帧。**本批不重复做 generation 身份**。
 - **`CharacterRuntimeRegistry`**(core/character/registry.py):`get(instance_id, factory)` 解析/懒建 per-instance runtime;runtime 持有 `snapshot_state()` / `flush()`。
@@ -158,7 +158,7 @@ class CharacterPublicState(ContractModel):
 
 (去掉扁平 `mood: str`;保留 `characterId/characterRevision/stateVersion`;`instanceId` **改名为 `characterInstanceId`**——修复 C4,对齐架构稿 §12.4 的 `CharacterPublicState` 与 WS `CharacterStateChangedMessage`,避免 REST/WS 同一实例身份用两个字段名。)
 
-**契约演进确认**:`CharacterPublicState` 的 `mood` 由 `str` 变 `CharacterPublicStateView`、`instanceId` 改名 `characterInstanceId`,是 breaking change,但**无 wire 消费者**(rest.py:598 注释「本批仅契约建模」),`make gen-types` 重生成即可。需检查 `frontend/src/types/contract.generated.ts` / `contract.raw.ts` 是否有手写依赖 `CharacterPublicState.mood`/`.instanceId` 的代码——**预期无**;golden frame `--check` 守门,**且须同步更新 `frontend_contract/tests/test_stage_ce_contract.py:77` 的 `dto.mood == "平静"` 断言**(它依赖扁平 mood str,见 C3/C5 修复的测试清单)。
+**契约演进确认**:`CharacterPublicState` 的 `mood` 由 `str` 变 `CharacterPublicStateView`、`instanceId` 改名 `characterInstanceId`,是 breaking change,但**无 wire 消费者**(rest.py:598 注释「本批仅契约建模」;frontend/src/types/contract.generated.ts:1733 的 `CharacterPublicState` 接口无前端代码消费 `.mood`/`.instanceId`),`make gen-types` 重生成即可。须同步更新 `frontend_contract/tests/test_stage_ce_contract.py` (`test_character_public_state_dto`,:72-82)——**`instanceId="inst_1"`(:73)/`dto.instanceId`(:75)** 改名 `characterInstanceId`,**:77 `dto.mood == "平静"`** 改为读 `dto.state.mood.label`。
 
 ### 4.5 `ServerInfoFeatures.character_state_stream`(frontend_contract/ws_message.py)
 
@@ -207,10 +207,8 @@ character_state_stream: bool = Field(default=False, description="角色状态流
 
 ### 6.1 `GET /api/character-instances/{id}/state`
 
-- **新增公开属性 `agent.character_runtime_registry`**([修复 C1]):`core/agent/agent.py` 加 `@property character_runtime_registry` 返回 `self._runtime_registry`(仿 `agent.character_engine` 公开访问;现有 `consolidator`/`memory_reflector` 用 `_runtime_registry._runtimes.get` 但那是 debug 展示,本路由需要完整 registry 访问)。跨模块消费**禁止** `agent._xxx`,故必须公开。同时给 `CharacterRuntimeRegistry` 加**公开只读方法 `get_existing(instance_id)`**(直接 dict 读、不懒建、未命中返回 None)——避免路由经 `instance_routes` 访问私有 `_runtimes`(那会暴露内部 dict)。
-- 新 `core/input/instance_routes.py`(与 character_routes.py 同构),`create_app` 注册 `app.router.add_get("/api/character-instances/{id}/state", _instance_state_get)`,经由 `register_character_routes(app, _check_auth)` 挂载(实例域与 character 域同 catalog,见 **A1 修复** 并入 character_routes.py,而非独立 register)。
-  
-  > **修正(原 spec §6.1 说新 `instance_routes.py`)**——review 发现 `/api/character-instances/{id}/state` 与 `/api/characters` 同属角色 catalog 域,现有 `register_character_routes`(server.py:308)已有现成 handler 结构。**处理方式**:在 `register_character_routes`(core/input/character_routes.py)内新增该路由,不另建 `instance_routes.py`——避免重复建模 app bind、更符合现有组织。
+- **新增公开属性 `agent.character_runtime_registry`**([修复 C1]):`core/agent/agent.py` 加 `@property character_runtime_registry` 返回 `self._runtime_registry`(仿 `agent.character_engine` 公开访问;现有 `consolidator`/`memory_reflector` 用 `_runtime_registry._runtimes.get` 但那是 debug 展示,本路由需要完整 registry 访问)。跨模块消费**禁止** `agent._xxx`,故必须公开。同时给 `CharacterRuntimeRegistry` 加**公开只读方法 `get_existing(instance_id)`**(直接 dict 读、不懒建、未命中返回 None)——避免路由访问私有 `_runtimes`(那会暴露内部 dict)。
+- **不新建 `instance_routes.py`**([修复 A1]):`/api/character-instances/{id}/state` 与 `/api/characters` 同属角色 catalog 域,现有 `register_character_routes`(server.py:308 已调;core/input/character_routes.py:185 定义)已有现成 handler 结构。**处理方式**:在 `register_character_routes` 内新增该路由,不另建独立模块——避免重复建模 app bind、更符合现有组织。
   
 - handler 逻辑(**只读,不懒建**,修复 A1):
   1. 解析 `{id}`。
@@ -261,7 +259,7 @@ character_state_stream: bool = Field(default=False, description="角色状态流
 | `core/input/ws_handler.py` | snapshot 发射(连接/激活) |
 | `core/cognitive/finalize.py` | 回合边界变化发射 |
 | `core/services/capabilities.py` | `build_server_info` 设 `character_state_stream=True` |
-| `frontend_contract/tests/test_stage_ce_contract.py` | 更新 `dto.mood` 断言(flat str→view) |
+| `frontend_contract/tests/test_stage_ce_contract.py` | 更新 `test_character_public_state_dto`:`instanceId`→`characterInstanceId` + `dto.mood`→`dto.state.mood.label` |
 | `scripts/gen_contract_frames.py` + `scripts/tests/test_gen_contract_frames.py` | golden frame:`_server_info` 加 `character_state_stream=True`;chat 序列末尾加 state 事件帧 |
 | golden frames (`scripts/gen_contract_frames.py` 相关) | 增 `character.state.changed` golden frame(可选,若需覆盖) |
 
