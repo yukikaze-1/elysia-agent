@@ -316,6 +316,32 @@ entry = MemoryEntry(
 
 `for_scope` 中的 `from core.memory.scoped_long_term import ScopedLongTermMemory` 为 lazy import——避免 long_term ↔ scoped_long_term 循环导入（`scoped_long_term.py` import `long_term.MemoryEntry`）。
 
+**`insert` 必须把 scope 字段映射到 `MemoryEntry` 顶层字段**（关键：`ScopedLongTermMemory.insert` 转发 `user_id=.../character_instance_id=.../visibility=...` 到 `**metadata`，但 `LongTermMemory.insert` 的 `meta = dict(metadata)` 会把它们留在 `metadata` dict 里，`MemoryEntry.user_id` 等顶层字段保持 `""` → `_in_scope(entry, scope)` 对 in-process 新插入记忆恒 False → `get_all()`/`_search_fallback` 返回空——**隔离功能失效**）。修：`insert` 内 `meta.pop("user_id", "")`/`meta.pop("character_instance_id", "")`/`meta.pop("visibility", "character_private")` 赋给 `MemoryEntry` 顶层字段：
+
+```python
+# long_term.py insert 内
+meta = dict(metadata)
+# 阶段 F：scope 字段弹出到 MemoryEntry 顶层（_in_scope/_search_fallback 过滤需要）
+user_id = str(meta.pop("user_id", ""))
+character_instance_id = str(meta.pop("character_instance_id", ""))
+visibility = str(meta.pop("visibility", "character_private"))
+memory_type = meta.pop("memory_type", meta.pop("type", "Note"))
+entry = MemoryEntry(
+    id=new_memory_id(),
+    text=text,
+    embedding=embedding,
+    memory_type=memory_type,
+    poignancy=int(meta.pop("poignancy", 5)),
+    timestamp=float(meta.pop("timestamp", _time.time())),
+    user_id=user_id,
+    character_instance_id=character_instance_id,
+    visibility=visibility,
+    metadata=meta,
+)
+```
+
+**级联 gap：`_save_pending_syncs`/`_load_pending_syncs`/`sync_dirty_entries`**（Milvus 离线 journal + 重寄路径）同样须带上 scope 字段——`_save_pending_syncs`（long_term.py:291-298）序列化 entry 时补 `user_id/character_instance_id/visibility`；`_load_pending_syncs`（:263-271）构造 `MemoryEntry` 时读 scope；`sync_dirty_entries`（:572-579）构建 Milvus 元数据时补 scope。否则 journal/重寄条目丢失 scope → 重启后 `_in_scope` 过滤失败。`update_text`/`delete`/`mark_absorbed` 同样需接受 `scope` 验证目标 entry 在 scope 内（`_ensure_in_scope`，见 Task 9）。
+
 `search` 加 scope 参数（签名必须带 scope）：
 
 ```python
@@ -562,7 +588,16 @@ class MemoryConsolidator:
                  buffer_threshold: int | None = None):
 ```
 
-`memory_reflector.py` 同理放宽为 `ScopedLongTermMemory | LongTermMemory`。
+`memory_reflector.py` 同理放宽为 `ScopedLongTermMemory | LongTermMemory`。且 **`session` 参数也放宽为 `SessionMemory | None = None`**——Task 7 构造时传 None（per-runtime 后 count 持久化改经 runtime.state），原签名 `session: "SessionMemory"`（非 Optional）传 None 会 pyright error。`self._session` 当前仅存不用（save_state/restore_state 不读它），None 安全。
+
+```python
+# memory_reflector.py
+def __init__(self, llm: MemoryLLM, memory: ScopedLongTermMemory | LongTermMemory,
+             session: "SessionMemory | None" = None,
+             character_name: str = "Agent", user_name: str = "用户"):
+    ...
+    self._session = session  # 仅存不用（counter 持久化改经 runtime.state）
+```
 
 - [ ] **Step 4: 运行确认通过 + 无全局 buffer 回归**
 
@@ -770,7 +805,9 @@ async def _flush_consolidator(self) -> None:
 
 （注：`CharacterRuntimeRegistry`（registry.py）无 `all_loaded()`，但有 `flush_all()`/`close_all()`。本批可在 registry 加 `def all_loaded(self) -> list[CharacterRuntime]: return list(self._runtimes.values())` 更干净，或直接迭代 `_runtimes.values()`。推荐加 `all_loaded()`——语义清晰，供 lifecycle/debug 复用。）
 
-- [ ] **Step 6b: agent.consolidator/memory_reflector 属性 + bind_memory_reflector 迁移**
+- [ ] **Step 6b: 删除单例创建 + agent.consolidator/memory_reflector 属性 + bind_memory_reflector 迁移**
+
+**删除 agent.py:293-309 的单例创建**：`self._consolidator = MemoryConsolidator(...)`（:293）、`self._memory_reflector = MemoryReflector(...)`（:301）、`self._session_manager.bind_memory_reflector(self._memory_reflector)`（:309）——per-runtime 化后这些单例不再构造，consolidator/reflector 改由 `_make_runtime` 构造挂 runtime。同时 **CognitiveLoop 构造的 `consolidator=self._consolidator`（agent.py:332）移除**——loop 不再接收单例 consolidator，`_after_response` 改用急切捕获的 runtime.consolidator（loop.py:185 `self._consolidator` 保持 None，仅作 fallback）；**`configure(memory_reflector=self._memory_reflector)`（agent.py:343）同样移除**（loop.py:186 `self._memory_reflector` 保持 None）。
 
 agent.py:1046/1051 `agent.consolidator`/`agent.memory_reflector` 属性当前返回 `self._consolidator`/`self._memory_reflector`（单例）。per-runtime 化后这两个单例不再构造。改为经 registry 解析（仅 debug 展示，默认 default runtime）或返回 None 并让 debug 层经 registry 取。同时 agent.py:309 `self._session_manager.bind_memory_reflector(self._memory_reflector)` 不再适用——reflector per-runtime 后，`session.save_state()` 的 reflector counter 持久化改经 runtime.state（spec §2.6），移除 `bind_memory_reflector` 调用与 session_manager 的 `set_memory_reflector`/`save_state` reflector 分支。
 
