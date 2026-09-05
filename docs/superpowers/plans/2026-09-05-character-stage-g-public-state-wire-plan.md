@@ -762,7 +762,7 @@ async def _emit_state_snapshot(agent, ws) -> None:
             return
         view = make_public_state(runtime)
         msg = CharacterStateChangedMessage(
-            conversationId=str(agent.session.active.session_id),
+            conversationId=str(agent.session.session_id),
             characterId=runtime.definition.characterId,
             characterInstanceId=runtime.instance.instanceId,
             characterRevision=runtime.revision.revision,
@@ -773,6 +773,8 @@ async def _emit_state_snapshot(agent, ws) -> None:
     except Exception:
         logger.debug("emit state snapshot 失败", exc_info=True)
 ```
+
+[实现修正] `conversationId` 用 `str(agent.session.session_id)`——`agent.session` 是 `SessionMemory`(有 `.session_id`),**无 `.active` 属性**(那属于 `agent.session_manager`)。原 plan 写 `agent.session.active.session_id` 会抛 AttributeError 被静默 catch → snapshot 永不发射。已修正。
 
 Add to `activate_session` handler (ws_v2.py or ws_handler.py, where activate_session switch succeeds): after switch, call `_emit_state_snapshot(agent, ws)`.
 
