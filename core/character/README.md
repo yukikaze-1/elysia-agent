@@ -17,7 +17,7 @@ core/character/
 ├── service.py            # CharacterService — CRUD 业务编排 + CAS 冲突（阶段 D）
 ├── builtin_source.py     # BuiltinCharacterSource — 从 character/{name}/config.yaml 构建内置角色
 ├── catalog.py            # CharacterCatalog — 只读内置角色目录（无 Mongo 也能列/校验）+ get_revision
-├── runtime.py            # CharacterRuntime — 单实例运行时容器（快照 + 懒 engine + lock/dirty）【阶段 E 激活】
+├── runtime.py            # CharacterRuntime — 单实例运行时容器（快照 + 懒 engine + memory_view/consolidator/reflector 持有 + lock/dirty）【阶段 E/F 激活】
 ├── registry.py           # CharacterRuntimeRegistry — LRU 缓存 + _busy/_session_binding_index + flush_all/close_all【阶段 E 激活】
 ├── migration.py          # 旧会话 shadow migration（legacy instance，架构稿 §15.3）
 └── tests/
@@ -65,6 +65,8 @@ core/character/
 
 单实例运行时容器，装载 `Definition`/`Revision`/`UserIdentity` 快照 + `CharacterRuntimeState`。**M3：engine 懒建为 per-instance**（`ensure_engine(factory)` 真绑定，非 M1/M2 占位；`bind_engine` 注入）；`snapshot_state()` 返回真实 `CharacterRuntimeState`（deep copy）；`flush()` 经 `persist_fn` 把 `runtime.state` 持久化到 `CharacterInstance.state`。持有 per-instance `Lock` + `dirty`/`stateVersion`。**状态权威：`runtime.state`**——engine 构造时传 `runtime.state`（与 runtime 共享同一引用），`_apply_mood`/`_finalize_turn` 写/读 `engine.state` 即 runtime.state（F1-b 正确语义：engine per-instance 永不换绑消除跨会话污染风险源）。
 
+**阶段 F（记忆 v2 隔离）**：`CharacterRuntime` 新增三持——`memory_view`（`ScopedLongTermMemory | None`）、`consolidator`（`MemoryConsolidator | None`）、`reflector`（`MemoryReflector | None`）。**已确认决策 #3**：这三个组件由 `agent._make_runtime` 在构造 runtime 时经 `for_scope()` 构造并挂入（`memory_view = self._long_term.for_scope(MemoryScope(user_id, instance_id))`；consolidator/reflector 各持 scoped view），`CharacterRuntime` 仅持有——scope 在视图创建时固定，调用点无法绕过。consolidator/reflector per-runtime 化后**无全局单例**；`_prepare_turn` 经 registry 解析当前 runtime 的组件，产品路径一律经 `_finalize_turn` 局部捕获（anti-race，首个 await 前固化，避免下一 turn 换绑导致错 scope 污染）。
+
 ### CharacterRuntimeRegistry（阶段 E 激活，[registry.py](registry.py)）
 
 `get(instance_id, factory)` 按 instance_id 解析/懒建 per-instance runtime（factory 从 agent 注入，构造 instance/defn/revision/user_identity + 经 `CharacterInstanceRepository.get(instance_id)` 加载 `CharacterInstance.state`；为空时空态起步）。LRU（`max_size=32`）驱逐前检查受保护状态：
@@ -102,4 +104,6 @@ core/character/
 | [Profile 包](../profile/README.md) | UserIdentity 用户最小身份 |
 | [阶段 E Spec](../../docs/superpowers/specs/2026-09-04-character-stage-e-runtime-binding-design.md) | CharacterRuntime 与会话绑定设计（M3：engine per-instance + RuntimeRegistry + CharacterRuntimeState） |
 | [阶段 E Plan](../../docs/superpowers/plans/2026-09-04-character-stage-e-runtime-binding-plan.md) | 阶段 E 实施计划（14 Task） |
+| [阶段 F Spec](../../docs/superpowers/specs/2026-09-05-character-stage-f-memory-v2-isolation-design.md) | 记忆 v2 隔离设计（CharacterRuntime 持 memory_view/consolidator/reflector） |
+| [阶段 F Plan](../../docs/superpowers/plans/2026-09-05-character-stage-f-memory-v2-isolation-plan.md) | 阶段 F 实施计划 |
 | [架构稿](../../docs/2026-08-30-character-prompt-customization-backend-architecture-design.md) | 角色域完整设计（§5 领域模型 / §7 运行时 / §15 迁移） |

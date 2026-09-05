@@ -220,8 +220,8 @@ bash scripts/setup.sh
 ```
 L0  Module/              无状态原子能力 — LLM, STT, TTS, Embedding, Database, Output, _common/, system_prompt, tool
 L1  core/                认知中枢 — EventBus → AgentFSM → CognitiveLoop → PromptAssembler
-L2  core/memory/         记忆与工具 — SessionMemory, LongTermMemory, ToolAdapter (Plugin 架构)
-L2  core/character/      角色域 — Definition/Revision/Instance + RuntimeRegistry + RuntimeState + Custom CRUD（C+E/D/E）
+L2  core/memory/         记忆与工具 — SessionMemory, LongTermMemory, ToolAdapter (Plugin 架构)；阶段 F 起按 MemoryScope 隔离（scoped view + long_term_memory_v2 + per-runtime consolidator/reflector）
+L2  core/character/      角色域 — Definition/Revision/Instance + RuntimeRegistry + RuntimeState + Custom CRUD（C+E/D/E）；阶段 F 起 CharacterRuntime 持 memory_view/consolidator/reflector
 L2  core/profile/        用户最小身份 — UserIdentity + Store CAS（C+E/D）
 L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator (DAG 编排)
 ```
@@ -269,7 +269,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Input | [core/input/README.md](core/input/README.md) | AudioBuffer + WebSocket 服务器 + Debug API |
 | Agent | [core/agent/README.md](core/agent/README.md) | 组装入口 + 生命周期管理 |
 | CognitiveLoop | [core/cognitive/README.md](core/cognitive/README.md) | ReAct 调度器 + 工具执行 + 计时 + 回合角色解析（_prepare_turn，阶段 E）（流式解析见 core/text） |
-| Memory | [core/memory/README.md](core/memory/README.md) | 记忆子系统（Session + LTM + EmbeddingProvider + 沉淀 + 去重） |
+| Memory | [core/memory/README.md](core/memory/README.md) | 记忆子系统（Session + LTM + EmbeddingProvider + 沉淀 + 去重）+ 阶段 F MemoryScope 隔离（scoped view + long_term_memory_v2 + per-runtime） |
 | Monitoring | [core/monitoring/README.md](core/monitoring/README.md) | 运行时可观测性（EventBus + IdleMonitor + TokenTracker） |
 | Debug | [core/debug/README.md](core/debug/README.md) | 调试仪表板数据层（16 panel + 录制） |
 | Text | [core/text/README.md](core/text/README.md) | 文本流处理管线（标签注册表 + tokenizer + splitter + parts + 协调器） |
@@ -279,7 +279,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Adapter | [core/adapter/README.md](core/adapter/README.md) | 适配器层（LLM + TTS + Tool） |
 | Task | [core/task/README.md](core/task/README.md) | 任务数据模型 + Worker Pool 调度器 |
 | Prompt | [core/prompt/README.md](core/prompt/README.md) | System prompt 组装层（MessageBuilder + PromptAssembler） |
-| Character | [core/character/README.md](core/character/README.md) | 角色域领域模型 + 运行时容器 + Custom CRUD + instance-scoped RuntimeState + RuntimeRegistry（Definition/Revision/Instance + Runtime/Registry + Draft/Service，C+E/D/E） |
+| Character | [core/character/README.md](core/character/README.md) | 角色域领域模型 + 运行时容器 + Custom CRUD + instance-scoped RuntimeState + RuntimeRegistry（Definition/Revision/Instance + Runtime/Registry + Draft/Service，C+E/D/E）+ 阶段 F memory_view/consolidator/reflector 持有 |
 | Profile | [core/profile/README.md](core/profile/README.md) | 用户最小身份 UserIdentity + Store CAS（user_pronoun 正位 + update_if_revision，C+E/D） |
 | Providers | [core/providers/README.md](core/providers/README.md) | Provider 元数据与自定义 provider |
 | Services | [core/services/README.md](core/services/README.md) | 服务能力声明与广播（capabilities） |
@@ -315,6 +315,8 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | [docs/superpowers/specs/2026-08-02-service-runtime-state-design.md](docs/superpowers/specs/2026-08-02-service-runtime-state-design.md) | 服务运行时状态 + 热插拔设计（ServiceState + set_service + capabilities 嵌套） |
 | [docs/superpowers/specs/2026-09-04-character-stage-e-runtime-binding-design.md](docs/superpowers/specs/2026-09-04-character-stage-e-runtime-binding-design.md) | 阶段 E CharacterRuntime 与会话绑定设计（M3：engine per-instance + RuntimeRegistry + CharacterRuntimeState） |
 | [docs/superpowers/plans/2026-09-04-character-stage-e-runtime-binding-plan.md](docs/superpowers/plans/2026-09-04-character-stage-e-runtime-binding-plan.md) | 阶段 E 实施计划（14 Task：RuntimeState/Repo/Runtime/Registry → _prepare_turn 回合解析 → 接线 → 读端 → README） |
+| [docs/superpowers/specs/2026-09-05-character-stage-f-memory-v2-isolation-design.md](docs/superpowers/specs/2026-09-05-character-stage-f-memory-v2-isolation-design.md) | 阶段 F 记忆 v2 隔离设计（MemoryScope + ScopedLongTermMemory + long_term_memory_v2 + per-runtime consolidator/reflector + C4 scoped view） |
+| [docs/superpowers/plans/2026-09-05-character-stage-f-memory-v2-isolation-plan.md](docs/superpowers/plans/2026-09-05-character-stage-f-memory-v2-isolation-plan.md) | 阶段 F 实施计划 |
 | [docs/review/doc-review-2026-07-18.md](docs/review/doc-review-2026-07-18.md) | 文档审查报告（2026-07-18） |
 | [docs/archive/](docs/archive/) | 归档文档（历史记录，不再随代码库更新）：electron 基线/迁移/进度/审计、经验与同步笔记、数据结构普查、前端交接包、WorkflowEngine 历史设计 |
 
@@ -438,7 +440,7 @@ Agent/
 │   ├── input/               # 输入层: AudioBuffer + WebSocket server + debug API
 │   ├── status/              # AgentStatus 接口层 (ABC + FSM 实现 + 底层 AgentFSM)
 │   ├── hitl.py              # HITL 审批通知器 (EventBusHITLNotifier)
-│   ├── memory/              # 记忆子系统 (Session + LTM + EmbeddingProvider + Consolidator + Reflector)
+│   ├── memory/              # 记忆子系统 (Session + LTM + EmbeddingProvider + scoped view(new) + Consolidator + Reflector)
 │   ├── monitoring/          # 可观测性: EventBus + IdleMonitor + TokenTracker
 │   ├── personality/         # CharacterEngine: 四层性格模型
 │   ├── schema/              # 共享 Pydantic 类型 (Event, Message, Part 等)

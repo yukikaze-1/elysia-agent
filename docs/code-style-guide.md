@@ -89,6 +89,21 @@ def coerce(cls, value: object) -> "MemoryType":               # 存储/构造边
   `str()/json.dumps()/pydantic/wire_dict()` 均输出成员值——wire 字节不变，前端无感。
 - 顶层 import 契约枚举需默认值真实对象时（`kind: SegmentKind = SegmentKind.TEXT`）用真实成员，非字符串注解。
 
+### 2.3 记忆作用域纪律（`MemoryScope` 模式，阶段 F）
+
+> 来源：阶段 F 记忆 v2 隔离。产品记忆（自动提取 / 工具保存 / 关系事件）一律按「用户 × 角色实例」作用域隔离，读写必须经绑定视图。
+
+| 模式 | 纪律 |
+|------|------|
+| **产品路径读/写记忆** | 一律经 `ScopedLongTermMemory`（`long_term.for_scope(scope)` 返回的绑定视图），调用点**不可**在方法调用时绕过 scope |
+| **consolidator/reflector** | 各持 scoped view，per-runtime 构造（engine 同模式）；**无全局单例**；counter 持久化经 `runtime.state` |
+| **存储层** | 产品记忆写 `long_term_memory_v2`（`MemoryRepositoryV2`），scope 字段 `user_id`/`character_instance_id`/`visibility` 顶部化 |
+| **scope 传参** | 底层 `LongTermMemory.search/insert/update_text/delete` 显式带 `scope`；`scope=None` 仅 admin 用途（宽容不 raise） |
+
+- `MemoryScope`（`core/memory/scope.py`）是领域模型：`@dataclass(frozen=True)`，字段 `user_id`/`character_instance_id`/`visibility`（`MemoryVisibility` StrEnum：`character_private`｜`user_shared`）。产品记忆一律 `character_private`；`user_shared` 只预留枚举，不提供自动升级路径。
+- C4 消费点（`Module/system_prompt/sections/memory.py`）接收 scoped view 时 **duck-typed 不 import `core.memory`**——维护 Module 边界（同 frontend_contract 零依赖模式）。
+- 严格签名破既有调用点——sweep 无 scope 调用点到 scoped view（阶段 F Task 9）；MagicMock 测试不受影响（接受任意签名）。
+
 ---
 
 ## 3. getattr 使用纪律
