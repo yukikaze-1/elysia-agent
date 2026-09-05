@@ -10,6 +10,9 @@ from core.character.service import (
 )
 from core.storage.base import StorageUnavailableError
 
+import pytest
+from core.input.tests.test_server import _make_agent
+
 
 def test_not_found_maps_to_404():
     r = _character_error_response(CharacterNotFoundError("x"))
@@ -51,3 +54,43 @@ def test_unknown_exc_maps_to_none():
 def test_archived_maps_to_409():
     r = _character_error_response(CharacterArchivedError("x"))
     assert r is not None and r.status == 409
+
+
+# ── 阶段 G REST GET /api/character-instances/{id}/state（只读 fail-closed）──
+
+
+@pytest.mark.asyncio
+async def test_instance_state_returns_public_state(aiohttp_client):
+    """GET /api/character-instances/{id}/state 返回产品态(含 state 子结构)。"""
+    from core.input.server import create_app
+
+    agent = _make_agent()  # test helper; ensure has character_runtime_registry
+    await agent.start()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+    try:
+        # default elysia instance 已注册
+        resp = await client.get("/api/character-instances/chi_builtin_elysia/state")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["characterId"] == "chr_builtin_elysia"
+        assert data["characterInstanceId"] == "chi_builtin_elysia"
+        assert "state" in data and "mood" in data["state"]
+    finally:
+        await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_instance_state_missing_returns_503(aiohttp_client):
+    """未注册 instance → fail-closed 503(不懒建)。"""
+    from core.input.server import create_app
+
+    agent = _make_agent()
+    await agent.start()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+    try:
+        resp = await client.get("/api/character-instances/chi_builtin_nonexistent/state")
+        assert resp.status == 503
+    finally:
+        await agent.stop()

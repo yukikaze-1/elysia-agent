@@ -182,6 +182,42 @@ async def _characters_rollback(request: web.Request) -> web.Response:
         return err if err else _protocol_error_response("INTERNAL_ERROR", "内部错误", 500)
 
 
+async def _instance_state_get(request: web.Request) -> web.Response:
+    """GET /api/character-instances/{id}/state — 只读产品态。
+
+    registry 命中即读;未命中/异常 → fail-closed 503。复用 _character_error_response
+    (character_routes.py:24,catch StorageUnavailableError → 503 CHARACTER_STORAGE_UNAVAILABLE),
+    不新建错误信封(与现有 /api/characters 路由同模式)。
+    """
+    from core.storage.attachment_repo import StorageUnavailableError  # re-export from base
+    agent = request.app["agent"]
+    instance_id = request.match_info.get("id", "")
+    try:
+        runtime = None
+        if instance_id:
+            registry = getattr(agent, "character_runtime_registry", None)
+            if registry is not None:
+                runtime = registry.get_existing(instance_id)
+        if runtime is None:
+            raise StorageUnavailableError(f"character instance not found: {instance_id}")
+        from core.character.public_state import make_public_state
+        from frontend_contract.rest import CharacterPublicState
+        view = make_public_state(runtime)
+        public = CharacterPublicState(
+            characterId=runtime.definition.characterId,
+            characterInstanceId=runtime.instance.instanceId,
+            characterRevision=runtime.revision.revision,
+            stateVersion=runtime.stateVersion,
+            state=view,
+        )
+        return web.json_response(public.wire_dict())
+    except Exception as e:
+        err = _character_error_response(e)  # StorageUnavailableError → 503 CHARACTER_STORAGE_UNAVAILABLE
+        if err is not None:
+            return err
+        raise
+
+
 def register_character_routes(app: web.Application, check_auth: Callable | None = None) -> None:
     """注册角色/身份 REST 路由（对齐 server.py 既有 register_xxx_routes 模式）。"""
     app.router.add_get("/api/me", _me_get)
@@ -197,3 +233,4 @@ def register_character_routes(app: web.Application, check_auth: Callable | None 
     app.router.add_post("/api/characters/{id}/clone", _characters_clone)
     app.router.add_get("/api/characters/{id}/revisions", _characters_revisions)
     app.router.add_post("/api/characters/{id}/rollback", _characters_rollback)
+    app.router.add_get("/api/character-instances/{id}/state", _instance_state_get)
