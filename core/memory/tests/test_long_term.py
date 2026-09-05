@@ -354,6 +354,19 @@ class FakeMemoryRepo:
         pass
 
 
+@pytest.mark.unit
+def test_memory_entry_scope_fields():
+    """MemoryEntry 必须有 scope 顶层字段（user_id/character_instance_id/visibility）。"""
+    from core.memory.long_term import MemoryEntry
+    e = MemoryEntry(
+        id="m_1", text="hi", user_id="usr_a",
+        character_instance_id="chi_a", visibility="character_private",
+    )
+    assert e.user_id == "usr_a"
+    assert e.character_instance_id == "chi_a"
+    assert e.visibility == "character_private"
+
+
 @pytest.mark.service
 class TestMemoryOfflineConsistency:
     """B5/P1-12：离线 insert/sync/delete 不丢数据、不复活旧数据。"""

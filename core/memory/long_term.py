@@ -17,10 +17,12 @@ from typing import TYPE_CHECKING, Any
 from paths import ProjectPath
 
 from core.memory.embedding_provider import EmbeddingProvider
+from core.memory.scope import MemoryScope
 from core.schema.memory import MemoryType
 from core.schema.types import MemoryId
 
 if TYPE_CHECKING:
+    from core.memory.scoped_long_term import ScopedLongTermMemory
     from core.storage.memory_repo import MemoryRepository
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,10 @@ class MemoryEntry:
     poignancy: int = 5             # 重要性 1-10
     timestamp: float = 0.0         # Unix 时间戳
     metadata: dict = field(default_factory=dict)
+    # 阶段 F（§2.3）：scope 字段——ANN/Python 双路径过滤、fallback 需要
+    user_id: str = ""
+    character_instance_id: str = ""
+    visibility: str = "character_private"
     _milvus_pk: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -54,10 +60,16 @@ async def _search_milvus_candidates(
     query_embedding: list[float] | None,
     query_text: str,
     top_k: int,
+    scope: MemoryScope | None = None,
 ) -> tuple[list[MemoryEntry], dict[int, float | None]]:
-    """Milvus ANN 候选召回 + 与内存条目 PK/文本兜底匹配。"""
+    """Milvus ANN 候选召回 + 与内存条目 PK/文本兜底匹配。
+
+    阶段 F：scope 非空时先按 scope 过滤内存条目，跨角色/跨用户的记忆不参与召回。
+    """
     candidates: list[MemoryEntry] = []
     distances: dict[int, float | None] = {}
+    if scope is not None:
+        entries = [e for e in entries if LongTermMemory._in_scope(e, scope)]
     if repo is None or not await repo.health_check():
         return candidates, distances
 
@@ -182,6 +194,31 @@ class LongTermMemory:
         self._pending_syncs_file_path = pending_syncs_file
         self._load_pending_syncs()
 
+    @staticmethod
+    def _in_scope(entry: "MemoryEntry", scope: MemoryScope) -> bool:
+        """判断条目是否落在给定 scope 内（character_instance_id + user_id 匹配）。"""
+        return (
+            entry.character_instance_id == scope.character_instance_id
+            and entry.user_id == scope.user_id
+        )
+
+    @classmethod
+    def _filter_by_scope(
+        cls, entries: list["MemoryEntry"], scope: MemoryScope | None,
+    ) -> list["MemoryEntry"]:
+        """scope 非空时按 scope 过滤条目；scope 为 None 时返回全部（宽容不 raise）。"""
+        if scope is None:
+            return entries
+        return [e for e in entries if cls._in_scope(e, scope)]
+
+    def for_scope(self, scope: MemoryScope) -> "ScopedLongTermMemory":
+        """返回绑定该 scope 的 ScopedLongTermMemory 视图（架构稿 §8.2）。
+
+        懒导入避免 long_term ↔ scoped_long_term 循环导入（Task 4 实现）。
+        """
+        from core.memory.scoped_long_term import ScopedLongTermMemory
+        return ScopedLongTermMemory(self, scope)
+
     async def connect(self) -> bool:
         """连接 Milvus（快速）。嵌入推迟到首次使用时加载。
 
@@ -267,6 +304,9 @@ class LongTermMemory:
                     memory_type=doc.get("memory_type", "Note"),
                     poignancy=int(doc.get("poignancy", 5)),
                     timestamp=float(doc.get("timestamp", 0.0)),
+                    user_id=doc.get("user_id", ""),
+                    character_instance_id=doc.get("character_instance_id", ""),
+                    visibility=doc.get("visibility", "character_private"),
                     metadata=dict(doc.get("metadata") or {}),
                 )
                 self._entries.append(entry)
@@ -294,6 +334,9 @@ class LongTermMemory:
                     "memory_type": entry.memory_type.value,
                     "poignancy": entry.poignancy,
                     "timestamp": entry.timestamp,
+                    "user_id": entry.user_id,
+                    "character_instance_id": entry.character_instance_id,
+                    "visibility": entry.visibility,
                     "metadata": entry.metadata,
                 }
             if not entries:
@@ -333,7 +376,8 @@ class LongTermMemory:
         try:
             results = await self._repo.query(
                 filter_expr="id >= 0",
-                output_fields=["id", "entry_id", "text", "memory_type", "poignancy", "timestamp"],
+                output_fields=["id", "entry_id", "text", "memory_type", "poignancy", "timestamp",
+                                 "user_id", "character_instance_id", "visibility"],
                 limit=self._max_entries,
             )
         except Exception as e:
@@ -369,6 +413,9 @@ class LongTermMemory:
                 memory_type=row.get("memory_type", "Note"),
                 poignancy=int(row.get("poignancy", 5)),
                 timestamp=float(row.get("timestamp", 0.0)),
+                user_id=row.get("user_id", ""),
+                character_instance_id=row.get("character_instance_id", ""),
+                visibility=row.get("visibility", "character_private"),
                 _milvus_pk=pk,
             )
             self._entries.append(entry)
@@ -407,6 +454,10 @@ class LongTermMemory:
             from core.utils import new_memory_id
             # 在副本上操作，避免修改调用方传入的 dict
             meta: dict[str, Any] = dict(metadata)
+            # 阶段 F：scope 字段弹出到 MemoryEntry 顶层（_in_scope/_search_fallback 过滤需要）
+            user_id = str(meta.pop("user_id", ""))
+            character_instance_id = str(meta.pop("character_instance_id", ""))
+            visibility = str(meta.pop("visibility", "character_private"))
             # 接受 'type' 作为 'memory_type' 的别名
             memory_type = meta.pop("memory_type", meta.pop("type", "Note"))
             entry = MemoryEntry(
@@ -416,6 +467,9 @@ class LongTermMemory:
                 memory_type=memory_type,
                 poignancy=int(meta.pop("poignancy", 5)),
                 timestamp=float(meta.pop("timestamp", _time.time())),
+                user_id=user_id,
+                character_instance_id=character_instance_id,
+                visibility=visibility,
                 metadata=meta,
             )
 
@@ -429,6 +483,9 @@ class LongTermMemory:
                             "memory_type": entry.memory_type.value,
                             "poignancy": entry.poignancy,
                             "timestamp": entry.timestamp,
+                            "user_id": entry.user_id,
+                            "character_instance_id": entry.character_instance_id,
+                            "visibility": entry.visibility,
                             **meta,
                         }],
                     )
@@ -575,6 +632,9 @@ class LongTermMemory:
                             "memory_type": entry.memory_type.value,
                             "poignancy": entry.poignancy,
                             "timestamp": entry.timestamp,
+                            "user_id": entry.user_id,
+                            "character_instance_id": entry.character_instance_id,
+                            "visibility": entry.visibility,
                             **entry.metadata,
                         }],
                     )
@@ -597,6 +657,7 @@ class LongTermMemory:
         self, entry_id: MemoryId, new_text: str,
         poignancy: int | None = None,
         memory_type: str | None = None,
+        scope: MemoryScope | None = None,
     ) -> bool:
         """更新记忆文本（内存 + Milvus 重建）。
 
@@ -605,6 +666,7 @@ class LongTermMemory:
             new_text: 新的记忆文本。
             poignancy: 新的重要性分数（1-10），None 表示不更新。
             memory_type: 新的记忆类型，None 表示不更新。
+            scope: 记忆作用域；非空时仅允许更新该 scope 内的条目（宽容：None 不 raise）。
 
         Returns:
             True 表示找到并更新了条目，False 表示条目不存在。
@@ -612,6 +674,8 @@ class LongTermMemory:
         async with self._write_lock:
             for i, e in enumerate(self._entries):
                 if e.id == entry_id:
+                    if scope is not None and not self._in_scope(e, scope):
+                        return False
                     e.text = new_text
                     if poignancy is not None:
                         e.poignancy = poignancy
@@ -635,6 +699,9 @@ class LongTermMemory:
                                         "memory_type": e.memory_type.value,
                                         "poignancy": e.poignancy,
                                         "timestamp": e.timestamp,
+                                        "user_id": e.user_id,
+                                        "character_instance_id": e.character_instance_id,
+                                        "visibility": e.visibility,
                                     }],
                                 )
                                 if pk_list:
@@ -657,11 +724,12 @@ class LongTermMemory:
                     return True
             return False
 
-    async def delete(self, entry_id: MemoryId) -> bool:
+    async def delete(self, entry_id: MemoryId, scope: MemoryScope | None = None) -> bool:
         """删除单条记忆（内存 + Milvus）。
 
         Args:
             entry_id: 要删除的条目 ID。
+            scope: 记忆作用域；非空时仅允许删除该 scope 内的条目（宽容：None 不 raise）。
 
         Returns:
             True 表示找到并删除了条目，False 表示条目不存在。
@@ -669,6 +737,8 @@ class LongTermMemory:
         async with self._write_lock:
             for i, e in enumerate(self._entries):
                 if e.id == entry_id:
+                    if scope is not None and not self._in_scope(e, scope):
+                        return False
                     self._entries.pop(i)
                     self._absorbed_ids.discard(entry_id)
                     self._dirty_ids.discard(entry_id)
@@ -731,6 +801,7 @@ class LongTermMemory:
         query_embedding: list[float] | None = None,
         top_k: int = 5,
         memory_type: str | None = None,
+        scope: MemoryScope | None = None,
     ) -> list[MemoryEntry]:
         """向量搜索 + rerank（相似度 + 重要性 + 新鲜度）。
 
@@ -739,6 +810,7 @@ class LongTermMemory:
             query_embedding: 查询向量，提供时跳过文本向量化。
             top_k: 返回的最大结果数。
             memory_type: 按记忆类型过滤（如 "Fact"、"Preference"）。
+            scope: 记忆作用域；非空时仅返回该 scope 内的条目（跨角色/用户隔离）。
 
         Returns:
             按综合分数降序排列的 MemoryEntry 列表。
@@ -749,14 +821,16 @@ class LongTermMemory:
             return []
 
         candidates, distances = await _search_milvus_candidates(
-            self._repo, self._entries, backend, query_embedding, query_text, top_k)
+            self._repo, self._entries, backend, query_embedding, query_text, top_k,
+            scope=scope)
 
         candidates = [e for e in candidates if e.id not in self._absorbed_ids]
 
         fb_scores: dict[int, float] = {}
         if not candidates:
+            scoped_entries = self._filter_by_scope(self._entries, scope)
             fallback_results = self._search_fallback(
-                query_text, min(top_k * 2, len(self._entries))
+                query_text, min(top_k * 2, len(scoped_entries)), scoped_entries
             )
             fallback_results = [
                 (sc, e) for sc, e in fallback_results if e.id not in self._absorbed_ids
@@ -768,22 +842,29 @@ class LongTermMemory:
 
         return _rerank_candidates(candidates, distances, fb_scores, memory_type, top_k)
 
-    def _search_fallback(self, query: str, top_k: int) -> list[tuple[float, MemoryEntry]]:
+    def _search_fallback(
+        self,
+        query: str,
+        top_k: int,
+        entries: list[MemoryEntry] | None = None,
+    ) -> list[tuple[float, MemoryEntry]]:
         """In-memory 文本重叠搜索，供 rerank 使用。
 
         Args:
             query: 查询文本。
             top_k: 返回的最大结果数。
+            entries: 参与搜索的条目池——scope 过滤后的候选；None 表示全部。
 
         Returns:
             (score, entry) 元组列表，按分数降序排列。
         """
+        pool = self._entries if entries is None else entries
         if not query:
-            return [(0.0, e) for e in self._entries[-top_k:]] if self._entries else []
+            return [(0.0, e) for e in pool[-top_k:]] if pool else []
 
         query_lower = query.lower()
         scored: list[tuple[float, MemoryEntry]] = []
-        for e in self._entries:
+        for e in pool:
             text_lower = e.text.lower()
             raw = sum(1 for ch in query_lower if ch != " " and ch in text_lower)
             if raw > 0:
