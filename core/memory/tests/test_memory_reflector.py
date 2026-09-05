@@ -3,8 +3,9 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from core.memory.long_term import MemoryEntry
+from core.memory.long_term import MemoryEntry, LongTermMemory
 from core.memory.memory_reflector import MemoryReflector, _get_reflector_prompt
+from core.memory.scope import MemoryScope
 from core.schema.memory_reflector import ReflectorActions
 
 
@@ -245,3 +246,18 @@ class TestPromptPlaceholder:
             "{last_summary}", "{}",
         )
         assert "Elysia" not in p and "妖梦" not in p
+
+
+@pytest.mark.asyncio
+async def test_reflector_accepts_scoped_view_and_none_session():
+    """reflector 应接受 ScopedLongTermMemory + session=None（类型放宽为 union / Optional）。"""
+    ltm = LongTermMemory(enable_eviction=False)
+    view = ltm.for_scope(MemoryScope(user_id="usr_a", character_instance_id="chi_a"))
+    r = MemoryReflector(
+        llm=FakeLLM(responses=["{}"]),
+        memory=view,
+        session=None,  # Task 7 起构造时传 None
+    )
+    assert r._memory is view
+    assert r._session is None
+

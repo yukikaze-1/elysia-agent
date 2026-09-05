@@ -6,6 +6,7 @@ Run:
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,6 +21,7 @@ from core.memory.consolidator import (
 )
 from core.schema.memory import MemoryType
 from core.memory.long_term import LongTermMemory
+from core.memory.scope import MemoryScope
 
 
 @pytest.fixture(autouse=True)
@@ -378,3 +380,28 @@ class TestPromptPlaceholder:
         """ConsolidationCompare/ExtractMemory prompt 无 Elysia/妖梦。"""
         for p in [_get_compare_prompt(), _get_extraction_prompt()]:
             assert "Elysia" not in p and "妖梦" not in p, "consolidation prompt 仍含 Elysia/妖梦"
+
+
+class _FakeLLM:
+    """最小 MemoryLLM 桩——仅用于构造 MemoryConsolidator，不触发提取。"""
+
+    model = "mock"
+
+    async def think(self, messages, **kw):
+        return SimpleNamespace(text="[]")  # 无提取
+
+    async def test(self):
+        return {"ok": True, "latency_ms": 0}
+
+    async def close(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_consolidator_accepts_scoped_view():
+    """consolidator 应接受 ScopedLongTermMemory（类型放宽为 union）。"""
+    ltm = LongTermMemory(enable_eviction=False)
+    view = ltm.for_scope(MemoryScope(user_id="usr_a", character_instance_id="chi_a"))
+    cons = MemoryConsolidator(_FakeLLM(), memory=view)  # 应接受 scoped view
+    assert cons._memory is view
+

@@ -22,6 +22,7 @@ from core.schema.memory import (
 
 from paths import ProjectPath
 from core.memory.long_term import LongTermMemory
+from core.memory.scoped_long_term import ScopedLongTermMemory
 from core.memory.llm_protocol import MemoryLLM
 
 logger = logging.getLogger(__name__)
@@ -172,7 +173,8 @@ class MemoryConsolidator:
 
     BUFFER_THRESHOLD = 6  # 攒够 N 条消息再调 LLM 提取
 
-    def __init__(self, llm: MemoryLLM, memory: LongTermMemory, character_name: str = "Elysia",
+    def __init__(self, llm: MemoryLLM, memory: ScopedLongTermMemory | LongTermMemory,
+                 character_name: str = "Elysia",
                  user_name: str = "用户", buffer_threshold: int | None = None):
         """初始化记忆整合器。
 

@@ -23,6 +23,7 @@ from core.memory.llm_protocol import MemoryLLM
 
 if TYPE_CHECKING:
     from core.memory.long_term import LongTermMemory
+    from core.memory.scoped_long_term import ScopedLongTermMemory
     from core.memory.session import SessionMemory
 
 logger = logging.getLogger(__name__)
@@ -69,8 +70,8 @@ class MemoryReflector:
     def __init__(
         self,
         llm: MemoryLLM,
-        memory: "LongTermMemory",
-        session: "SessionMemory",
+        memory: "ScopedLongTermMemory | LongTermMemory",
+        session: "SessionMemory | None" = None,
         character_name: str = "Agent",  # 角色名（占位符替换；默认中性，agent.py 恒传 self._character.name）
         user_name: str = "用户",          # 用户名（占位符替换；默认中性，agent.py 恒传 self._user_name）
     ):
@@ -78,14 +79,15 @@ class MemoryReflector:
 
         Args:
             llm: 记忆域 LLM 窄接口（MemoryLLM），用于审查记忆。
-            memory: 长期记忆后端。
-            session: 会话记忆，用于访问 character_state 等。
+            memory: 长期记忆后端（ScopedLongTermMemory | LongTermMemory，duck-typed）。
+            session: 会话记忆，用于访问 character_state 等。Task 7 起 per-runtime
+                构造传 None（counter 持久化改经 runtime.state），当前仅存不用。
             character_name: 角色名，用于替换 prompt 中的 {character_name} 占位符。
             user_name: 用户名，用于替换 prompt 中的 {user_name} 占位符。
         """
         self._llm = llm
         self._memory = memory
-        self._session = session
+        self._session = session  # 仅存不用（counter 持久化改经 runtime.state）
         self._character_name = character_name  # 新增
         self._user_name = user_name            # 新增
         self._lock = asyncio.Lock()
