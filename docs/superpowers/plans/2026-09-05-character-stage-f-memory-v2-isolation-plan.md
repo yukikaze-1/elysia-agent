@@ -765,12 +765,14 @@ agent.py:1046/1051 `agent.consolidator`/`agent.memory_reflector` 属性当前返
 @property
 def consolidator(self):
     """当前实例的 memory consolidator（debug 展示用）。"""
-    rt = self._registry.get(DEFAULT_INSTANCE_ID, lambda: None)  # default runtime
+    # 不调 registry.get(..., lambda: None)——get 会把 factory() 结果存入 dict，
+    # lambda: None 会污染 _runtimes（后续 _evict_if_needed 访问 rt.dirty 崩溃）。
+    rt = self._registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001
     return rt.consolidator if rt else None
 
 @property
 def memory_reflector(self):
-    rt = self._registry.get(DEFAULT_INSTANCE_ID, lambda: None)
+    rt = self._registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001
     return rt.reflector if rt else None
 ```
 
@@ -852,7 +854,7 @@ Expected: PASS（C4 代码无需 import core.memory——保持 duck-typed）
 
 ```python
 # debug/info.py:203/291/300
-rt = agent._runtime_registry.get(DEFAULT_INSTANCE_ID, lambda: None)  # 或代理
+rt = agent._runtime_registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001 — 不调 get(..., lambda: None) 防污染 registry
 cons = rt.consolidator if rt else None
 if cons:
     info.consolidation_history = list(cons._history)[-5:]
