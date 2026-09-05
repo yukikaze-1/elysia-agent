@@ -1947,11 +1947,97 @@
       "type": "object"
     },
     "CharacterPublicState": {
-      "description": "角色产品态（阶段 C+E/general，feature flag 开启后走 wire）。",
+      "$defs": {
+        "CharacterPublicStateView": {
+          "description": "角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。\n\nmood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt\n可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。",
+          "properties": {
+            "currentActivity": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "当前活动(可缺省)",
+              "title": "Currentactivity"
+            },
+            "lastInteractionAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "最近交互时间(可缺省)",
+              "title": "Lastinteractionat"
+            },
+            "mood": {
+              "$ref": "#/$defs/MoodState",
+              "description": "当前心情"
+            },
+            "proactiveEnabled": {
+              "default": false,
+              "description": "主动搭话是否开启",
+              "title": "Proactiveenabled",
+              "type": "boolean"
+            },
+            "updatedAt": {
+              "description": "产品态更新时间(ISO)",
+              "title": "Updatedat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mood",
+            "updatedAt"
+          ],
+          "title": "CharacterPublicStateView",
+          "type": "object"
+        },
+        "MoodState": {
+          "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+          "properties": {
+            "intensity": {
+              "default": 0.5,
+              "description": "心情强度 0-1",
+              "title": "Intensity",
+              "type": "number"
+            },
+            "label": {
+              "description": "心情标签",
+              "title": "Label",
+              "type": "string"
+            },
+            "updatedAt": {
+              "description": "心情更新时间(ISO)",
+              "title": "Updatedat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "updatedAt"
+          ],
+          "title": "MoodState",
+          "type": "object"
+        }
+      },
+      "description": "角色产品态(REST GET /api/character-instances/{id}/state)。\n\n由阶段 C+E 扁平 mood:str + instanceId 泛化而来——flat mood 移除、instanceId 改名\ncharacterInstanceId(对齐 WS CharacterStateChangedMessage 与架构稿 §12.4)。",
       "properties": {
         "characterId": {
           "description": "角色 ID",
           "title": "Characterid",
+          "type": "string"
+        },
+        "characterInstanceId": {
+          "description": "角色实例 ID",
+          "title": "Characterinstanceid",
           "type": "string"
         },
         "characterRevision": {
@@ -1960,16 +2046,9 @@
           "title": "Characterrevision",
           "type": "integer"
         },
-        "instanceId": {
-          "description": "实例 ID",
-          "title": "Instanceid",
-          "type": "string"
-        },
-        "mood": {
-          "default": "平静",
-          "description": "当前心情",
-          "title": "Mood",
-          "type": "string"
+        "state": {
+          "$ref": "#/$defs/CharacterPublicStateView",
+          "description": "产品态视图"
         },
         "stateVersion": {
           "default": 1,
@@ -1980,9 +2059,91 @@
       },
       "required": [
         "characterId",
-        "instanceId"
+        "characterInstanceId",
+        "state"
       ],
       "title": "CharacterPublicState",
+      "type": "object"
+    },
+    "CharacterPublicStateView": {
+      "$defs": {
+        "MoodState": {
+          "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+          "properties": {
+            "intensity": {
+              "default": 0.5,
+              "description": "心情强度 0-1",
+              "title": "Intensity",
+              "type": "number"
+            },
+            "label": {
+              "description": "心情标签",
+              "title": "Label",
+              "type": "string"
+            },
+            "updatedAt": {
+              "description": "心情更新时间(ISO)",
+              "title": "Updatedat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "updatedAt"
+          ],
+          "title": "MoodState",
+          "type": "object"
+        }
+      },
+      "description": "角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。\n\nmood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt\n可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。",
+      "properties": {
+        "currentActivity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "当前活动(可缺省)",
+          "title": "Currentactivity"
+        },
+        "lastInteractionAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "最近交互时间(可缺省)",
+          "title": "Lastinteractionat"
+        },
+        "mood": {
+          "$ref": "#/$defs/MoodState",
+          "description": "当前心情"
+        },
+        "proactiveEnabled": {
+          "default": false,
+          "description": "主动搭话是否开启",
+          "title": "Proactiveenabled",
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "description": "产品态更新时间(ISO)",
+          "title": "Updatedat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mood",
+        "updatedAt"
+      ],
+      "title": "CharacterPublicStateView",
       "type": "object"
     },
     "CharacterReflectorInfo": {
@@ -2258,6 +2419,144 @@
         "createdAt"
       ],
       "title": "CharacterRevisionSummary",
+      "type": "object"
+    },
+    "CharacterStateChangedMessage": {
+      "$defs": {
+        "CharacterPublicStateView": {
+          "description": "角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。\n\nmood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt\n可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。",
+          "properties": {
+            "currentActivity": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "当前活动(可缺省)",
+              "title": "Currentactivity"
+            },
+            "lastInteractionAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "最近交互时间(可缺省)",
+              "title": "Lastinteractionat"
+            },
+            "mood": {
+              "$ref": "#/$defs/MoodState",
+              "description": "当前心情"
+            },
+            "proactiveEnabled": {
+              "default": false,
+              "description": "主动搭话是否开启",
+              "title": "Proactiveenabled",
+              "type": "boolean"
+            },
+            "updatedAt": {
+              "description": "产品态更新时间(ISO)",
+              "title": "Updatedat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mood",
+            "updatedAt"
+          ],
+          "title": "CharacterPublicStateView",
+          "type": "object"
+        },
+        "MoodState": {
+          "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+          "properties": {
+            "intensity": {
+              "default": 0.5,
+              "description": "心情强度 0-1",
+              "title": "Intensity",
+              "type": "number"
+            },
+            "label": {
+              "description": "心情标签",
+              "title": "Label",
+              "type": "string"
+            },
+            "updatedAt": {
+              "description": "心情更新时间(ISO)",
+              "title": "Updatedat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "updatedAt"
+          ],
+          "title": "MoodState",
+          "type": "object"
+        }
+      },
+      "description": "角色状态变化事件(架构稿 §12.4;v2,character_state_stream=true 后发送)。\n\n只含产品态字段;state 是完整 CharacterPublicStateView,不是 patch;未知 optional 字段省略。\n客户端只按同一 instance 内严格递增的 stateVersion 应用事件,不能用时间字符串替代顺序。",
+      "properties": {
+        "characterId": {
+          "description": "角色 ID",
+          "title": "Characterid",
+          "type": "string"
+        },
+        "characterInstanceId": {
+          "description": "角色实例 ID",
+          "title": "Characterinstanceid",
+          "type": "string"
+        },
+        "characterRevision": {
+          "default": 1,
+          "description": "角色修订号",
+          "title": "Characterrevision",
+          "type": "integer"
+        },
+        "conversationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "会话 ID(可缺省)",
+          "title": "Conversationid"
+        },
+        "state": {
+          "$ref": "#/$defs/CharacterPublicStateView",
+          "description": "完整产品态视图(非 patch)"
+        },
+        "stateVersion": {
+          "default": 1,
+          "description": "实例状态版本",
+          "title": "Stateversion",
+          "type": "integer"
+        },
+        "type": {
+          "const": "character.state.changed",
+          "default": "character.state.changed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "characterId",
+        "characterInstanceId",
+        "state"
+      ],
+      "title": "CharacterStateChangedMessage",
       "type": "object"
     },
     "CharacterStateImpact": {
@@ -8578,6 +8877,33 @@
       "title": "MessagesResponse",
       "type": "object"
     },
+    "MoodState": {
+      "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+      "properties": {
+        "intensity": {
+          "default": 0.5,
+          "description": "心情强度 0-1",
+          "title": "Intensity",
+          "type": "number"
+        },
+        "label": {
+          "description": "心情标签",
+          "title": "Label",
+          "type": "string"
+        },
+        "updatedAt": {
+          "description": "心情更新时间(ISO)",
+          "title": "Updatedat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "updatedAt"
+      ],
+      "title": "MoodState",
+      "type": "object"
+    },
     "PendingApprovalItem": {
       "description": "pending 工具审批项（全局返回，不按会话过滤——D-b 全局工具语义）。",
       "properties": {
@@ -9881,6 +10207,12 @@
           "title": "Character Profiles",
           "type": "boolean"
         },
+        "character_state_stream": {
+          "default": false,
+          "description": "角色状态流（阶段 G；character.state.changed 事件；character_profiles=false 时独立可用）",
+          "title": "Character State Stream",
+          "type": "boolean"
+        },
         "desktop_runtime": {
           "default": false,
           "description": "Desktop 工具 Runtime（批次 4）",
@@ -9942,6 +10274,12 @@
               "default": false,
               "description": "多角色 Profile（阶段 C+E；本批次恒 false，架构稿决策 #12）",
               "title": "Character Profiles",
+              "type": "boolean"
+            },
+            "character_state_stream": {
+              "default": false,
+              "description": "角色状态流（阶段 G；character.state.changed 事件；character_profiles=false 时独立可用）",
+              "title": "Character State Stream",
               "type": "boolean"
             },
             "desktop_runtime": {
@@ -10516,6 +10854,115 @@
             "services"
           ],
           "title": "CapabilitiesMessage",
+          "type": "object"
+        },
+        "CharacterPublicStateView": {
+          "description": "角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。\n\nmood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt\n可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。",
+          "properties": {
+            "currentActivity": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "当前活动(可缺省)",
+              "title": "Currentactivity"
+            },
+            "lastInteractionAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "最近交互时间(可缺省)",
+              "title": "Lastinteractionat"
+            },
+            "mood": {
+              "$ref": "#/$defs/MoodState",
+              "description": "当前心情"
+            },
+            "proactiveEnabled": {
+              "default": false,
+              "description": "主动搭话是否开启",
+              "title": "Proactiveenabled",
+              "type": "boolean"
+            },
+            "updatedAt": {
+              "description": "产品态更新时间(ISO)",
+              "title": "Updatedat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mood",
+            "updatedAt"
+          ],
+          "title": "CharacterPublicStateView",
+          "type": "object"
+        },
+        "CharacterStateChangedMessage": {
+          "description": "角色状态变化事件(架构稿 §12.4;v2,character_state_stream=true 后发送)。\n\n只含产品态字段;state 是完整 CharacterPublicStateView,不是 patch;未知 optional 字段省略。\n客户端只按同一 instance 内严格递增的 stateVersion 应用事件,不能用时间字符串替代顺序。",
+          "properties": {
+            "characterId": {
+              "description": "角色 ID",
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "description": "角色实例 ID",
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "default": 1,
+              "description": "角色修订号",
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "conversationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID(可缺省)",
+              "title": "Conversationid"
+            },
+            "state": {
+              "$ref": "#/$defs/CharacterPublicStateView",
+              "description": "完整产品态视图(非 patch)"
+            },
+            "stateVersion": {
+              "default": 1,
+              "description": "实例状态版本",
+              "title": "Stateversion",
+              "type": "integer"
+            },
+            "type": {
+              "const": "character.state.changed",
+              "default": "character.state.changed",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "state"
+          ],
+          "title": "CharacterStateChangedMessage",
           "type": "object"
         },
         "CommandMessage": {
@@ -11601,6 +12048,33 @@
           "title": "MessageMessage",
           "type": "object"
         },
+        "MoodState": {
+          "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+          "properties": {
+            "intensity": {
+              "default": 0.5,
+              "description": "心情强度 0-1",
+              "title": "Intensity",
+              "type": "number"
+            },
+            "label": {
+              "description": "心情标签",
+              "title": "Label",
+              "type": "string"
+            },
+            "updatedAt": {
+              "description": "心情更新时间(ISO)",
+              "title": "Updatedat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "updatedAt"
+          ],
+          "title": "MoodState",
+          "type": "object"
+        },
         "RejectedUserAckMessage": {
           "additionalProperties": false,
           "description": "用户消息拒绝确认（v2）：messageId 恒 \"\"（D2：短期保留空白串兼容前端批次 A）；error 必填。\n\nclientRequestId 不做 min_length——「缺少 clientRequestId」的契约拒绝需要回显空串\n（否则构造失败被吞，客户端拿不到任何响应）。",
@@ -11696,6 +12170,12 @@
               "default": false,
               "description": "多角色 Profile（阶段 C+E；本批次恒 false，架构稿决策 #12）",
               "title": "Character Profiles",
+              "type": "boolean"
+            },
+            "character_state_stream": {
+              "default": false,
+              "description": "角色状态流（阶段 G；character.state.changed 事件；character_profiles=false 时独立可用）",
+              "title": "Character State Stream",
               "type": "boolean"
             },
             "desktop_runtime": {
@@ -13351,6 +13831,7 @@
           "audio_end": "#/$defs/AudioEndMessage",
           "audio_start": "#/$defs/AudioStartMessage",
           "capabilities": "#/$defs/CapabilitiesMessage",
+          "character.state.changed": "#/$defs/CharacterStateChangedMessage",
           "command": "#/$defs/CommandMessage",
           "delta": "#/$defs/DeltaMessage",
           "dictation.cancelled": "#/$defs/DictationCancelledMessage",
@@ -13505,6 +13986,9 @@
         },
         {
           "$ref": "#/$defs/ToolRequestMessage"
+        },
+        {
+          "$ref": "#/$defs/CharacterStateChangedMessage"
         },
         {
           "$ref": "#/$defs/VoiceTranscriptMessage"
@@ -20126,6 +20610,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "27bb5dde8f300a5e",
+  "schemaHash": "447633fa17930d36",
   "transportVersion": "2"
 }

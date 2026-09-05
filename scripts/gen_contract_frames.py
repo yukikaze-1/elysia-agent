@@ -48,7 +48,8 @@ def _server_info() -> wm.ServerInfoMessage:
         features=wm.ServerInfoFeatures(
             structured_generation=True, multi_conversation=True, desktop_runtime=True,
             dictation=True, voice_recording=True, voice_realtime=True, media_upload=True,
-            idempotency_durable=True),  # D6c：当前契约支持幂等跨重启持久化
+            idempotency_durable=True,
+            character_state_stream=True),  # 阶段 G: 角色状态流已实现(恒 true,独立于 character_profiles)
         services={
             "llm": wm.ServiceCapability(available=True, enabled=True,
                                         model="deepseek/deepseek-chat",
@@ -122,8 +123,15 @@ def _chat() -> list[str]:
         conversationUsage=rest.ConversationUsage(
             total=30, byModel={"deepseek/deepseek-chat": 30}))
     idle = wm.StateMessage(state="idle")
+    state_changed = wm.CharacterStateChangedMessage(
+        conversationId="default", characterId="chr_builtin_elysia",
+        characterInstanceId="chi_builtin_elysia", characterRevision=1,
+        stateVersion=1,
+        state=rest.CharacterPublicStateView(
+            mood=rest.MoodState(label="开心", intensity=0.72, updatedAt=_TS),
+            proactiveEnabled=False, updatedAt=_TS))
     return _f(ack, thinking, typing_on, started, iv_start, iv_done, reply_start, delta,
-              typing_off, speaking, reply_done, completed, idle)
+              typing_off, speaking, reply_done, completed, idle, state_changed)
 
 
 def _cancel() -> list[str]:

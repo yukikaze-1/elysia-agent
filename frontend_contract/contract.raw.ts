@@ -2,7 +2,34 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: 27bb5dde8f300a5e
+// schemaHash: 447633fa17930d36
+
+/** 心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。 */
+export interface MoodState {
+  /** 心情标签 */
+  label: string
+  /** 心情强度 0-1 */
+  intensity: number
+  /** 心情更新时间(ISO) */
+  updatedAt: string
+}
+
+/** 角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。
+
+mood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt
+可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。 */
+export interface CharacterPublicStateView {
+  /** 当前心情 */
+  mood: MoodState
+  /** 当前活动(可缺省) */
+  currentActivity?: string
+  /** 最近交互时间(可缺省) */
+  lastInteractionAt?: string
+  /** 主动搭话是否开启 */
+  proactiveEnabled: boolean
+  /** 产品态更新时间(ISO) */
+  updatedAt: string
+}
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
 export interface ConversationUsage {
@@ -269,6 +296,8 @@ export interface ServerInfoFeatures {
   idempotency_durable: boolean
   /** 多角色 Profile（阶段 C+E；本批次恒 false，架构稿决策 #12） */
   character_profiles: boolean
+  /** 角色状态流（阶段 G；character.state.changed 事件；character_profiles=false 时独立可用） */
+  character_state_stream: boolean
 }
 
 /** 协议版本 + 服务器能力声明（仅 v2 客户端；取代 capabilities，避免重复帧）。
@@ -482,6 +511,26 @@ export interface GenerationFailedMessage {
   characterInstanceId?: string
   /** 角色修订号 */
   characterRevision?: number
+}
+
+/** 角色状态变化事件(架构稿 §12.4;v2,character_state_stream=true 后发送)。
+
+只含产品态字段;state 是完整 CharacterPublicStateView,不是 patch;未知 optional 字段省略。
+客户端只按同一 instance 内严格递增的 stateVersion 应用事件,不能用时间字符串替代顺序。 */
+export interface CharacterStateChangedMessage {
+  type: 'character.state.changed'
+  /** 会话 ID(可缺省) */
+  conversationId?: string
+  /** 角色 ID */
+  characterId: string
+  /** 角色实例 ID */
+  characterInstanceId: string
+  /** 角色修订号 */
+  characterRevision: number
+  /** 实例状态版本 */
+  stateVersion: number
+  /** 完整产品态视图(非 patch) */
+  state: CharacterPublicStateView
 }
 
 /** 流式文字增量。 */
@@ -1733,18 +1782,21 @@ export interface CharacterInstanceSummary {
   stateVersion: number
 }
 
-/** 角色产品态（阶段 C+E/general，feature flag 开启后走 wire）。 */
+/** 角色产品态(REST GET /api/character-instances/{id}/state)。
+
+由阶段 C+E 扁平 mood:str + instanceId 泛化而来——flat mood 移除、instanceId 改名
+characterInstanceId(对齐 WS CharacterStateChangedMessage 与架构稿 §12.4)。 */
 export interface CharacterPublicState {
   /** 角色 ID */
   characterId: string
-  /** 实例 ID */
-  instanceId: string
+  /** 角色实例 ID */
+  characterInstanceId: string
   /** 角色修订号 */
   characterRevision: number
-  /** 当前心情 */
-  mood: string
   /** 实例状态版本 */
   stateVersion: number
+  /** 产品态视图 */
+  state: CharacterPublicStateView
 }
 
 /** 角色列表（分页沿用 has_more + cursor 约定）。 */
@@ -2553,6 +2605,7 @@ export type ServerMessage =
   | GenerationCompletedMessage
   | GenerationFailedMessage
   | ToolRequestMessage
+  | CharacterStateChangedMessage
   | VoiceTranscriptMessage
   | VoiceSessionStartedMessage
   | VoiceSessionPartialMessage
