@@ -55,4 +55,9 @@ class CharacterRuntimeState(BaseModel):
     reflector_buffer: list[tuple[str, str]] = Field(default_factory=list)
     reflector_context: list[dict] = Field(default_factory=list)
     self_perception_history: list[dict] = Field(default_factory=list)
+    # 阶段 F（§2.6/架构稿 §8.5）：MemoryReflector 计数器持久化——per-runtime 化后
+    # session.save_state() 不再承载，改经 runtime.state（回合边界 flush）。
+    mr_round_count: int = 0
+    mr_new_memory_count: int = 0
+    mr_last_summary: dict[str, object] = Field(default_factory=dict)
     updated_at: IsoTimestamp = Field(default_factory=now_iso)

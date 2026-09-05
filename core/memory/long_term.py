@@ -84,10 +84,21 @@ async def _search_milvus_candidates(
         return candidates, distances
 
     try:
+        # 阶段 F（§2.3）：ANN 阶段用 scope filter——Milvus 侧先按 user_id +
+        # character_instance_id + visibility 过滤，避免其他 scope 条目挤占 top-k
+        # 导致本 scope 召回丢失（spec §8.3「ANN 用 filter 而非先召回再 Python 过滤」）。
+        filter_expr = None
+        if scope is not None:
+            filter_expr = (
+                f'user_id == "{scope.user_id}" && '
+                f'character_instance_id == "{scope.character_instance_id}" && '
+                f'visibility == "{scope.visibility.value}"'
+            )
         raw = await repo.search(
             vector=vec,
             top_k=min(top_k * 4, 20),
             output_fields=["id", "text", "memory_type", "poignancy", "timestamp"],
+            filter_expr=filter_expr,
         )
         pk_to_distance: dict[int, float] = {}
         text_fb: dict[str, float] = {}

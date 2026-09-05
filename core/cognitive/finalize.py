@@ -253,6 +253,14 @@ class CognitiveFinalize:
         if runtime is None:
             return
         try:
+            # 阶段 F（§2.6/架构稿 §8.5）：MemoryReflector per-runtime 后计数器改经
+            # runtime.state 持久化（session.save_state 不再承载，bind_memory_reflector 已移除）。
+            # 回合边界先把 runtime.reflector 计数器 sync 进 runtime.state，再 flush 落库。
+            if runtime.reflector is not None:
+                mr_state = runtime.reflector.save_state()
+                runtime.state.mr_round_count = mr_state.mr_round_count
+                runtime.state.mr_new_memory_count = mr_state.mr_new_memory_count
+                runtime.state.mr_last_summary = mr_state.mr_last_summary
             if self._engine is not None:
                 self._engine.sync_reflector_to_runtime_state()
             await runtime.flush()
