@@ -114,11 +114,12 @@ class CharacterRuntime:
 
 ### 2.6 per-runtime consolidator/reflector 接线
 
-`_prepare_turn` / `loop` 消费 consolidator/reflector 点改为从 runtime 解析：
+`_prepare_turn` / `loop` 消费 consolidator/reflector 点改为从 runtime 解析，**且必须局部捕获**（与 loop.py:820-826 对 session/engine/reflector 的 C3/P1-10 anti-race 模式同构）：
 
-- **loop.py:185** `self._consolidator = consolidator` 迁移：`_prepare_turn` 经 `runtime.consolidator` 取——`_consolidate` 用**本回合 runtime** 的 consolidator,而非单例。
-- **loop.py:851-857** reflector 增量：`self._memory_reflector`（`configure()` 注入）改为经 `runtime.reflector`。
-- **agent.py:293/301** 不再构造全局单例 consolidator/reflector;`agent.consolidator`/`agent.memory_reflector` 属性改经 registry 解析（或保留为 legacy 单例但仅 debug 用）。
+- **`_finalize_turn` spawn `_after_response` 时局部捕获本回合 consolidator/reflector**：`_after_response(user_message, public_text, session=target, engine=self._engine, consolidator=runtime.consolidator, reflector=runtime.reflector)`——**不要** per-turn 重绑 `self._consolidator`/`self._memory_reflector`。原因：`_after_response` 是 fire-and-forget task（finalize.py:147），consolidate 内含 LLM await；下一 turn 的 `_prepare_turn` 若重绑 `self._consolidator`，本次 in-flight consolidation 会用到下一轮的 consolidator（错 scope）——正是本批消除的跨实例污染。局部捕获在首个 await 前固化，与 session/engine 一致。
+- **loop.py:185 `self._consolidator`**：仍保留（供 `configure()` 兼容注入），但 `_after_response` 内改用参数 `consolidator`（None 回退 `self._consolidator`）。
+- **loop.py:851-857 reflector 增量**：`_after_response` 内用参数 `reflector`（None 回退 `self._memory_reflector`）。
+- **agent.py:293/301** 不再构造全局单例 consolidator/reflector;`agent.consolidator`/`agent.memory_reflector` 属性改经 registry 解析（仅 debug 展示用，默认显示 default runtime;产品路径一律经 `_finalize_turn` 局部捕获的 runtime.consolidator/reflector）。
 - **session_manager.bind_memory_reflector**（agent.py:309）：reflector per-runtime 后,`session.save_state()` 的 reflector counter 持久化改经 runtime.state（架构稿 §8.5「计数器进入 CharacterRuntimeState 或独立 instance state」）。
 
 ### 2.7 生命周期 flush
@@ -168,12 +169,15 @@ _make_runtime(instance_id, character_id)
 
 _prepare_turn(runtime)
   → svc["memory"] = runtime.memory_view        # memory 工具已 scope 过滤
-  → self._consolidator = runtime.consolidator  # 本回合 consolidator
-  → self._memory_reflector = runtime.reflector # 本回合 reflector
+  → self._current_runtime = runtime            # 供 _finalize_turn 局部捕获 consolidator/reflector
   → C4 MemorySection.search(query)             # 经 runtime.memory_view（已 scope）
+
+_finalize_turn  spawn _after_response
+  → _after_response(..., session=target, engine=engine,
+                    consolidator=runtime.consolidator, reflector=runtime.reflector)  # 局部捕获
 ```
 
-**核心不变式**：任何记忆写/读都经过 `ScopedLongTermMemory` 视图——`scope` 在视图创建时绑定,调用方无法在调用点绕过。consolidator/reflector 也各持 scoped view,不受全局单例污染。
+**核心不变式**：任何记忆写/读都经过 `ScopedLongTermMemory` 视图——`scope` 在视图创建时绑定,调用方无法在调用点绕过。consolidator/reflector 也各持 scoped view,不受全局单例污染。**anti-race**：`_after_response` 用**局部捕获**的 consolidator/reflector（首个 await 前固化）,而非 per-turn 重绑 `self._consolidator`——consolidate 的 LLM await 期间下一 turn 不会换掉本次 consolidator 的 scope。
 
 ### 3.3 Scope 绑定时机
 
@@ -197,7 +201,7 @@ def _make_runtime(self, instance_id: str) -> CharacterRuntime:
     return rt
 ```
 
-（`self._user_id` 从当前会话 `UserIdentity` 解析——阶段 E 的 `usr_local_default`。）
+（`self._user_id` 从 `self._user_identity`（agent.py:124, `UserIdentity.userId`）解析——阶段 E 的 `usr_local_default`。注意 `_make_runtime` 是 `agent.__init__` 内的闭包,捕获 `self._user_identity`;`user_id` 在 runtime 创建时固定——单用户 companion 下每个 instance 一个 user_id,不需按 user 重键。）
 
 ## 4. 错误处理
 
@@ -230,7 +234,7 @@ def _make_runtime(self, instance_id: str) -> CharacterRuntime:
 - **`user_shared` 实际升级路径**：本批只定义枚举,不提供自动升级。
 - **Neo4j 关系事实迁移**（架构稿 §8.6）：Neo4j 缺失不阻塞本批。
 - **旧 `long_term_memory` 数据迁移**：阶段 E 已清旧会话,空库起步;不迁移。
-- **Debug 全库 admin API**：`MemoryRepository.query(filter_expr=None)` 保留供 debug,但不作为产品 MemoryView 借用。
+- **Debug 全库 admin API**：`MemoryRepository.query(filter_expr=None)` 保留供 debug,但不作为产品 MemoryView 借用。**注**：debug DatabaseTab LtmPanel 目前读 v1 `long_term_memory`;产品路径本批迁 v2 后,debug 面板会显示空/旧库——**本批记录为已知行为差异**（debug LTM panel 改读 v2 视为阶段 H 前端联调范围,或在 debug 层经 registry 解析 v2）。
 - **前端 Electron 联调**。
 
 ## 7. 验收清单（exit conditions）
@@ -240,9 +244,10 @@ def _make_runtime(self, instance_id: str) -> CharacterRuntime:
 3. **`ScopedLongTermMemory`** 的 insert/search/update/delete 全部作用域过滤;不同 `character_instance_id` 互不可见。
 4. **`long_term_memory_v2`** collection 建立;**`LongTermMemory` 底层 repo 指向 v2**;ANN 用 `user_id + character_instance_id + visibility` filter;内存 fallback 按 scope 过滤。
 5. **C4 / memory 工具** 全部经 scoped view 读写,无全局单例泄漏（`_lifecycle_tools.py:68` 不再注入裸单例）。
-6. **consolidator / reflector per-runtime 化**：buffer 属 instance、计数器 per-instance、compare 只查同 scope、merge 验证 scope;`_flush_consolidator` 迭代 registry runtimes。
+6. **consolidator / reflector per-runtime 化**：buffer 属 instance、计数器 per-instance、compare 只查同 scope、merge 验证 scope;`_flush_consolidator` 迭代 registry runtimes;`_after_response` 用**局部捕获**的 consolidator/reflector（anti-race,首个 await 前固化,不 per-turn 重绑 `self._consolidator`）。
 7. **`CharacterRuntime` 持有 `memory_view`/`consolidator`/`reflector`**;agent `_make_runtime` 构造 scoped 三组件。
-8. **Elysia snapshot byte 不变**（18127B）。
+8. **`MemoryEntry` 模型带 scope 字段**（`user_id`/`character_instance_id`/`visibility`）——`_search_fallback`/`_search_milvus_candidates` 过滤 `_entries` 需要;`_load_from_milvus` 重启**全量加载后经 view 过滤**（不选「只加载当前 scope」——否则其他 scope 视图为空,破坏多实例共存）。
+9. **Elysia snapshot byte 不变**（18127B）。
 9. **ruff/pyright/contract --check** 全绿。
 
 ## 8. 引用
