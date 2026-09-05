@@ -426,6 +426,16 @@ class TestStartPersistenceTokenRepo:
         assert "TokenRepository 离线" in caplog.text
 
 
+class TestCharacterPublicAccessors:
+    def test_character_runtime_registry_exposed(self, agent):
+        """character_runtime_registry 公开访问 self._runtime_registry。"""
+        assert agent.character_runtime_registry is agent._runtime_registry  # noqa: SLF001
+
+    def test_character_state_stream_true(self, agent):
+        """character_state_stream 恒 true(本批,与 build_server_info 一致)。"""
+        assert agent.character_state_stream is True
+
+
 class TestRestartReentrancy:
     """C4/P1-07：同一 Agent 实例 restart 可重入——状态复位，不重复/不丢失。"""
 

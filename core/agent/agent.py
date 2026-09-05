@@ -1090,6 +1090,25 @@ class Agent(AgentLifecycle, AgentServer):
         return runtime.ensure_engine(lambda: self._make_engine(runtime))
 
     @property
+    def character_runtime_registry(self) -> "CharacterRuntimeRegistry":
+        """角色运行时注册表(公开只读)。
+
+        阶段 G: REST /api/character-instances/{id}/state 经此解析 instance runtime。
+        跨模块消费禁止 agent._xxx,故公开;注册表内部 get_existing 为只读不懒建。
+        """
+        return self._runtime_registry
+
+    @property
+    def character_state_stream(self) -> bool:
+        """角色状态流开关(阶段 G,恒 true——本批实现 snapshot/回合边界事件)。
+
+        与 build_server_info 的 ServerInfoFeatures.character_state_stream 保持一致,
+        避免 ws_handler/finalize 的发射 gate 与 capabilities 各自硬编码漂移。
+        character_profiles 恒 false(capabilities.py:107 已硬编码,不引此属性)。
+        """
+        return True
+
+    @property
     def character_reflector(self):
         """角色反思器（当前 instance engine.reflector）。"""
         return self.character_engine._reflector
