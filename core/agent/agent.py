@@ -63,6 +63,7 @@ from Module.workflow_contract.schema import WorkflowId
 from core.agent._types import RunState, _PendingMessage, _BackgroundTaskEntry
 from core.agent.lifecycle import AgentLifecycle
 from core.agent.server import AgentServer
+from core.cognitive.loop import DEFAULT_INSTANCE_ID
 
 from core.config import AppConfig
 from core.monitoring.event_bus import EventBus, EventPriority, EventType
@@ -71,6 +72,7 @@ from core.utils import set_request_id, get_request_id
 from core.config import CharacterConfig
 from core.memory.session_manager import SessionManager
 from core.memory.long_term import LongTermMemory
+from core.memory.scope import MemoryScope
 from core.prompt.prompt_assembler import PromptAssembler
 from core.adapter import ToolAdapter
 from core.tools import ALL_PLUGINS
@@ -95,7 +97,7 @@ from core.task import TaskScheduler
 from core.storage.session_repo import SessionRepository
 from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository
-from core.storage.memory_repo import MemoryRepository
+from core.storage.memory_repo_v2 import MemoryRepositoryV2
 from core.storage.desktop_call_repo import DesktopCallRepository
 from core.storage.attachment_repo import AttachmentRepository
 from core.storage.idempotency_repo import IdempotencyRepository
@@ -144,7 +146,7 @@ class Agent(AgentLifecycle, AgentServer):
             database_name=db_cfg.db_name,
             base_url=db_cfg.mongodb_uri,
         )
-        self._memory_repo = MemoryRepository(
+        self._memory_repo = MemoryRepositoryV2(
             base_url=db_cfg.milvus_uri,
             token=db_cfg.milvus_token or None,
         )
@@ -231,11 +233,35 @@ class Agent(AgentLifecycle, AgentServer):
             """
             role_name = instance_id.removeprefix("chi_builtin_")
             definition, revision, instance = self._builtin_source.load(role_name)
+            # Task 7（记忆 v2 隔离）：scoped 三组件——memory_view（ScopedLongTermMemory）
+            # + per-runtime consolidator/reflector。scope 按 instance 固定，view 复用同一
+            # LongTermMemory（_long_term），但读写全部作用域过滤。
+            scope = MemoryScope(
+                user_id=self._user_identity.userId,
+                character_instance_id=instance_id,
+            )
+            memory_view = self._long_term.for_scope(scope)
             rt = CharacterRuntime(
                 instance=instance,
                 definition=definition,
                 revision=revision,
                 user_identity=self._user_identity,
+                memory_view=memory_view,
+                consolidator=MemoryConsolidator(
+                    llm=self._llm,
+                    memory=memory_view,
+                    character_name=self._character.name,
+                    user_name=self._user_name,
+                ),
+                # MemoryReflector 的 session 原用于 save_state() 计数器持久化；per-runtime
+                # 后计数持久化改经 runtime.state（spec §2.6），构造不依赖 session——传 None。
+                reflector=MemoryReflector(
+                    llm=self._llm,
+                    memory=memory_view,
+                    session=None,
+                    character_name=self._character.name,
+                    user_name=self._user_name,
+                ),
             )
             # M3（C1 修复）：每个 runtime 都接 persist_fn——否则 registry 经此构造出的
             # 非 default instance runtime 的 _persist_fn=None，flush() no-op，状态永不落库。
@@ -290,23 +316,9 @@ class Agent(AgentLifecycle, AgentServer):
         self._stt_emotion_state: dict = {"emotion": "NEUTRAL", "events": []}  # STT 情绪/事件状态
         self._stt_ok = False  # STT 连通性标志 — 在 run_server() 中设置
 
-        self._consolidator = MemoryConsolidator(
-            llm=self._llm,
-            memory=self._long_term,
-            character_name=self._character.name,
-            user_name=self._user_name,
-        )
-
-        # ---- 记忆反射器 ----
-        self._memory_reflector = MemoryReflector(
-            llm=self._llm,
-            memory=self._long_term,
-            session=self._session_manager.active,
-            character_name=self._character.name,  # 新增：占位符替换，避免默认值泄漏给 Cyrene
-            user_name=self._user_name,            # 新增
-        )
-        # B6/P2-01：把 reflector 挂到所有会话——反思状态经 session save/load 持久化
-        self._session_manager.bind_memory_reflector(self._memory_reflector)
+        # Task 7（记忆 v2 隔离）：consolidator/memory_reflector 不再构造全局单例——
+        # per-runtime 化后由 _make_runtime 构造挂 CharacterRuntime（registry 解析）。
+        # loop 的 _consolidator/_memory_reflector 保持 None，仅作 after_response fallback。
 
         # ---- Token 统计 ----
         self._token_tracker: "TokenTracker | None" = None  # 在 start() 中创建（需要 session_id）
@@ -329,7 +341,6 @@ class Agent(AgentLifecycle, AgentServer):
             session_resolver=lambda c, p: self.resolve_session(c, p),  # 批次 3：按 conversation_id + protocol_version 解析目标会话
             tool_adapter=self._tool_adapter,
             character_engine=self._default_engine,
-            consolidator=self._consolidator,
             tts=self._tts,
             token_tracker=self._token_tracker,
             generation_registry=self._generation_registry,
@@ -340,7 +351,6 @@ class Agent(AgentLifecycle, AgentServer):
             engine_factory=self._make_engine,
         )
         self._cognitive.configure(
-            memory_reflector=self._memory_reflector,
             # Task 7（B1）：把用户身份存储传给 loop——_prepare_turn 读 store.pronouns 得 userPronoun
             user_identity_store=self._user_identity_store,
             # _after_response 是独立 task，主 process 返回后仍会保存 SessionMemory；
@@ -1044,13 +1054,25 @@ class Agent(AgentLifecycle, AgentServer):
 
     @property
     def consolidator(self):
-        """记忆整合器。"""
-        return self._consolidator
+        """当前实例的 memory consolidator（debug 展示用）。
+
+        Task 7（记忆 v2 隔离）：不再返回全局单例——per-runtime 化后经 registry 解析
+        default runtime 的 consolidator。注意：不调 registry.get(..., lambda: None)——get
+        会把 factory() 结果存入 dict，lambda: None 会污染 _runtimes（后续 _evict_if_needed
+        访问 rt.dirty 崩溃）。agent 属性是 _runtime_registry（非 _registry）。
+        """
+        rt = self._runtime_registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001
+        return rt.consolidator if rt else None
 
     @property
     def memory_reflector(self):
-        """长期记忆反思。"""
-        return self._memory_reflector
+        """当前实例的长期记忆反思（debug 展示用）。
+
+        Task 7（记忆 v2 隔离）：同 consolidator——经 registry 解析 default runtime。
+        不调 registry.get(..., lambda: None)（避免 lambda: None 污染 _runtimes）。
+        """
+        rt = self._runtime_registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001
+        return rt.reflector if rt else None
 
     @property
     def character_engine(self):

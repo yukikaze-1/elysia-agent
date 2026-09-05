@@ -229,16 +229,26 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
             logger.warning("flush_after_response failed", exc_info=True)
 
     async def _flush_consolidator(self) -> None:
-        """Memory consolidation buffer 落盘，防止未持久化的记忆丢失。"""
-        if self._consolidator:
-            try:
-                items = await asyncio.wait_for(self._consolidator.flush(), timeout=5.0)
-                if items:
-                    logger.info("Flushed %d consolidator items on shutdown", len(items))
-            except asyncio.TimeoutError:
-                logger.warning("Consolidator flush timed out during shutdown")
-            except Exception:
-                logger.warning("Consolidator flush failed", exc_info=True)
+        """Memory consolidation buffer 落盘，防止未持久化的记忆丢失。
+
+        Task 7（记忆 v2 隔离）：不再全局 _consolidator 单例——per-runtime 化后经
+        RuntimeRegistry 遍历各 instance runtime 的 consolidator，对每个触发 flush。
+        与 _flush_reflector 同模式：getattr(self, "_runtime_registry", None)——agent 属性
+        是 _runtime_registry（非 _registry）。
+        """
+        registry = getattr(self, "_runtime_registry", None)
+        if registry is None:
+            return
+        for rt in registry._runtimes.values():  # noqa: SLF001 — 组合根遍历 registry 持有的 runtime
+            if rt.consolidator:
+                try:
+                    items = await asyncio.wait_for(rt.consolidator.flush(), timeout=5.0)
+                    if items:
+                        logger.info("Flushed %d consolidator items on shutdown", len(items))
+                except asyncio.TimeoutError:
+                    logger.warning("Consolidator flush timed out during shutdown")
+                except Exception:
+                    logger.warning("Consolidator flush failed", exc_info=True)
 
     async def _flush_reflector(self) -> None:
         """CharacterReflector buffer 落盘，防止未持久化的性格反思丢失。

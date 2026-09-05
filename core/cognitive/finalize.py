@@ -134,11 +134,18 @@ class CognitiveFinalize:
             await self._session_work_reserver(target.session_id)
             background_reserved = True
 
+        # Task 7（记忆 v2 隔离）：create_task 前急切读出 runtime——anti-race，与上方
+        # target/self._engine 同构。per-turn 不重绑 self._consolidator（会跨 instance 写错）。
+        runtime = self._current_runtime
+
         async def _run_after_response() -> None:
             try:
                 await self._after_response(
                     user_message, public_text,
-                    session=target, engine=self._engine)
+                    session=target, engine=self._engine,
+                    consolidator=runtime.consolidator if runtime else None,
+                    memory_reflector=runtime.reflector if runtime else None,
+                )
             finally:
                 if background_reserved and self._session_work_releaser is not None:
                     self._session_work_releaser(target.session_id)

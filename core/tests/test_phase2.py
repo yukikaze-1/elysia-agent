@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from Module.embedding import EmbeddingFactory
+from core.memory.scope import MemoryScope
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -272,8 +273,16 @@ class TestMemoryIntegration:
         agent = Agent(config=AppConfig())
         await agent.start()
 
-        # 插入测试数据
-        await agent._long_term.insert("上周和妖梦约定周六去爬香山", memory_type="plan", poignancy=7)
+        # Task 7（记忆 v2 隔离）：memory 服务改由 _prepare_turn 逐回合注入 runtime.memory_view
+        # 的 scope——本测试直接调 execute（绕过回合），需手动注入同样作用域的 scoped view。
+        # 测试数据同样经该 scoped view 插入（否则落在 scope 外，search 过滤后召不回）。
+        scoped_mem = agent.long_term.for_scope(
+            MemoryScope(user_id=agent._user_identity.userId,
+                        character_instance_id="chi_builtin_elysia"))
+        agent._tool_adapter.tool_context.services["memory"] = scoped_mem
+
+        # 插入测试数据（经 scoped view，写入 scope 字段）
+        await scoped_mem.insert("上周和妖梦约定周六去爬香山", memory_type="plan", poignancy=7)
 
         # 直接使用工具
         result = await agent._tool_adapter.execute("search_memory", ctx=agent._tool_adapter.tool_context, query="爬山")
@@ -299,8 +308,16 @@ class TestMemoryIntegration:
             return True, "confirmed"
         agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
 
+        # Task 7（记忆 v2 隔离）：同 test_search_memory_tool——手动注入 scoped memory view。
+        scoped_mem = agent.long_term.for_scope(
+            MemoryScope(user_id=agent._user_identity.userId,
+                        character_instance_id="chi_builtin_elysia"))
+        agent._tool_adapter.tool_context.services["memory"] = scoped_mem
+
         await agent._tool_adapter.execute("save_memory", ctx=agent._tool_adapter.tool_context, content="测试保存的记忆", type="fact")
-        results = await agent._long_term.search(query_text="测试保存")
+        # 验证：经注入的 scoped 视图检索（save_memory 写的是该 scope，全局 ANN 召回可能受
+        # 共享 Milvus 集合历史条目干扰——scoped 检索按 scope 过滤，命中确定）。
+        results = await scoped_mem.search(query_text="测试保存", top_k=20)
         assert len(results) > 0
         assert any("测试保存" in r.text for r in results)
 

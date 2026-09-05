@@ -46,21 +46,53 @@ def _registry_with_runtime():
 class TestFlushConsolidator:
     @pytest.mark.asyncio
     async def test_flush_with_items(self, fake_agent):
-        fake_agent._consolidator = AsyncMock()
-        fake_agent._consolidator.flush.return_value = ["item1", "item2"]
+        """经 registry runtimes 迭代 flush consolidator（Task 7 per-runtime 化）。"""
+        rt = CharacterRuntime(
+            instance=CharacterInstance(instanceId="chi_builtin_elysia",
+                                       characterId="chr_builtin_elysia"),
+            definition=CharacterDefinition(characterId="chr_builtin_elysia"),
+            revision=CharacterRevision(characterId="chr_builtin_elysia",
+                                       revision=1, displayName="Elysia"),
+            user_identity=UserIdentity(userId="usr_local_default"),
+        )
+        rt.consolidator = AsyncMock()
+        rt.consolidator.flush.return_value = ["item1", "item2"]
+        fake_agent._runtime_registry = CharacterRuntimeRegistry()
+        fake_agent._runtime_registry.get("chi_builtin_elysia", lambda: rt)
         await AgentLifecycle._flush_consolidator(fake_agent)
-        fake_agent._consolidator.flush.assert_awaited_once()
+        rt.consolidator.flush.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_flush_timeout_does_not_raise(self, fake_agent):
-        fake_agent._consolidator = AsyncMock()
-        fake_agent._consolidator.flush.side_effect = asyncio.TimeoutError
+        """flush 超时不应抛异常。"""
+        rt = CharacterRuntime(
+            instance=CharacterInstance(instanceId="chi_builtin_elysia",
+                                       characterId="chr_builtin_elysia"),
+            definition=CharacterDefinition(characterId="chr_builtin_elysia"),
+            revision=CharacterRevision(characterId="chr_builtin_elysia",
+                                       revision=1, displayName="Elysia"),
+            user_identity=UserIdentity(userId="usr_local_default"),
+        )
+        rt.consolidator = AsyncMock()
+        rt.consolidator.flush.side_effect = asyncio.TimeoutError
+        fake_agent._runtime_registry = CharacterRuntimeRegistry()
+        fake_agent._runtime_registry.get("chi_builtin_elysia", lambda: rt)
         await AgentLifecycle._flush_consolidator(fake_agent)
         # 不应抛异常
 
     @pytest.mark.asyncio
     async def test_no_consolidator_does_not_raise(self, fake_agent):
-        fake_agent._consolidator = None
+        """registry 空/无 consolidator 的 runtime 应跳过，不抛。"""
+        rt, _ = _runtime_with_engine()  # consolidator 未设置（None）
+        fake_agent._runtime_registry = CharacterRuntimeRegistry()
+        fake_agent._runtime_registry.get("chi_builtin_elysia", lambda: rt)
+        await AgentLifecycle._flush_consolidator(fake_agent)
+        # 不应抛异常
+
+    @pytest.mark.asyncio
+    async def test_no_registry_does_not_raise(self, fake_agent):
+        """无 registry 时返回，不抛。"""
+        fake_agent._runtime_registry = None
         await AgentLifecycle._flush_consolidator(fake_agent)
         # 不应抛异常
 

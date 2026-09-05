@@ -200,7 +200,11 @@ def _collect_tools_and_consolidation(agent: "Agent", info: DebugInfo) -> None:
     info.tools = tm.plugin_list
     info.tool_history = list(tm.history)[-5:]
 
-    info.consolidation_history = list(agent.consolidator._history)[-5:]  # noqa: SLF001
+    # Task 7（记忆 v2 隔离）：agent.consolidator 现经 registry 解析（可能 None——无 default
+    # runtime 或未预置时）。None 时清空历史（不抛）。
+    cons = agent.consolidator
+    info.consolidation_history = (
+        list(cons._history)[-5:] if cons else [])  # noqa: SLF001
 
 
 async def _collect_character_and_reflector(agent: "Agent", info: DebugInfo) -> None:
@@ -288,18 +292,20 @@ def _collect_runtime_stats(agent: "Agent", info: DebugInfo) -> None:
     except Exception:
         pass
 
+    # Task 7（记忆 v2 隔离）：agent.memory_reflector/consolidator 现经 registry 解析
+    # （可能 None——无 default runtime 或未预置时）。None 时记 0 / 空，不抛。
     mr = agent.memory_reflector
-    info.mreflector_exists = True
-    info.mreflector_round_count = mr._round_count  # noqa: SLF001
-    info.mreflector_round_threshold = mr.ROUND_THRESHOLD
-    info.mreflector_new_memory_count = mr._new_memory_count  # noqa: SLF001
-    info.mreflector_memory_threshold = mr.NEW_MEMORY_THRESHOLD
-    info.mreflector_locked = mr._lock.locked()  # noqa: SLF001
-    info.mreflector_last_summary = dict(mr._last_summary) if mr._last_summary else {}  # noqa: SLF001
+    info.mreflector_exists = mr is not None
+    info.mreflector_round_count = mr._round_count if mr else 0  # noqa: SLF001
+    info.mreflector_round_threshold = mr.ROUND_THRESHOLD if mr else 0
+    info.mreflector_new_memory_count = mr._new_memory_count if mr else 0  # noqa: SLF001
+    info.mreflector_memory_threshold = mr.NEW_MEMORY_THRESHOLD if mr else 0
+    info.mreflector_locked = mr._lock.locked() if mr else False  # noqa: SLF001
+    info.mreflector_last_summary = (dict(mr._last_summary) if (mr and mr._last_summary) else {})  # noqa: SLF001
 
     cons = agent.consolidator
-    info.consolidator_buffer_size = len(cons._buffer)  # noqa: SLF001
-    info.consolidator_threshold = cons._threshold  # noqa: SLF001
+    info.consolidator_buffer_size = len(cons._buffer) if cons else 0  # noqa: SLF001
+    info.consolidator_threshold = cons._threshold if cons else 0  # noqa: SLF001
 
     try:
         # Task 12（§6.5 读端迁移）：mood 读当前 instance engine.state（实例权威）。

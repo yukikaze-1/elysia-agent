@@ -430,6 +430,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         if self._tool_adapter is not None:
             svc = self._tool_adapter.tool_context.services
             svc["session"] = target
+            # Task 7（记忆 v2 隔离）：per-turn 注入 scoped memory_view（runtime.memory_view，
+            # 按本回合 instance scope 过滤）——取代 _lifecycle_tools 的全局裸 _long_term 单例。
+            svc["memory"] = runtime.memory_view
             svc["_session_msg_count"] = len(target.messages)
 
         rid = get_request_id()
@@ -796,7 +799,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
 
     async def _after_response(self, user_message: str, assistant_response: str, *,
                               session: SessionMemory | None = None,
-                              engine: "CharacterEngine | None" = None) -> None:
+                              engine: "CharacterEngine | None" = None,
+                              consolidator: MemoryConsolidator | None = None,
+                              memory_reflector: MemoryReflector | None = None) -> None:
         """Post-response 钩子：沉淀记忆、性格反思、保存会话。
 
         以 fire-and-forget 方式由 _finalize_turn 调用。
@@ -809,6 +814,11 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 in-flight 异步延续落错会话；None 时回退 self._session）
             engine: 批次 3 本轮 CharacterEngine（局部捕获——buffer_message 归属；
                 None 时回退 self._engine）
+            consolidator: Task 7（记忆 v2 隔离）本轮 runtime 的 per-runtime consolidator
+                （局部捕获——防 resolver 切走后异步延续落错 instance；None 时回退
+                self._consolidator，仍保持 None，仅作兼容 fallback）
+            memory_reflector: Task 7（记忆 v2 隔离）本轮 runtime 的 per-runtime reflector
+                （局部捕获同 above；None 时回退 self._memory_reflector，仍保持 None）
         """
         # shutdown 门禁——stop() 开始后（cognitive task 已 cancel、LLM/session repo 将关闭），
         # 本轮 turn 收尾新创建的 after_response task 立即退出，避免与已关闭资源并发。
@@ -824,12 +834,18 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # C3/P1-10：在首个 await 前固化发起会话的 reflector——consolidate await 期间
         # session switch 会 rebind engine._reflector，晚读会写到新会话的 reflector。
         target_reflector = getattr(target_engine, "_reflector", None) if target_engine else None
+        # Task 7（记忆 v2 隔离）：per-runtime consolidator/reflector 局部捕获（anti-race，
+        # 与 session/engine 同构）。self._consolidator/_memory_reflector 恒 None（已删单例），
+        # 仅作直接构造 loop 的测试路径 fallback。
+        target_consolidator = consolidator if consolidator is not None else self._consolidator
+        target_memory_reflector = (memory_reflector if memory_reflector is not None
+                                   else self._memory_reflector)
 
         items = []  # 初始化，避免 NameError
-        if self._consolidator:
+        if target_consolidator:
             try:
                 t0 = time.perf_counter()
-                items = await self._consolidator.consolidate(user_message, assistant_response)
+                items = await target_consolidator.consolidate(user_message, assistant_response)
                 if items:
                     logger.debug("记忆沉淀: %d 条 (%d ms)", len(items),
                                  int((time.perf_counter() - t0) * 1000))
@@ -848,13 +864,13 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             except Exception:
                 logger.warning("性格反思缓冲失败", exc_info=True)
         # 更新 MemoryReflector 计数器
-        if self._memory_reflector:
-            self._memory_reflector.increment_round()
+        if target_memory_reflector:
+            target_memory_reflector.increment_round()
             if items:
-                self._memory_reflector.increment_new_memories(len(items))
+                target_memory_reflector.increment_new_memories(len(items))
             # 检查是否需要触发去重（非阻塞，快速判断）
             try:
-                await self._memory_reflector.check_and_reflect()
+                await target_memory_reflector.check_and_reflect()
             except Exception:
                 logger.warning("MemoryReflector check failed", exc_info=True)
         # 异步保存会话（fire-and-forget，不阻塞本轮）

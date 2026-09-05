@@ -65,7 +65,8 @@ class _LifecycleTools:
            经 ToolContext.services 供 desktop 插件 `ctx.services.get("desktop_bridge")`。
         """
         extra_services = {
-            "memory": self._long_term,
+            # Task 7（记忆 v2 隔离）：不再裸注入全局 _long_term 单例——per-turn 在
+            # _prepare_turn（loop.py）注入 svc["memory"] = runtime.memory_view（scoped）。
             "scheduler": self._scheduler,
             "config": self._config,
             "session": self.session,

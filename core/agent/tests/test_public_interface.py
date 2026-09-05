@@ -31,8 +31,6 @@ SUBSYSTEM_PROPS = [
     ("cognitive", "_cognitive", False),
     ("idle", "_idle", False),
     ("scheduler", "_scheduler", False),
-    ("consolidator", "_consolidator", False),
-    ("memory_reflector", "_memory_reflector", False),
     ("character", "_character", False),
 ]
 STARTUP_PROPS = [
@@ -80,6 +78,37 @@ class TestCharacterM3Properties:
     def test_character_reflector_resolves_from_engine(self, agent):
         """character_reflector 返回当前 instance engine 的 reflector。"""
         assert agent.character_reflector is agent.character_engine._reflector
+
+
+class TestMemoryV2Properties:
+    """Task 7（记忆 v2 隔离）：consolidator/memory_reflector 经 registry 解析 default runtime。
+
+    不再 attr 直通（_consolidator/_memory_reflector 全局单例已删）——per-runtime 化后
+    由 _make_runtime 构造挂 CharacterRuntime。未预置 instance 时返回 None（不抛、不污染
+    registry——get(..., lambda: None) 会把 None 存进 _runtimes，杜绝该模式）。
+    """
+
+    def test_default_consolidator_resolves_via_registry(self, agent):
+        """consolidator 返回 registry 中 default instance 的 per-runtime consolidator。"""
+        rt = agent._runtime_registry._runtimes.get("chi_builtin_elysia")  # noqa: SLF001
+        assert rt is not None
+        assert agent.consolidator is rt.consolidator
+        assert agent.consolidator is not None
+
+    def test_default_memory_reflector_resolves_via_registry(self, agent):
+        """memory_reflector 返回 registry 中 default instance 的 per-runtime reflector。"""
+        rt = agent._runtime_registry._runtimes.get("chi_builtin_elysia")  # noqa: SLF001
+        assert rt is not None
+        assert agent.memory_reflector is rt.reflector
+        assert agent.memory_reflector is not None
+
+    def test_scoped_view_shares_long_term(self, agent):
+        """memory_view 绑定 default scope 且共享同一 LongTermMemory（_long_term）。"""
+        rt = agent._runtime_registry._runtimes.get("chi_builtin_elysia")  # noqa: SLF001
+        view = rt.memory_view
+        assert view is not None
+        assert view.scope.character_instance_id == "chi_builtin_elysia"
+        assert view._long_term is agent.long_term  # noqa: SLF001
 
 
 class TestStartupProperties:
