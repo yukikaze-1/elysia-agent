@@ -234,7 +234,46 @@ class CognitiveFinalize:
         await self._mark_generation_completed()
         await self._emit_turn_completed(conversation_id, target)
         await self._flush_runtime_at_turn_boundary()
+        await self._emit_state_change_if_needed(conversation_id)
         await self._transition_idle()
+
+    async def _emit_state_change_if_needed(self, conversation_id: SessionId | None) -> None:
+        """回合边界按 mood 变化发射 character.state.changed。
+
+        发射点:flush 调完之后(stateVersion 已 CAS 递增,见 spec §3.3/§7.2)。
+        仅 v2 + character_state_stream=true 且 mood 真变化时发射——不比较 updated_at
+        (展示字段)/proactiveEnabled(immutable 常量)。
+
+        [B2 修复] 必须 gate protocol_version >= 2(对齐 finalize.py:82 现有 turn_completed
+        模式)——否则 v1 turn 也会进此广播,破坏 v1 wire 不变性。channels 用
+        self._output._split_versions() 取 v2 通道(不广播到 v1)。
+        [B1 修复] OutputManager 只有私有 _broadcast(无公开 broadcast),且是 async——
+        需 await self._output._broadcast(...)。
+        """
+        ctx = self._generation_ctx
+        if ctx is None or ctx.protocol_version < 2:
+            return
+        runtime = self._current_runtime
+        if runtime is None:
+            return
+        try:
+            view = runtime.public_state()
+            if not runtime.has_public_state_changed(view):
+                return
+            runtime._last_public_state = view  # noqa: SLF001
+            _v1, v2 = self._output._split_versions()  # noqa: SLF001 —— OutputManager 无公开 broadcast
+            await self._output._broadcast(  # noqa: SLF001
+                "on_character_state_changed",
+                conversation_id=conversation_id,
+                character_id=runtime.definition.characterId,
+                character_instance_id=runtime.instance.instanceId,
+                character_revision=runtime.revision.revision,
+                state_version=runtime.stateVersion,
+                state=view,
+                channels=v2,
+            )
+        except Exception:
+            logger.debug("回合边界 state change 发射失败", exc_info=True)
 
     async def _flush_runtime_at_turn_boundary(self) -> None:
         """M3（I1 修复）：回合边界持久化 runtime 状态。
