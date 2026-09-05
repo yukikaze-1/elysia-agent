@@ -820,7 +820,7 @@ Create `core/cognitive/tests/test_finalize.py`:
 mock _output —— 不跑完整 turn(完整链路由 Task 5 snapshot 测试 + test_v2_empty_response 覆盖)。
 """
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from core.cognitive.finalize import CognitiveFinalize
 from core.schema.types import SessionId
@@ -829,12 +829,18 @@ pytestmark = pytest.mark.service
 
 
 def _host(protocol_version=2):
-    """构造 CognitiveFinalize mixin 宿主(mock _output/_generation_ctx/_current_runtime)。"""
-    host = MagicMock(spec=CognitiveFinalize)
+    """构造 CognitiveFinalize mixin 宿主(无 spec MagicMock——spec 会阻止设置 _output,
+    因 _output 只是类型占位注解 finalize.py:43,非类属性,spec 判定后 _output 不可设)。
+
+    用平凡 MagicMock(不设 spec)让 _generation_ctx/_current_runtime/_output 可设;
+    调 CognitiveFinalize._emit_state_change_if_needed(host, ...) 走类的真实 unbound 方法。
+    """
+    host = MagicMock()
     host._generation_ctx = MagicMock(protocol_version=protocol_version)
     host._current_runtime = MagicMock()
     v2_channel = MagicMock()
     host._output._split_versions.return_value = ([], [v2_channel])
+    host._output._broadcast = AsyncMock()  # _broadcast 是 async 方法——实现里 await self._output._broadcast(...)
     return host, v2_channel
 
 
@@ -875,7 +881,9 @@ async def test_no_mood_change_does_not_emit():
     host._output._broadcast.assert_not_awaited()
 ```
 
-Note: `CognitiveFinalize` 是 mixin(`finalize.py:36 class CognitiveFinalize`),用 `spec=CognitiveFinalize` 的 MagicMock + unbound 方法调用(`CognitiveFinalize._emit_state_change_if_needed(host, ...)`)最直接——`_emit_state_change_if_needed` 只依赖 `_generation_ctx`/`_current_runtime`/`_output`(都是宿主属性,已 mock)。
+Note: `CognitiveFinalize` 是 mixin(`finalize.py:36 class CognitiveFinalize`)。测试用**无 spec 的 MagicMock host**(不能用 `spec=CognitiveFinalize`——会阻止设置 `_output`,因 `_output` 只是类型占位注解非类属性)+ unbound 方法调用(`CognitiveFinalize._emit_state_change_if_needed(host, ...)`)最直接——`_emit_state_change_if_needed` 只依赖 `_generation_ctx`/`_current_runtime`/`_output`(都是宿主属性,已 mock)。
+
+> TDD 说明:Step 1 写测试时 `_emit_state_change_if_needed` 尚未实现,`CognitiveFinalize._emit_state_change_if_needed(host, ...)` 会 AttributeError(方法不存在)→ 测试 fail(正确)。Step 3 实现该方法后,unbound 调用经类真实方法以 host 为 self,读取 host 的已 mock 属性,测试通过。
 
 - [ ] **Step 2: Run to verify fails**
 
