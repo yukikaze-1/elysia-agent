@@ -4,8 +4,15 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from core.memory.long_term import LongTermMemory, MemoryEntry
+from core.memory.scope import MemoryScope
 from core.schema.memory import MemoryType
 from core.schema.types import MemoryId
+
+
+@pytest.fixture
+def memory_scope() -> MemoryScope:
+    """测试用的固定 scope（Task 9：无 scope 调用点迁移）。"""
+    return MemoryScope(user_id="usr_a", character_instance_id="chi_a")
 
 
 @pytest.fixture(autouse=True)
@@ -78,19 +85,21 @@ class TestPKMatching:
     """PK 匹配: 同文异构条目各自获得正确 distance。"""
 
     @pytest.mark.asyncio
-    async def test_only_matching_pk_appears(self):
+    async def test_only_matching_pk_appears(self, memory_scope):
         """Milvus 只返回一个 PK 时，仅该 PK 对应条目出现（旧代码 text 匹配会两个都出现）。"""
 
         ltm = LongTermMemory(max_entries=10)
 
-        # 两个同文异构条目
+        # 两个同文异构条目（scope 字段与 memory_scope 对齐，参与 scope 过滤）
         e1 = MemoryEntry(
             id="id-1", text="我喜欢吃披萨", memory_type="note",
             poignancy=5, timestamp=1000.0, _milvus_pk=101,
+            user_id="usr_a", character_instance_id="chi_a",
         )
         e2 = MemoryEntry(
             id="id-2", text="我喜欢吃披萨", memory_type="note",
             poignancy=8, timestamp=2000.0, _milvus_pk=102,
+            user_id="usr_a", character_instance_id="chi_a",
         )
         ltm._entries = [e1, e2]
 
@@ -102,7 +111,7 @@ class TestPKMatching:
         mock_repo.health_check = AsyncMock(return_value=True)
         ltm._repo = mock_repo
 
-        results = await ltm.search(query_embedding=[0.1] * 896, top_k=5)
+        results = await ltm.search(query_embedding=[0.1] * 896, top_k=5, scope=memory_scope)
 
         # 只有 e1 应该出现（PK 匹配），e2 不应出现（其 PK 不在 Milvus 结果中）
         ids_in_results = {e.id for e in results}
@@ -112,7 +121,7 @@ class TestPKMatching:
         )
 
     @pytest.mark.asyncio
-    async def test_both_pks_in_results_both_appear(self):
+    async def test_both_pks_in_results_both_appear(self, memory_scope):
         """两个不同 PK 的条目都在 Milvus 结果中时，两个都应出现且各自正确 distance。"""
 
         ltm = LongTermMemory(max_entries=10)
@@ -120,10 +129,12 @@ class TestPKMatching:
         e1 = MemoryEntry(
             id="id-1", text="同文", memory_type="note",
             poignancy=5, timestamp=1000.0, _milvus_pk=101,
+            user_id="usr_a", character_instance_id="chi_a",
         )
         e2 = MemoryEntry(
             id="id-2", text="同文", memory_type="note",
             poignancy=5, timestamp=1000.0, _milvus_pk=102,
+            user_id="usr_a", character_instance_id="chi_a",
         )
         ltm._entries = [e1, e2]
 
@@ -135,7 +146,7 @@ class TestPKMatching:
         mock_repo.health_check = AsyncMock(return_value=True)
         ltm._repo = mock_repo
 
-        results = await ltm.search(query_embedding=[0.1] * 896, top_k=5)
+        results = await ltm.search(query_embedding=[0.1] * 896, top_k=5, scope=memory_scope)
 
         # 两个 PK 都在 Milvus 结果中 → 两个都出现
         ids_in_results = {e.id for e in results}
@@ -148,7 +159,7 @@ class TestPKMatching:
         assert idx1 < idx2, f"e1 (distance=0.3) 应排在 e2 (distance=0.7) 之前，实际: {idx1} vs {idx2}"
 
     @pytest.mark.asyncio
-    async def test_text_fallback_when_no_milvus_id(self):
+    async def test_text_fallback_when_no_milvus_id(self, memory_scope):
         """Milvus 返回结果中无 id 字段或无 PK 时，走 text fallback 匹配。"""
 
         ltm = LongTermMemory(max_entries=10)
@@ -157,10 +168,12 @@ class TestPKMatching:
         e1 = MemoryEntry(
             id="old-1", text="历史记忆", memory_type="note",
             poignancy=5, timestamp=1000.0, _milvus_pk=None,
+            user_id="usr_a", character_instance_id="chi_a",
         )
         e2 = MemoryEntry(
             id="e2", text="无ID字段测试", memory_type="note",
             poignancy=5, timestamp=1000.0, _milvus_pk=None,
+            user_id="usr_a", character_instance_id="chi_a",
         )
         ltm._entries = [e1, e2]
 
@@ -173,7 +186,7 @@ class TestPKMatching:
         mock_repo.health_check = AsyncMock(return_value=True)
         ltm._repo = mock_repo
 
-        results = await ltm.search(query_embedding=[0.1] * 896, top_k=5)
+        results = await ltm.search(query_embedding=[0.1] * 896, top_k=5, scope=memory_scope)
 
         assert len(results) == 2
         result_ids = {r.id for r in results}
@@ -295,20 +308,26 @@ class TestMemoryTypeNormalization:
         assert e.memory_type is MemoryType.NOTE
 
     @pytest.mark.asyncio
-    async def test_search_filter_case_insensitive(self):
+    async def test_search_filter_case_insensitive(self, memory_scope):
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
-        await mem.insert("工作计划A", memory_type="plan")
-        hits = await mem.search(query_text="工作", memory_type="PLAN", top_k=10)
+        await mem.insert("工作计划A", memory_type="plan",
+                         user_id=memory_scope.user_id,
+                         character_instance_id=memory_scope.character_instance_id)
+        hits = await mem.search(query_text="工作", memory_type="PLAN", top_k=10,
+                                scope=memory_scope)
         assert len(hits) == 1
         assert hits[0].memory_type is MemoryType.PLAN
 
     @pytest.mark.asyncio
-    async def test_search_filter_unknown_returns_empty(self):
+    async def test_search_filter_unknown_returns_empty(self, memory_scope):
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
-        await mem.insert("工作计划A", memory_type="plan")
-        hits = await mem.search(query_text="工作", memory_type="bogus", top_k=10)
+        await mem.insert("工作计划A", memory_type="plan",
+                         user_id=memory_scope.user_id,
+                         character_instance_id=memory_scope.character_instance_id)
+        hits = await mem.search(query_text="工作", memory_type="bogus", top_k=10,
+                                scope=memory_scope)
         assert hits == []
 
 
@@ -378,23 +397,27 @@ class TestMemoryOfflineConsistency:
         return ltm
 
     @pytest.mark.asyncio
-    async def test_insert_empty_pk_marks_dirty(self):
+    async def test_insert_empty_pk_marks_dirty(self, memory_scope):
         """repo 离线（insert 返回空 PK）→ 不能视为成功，标记 dirty 待同步。"""
         repo = FakeMemoryRepo()  # insert 返回 []
         ltm = await self._ltm_with_embedding(repo)
 
-        await ltm.insert("离线记忆", source="consolidation")
+        await ltm.insert("离线记忆", source="consolidation",
+                         user_id=memory_scope.user_id,
+                         character_instance_id=memory_scope.character_instance_id)
 
         entry = ltm._entries[0]  # noqa: SLF001
         assert entry._milvus_pk is None  # noqa: SLF001
         assert entry.id in ltm._dirty_ids  # noqa: SLF001 — 未假成功
 
     @pytest.mark.asyncio
-    async def test_sync_dirty_keeps_dirty_on_empty_pk(self):
+    async def test_sync_dirty_keeps_dirty_on_empty_pk(self, memory_scope):
         """sync 遇空 PK（仍离线）→ 保留 dirty 不计数；拿到 PK 后才移除。"""
         repo = FakeMemoryRepo()  # 第一轮 []，第二轮可补
         ltm = await self._ltm_with_embedding(repo)
-        await ltm.insert("x", source="consolidation")
+        await ltm.insert("x", source="consolidation",
+                         user_id=memory_scope.user_id,
+                         character_instance_id=memory_scope.character_instance_id)
         eid = ltm._entries[0].id  # noqa: SLF001
 
         first = await ltm.sync_dirty_entries()
@@ -408,16 +431,18 @@ class TestMemoryOfflineConsistency:
         assert ltm._entries[0]._milvus_pk == 42  # noqa: SLF001
 
     @pytest.mark.asyncio
-    async def test_delete_offline_records_pending_tombstone(self):
+    async def test_delete_offline_records_pending_tombstone(self, memory_scope):
         """离线删除（repo.delete 返回 0）→ 记持久 tombstone，不复活旧行。"""
         repo = FakeMemoryRepo(delete_result=0)
         ltm = await self._ltm_with_embedding(repo)
-        await ltm.insert("x", source="consolidation")
+        await ltm.insert("x", source="consolidation",
+                         user_id=memory_scope.user_id,
+                         character_instance_id=memory_scope.character_instance_id)
         entry = ltm._entries[0]  # noqa: SLF001
         entry._milvus_pk = 7  # noqa: SLF001 — 已同步
         await ltm.sync_dirty_entries()
 
-        assert await ltm.delete(entry.id) is True
+        assert await ltm.delete(entry.id, scope=memory_scope) is True
         assert entry.id in ltm._pending_deletes  # noqa: SLF001 — tombstone
         assert ltm._pending_deletes[entry.id] == 7  # noqa: SLF001
 

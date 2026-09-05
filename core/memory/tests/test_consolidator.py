@@ -165,7 +165,8 @@ class TestMemoryConsolidator:
             {"type": "Preference", "content": "喜欢蓝色", "poignancy": 5},
             {"type": "Plan", "content": "明天去爬山", "poignancy": 5},
         ])))
-        mem = LongTermMemory()
+        ltm = LongTermMemory()
+        mem = ltm.for_scope(MemoryScope(user_id="usr_a", character_instance_id="chi_a"))
         consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
 
         items = await consolidator.consolidate(
@@ -185,7 +186,8 @@ class TestMemoryConsolidator:
         from core.tests.fake_llm import FakeLLMBackend
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
-        mem = LongTermMemory()
+        ltm = LongTermMemory()
+        mem = ltm.for_scope(MemoryScope(user_id="usr_a", character_instance_id="chi_a"))
         consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
 
         items = await consolidator.consolidate("", "")
@@ -219,16 +221,17 @@ class TestMemoryConsolidator:
                     text = '[{"type": "Fact", "content": "测试flush", "poignancy": 5}]'
                 return R()
 
-        mem = LongTermMemory()
+        ltm = LongTermMemory()
+        mem = ltm.for_scope(MemoryScope(user_id="usr_a", character_instance_id="chi_a"))
         c = MemoryConsolidator(FakeLLM(), mem, buffer_threshold=10)  # type: ignore[arg-type]
         await c.consolidate("user msg 1", "assistant reply 1")
         await c.consolidate("user msg 2", "assistant reply 2")
         await c.consolidate("user msg 3", "assistant reply 3")
-        assert mem.count == 0  # below threshold, not yet consolidated
+        assert ltm.count == 0  # below threshold, not yet consolidated
 
         items = await c.flush()
         assert len(items) > 0
-        assert mem.count > 0
+        assert ltm.count > 0
 
     @pytest.mark.asyncio
     async def test_concurrent_consolidate_keeps_new_messages(self):
@@ -245,7 +248,8 @@ class TestMemoryConsolidator:
                     text = "[]"
                 return R()
 
-        mem = LongTermMemory()
+        ltm = LongTermMemory()
+        mem = ltm.for_scope(MemoryScope(user_id="usr_a", character_instance_id="chi_a"))
         c = MemoryConsolidator(BlockingLLM(), mem, "Bot", buffer_threshold=2)  # type: ignore[arg-type]
 
         t1 = asyncio.create_task(c.consolidate("u1", "a1"))
@@ -303,15 +307,16 @@ class TestMemoryConsolidatorEdgeCases:
         from core.tests.fake_llm import FakeLLMBackend
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
-        mem = LongTermMemory()
+        ltm = LongTermMemory()
+        mem = ltm.for_scope(MemoryScope(user_id="usr_a", character_instance_id="chi_a"))
         consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
-        count_before = mem.count
+        count_before = ltm.count
 
         await consolidator.consolidate(
             "我叫妖梦，我的生日是5月20日",
             "好的妖梦！我记住了，你叫妖梦，生日是5月20日。到时候要提醒我给你过生日哦～"
         )
-        assert mem.count >= count_before
+        assert ltm.count >= count_before
 
         await adapter.close()
 
@@ -321,7 +326,8 @@ class TestMemoryConsolidatorEdgeCases:
         from core.tests.fake_llm import FakeLLMBackend
 
         adapter = LLMAdapter(_test_backend=FakeLLMBackend())
-        mem = LongTermMemory()
+        ltm = LongTermMemory()
+        mem = ltm.for_scope(MemoryScope(user_id="usr_a", character_instance_id="chi_a"))
         consolidator = MemoryConsolidator(adapter, mem, "TestBot", buffer_threshold=1)
 
         long_msg = "长消息" * 300
