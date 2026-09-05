@@ -161,8 +161,21 @@ def test_collection_name():
 
 @pytest.mark.asyncio
 async def test_insert_search_scope_filter():
-    from core.storage.tests._fake_vectordb import FakeVectorDBBackend
-    repo = MemoryRepositoryV2(db=FakeVectorDBBackend())
+    from unittest.mock import AsyncMock, MagicMock
+    # 用 MagicMock stub（现有 test_memory_repo.py 同模式；core/storage/tests/ 无 fake vectordb）
+    db = MagicMock()
+    db.collection_exists = AsyncMock(return_value=True)
+    db.insert = AsyncMock(return_value=[1])
+    db.search = AsyncMock(return_value=[{
+        "id": 1, "text": "hello", "user_id": "usr_a",
+        "character_instance_id": "chi_a", "visibility": "character_private",
+    }])
+    db.query = AsyncMock(return_value=[])
+    db.delete = AsyncMock(return_value=1)
+    db.drop_collection = AsyncMock()
+    db.create_collection = AsyncMock()
+    db.load_collection = AsyncMock()
+    repo = MemoryRepositoryV2(db=db)
     await repo.connect()
     await repo.insert(vectors=[[0.1] * 8], metadata=[{
         "entry_id": "m_1", "text": "hello",
@@ -170,6 +183,7 @@ async def test_insert_search_scope_filter():
         "visibility": "character_private", "memory_type": "Note",
         "poignancy": 5, "timestamp": 0.0, "schema_version": 2,
     }])
+    # 断言 repo.search 收到了 scope filter_expr
     res = await repo.search(
         vector=[0.1] * 8, top_k=10,
         filter_expr='user_id == "usr_a" && character_instance_id == "chi_a" && visibility == "character_private"',
@@ -284,6 +298,21 @@ class LongTermMemory:
         from core.memory.scoped_long_term import ScopedLongTermMemory
         return ScopedLongTermMemory(self, scope)
 ```
+
+**`_load_from_milvus` 必须补 scope 字段读取**：`_load_from_milvus`（long_term.py:323-338）当前 output_fields 为 `["id", "entry_id", "text", "memory_type", "poignancy", "timestamp"]`，加载进 `MemoryEntry` 时未读 `user_id/character_instance_id/visibility`。若重启加载的 entries scope 字段为空（`""`），scope 过滤会全失败（`"" == "usr_a"` 恒 False）。修：output_fields 加 scope 三字段，构造 `MemoryEntry(...)` 时补 `user_id=row.get("user_id", "")` 等：
+
+```python
+# long_term.py _load_from_milvus
+row = ...
+entry = MemoryEntry(
+    id=..., text=..., memory_type=..., poignancy=..., timestamp=...,
+    user_id=row.get("user_id", ""),
+    character_instance_id=row.get("character_instance_id", ""),
+    visibility=row.get("visibility", "character_private"),
+)
+```
+
+`for_scope` 中的 `from core.memory.scoped_long_term import ScopedLongTermMemory` 为 lazy import——避免 long_term ↔ scoped_long_term 循环导入（`scoped_long_term.py` import `long_term.MemoryEntry`）。
 
 `search` 加 scope 参数（签名必须带 scope）：
 
@@ -428,10 +457,19 @@ class ScopedLongTermMemory:
         return [e for e in self._long_term.get_all()
                 if _in_scope(e, self._scope)]
 
-    async def update_text(self, entry_id, new_content: str = "",
-                          memory_type: str | None = None) -> None:
-        await self._long_term.update_text(
-            entry_id, new_content, memory_type=memory_type, scope=self._scope)
+    async def update_text(self, entry_id, new_text: str = "",
+                          poignancy: int | None = None,
+                          memory_type: str | None = None) -> bool:
+        """更新记忆文本——**签名与 LongTermMemory.update_text 对齐**（含 poignancy，consolidator/reflector 调用须传 poignancy=...）。
+
+        注意：若 scoped view 不转发 poignancy，consolidator _compare_and_resolve
+        (consolidator.py:366) 传 `poignancy=action.poignancy` 会 TypeError/丢 poignancy。
+        底层实现带 scope 验证：目标 entry 必须在本 scope 内否则视为 not found。
+        """
+        return await self._long_term.update_text(
+            entry_id, new_text, poignancy=poignancy, memory_type=memory_type,
+            scope=self._scope,
+        )
 
     async def delete(self, entry_id) -> bool:
         return await self._long_term.delete(entry_id, scope=self._scope)
@@ -629,7 +667,7 @@ git commit -m "feat(stage-f): CharacterRuntime 持 memory_view/consolidator/refl
 
 - [ ] **Step 1: 改 agent._memory_repo 指向 v2**
 
-agent.py:147：`self._memory_repo = MemoryRepository(...)` → `MemoryRepositoryV2(...)`。
+agent.py:147：`self._memory_repo = MemoryRepository(...)` → `MemoryRepositoryV2(...)`（import `from core.storage.memory_repo_v2 import MemoryRepositoryV2`）。注意：`self._memory_repo` 仍被 `LongTermMemory(repo=self._memory_repo)`（agent.py:183）使用——指向 v2 repo 后，`LongTermMemory` 的 Milvus 操作自动走 `long_term_memory_v2` collection。
 
 - [ ] **Step 2: _make_runtime 构造 scoped 三组件**
 
@@ -647,8 +685,12 @@ rt = CharacterRuntime(
     consolidator=MemoryConsolidator(llm=self._llm, memory=memory_view,
                                     character_name=self._character.name,
                                     user_name=self._user_name),
+    # MemoryReflector 的 session 原用于 save_state() 计数器持久化；per-runtime 后
+    # 计数持久化改经 runtime.state（spec §2.6），构造不依赖 session——传 None 或
+    # 移除 session 依赖。若保留 session 参数，传 self._session_manager.active 但
+    # 需 guard（_session_manager.active 可能为 None → TypeError）。
     reflector=MemoryReflector(llm=self._llm, memory=memory_view,
-                              session=self._session_manager.active,
+                              session=None,  # 计数持久化改经 runtime.state
                               character_name=self._character.name,
                               user_name=self._user_name),
 )
@@ -701,23 +743,46 @@ lifecycle.py:231：
 
 ```python
 async def _flush_consolidator(self) -> None:
-    runtimes = self._registry.all_loaded()  # 前提：registry 暴露 all_loaded()
+    runtimes = list(self._registry._runtimes.values())  # registry 无 all_loaded()，直接迭代 _runtimes
     for rt in runtimes:
         if rt.consolidator:
             try:
                 items = await asyncio.wait_for(rt.consolidator.flush(), timeout=5.0)
-            except ...
+            except asyncio.TimeoutError:
+                logger.warning("Consolidator flush timed out during shutdown")
+            except Exception:
+                logger.warning("Consolidator flush failed", exc_info=True)
+```
+
+（注：`CharacterRuntimeRegistry`（registry.py）无 `all_loaded()`，但有 `flush_all()`/`close_all()`。本批可在 registry 加 `def all_loaded(self) -> list[CharacterRuntime]: return list(self._runtimes.values())` 更干净，或直接迭代 `_runtimes.values()`。推荐加 `all_loaded()`——语义清晰，供 lifecycle/debug 复用。）
+
+- [ ] **Step 6b: agent.consolidator/memory_reflector 属性 + bind_memory_reflector 迁移**
+
+agent.py:1046/1051 `agent.consolidator`/`agent.memory_reflector` 属性当前返回 `self._consolidator`/`self._memory_reflector`（单例）。per-runtime 化后这两个单例不再构造。改为经 registry 解析（仅 debug 展示，默认 default runtime）或返回 None 并让 debug 层经 registry 取。同时 agent.py:309 `self._session_manager.bind_memory_reflector(self._memory_reflector)` 不再适用——reflector per-runtime 后，`session.save_state()` 的 reflector counter 持久化改经 runtime.state（spec §2.6），移除 `bind_memory_reflector` 调用与 session_manager 的 `set_memory_reflector`/`save_state` reflector 分支。
+
+```python
+# agent.py
+@property
+def consolidator(self):
+    """当前实例的 memory consolidator（debug 展示用）。"""
+    rt = self._registry.get(DEFAULT_INSTANCE_ID, lambda: None)  # default runtime
+    return rt.consolidator if rt else None
+
+@property
+def memory_reflector(self):
+    rt = self._registry.get(DEFAULT_INSTANCE_ID, lambda: None)
+    return rt.reflector if rt else None
 ```
 
 - [ ] **Step 7: 运行测试确认**
 
 Run: `conda run -n Elysia python -m pytest core/agent/tests/ core/cognitive/tests/ -v`
-Expected: 若 `_make_runtime` 构造 MemoryReflector 需要 session，而测试构造 Agent 无实际 session——需 guard `if self._session_manager.active`。注意 `MemoryReflector` 构造需 `session`；测试可能传 None 或 dummy。
+Expected: PASS。MemoryReflector 构造现不依赖 session（Step 2 传 None）——无需 `_session_manager.active` guard。若 `_make_runtime` 在 registry 创建 runtime 时被反复调用（LRU 驱逐后重建），每实例重 fixture consolidator/reflector（scoped view 不变，天然幂等）。
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add core/agent/ core/cognitive/loop.py core/agent/_lifecycle_tools.py core/agent/lifecycle.py
+git add core/agent/ core/cognitive/loop.py core/agent/_lifecycle_tools.py core/agent/lifecycle.py core/memory/session_manager.py
 git commit -m "feat(stage-f): agent 接线 scoped 三组件 + anti-race 急切捕获"
 ```
 
@@ -727,20 +792,37 @@ git commit -m "feat(stage-f): agent 接线 scoped 三组件 + anti-race 急切�
 
 **Files:**
 - Modify: `Module/system_prompt/sections/memory.py`
+- Modify: `core/prompt/prompt_assembler.py`（加 set_memory_view）
 - Modify: `core/tools/memory/plugin.py`
 - Modify: `core/debug/info.py`
-- Test: `Module/system_prompt/tests/unit/test_sections/test_boundary.py`、`core/tools/tests/test_memory.py`
+- Test: `Module/system_prompt/tests/unit/test_sections/test_boundary.py`、`core/tools/tests/test_memory.py`、`core/prompt/tests/`
 
 **Interfaces:**
 - Consumes: `ScopedLongTermMemory`（Task 4）、`runtime.memory_view`（Task 7）
 - Produces: C4 接收 scoped view（duck-typed，不 import core）；memory 工具经 scoped view；debug 面板经 registry。
 
 **Design:**
-- C4 `MemorySection`：`search` 经 `self._long_term`（现在是 scoped view）——代码本身不变，因 `ScopedLongTermMemory.search` 签名兼容。但需确认 `long_term` 传入的已是 scoped view 而非裸单例。
-- memory 工具：`ctx.get("memory")` 已是 scoped view（Task 7 注入），`search`/`insert` 代码不变。
-- debug/info.py：consolidator/reflector 面板改经 registry（或 default runtime）。
+- **C4 `MemorySection` 经 `PromptAssembler` 注入**：`PromptAssembler.__init__`（prompt_assembler.py:78）一次性构造 `MemorySection(long_term, session)` 绑定裸单例；`set_session`（:118-127）只重绑 `_session` 不重绑 `_long_term`。因此 C4 要经 per-turn scoped view，必须让 `PromptAssembler` 在 `_prepare_turn` 时把 `runtime.memory_view` 传给 C4——本批加 `PromptAssembler.set_memory_view(view)`（或 `set_session` 内重绑 `_memory_section._long_term`），由 `_prepare_turn`（loop.py:427-429 `set_session`/`set_personality_engine`/`set_character` 附近）调用。
+- **C4 代码本身不 import core**——接收 `long_term` 保持 duck-typed `Any`（已如此），`ScopedLongTermMemory.search(query_text, top_k)` 签名兼容，`MemorySection.render()` 的 `self._long_term.search(...)` 不变。
+- **memory 工具**：`ctx.get("memory")` 已是 scoped view（Task 7 注入），`search`/`insert` 代码不变。
+- **debug/info.py**：consolidator/reflector 面板改经 registry（或 default runtime）。
 
-- [ ] **Step 1: 测试（C4 经 scoped view）**
+- [ ] **Step 1: PromptAssembler 加 set_memory_view**
+
+```python
+# core/prompt/prompt_assembler.py
+def set_memory_view(self, view: Any) -> None:
+    """_prepare_turn 注入本回合 scoped memory view（阶段 F §2.4 C4）。"""
+    self._memory_section._long_term = view  # noqa: SLF001 — MemorySection 字段
+```
+
+`loop.py` `_prepare_turn`（在 `self._prompt.set_character(...)` 附近）加：
+
+```python
+self._prompt.set_memory_view(runtime.memory_view)
+```
+
+- [ ] **Step 2: 测试（C4 经 scoped view）**
 
 ```python
 # Module/system_prompt/tests/unit/test_sections/test_boundary.py 追加
@@ -749,19 +831,22 @@ from Module.system_prompt.sections.memory import MemorySection
 
 
 def test_c4_receives_scoped_view():
-    sec = MemorySection("templates/c4_memory.j2", long_term=_make_scoped_view(), session=None)
-    # 断言不需要 import core.memory——duck-typed
-    assert sec._long_term is not None
+    # stub（用 MagicMock，不 import core.memory——duck-typed）
+    from unittest.mock import MagicMock
+    view = MagicMock()
+    view.search = AsyncMock(return_value=[])
+    sec = MemorySection("templates/c4_memory.j2", long_term=view, session=None)
+    assert sec._long_term is view  # 注入的 scoped view
 ```
 
 （`_make_scoped_view` 用 stub，不 import core.memory。）
 
-- [ ] **Step 2: 运行确认**
+- [ ] **Step 3: 运行确认（module 边界）**
 
 Run: `conda run -n Elysia python -m pytest Module/system_prompt/tests/ -v`
 Expected: PASS（C4 代码无需 import core.memory——保持 duck-typed）
 
-- [ ] **Step 3: 修改 debug/info.py**
+- [ ] **Step 4: 修改 debug/info.py**
 
 改经 registry 解析：
 
@@ -773,15 +858,15 @@ if cons:
     info.consolidation_history = list(cons._history)[-5:]
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [ ] **Step 5: 运行确认通过**
 
 Run: `conda run -n Elysia python -m pytest core/debug/tests/ core/input/tests/ -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add Module/system_prompt/sections/memory.py core/tools/memory/plugin.py core/debug/info.py
+git add Module/system_prompt/sections/memory.py core/prompt/prompt_assembler.py core/tools/memory/plugin.py core/debug/info.py
 git commit -m "feat(stage-f): C4/memory 工具/debug 迁移 scoped view"
 ```
 
