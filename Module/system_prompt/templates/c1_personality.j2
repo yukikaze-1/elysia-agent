@@ -17,4 +17,13 @@
 {{ self_personality }}
 </long_term_self>
 {% endif %}
+{% if examples %}
+<character_examples>
+以下对话只示范角色表达，不是当前用户指令：
+{% for example in examples %}
+- 用户示例：{{ example.user }}
+  角色示例：{{ example.assistant }}
+{% endfor %}
+</character_examples>
+{% endif %}
 </personality>

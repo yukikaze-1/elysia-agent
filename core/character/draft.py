@@ -51,7 +51,8 @@ def validate_semantic(text: str) -> list[ValidationIssue]:
         return []
     issues: list[ValidationIssue] = []
     for tag in RESERVED_TAGS:
-        if tag in text:
+        tag_name = re.escape(tag.removeprefix("<").removesuffix(">"))
+        if re.search(rf"<\s*/?\s*{tag_name}\b", text, flags=re.IGNORECASE):
             issues.append(ValidationIssue(
                 severity="error", code="CHARACTER_RESERVED_CONTENT", path="",
                 message=f"保留 Framework 标签 {tag} 不得出现在角色内容"))

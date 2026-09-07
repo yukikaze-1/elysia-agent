@@ -1,0 +1,10 @@
+{# Generic wrapper for in-conversation initiative, not background scheduling. #}
+{% if conversation_initiative %}
+<proactive>
+<character_authored section="conversation_initiative">
+{{ conversation_initiative }}
+</character_authored>
+
+这里仅描述正在对话时如何接话；用户明确要暂停、独处或结束话题时必须停止追问。
+</proactive>
+{% endif %}

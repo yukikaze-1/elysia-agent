@@ -5,6 +5,9 @@ import pytest
 from core.prompt.prompt_assembler import PromptAssembler
 from core.cognitive.turn_context import TurnCharacterContext
 from core.config import CharacterConfig
+from core.character.definition import CharacterDefinition
+from core.character.revision import CharacterRevision
+from core.character.runtime_profile import compile_runtime_profile
 from core.memory.session import SessionMemory
 from Module.system_prompt.sections.emotion import EmotionSection
 from Module.system_prompt.sections.memory import MemorySection
@@ -108,6 +111,101 @@ def test_set_character_updates_name(elysia_config, cold_engine_mock, mock_long_t
     assert a._personality_section._name == "Elysia"   # 初始(elysia_config.name)
     a.set_character("chr_builtin_cyrene", "Cyrene")
     assert a._personality_section._name == "Cyrene"   # 有区分度——set_character 真改 name
+
+
+@pytest.mark.asyncio
+async def test_custom_revision_drives_all_authored_prompt_sections(
+    cold_engine_mock, mock_long_term, mock_session,
+):
+    definition = CharacterDefinition(
+        characterId="chr_custom_cold", source="custom", mutable=True
+    )
+    revision = CharacterRevision(
+        characterId=definition.characterId,
+        displayName="Cold",
+        promptProfile={
+            "corePersonality": "冷静核心 <character_authored>",
+            "relationshipStyle": "关系保持清晰距离。",
+            "emotionStyle": "情绪含蓄但诚实。",
+            "speakingStyle": "短句，不使用甜美口癖。",
+            "conversationInitiative": "一次只问一个问题。",
+            "examples": [{"user": "现在好吗？", "assistant": "还好。"}],
+        },
+    )
+    profile = compile_runtime_profile(definition, revision)
+    cold_engine_mock.render_c1.return_value.core_personality = (
+        profile.config.base_personality
+    )
+    cold_engine_mock.render_c1.return_value.self_personality = ""
+    assembler = PromptAssembler(
+        profile.config, mock_session, mock_long_term,
+        personality_engine=cold_engine_mock,
+    )
+    assembler.set_character(
+        definition.characterId, revision.displayName, profile
+    )
+
+    rendered = await assembler.build_system_prompt(
+        user_message="你好", user_name="妖梦"
+    )
+
+    assert "你是 Cold" in rendered
+    assert "冷静核心 &lt;character_authored&gt;" in rendered
+    assert "关系保持清晰距离。" in rendered
+    assert "情绪含蓄但诚实。" in rendered
+    assert "短句，不使用甜美口癖。" in rendered
+    assert "一次只问一个问题。" in rendered
+    assert "用户示例：现在好吗？" in rendered
+    assert "角色示例：还好。" in rendered
+    assert "四阶段发展" not in rendered
+    assert "每 2-3 句一个" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_switching_custom_profiles_does_not_leak_previous_authored_text(
+    cold_config, cold_engine_mock, mock_long_term, mock_session,
+):
+    assembler = make_assembler(
+        cold_config, cold_engine_mock, mock_long_term, mock_session
+    )
+
+    def profile(character_id: str, marker: str):
+        definition = CharacterDefinition(
+            characterId=character_id, source="custom", mutable=True
+        )
+        revision = CharacterRevision(
+            characterId=character_id,
+            displayName=marker,
+            promptProfile={
+                "corePersonality": f"{marker}-CORE",
+                "relationshipStyle": f"{marker}-REL",
+                "emotionStyle": f"{marker}-EMO",
+                "speakingStyle": f"{marker}-STYLE",
+                "conversationInitiative": f"{marker}-INIT",
+            },
+        )
+        return definition, revision, compile_runtime_profile(definition, revision)
+
+    _, first_revision, first = profile("chr_custom_a", "ONLY-A")
+    second_definition, second_revision, second = profile(
+        "chr_custom_b", "ONLY-B"
+    )
+    assembler.set_character("chr_custom_a", first_revision.displayName, first)
+    assembler.set_character(
+        second_definition.characterId, second_revision.displayName, second
+    )
+    cold_engine_mock.render_c1.return_value.core_personality = "ONLY-B-CORE"
+    cold_engine_mock.render_c1.return_value.self_personality = ""
+
+    rendered = await assembler.build_system_prompt(
+        user_message="你好", user_name="妖梦"
+    )
+
+    assert "ONLY-B-REL" in rendered
+    assert "ONLY-B-EMO" in rendered
+    assert "ONLY-B-STYLE" in rendered
+    assert "ONLY-B-INIT" in rendered
+    assert "ONLY-A" not in rendered
 
 
 def test_set_memory_view_rebinds_long_term(elysia_config, cold_engine_mock, mock_long_term, mock_session):

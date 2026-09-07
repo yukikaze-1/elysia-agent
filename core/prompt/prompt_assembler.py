@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from core.personality.engine import CharacterEngine
     from core.cognitive.turn_context import TurnCharacterContext
+    from core.character.runtime_profile import RuntimeCharacterProfile
 
 from core.prompt.message_builder import MessageBuilder
 from Module.system_prompt.system_prompt_manager import SystemPromptManager
@@ -77,6 +78,16 @@ class PromptAssembler:
         self._emotion_section = EmotionSection(self._resolve_template("c3_emotion.j2"), session)
         self._memory_section = MemorySection(f"{_SECTION}/c4_memory.j2", long_term, session)
         self._own_life_section = OwnLifeSection(f"{_SECTION}/c8_own_life.j2", session)
+        self._relationship_section = RelationshipSection(
+            self._resolve_template("c2_relationship.j2"), character.name
+        )
+        self._speaking_style_section = SpeakingStyleSection(
+            f"{_SECTION}/c6_speaking_style.j2",
+            speaking_style=character.speaking_style,
+        )
+        self._proactive_section = ProactiveSection(
+            self._resolve_template("c7_proactive.j2")
+        )
 
         sections = [
             ConflictRulesSection(f"{_SECTION}/f1_conflict_rules.j2"),
@@ -86,9 +97,9 @@ class PromptAssembler:
             self._emotion_section,
             self._memory_section,
             self._personality_section,
-            RelationshipSection(self._resolve_template("c2_relationship.j2"), character.name),
-            SpeakingStyleSection(f"{_SECTION}/c6_speaking_style.j2", speaking_style=character.speaking_style),
-            ProactiveSection(self._resolve_template("c7_proactive.j2")),
+            self._relationship_section,
+            self._speaking_style_section,
+            self._proactive_section,
             self._own_life_section,
             self._self_perception_section,
         ]
@@ -106,14 +117,72 @@ class PromptAssembler:
         """更换人格引擎实例（会话切换后 C1/C6/C9 数据来源随角色更新）。"""
         self._personality_engine = engine
 
-    def set_character(self, character_id: str, display_name: str) -> None:
-        """更新 C1 name(spec §6.1/§13 主诉求——#9 双角色 C1 "你是 {{ name }}" 不串)。
+    @staticmethod
+    def _switch_template(section: Any, template_path: str) -> None:
+        """Switch one trusted local template and invalidate its source cache."""
+        if section._template_path != template_path:
+            section._template_path = template_path
+            section._cached_template = None
 
-        review 第 4 轮 re-scope: 本批**只路由 C1 name**(经 _personality_section._name, 渲染时生效)。
-        模板目录 c2/c3/c7 的 per-role 路由 defer——_resolve_template 仅在 __init__ 求值,
-        set_character 改 _character.name 不重绑已建 section, 故不声称模板目录路由(阶段 F/H 再实现)。
+    @staticmethod
+    def _runtime_template(role: str | None, name: str) -> str:
+        if role:
+            candidate = f"{_SECTION}/{role}/{name}"
+            if Path(candidate).exists():
+                return candidate
+        return f"{_SECTION}/custom/{name}"
+
+    def set_character(
+        self,
+        character_id: str,
+        display_name: str,
+        profile: "RuntimeCharacterProfile | None" = None,
+    ) -> None:
+        """Bind all authored/static prompt inputs to the turn's exact revision.
+
+        ``profile=None`` preserves the legacy name-only call for older tests and
+        adapters.  Runtime turns always provide a compiled profile.
         """
         self._personality_section._name = display_name
+        if profile is None:
+            return
+
+        self._character = profile.config
+        role = profile.builtin_template_role
+        authored = role is None
+        self._personality_section.set_authored_profile(
+            authored=authored,
+            examples=tuple(
+                (example.user, example.assistant) for example in profile.examples
+            ) if authored else (),
+        )
+        self._speaking_style_section.set_character_profile(
+            profile.config.speaking_style,
+            authored=authored,
+        )
+
+        self._switch_template(
+            self._relationship_section,
+            self._runtime_template(role, "c2_relationship.j2"),
+        )
+        self._switch_template(
+            self._emotion_section,
+            self._runtime_template(role, "c3_emotion.j2"),
+        )
+        self._switch_template(
+            self._proactive_section,
+            self._runtime_template(role, "c7_proactive.j2"),
+        )
+        self._relationship_section.set_character_profile(
+            name=display_name,
+            relationship_style=(profile.relationship_style if authored else ""),
+        )
+        self._emotion_section.set_character_profile(
+            profile.emotion_style if authored else ""
+        )
+        self._proactive_section.set_character_profile(
+            profile.conversation_initiative if authored else ""
+        )
 
     def set_session(self, session: SessionMemory) -> None:
         """会话切换时重绑 session 引用（本对象 + 三个会话依赖 section）。

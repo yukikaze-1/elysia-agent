@@ -335,6 +335,12 @@ class CharacterService:
         ):
             for issue in _semantic_issues(text, f"/promptProfile/{field}"):
                 issues.append(issue)
+        for index, example in enumerate(profile.examples):
+            for field, text in (("user", example.user), ("assistant", example.assistant)):
+                for issue in _semantic_issues(
+                    text, f"/promptProfile/examples/{index}/{field}"
+                ):
+                    issues.append(issue)
         estimated = sum(
             len(text)
             for text in (

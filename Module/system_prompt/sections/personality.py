@@ -1,6 +1,7 @@
 """C1: 人格。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
+from Module.system_prompt.sections.authored import escape_authored_prompt
 
 
 class PersonalitySection(Jinja2Section):
@@ -23,17 +24,38 @@ class PersonalitySection(Jinja2Section):
         self._name = character_name
         self._user_name = ""
         self._user_pronoun = "她"
+        self._authored = False
+        self._examples: tuple[tuple[str, str], ...] = ()
 
     def set_context(self, **kwargs: Any) -> None:
         self._user_name = kwargs.get("user_name", "")
         self._user_pronoun = kwargs.get("user_pronoun", "她")
 
     async def render(self) -> str:
+        core = (
+            escape_authored_prompt(self._core)
+            if self._authored else self._core
+        )
+        examples = [
+            {
+                "user": escape_authored_prompt(user),
+                "assistant": escape_authored_prompt(assistant),
+            }
+            for user, assistant in self._examples
+        ]
         return self._render_template(
             name=self._name,
-            core_personality=self._core,
+            core_personality=core,
             self_personality=self._self,
+            examples=examples,
         )
+
+    def set_authored_profile(
+        self, *, authored: bool, examples: tuple[tuple[str, str], ...]
+    ) -> None:
+        """Set the current revision's trust boundary and few-shot examples."""
+        self._authored = authored
+        self._examples = examples
 
     def update_personality(self, core: str, self_p: str) -> None:
         """更新人格数据。

@@ -429,7 +429,11 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         )
         self._prompt._turn_context = self._turn_context
         self._prompt.set_personality_engine(engine)
-        self._prompt.set_character(runtime.definition.characterId, runtime.revision.displayName)
+        self._prompt.set_character(
+            runtime.definition.characterId,
+            runtime.revision.displayName,
+            runtime.profile,
+        )
         # Task 8（记忆 v2 隔离）：_prepare_turn 注入本回合 scoped memory view——
         # C4（MemorySection）经 runtime.memory_view 读记忆（ScopeLongTermMemory），
         # 与 set_session 重绑 _session 同构（set_memory_view 重绑 _long_term）。

@@ -1,6 +1,7 @@
 """C3: 情感。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
+from Module.system_prompt.sections.authored import escape_authored_prompt
 
 
 class EmotionSection(Jinja2Section):
@@ -20,6 +21,7 @@ class EmotionSection(Jinja2Section):
         self._user_name = ""
         self._user_pronoun = "她"
         self._mood = "neutral"  # 可由 set_context(mood=...) 覆盖
+        self._emotion_style = ""
 
     def set_context(self, **kwargs: Any) -> None:
         self._user_name = kwargs.get("user_name", "")
@@ -33,4 +35,8 @@ class EmotionSection(Jinja2Section):
         return self._render_template(
             mood=self._mood, user_name=self._user_name,
             user_pronoun=self._user_pronoun,
+            emotion_style=escape_authored_prompt(self._emotion_style),
         )
+
+    def set_character_profile(self, emotion_style: str) -> None:
+        self._emotion_style = emotion_style

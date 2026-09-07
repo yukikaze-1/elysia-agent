@@ -1,6 +1,7 @@
 """C7: 主动性。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
+from Module.system_prompt.sections.authored import escape_authored_prompt
 
 
 class ProactiveSection(Jinja2Section):
@@ -17,6 +18,7 @@ class ProactiveSection(Jinja2Section):
         super().__init__(template_path)
         self._user_name = ""
         self._user_pronoun = "她"
+        self._conversation_initiative = ""
 
     def set_context(self, **kwargs: Any) -> None:
         self._user_name = kwargs.get("user_name", "")
@@ -26,4 +28,10 @@ class ProactiveSection(Jinja2Section):
         return self._render_template(
             user_name=self._user_name,
             user_pronoun=self._user_pronoun,
+            conversation_initiative=escape_authored_prompt(
+                self._conversation_initiative
+            ),
         )
+
+    def set_character_profile(self, conversation_initiative: str) -> None:
+        self._conversation_initiative = conversation_initiative

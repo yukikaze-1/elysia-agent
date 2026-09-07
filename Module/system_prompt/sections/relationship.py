@@ -1,6 +1,7 @@
 """C2: 关系。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
+from Module.system_prompt.sections.authored import escape_authored_prompt
 
 
 class RelationshipSection(Jinja2Section):
@@ -19,6 +20,7 @@ class RelationshipSection(Jinja2Section):
         self._character_name = character_name
         self._user_name = ""
         self._user_pronoun = "她"
+        self._relationship_style = ""
 
     def set_context(self, **kwargs: Any) -> None:
         self._user_name = kwargs.get("user_name", "")
@@ -29,4 +31,9 @@ class RelationshipSection(Jinja2Section):
             name=self._character_name,
             user_name=self._user_name,
             user_pronoun=self._user_pronoun,
+            relationship_style=escape_authored_prompt(self._relationship_style),
         )
+
+    def set_character_profile(self, *, name: str, relationship_style: str) -> None:
+        self._character_name = name
+        self._relationship_style = relationship_style

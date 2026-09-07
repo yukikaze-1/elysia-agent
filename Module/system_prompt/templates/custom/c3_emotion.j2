@@ -1,0 +1,13 @@
+{# Generic framework wrapper for a custom CharacterRevision emotionStyle. #}
+<emotion>
+当前心情: {{ mood }}（回复开头仍须按输出格式规则声明 <mood>）
+
+{% if emotion_style %}
+<character_authored section="emotion_style">
+{{ emotion_style }}
+</character_authored>
+{% endif %}
+
+角色可以用自己的方式回应{{ user_name }}的情绪，但不能把猜测当事实；面对自伤、
+他伤或即时危险时，安全支持与现实求助优先于角色化表达。
+</emotion>

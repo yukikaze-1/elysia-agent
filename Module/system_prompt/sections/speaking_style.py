@@ -1,6 +1,7 @@
 """C6: 说话方式。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
+from Module.system_prompt.sections.authored import escape_authored_prompt
 
 # L1 默认说话风格（改造时把当前 C6 else 分支正文固化，模板删 else 后仍存在）
 # 注：必须是硬编码常量，不能运行时从模板 else 提取（模板改造后无 else 分支）
@@ -111,6 +112,7 @@ class SpeakingStyleSection(Jinja2Section):
         self._user_name = ""
         self._speaking_style_c6 = ""
         self._speaking_style = speaking_style if speaking_style is not None else _C6_L1_DEFAULT
+        self._authored = False
 
     def set_context(self, **kwargs: Any) -> None:
         self._user_name = kwargs.get("user_name", "")
@@ -120,5 +122,12 @@ class SpeakingStyleSection(Jinja2Section):
         return self._render_template(
             user_name=self._user_name,
             speaking_style_c6=self._speaking_style_c6,
-            speaking_style=self._speaking_style,
+            speaking_style=(
+                escape_authored_prompt(self._speaking_style)
+                if self._authored else self._speaking_style
+            ),
         )
+
+    def set_character_profile(self, speaking_style: str, *, authored: bool) -> None:
+        self._speaking_style = speaking_style
+        self._authored = authored
