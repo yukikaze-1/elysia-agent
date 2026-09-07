@@ -46,13 +46,30 @@ class OutputChannel(ABC):
             delta: 单个文本增量（token）。
         """
 
-    async def on_expression(self, expression: str, intensity: float = 1.0) -> None:
+    async def on_expression(self, expression: str, intensity: float = 1.0, *,
+                            conversation_id: str | None = None,
+                            generation_id: str | None = None,
+                            character_id: str | None = None,
+                            character_instance_id: str | None = None,
+                            character_revision: int | None = None) -> None:
         """表情/情绪变更 — 前端可驱动 Live2D / 头像动画
 
         Args:
             expression: 表情/情绪标识。
             intensity: 强度，0.0~1.0。
         """
+
+    async def on_live2d_directive(self, *, conversation_id: str | None = None,
+                                  generation_id: str | None = None,
+                                  character_id: str | None = None,
+                                  character_instance_id: str | None = None,
+                                  character_revision: int | None = None,
+                                  expression: str | None = None,
+                                  motion: str | None = None,
+                                  state: str | None = None,
+                                  priority: int | None = None,
+                                  duration_ms: int | None = None) -> None:
+        """v2 Live2D 表现建议；默认 no-op。"""
 
     async def on_action(self, action: str, *, params: dict | None = None) -> None:
         """动作变更 — 如 wave, nod, surprised + 参数

@@ -31,6 +31,8 @@ from frontend_contract import (
     GenerationSegmentCompletedMessage,
     GenerationSegmentStartedMessage,
     GenerationStartedMessage,
+    Live2DDirectiveMessage,
+    Live2DDirectiveState,
     MessageMessage,
     StateMessage,
     TokenRound,
@@ -117,7 +119,12 @@ class WebSocketChannel(OutputChannel):
         # 契约：stream_id None → 缺省省略（X?）
         await self._send_json(DeltaMessage(content=delta, stream_id=stream_id).wire_dict())
 
-    async def on_expression(self, expression: str, intensity: float = 1.0) -> None:
+    async def on_expression(self, expression: str, intensity: float = 1.0, *,
+                            conversation_id: str | None = None,
+                            generation_id: str | None = None,
+                            character_id: str | None = None,
+                            character_instance_id: str | None = None,
+                            character_revision: int | None = None) -> None:
         """发送表情/情绪变更。
 
         Args:
@@ -126,6 +133,31 @@ class WebSocketChannel(OutputChannel):
         """
         await self._send_json(ExpressionMessage(
             expression=expression, intensity=intensity,
+            conversationId=conversation_id, generationId=generation_id,
+            characterId=character_id, characterInstanceId=character_instance_id,
+            characterRevision=character_revision,
+        ).wire_dict())
+
+    async def on_live2d_directive(self, *, conversation_id: str | None = None,
+                                  generation_id: str | None = None,
+                                  character_id: str | None = None,
+                                  character_instance_id: str | None = None,
+                                  character_revision: int | None = None,
+                                  expression: str | None = None,
+                                  motion: str | None = None,
+                                  state: str | None = None,
+                                  priority: int | None = None,
+                                  duration_ms: int | None = None) -> None:
+        """发送 v2 Live2D 表现建议；v1 通道防御性忽略。"""
+        if self.protocol_version < 2:
+            return
+        await self._send_json(Live2DDirectiveMessage(
+            conversationId=conversation_id, generationId=generation_id,
+            characterId=character_id, characterInstanceId=character_instance_id,
+            characterRevision=character_revision,
+            expression=expression, motion=motion,
+            state=Live2DDirectiveState(state) if state is not None else None,
+            priority=priority, durationMs=duration_ms,
         ).wire_dict())
 
     async def on_action(self, action: str, *, params: dict | None = None) -> None:

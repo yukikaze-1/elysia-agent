@@ -126,6 +126,49 @@ class TestWebSocketChannel:
         })
 
     @pytest.mark.asyncio
+    async def test_on_expression_with_character_identity(self):
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        ch = WebSocketChannel(ws, protocol_version=2)
+        await ch.on_expression(
+            "happy", 0.8,
+            conversation_id="conv_1", generation_id="gen_1",
+            character_id="chr_elysia", character_instance_id="chi_1",
+            character_revision=3,
+        )
+        ws.send_json.assert_called_with({
+            "type": "expression", "expression": "happy", "intensity": 0.8,
+            "conversationId": "conv_1", "generationId": "gen_1",
+            "characterId": "chr_elysia", "characterInstanceId": "chi_1",
+            "characterRevision": 3,
+        })
+
+    @pytest.mark.asyncio
+    async def test_on_live2d_directive_is_v2_only(self):
+        v2_ws = MagicMock()
+        v2_ws.send_json = AsyncMock()
+        v2 = WebSocketChannel(v2_ws, protocol_version=2)
+        await v2.on_live2d_directive(
+            conversation_id="conv_1", generation_id="gen_1",
+            character_id="chr_elysia", character_instance_id="chi_1",
+            character_revision=3, expression="happy.exp3.json",
+            state="happy", priority=1, duration_ms=500,
+        )
+        assert v2_ws.send_json.await_args.args[0] == {
+            "type": "live2d.directive", "conversationId": "conv_1",
+            "generationId": "gen_1", "characterId": "chr_elysia",
+            "characterInstanceId": "chi_1", "characterRevision": 3,
+            "expression": "happy.exp3.json", "state": "happy",
+            "priority": 1, "durationMs": 500,
+        }
+
+        v1_ws = MagicMock()
+        v1_ws.send_json = AsyncMock()
+        v1 = WebSocketChannel(v1_ws, protocol_version=1)
+        await v1.on_live2d_directive(state="idle")
+        v1_ws.send_json.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_on_text_delta(self):
         ws = MagicMock()
         ws.send_json = AsyncMock()

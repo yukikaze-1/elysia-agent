@@ -26,7 +26,7 @@ def test_server_message_members():
     models, discriminated = main_mod._collect()
     members = discriminated["ServerMessage"]
     names = {m.__name__ for m in members}
-    assert len(members) == 42  # 41 具名 + CharacterStateChangedMessage（阶段 G）+ UnknownMessage（发射器追加）
+    assert len(members) == 43  # 加入阶段 H Live2DDirectiveMessage；UnknownMessage 由发射器追加
     assert "UnknownMessage" not in names
     assert "AcceptedUserAckMessage" in names
     assert "RejectedUserAckMessage" in names
@@ -342,7 +342,7 @@ def test_heartbeat_ack_removed_from_union():
     from frontend_contract.tests.test_batch6_contract import _union_members
     members = _union_members()
     assert "HeartbeatAckMessage" not in members
-    assert len(members) == 42  # 41 既有 + CharacterStateChangedMessage（阶段 G）
+    assert len(members) == 43  # 阶段 H 加入 Live2DDirectiveMessage
 
 
 @pytest.mark.unit
@@ -534,6 +534,39 @@ def test_generation_character_identity_rejects_partial_triples(model_factory, id
     """generation 三类父事件都不允许半套角色身份进入 wire。"""
     with pytest.raises(ValueError, match="generation character identity"):
         model_factory(**identity)
+
+
+@pytest.mark.unit
+def test_expression_and_live2d_directive_character_identity_wire():
+    """表现事件保留完整会话/generation/角色身份，迁移期仍可全缺省。"""
+    identity = {
+        "conversationId": "conv_1",
+        "generationId": "gen_1",
+        "characterId": "chr_elysia",
+        "characterInstanceId": "chi_1",
+        "characterRevision": 3,
+    }
+    expression = w.ExpressionMessage(
+        expression="happy", intensity=0.8, **identity).wire_dict()
+    assert expression | {} == {
+        "type": "expression", "expression": "happy", "intensity": 0.8,
+        **identity,
+    }
+    directive = w.Live2DDirectiveMessage(
+        expression="expressions/happy.exp3.json", state="happy",
+        priority=1, durationMs=1200, **identity).wire_dict()
+    assert directive["type"] == "live2d.directive"
+    assert directive["state"] == "happy"
+    assert directive["characterInstanceId"] == "chi_1"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("model", [w.ExpressionMessage, w.Live2DDirectiveMessage])
+def test_presentation_events_reject_partial_character_identity(model):
+    """表现事件不得携带半套角色三元组。"""
+    payload = {"expression": "happy", "characterId": "chr_elysia"}
+    with pytest.raises(ValueError, match="generation character identity"):
+        model(**payload)
 
 
 @pytest.mark.unit

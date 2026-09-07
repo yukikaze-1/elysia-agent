@@ -212,6 +212,39 @@ class OutputManager:
             channels=channels, capability=capability or ChannelCapability.ACTION,
         )
 
+    async def live2d_directive(
+        self,
+        *,
+        conversation_id: str | None = None,
+        generation_id: str | None = None,
+        character_id: str | None = None,
+        character_instance_id: str | None = None,
+        character_revision: int | None = None,
+        expression: str | None = None,
+        motion: str | None = None,
+        state: str | None = None,
+        priority: int | None = None,
+        duration_ms: int | None = None,
+        channels: list[OutputChannel] | None = None,
+    ) -> None:
+        """向 v2 通道广播带角色归属的 Live2D 低优先级建议。"""
+        _v1, v2 = self._split_versions(channels)
+        await self._broadcast(
+            "on_live2d_directive",
+            conversation_id=conversation_id,
+            generation_id=generation_id,
+            character_id=character_id,
+            character_instance_id=character_instance_id,
+            character_revision=character_revision,
+            expression=expression,
+            motion=motion,
+            state=state,
+            priority=priority,
+            duration_ms=duration_ms,
+            channels=v2,
+            capability=ChannelCapability.EXPRESSION,
+        )
+
     async def tool_started(
         self, *, call_id: str, tool_name: str, runtime: str,
         v1_args: dict, input_summary: str | None,

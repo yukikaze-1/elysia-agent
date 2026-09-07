@@ -68,6 +68,18 @@ class VoiceEndReason(StrEnum):
     TIMEOUT = "timeout"
     STT_DISABLED = "stt_disabled"
 
+
+class Live2DDirectiveState(StrEnum):
+    """后端给 Live2D 的低优先级表现建议状态。"""
+
+    IDLE = "idle"
+    LISTENING = "listening"
+    THINKING = "thinking"
+    SPEAKING = "speaking"
+    HAPPY = "happy"
+    SAD = "sad"
+    SURPRISED = "surprised"
+
 # ───────────────────────────── 支持类型 ─────────────────────────────
 
 
@@ -536,11 +548,44 @@ class TokenUsageMessage(ContractModel):
 
 
 class ExpressionMessage(ContractModel):
-    """表情/情绪变更。"""
+    """表情/情绪变更；角色字段迁移期可缺省，出现时必须为完整三元组。"""
 
     type: Literal["expression"] = "expression"
     expression: str = Field(description="表情/情绪标识")
     intensity: Optional[float] = Field(default=None, description="强度 0.0~1.0，可缺省")
+    conversationId: Optional[str] = Field(default=None, min_length=1, description="会话 ID，可缺省")
+    generationId: Optional[str] = Field(default=None, min_length=1, description="生成 ID；非生成表现可缺省")
+    characterId: Optional[str] = Field(default=None, min_length=1, description="角色 ID，可缺省")
+    characterInstanceId: Optional[str] = Field(default=None, min_length=1, description="角色实例 ID，可缺省")
+    characterRevision: Optional[int] = Field(default=None, ge=1, description="角色修订号，可缺省")
+
+    @model_validator(mode="after")
+    def _validate_character_identity(self) -> "ExpressionMessage":
+        _require_complete_character_identity(
+            self.characterId, self.characterInstanceId, self.characterRevision)
+        return self
+
+
+class Live2DDirectiveMessage(ContractModel):
+    """后端 Live2D 表现建议；客户端按现实态优先级仲裁。"""
+
+    type: Literal["live2d.directive"] = "live2d.directive"
+    conversationId: Optional[str] = Field(default=None, min_length=1, description="会话 ID，可缺省")
+    generationId: Optional[str] = Field(default=None, min_length=1, description="生成 ID；非生成指令可缺省")
+    characterId: Optional[str] = Field(default=None, min_length=1, description="角色 ID，可缺省")
+    characterInstanceId: Optional[str] = Field(default=None, min_length=1, description="角色实例 ID，可缺省")
+    characterRevision: Optional[int] = Field(default=None, ge=1, description="角色修订号，可缺省")
+    expression: Optional[str] = Field(default=None, min_length=1, description="表情资源标识，可缺省")
+    motion: Optional[str] = Field(default=None, min_length=1, description="动作资源标识，可缺省")
+    state: Optional[Live2DDirectiveState] = Field(default=None, description="低优先级表现状态，可缺省")
+    priority: Optional[int] = Field(default=None, ge=0, le=3, description="建议优先级 0~3，可缺省")
+    durationMs: Optional[int] = Field(default=None, ge=0, le=30_000, description="持续时间毫秒，可缺省")
+
+    @model_validator(mode="after")
+    def _validate_character_identity(self) -> "Live2DDirectiveMessage":
+        _require_complete_character_identity(
+            self.characterId, self.characterInstanceId, self.characterRevision)
+        return self
 
 
 class StateMessage(ContractModel):
@@ -1106,6 +1151,7 @@ ServerMessage = Annotated[Union[
     MessageMessage,
     TokenUsageMessage,
     ExpressionMessage,
+    Live2DDirectiveMessage,
     StateMessage,
     AudioMessage,
     AudioEndMessage,
