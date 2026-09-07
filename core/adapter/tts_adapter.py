@@ -16,6 +16,7 @@ import asyncio
 import logging
 import struct
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from Module.output import ChannelCapability, OutputManager
@@ -81,6 +82,27 @@ def _wav_info(audio: bytes) -> tuple[int | None, int | None]:
         return None, None
 
 
+@dataclass(frozen=True, slots=True)
+class _AudioTurnIdentity:
+    """句子入队时冻结的角色/会话身份；不携带 GenerationContext 的可变分段状态。"""
+
+    conversation_id: str | None
+    generation_id: str | None
+    character_id: str | None
+    character_instance_id: str | None
+    character_revision: int | None
+
+    @classmethod
+    def capture(cls, ctx: object) -> "_AudioTurnIdentity":
+        return cls(
+            conversation_id=getattr(ctx, "conversation_id", None),
+            generation_id=getattr(ctx, "generation_id", None),
+            character_id=getattr(ctx, "character_id", None) or None,
+            character_instance_id=getattr(ctx, "character_instance_id", None) or None,
+            character_revision=getattr(ctx, "character_revision", None) or None,
+        )
+
+
 class TTSStreamManager:
     """管理 TTS 流式播放、emoji 排队、句间同步。
 
@@ -141,7 +163,7 @@ class TTSStreamManager:
         self._release_events[1] = asyncio.Event()
         self._release_events[1].set()
 
-    def stream_sentence(self, sentence: str) -> None:
+    def stream_sentence(self, sentence: str, *, ctx: object | None = None) -> None:
         """启动一句的 TTS 后台任务。
 
         自动判断：纯 emoji 句排队到上一句之后，其余送 TTS 合成。
@@ -149,6 +171,7 @@ class TTSStreamManager:
 
         Args:
             sentence: 待合成的句子文本。
+            ctx: 当前 generation 上下文；只在入队点复制身份字段，不保留可变上下文。
         """
         if not self._enabled:
             return
@@ -183,8 +206,10 @@ class TTSStreamManager:
         logger.debug("TTS 句 %d (总#%d) 开始 (%d 字符)", seq, sid, len(sentence))
         logger.debug("TTS 句内容: %s", _clean[:60])
 
+        identity = _AudioTurnIdentity.capture(ctx) if ctx is not None else None
         task = asyncio.create_task(
-            self._download_and_forward(sid, seq, sentence, display_text, action_text),
+            self._download_and_forward(
+                sid, seq, sentence, display_text, action_text, identity),
             name=f"tts-{sid}",
         )
         self._tasks.append(task)
@@ -332,6 +357,7 @@ class TTSStreamManager:
         sentence: str,
         display_text: str,
         action_text: str,
+        ctx: _AudioTurnIdentity | None,
     ) -> None:
         """下载 TTS 音频后按序转发到前端。
 
@@ -419,7 +445,8 @@ class TTSStreamManager:
             fmt = self._tts.stream_format if self._tts else "wav"
             sr, dur = _wav_info(audio)
             self._audio_forwarding.add(sid)
-            await self._output.audio_start(sid, format=fmt, sample_rate=sr, duration_ms=dur)
+            await self._output.audio_start(
+                sid, format=fmt, sample_rate=sr, duration_ms=dur, ctx=ctx)
             chunk_size = 4096
             for offset in range(0, len(audio), chunk_size):
                 await self._output.audio_chunk(

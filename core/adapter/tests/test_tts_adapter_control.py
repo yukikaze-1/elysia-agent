@@ -38,7 +38,7 @@ class FakeOut:
     async def audio_end(self, stream_id=0, *, format="wav", **kw):
         self.calls.append(("audio_end", stream_id))
     async def audio_start(self, stream_id, *, format="wav", sample_rate=None, duration_ms=None, **kw):
-        self.calls.append(("audio_start", stream_id, sample_rate, duration_ms))
+        self.calls.append(("audio_start", stream_id, sample_rate, duration_ms, kw.get("ctx")))
     async def audio_cancelled(self, stream_id, **kw):
         self.calls.append(("audio_cancelled", stream_id))
 
@@ -69,6 +69,31 @@ async def test_stream_sentence_emits_audio_start():
     assert any(c[0] == "audio_start" for c in out.calls)
     start = [c for c in out.calls if c[0] == "audio_start"][0]
     assert start[2] == 32000  # sample_rate
+
+
+@pytest.mark.asyncio
+async def test_stream_sentence_preserves_generation_context_for_audio_start():
+    from core.cognitive.generation import GenerationContext
+
+    out = FakeOut()
+    mgr = TTSStreamManager(tts=FakeTTS(), output=out, character_name="elysia")
+    mgr.reset_for_turn()
+    ctx = GenerationContext(
+        generation_id="gen_1", user_message_id="msg_u1",
+        assistant_message_id="msg_a1", conversation_id="conv_1",
+        character_id="chr_elysia", character_instance_id="chi_1",
+        character_revision=3,
+    )
+    mgr.stream_sentence("你好", ctx=ctx)
+    await mgr.wait_all()
+    start = [c for c in out.calls if c[0] == "audio_start"][0]
+    captured = start[4]
+    assert captured is not ctx
+    assert captured.conversation_id == "conv_1"
+    assert captured.generation_id == "gen_1"
+    assert captured.character_id == "chr_elysia"
+    assert captured.character_instance_id == "chi_1"
+    assert captured.character_revision == 3
 
 
 @pytest.mark.asyncio

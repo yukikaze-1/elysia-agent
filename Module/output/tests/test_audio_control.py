@@ -24,6 +24,24 @@ def test_audio_start_wire():
     assert frame["stream_id"] == 5 and frame["sampleRate"] == 32000
 
 
+def test_audio_start_wire_with_character_identity():
+    ws = FakeWs()
+    ch = WebSocketChannel(ws, protocol_version=2)
+    import asyncio
+    asyncio.run(ch.on_audio_start(
+        5, format="wav", sample_rate=32000, duration_ms=1000,
+        conversation_id="conv_1", generation_id="gen_1",
+        character_id="chr_elysia", character_instance_id="chi_1",
+        character_revision=3,
+    ))
+    frame = ws.sent[-1]
+    assert frame["conversationId"] == "conv_1"
+    assert frame["generationId"] == "gen_1"
+    assert frame["characterId"] == "chr_elysia"
+    assert frame["characterInstanceId"] == "chi_1"
+    assert frame["characterRevision"] == 3
+
+
 def test_audio_cancelled_pops_seq():
     ws = FakeWs()
     ch = WebSocketChannel(ws)

@@ -419,12 +419,26 @@ class OutputManager:
     async def audio_start(self, stream_id: int, *, format: str = "wav",
                           sample_rate: int | None = None, duration_ms: int | None = None,
                           channels: list[OutputChannel] | None = None,
-                          capability: ChannelCapability | None = None) -> None:
+                          capability: ChannelCapability | None = None,
+                          ctx: Any | None = None) -> None:
         """广播音频流开始（stream_id = playback ID，BE-063）。"""
+        target_capability = capability or ChannelCapability.AUDIO
+        if ctx is None:
+            await self._broadcast(
+                "on_audio_start", stream_id, format=format, sample_rate=sample_rate,
+                duration_ms=duration_ms, channels=channels,
+                capability=target_capability)
+            return
+
+        v1, v2 = self._split_versions(channels)
         await self._broadcast(
             "on_audio_start", stream_id, format=format, sample_rate=sample_rate,
-            duration_ms=duration_ms, channels=channels,
-            capability=capability or ChannelCapability.AUDIO)
+            duration_ms=duration_ms, channels=v1,
+            capability=target_capability)
+        await self._broadcast(
+            "on_audio_start", stream_id, format=format, sample_rate=sample_rate,
+            duration_ms=duration_ms, **_character_event_kwargs(ctx), channels=v2,
+            capability=target_capability)
 
     async def audio_cancelled(self, stream_id: int, *,
                               channels: list[OutputChannel] | None = None,

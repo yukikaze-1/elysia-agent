@@ -224,11 +224,20 @@ class WebSocketChannel(OutputChannel):
 
     async def on_audio_start(self, stream_id: int, *, format: str = "wav",
                              sample_rate: int | None = None,
-                             duration_ms: int | None = None) -> None:
+                             duration_ms: int | None = None,
+                             conversation_id: str | None = None,
+                             generation_id: str | None = None,
+                             character_id: str | None = None,
+                             character_instance_id: str | None = None,
+                             character_revision: int | None = None) -> None:
         """音频流开始（stream_id = playback ID）。"""
         await self._send_json(AudioStartMessage(
             stream_id=stream_id, format=AudioFormat(format), sampleRate=sample_rate,
-            durationMs=duration_ms).wire_dict())
+            durationMs=duration_ms,
+            conversationId=conversation_id, generationId=generation_id,
+            characterId=character_id, characterInstanceId=character_instance_id,
+            characterRevision=character_revision,
+        ).wire_dict())
 
     async def on_audio_cancelled(self, stream_id: int) -> None:
         """音频流被取消——清理 _audio_seq 残留 + 通知前端清理孤儿 chunk。"""

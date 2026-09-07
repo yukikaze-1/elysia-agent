@@ -781,12 +781,23 @@ class DictationCancelledMessage(ContractModel):
 # ─────────────────── 批次 6 TTS 播放控制（BE-063） ───────────────────
 
 class AudioStartMessage(ContractModel):
-    """音频流开始（stream_id = playback ID）。"""
+    """音频流开始（stream_id = playback ID）；角色字段出现时必须完整。"""
     type: Literal["audio_start"] = "audio_start"
     stream_id: int = Field(description="playback ID")
     format: AudioFormat = Field(default=AudioFormat.WAV, description="音频格式")
     sampleRate: Optional[int] = Field(default=None, description="采样率（WAV header），可缺省")
     durationMs: Optional[int] = Field(default=None, description="时长毫秒（WAV 计算），可缺省")
+    conversationId: Optional[str] = Field(default=None, min_length=1, description="会话 ID，可缺省")
+    generationId: Optional[str] = Field(default=None, min_length=1, description="生成 ID；预览等非生成音频可缺省")
+    characterId: Optional[str] = Field(default=None, min_length=1, description="角色 ID，可缺省")
+    characterInstanceId: Optional[str] = Field(default=None, min_length=1, description="角色实例 ID，可缺省")
+    characterRevision: Optional[int] = Field(default=None, ge=1, description="角色修订号，可缺省")
+
+    @model_validator(mode="after")
+    def _validate_character_identity(self) -> "AudioStartMessage":
+        _require_complete_character_identity(
+            self.characterId, self.characterInstanceId, self.characterRevision)
+        return self
 
 
 class AudioCancelledMessage(ContractModel):

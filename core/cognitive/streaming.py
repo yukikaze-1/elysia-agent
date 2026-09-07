@@ -197,9 +197,9 @@ class CognitiveStreaming:
             await self.phases.enter_speaking()
             speaking_started = True
         tts_active = self._tts_mgr.active and self._tts_mgr.enabled
-        if tts_active:
-            self._tts_mgr.stream_sentence(sentence)
         ctx = self._generation_ctx
+        if tts_active:
+            self._tts_mgr.stream_sentence(sentence, ctx=ctx)
         if ctx is not None:
             if ctx.current_segment_id is not None:
                 await self._output.segment_completed(sentence, ctx, tts_active=tts_active)

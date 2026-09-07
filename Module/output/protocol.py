@@ -112,7 +112,12 @@ class OutputChannel(ABC):
 
     async def on_audio_start(self, stream_id: int, *, format: str = "wav",
                              sample_rate: int | None = None,
-                             duration_ms: int | None = None) -> None:
+                             duration_ms: int | None = None,
+                             conversation_id: str | None = None,
+                             generation_id: str | None = None,
+                             character_id: str | None = None,
+                             character_instance_id: str | None = None,
+                             character_revision: int | None = None) -> None:
         """音频流开始（BE-063）。默认空实现。"""
 
     async def on_audio_cancelled(self, stream_id: int) -> None:

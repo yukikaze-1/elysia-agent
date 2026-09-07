@@ -570,6 +570,28 @@ def test_presentation_events_reject_partial_character_identity(model):
 
 
 @pytest.mark.unit
+def test_audio_start_carries_generation_character_identity():
+    """audio_start 是 stream_id 与冻结 generation/角色身份的唯一绑定点。"""
+    frame = w.AudioStartMessage(
+        stream_id=42, format="wav", sampleRate=24_000, durationMs=800,
+        conversationId="conv_1", generationId="gen_1",
+        characterId="chr_elysia", characterInstanceId="chi_1",
+        characterRevision=3,
+    ).wire_dict()
+    assert frame["stream_id"] == 42
+    assert frame["conversationId"] == "conv_1"
+    assert frame["generationId"] == "gen_1"
+    assert frame["characterInstanceId"] == "chi_1"
+
+
+@pytest.mark.unit
+def test_audio_start_rejects_partial_character_identity():
+    with pytest.raises(ValueError, match="generation character identity"):
+        w.AudioStartMessage(
+            stream_id=42, characterId="chr_elysia", characterRevision=3)
+
+
+@pytest.mark.unit
 def test_audio_descriptor_wire_camel_keys():
     """AudioInputDescriptor wire 键为 camelCase；audio 缺省省略。"""
     m = w.VoiceRecordStartMessage(
