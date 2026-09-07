@@ -35,6 +35,7 @@ class TestPublicStateView:
 class TestCharacterStateChangedMessage:
     def test_type_literal(self):
         msg = CharacterStateChangedMessage(
+            conversationId="default",
             characterId="chr_elysia", characterInstanceId="chi_builtin_elysia",
             stateVersion=3, state=CharacterPublicStateView(
                 mood=MoodState(label="开心", intensity=0.72, updatedAt=_TS),
