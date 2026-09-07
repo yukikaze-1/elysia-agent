@@ -10,7 +10,7 @@
 from enum import Enum, StrEnum
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import ConfigDict, Discriminator, Field
+from pydantic import ConfigDict, Discriminator, Field, model_validator
 
 from frontend_contract.base import ContractModel, TsNull
 from frontend_contract.rest import (
@@ -370,6 +370,24 @@ UserAckMessage = Annotated[
 ]
 
 
+def _require_complete_character_identity(
+    character_id: str | None,
+    character_instance_id: str | None,
+    character_revision: int | None,
+) -> None:
+    """兼容三字段全缺省，但拒绝只出现其中一部分的 generation 身份。"""
+    present = (
+        character_id is not None,
+        character_instance_id is not None,
+        character_revision is not None,
+    )
+    if any(present) and not all(present):
+        raise ValueError(
+            "generation character identity must provide characterId, "
+            "characterInstanceId and characterRevision together"
+        )
+
+
 class GenerationStartedMessage(ContractModel):
     """生成开始（v2）。messageId = assistant 父消息 ID（generation 开始预分配）。"""
 
@@ -379,9 +397,15 @@ class GenerationStartedMessage(ContractModel):
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
     requestId: Optional[str] = Field(default=None, description="回显 request_id（日志关联），可缺省")
     model: Optional[str] = Field(default=None, description="实际模型，可缺省")
-    characterId: Optional[str] = Field(default=None, description="角色 ID（character_profiles=true 后必填）")
-    characterInstanceId: Optional[str] = Field(default=None, description="角色实例 ID")
-    characterRevision: Optional[int] = Field(default=None, description="角色修订号")
+    characterId: Optional[str] = Field(default=None, min_length=1, description="角色 ID（character_profiles=true 后必填）")
+    characterInstanceId: Optional[str] = Field(default=None, min_length=1, description="角色实例 ID")
+    characterRevision: Optional[int] = Field(default=None, ge=1, description="角色修订号")
+
+    @model_validator(mode="after")
+    def _validate_character_identity(self) -> "GenerationStartedMessage":
+        _require_complete_character_identity(
+            self.characterId, self.characterInstanceId, self.characterRevision)
+        return self
 
 
 class GenerationSegmentStartedMessage(ContractModel):
@@ -437,9 +461,15 @@ class GenerationCompletedMessage(ContractModel):
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
     conversationUsage: Optional[ConversationUsage] = Field(
         default=None, description="会话级 token 累计（get_session_stats 填充），可缺省")
-    characterId: Optional[str] = Field(default=None, description="角色 ID（character_profiles=true 后必填）")
-    characterInstanceId: Optional[str] = Field(default=None, description="角色实例 ID")
-    characterRevision: Optional[int] = Field(default=None, description="角色修订号")
+    characterId: Optional[str] = Field(default=None, min_length=1, description="角色 ID（character_profiles=true 后必填）")
+    characterInstanceId: Optional[str] = Field(default=None, min_length=1, description="角色实例 ID")
+    characterRevision: Optional[int] = Field(default=None, ge=1, description="角色修订号")
+
+    @model_validator(mode="after")
+    def _validate_character_identity(self) -> "GenerationCompletedMessage":
+        _require_complete_character_identity(
+            self.characterId, self.characterInstanceId, self.characterRevision)
+        return self
 
 
 class GenerationFailedMessage(ContractModel):
@@ -454,9 +484,15 @@ class GenerationFailedMessage(ContractModel):
     retryable: bool = Field(description="是否可重试")
     details: dict[str, Any] = Field(default_factory=dict, description="公开安全详情，可缺省")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
-    characterId: Optional[str] = Field(default=None, description="角色 ID（character_profiles=true 后必填）")
-    characterInstanceId: Optional[str] = Field(default=None, description="角色实例 ID")
-    characterRevision: Optional[int] = Field(default=None, description="角色修订号")
+    characterId: Optional[str] = Field(default=None, min_length=1, description="角色 ID（character_profiles=true 后必填）")
+    characterInstanceId: Optional[str] = Field(default=None, min_length=1, description="角色实例 ID")
+    characterRevision: Optional[int] = Field(default=None, ge=1, description="角色修订号")
+
+    @model_validator(mode="after")
+    def _validate_character_identity(self) -> "GenerationFailedMessage":
+        _require_complete_character_identity(
+            self.characterId, self.characterInstanceId, self.characterRevision)
+        return self
 
 
 class CharacterStateChangedMessage(ContractModel):

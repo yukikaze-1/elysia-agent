@@ -505,6 +505,38 @@ def test_generation_character_audit_wire_present_when_set():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "model_factory",
+    [
+        lambda **identity: w.GenerationStartedMessage(
+            generationId="gen_1", messageId="msg_1", **identity),
+        lambda **identity: w.GenerationCompletedMessage(
+            generationId="gen_1", messageId="msg_1",
+            finishReason="stop", usage=w.TokenUsage(rounds=[], turn_total=0),
+            model="fake/test", **identity),
+        lambda **identity: w.GenerationFailedMessage(
+            generationId="gen_1", code="INTERNAL", message="失败",
+            retryable=False, **identity),
+    ],
+)
+@pytest.mark.parametrize(
+    "identity",
+    [
+        {"characterId": "chr_elysia"},
+        {"characterInstanceId": "chi_1"},
+        {"characterRevision": 1},
+        {"characterId": "chr_elysia", "characterInstanceId": "chi_1"},
+        {"characterId": "chr_elysia", "characterRevision": 1},
+        {"characterInstanceId": "chi_1", "characterRevision": 1},
+    ],
+)
+def test_generation_character_identity_rejects_partial_triples(model_factory, identity):
+    """generation 三类父事件都不允许半套角色身份进入 wire。"""
+    with pytest.raises(ValueError, match="generation character identity"):
+        model_factory(**identity)
+
+
+@pytest.mark.unit
 def test_audio_descriptor_wire_camel_keys():
     """AudioInputDescriptor wire 键为 camelCase；audio 缺省省略。"""
     m = w.VoiceRecordStartMessage(

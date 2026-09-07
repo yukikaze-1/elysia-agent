@@ -55,6 +55,29 @@ class GenerationContext:
     character_instance_id: str = ""
     character_revision: int = 0
 
+    def __post_init__(self) -> None:
+        """拒绝不完整的角色审计身份。
+
+        兼容旧调用方完全不提供身份；一旦提供任一字段，角色、实例与修订号必须
+        同时有效，避免同一 generation 的 started/completed/failed 帧携带残缺身份。
+        """
+        identity_absent = (
+            self.character_id == ""
+            and self.character_instance_id == ""
+            and self.character_revision == 0
+        )
+        if identity_absent:
+            return
+        if (
+            not self.character_id.strip()
+            or not self.character_instance_id.strip()
+            or self.character_revision < 1
+        ):
+            raise ValueError(
+                "generation character identity must provide character_id, "
+                "character_instance_id and a positive character_revision together"
+            )
+
     def open_segment(self, channel: MessageChannel, kind: SegmentKind = SegmentKind.TEXT) -> SegmentId:
         """打开一个新分段：分配 seg_ ID、全局序号递增、重置段内 delta。
 

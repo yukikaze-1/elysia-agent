@@ -81,3 +81,52 @@ def test_open_segment_channel_kind_enum_types():
     hints = get_type_hints(GenerationContext.open_segment)
     assert hints["channel"] is MessageChannel
     assert hints["kind"] is SegmentKind
+
+
+@pytest.mark.unit
+def test_generation_context_accepts_complete_or_absent_character_identity():
+    """旧上下文可完全缺省身份，新上下文必须携带完整三元组。"""
+    base = {
+        "generation_id": GenerationId("gen_1"),
+        "user_message_id": MessageId("msg_u1"),
+        "assistant_message_id": MessageId("msg_a1"),
+    }
+    GenerationContext(**base)
+    ctx = GenerationContext(
+        **base,
+        character_id="chr_elysia",
+        character_instance_id="chi_1",
+        character_revision=3,
+    )
+    assert ctx.character_revision == 3
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("character_id", "character_instance_id", "character_revision"),
+    [
+        ("chr_elysia", "", 0),
+        ("", "chi_1", 0),
+        ("", "", 1),
+        ("chr_elysia", "chi_1", 0),
+        ("chr_elysia", "", 1),
+        ("", "chi_1", 1),
+        ("chr_elysia", "chi_1", -1),
+        (" ", "chi_1", 1),
+    ],
+)
+def test_generation_context_rejects_partial_character_identity(
+    character_id: str,
+    character_instance_id: str,
+    character_revision: int,
+):
+    """任何半套角色身份都必须在进入输出链路前失败。"""
+    with pytest.raises(ValueError, match="generation character identity"):
+        GenerationContext(
+            generation_id=GenerationId("gen_1"),
+            user_message_id=MessageId("msg_u1"),
+            assistant_message_id=MessageId("msg_a1"),
+            character_id=character_id,
+            character_instance_id=character_instance_id,
+            character_revision=character_revision,
+        )
