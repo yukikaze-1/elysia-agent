@@ -300,12 +300,15 @@ def create_app(
         app["user_identity"] = app["user_identity_store"].bootstrap(
             (agent_config.agent.user_name if agent_config and getattr(agent_config, "agent", None)
              else "用户"))
-    # CharacterService：repo 无 db 参数时 connect 建真实 Mongo（首次操作 fail-closed）；
-    # 与 idempotency_repo 一样在 create_app 注入。
-    app["character_service"] = CharacterService(
-        repo=CharacterRepository(), rev_repo=CharacterRevisionRepository(),
-        catalog=CharacterCatalog(source=BuiltinCharacterSource()),
-        user_identity_store=app["user_identity_store"],
+    # REST 与 Agent runtime loader 必须复用同一 CharacterService/repository 图；
+    # MagicMock/旧组合根未提供时才构造兼容回退。
+    app["character_service"] = (
+        getattr(agent, "_character_service", None)
+        or CharacterService(
+            repo=CharacterRepository(), rev_repo=CharacterRevisionRepository(),
+            catalog=CharacterCatalog(source=BuiltinCharacterSource()),
+            user_identity_store=app["user_identity_store"],
+        )
     )
     app["character_session_binding_service"] = CharacterSessionBindingService(
         character_service=app["character_service"],

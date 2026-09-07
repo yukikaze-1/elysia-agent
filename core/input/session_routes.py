@@ -492,6 +492,11 @@ async def sessions_create_handler(request: web.Request) -> web.Response:
         resolved = await request.app["character_session_binding_service"].resolve_for_create(
             wire.characterId,
         )
+        # Do not persist a session whose selected custom character cannot become
+        # an actual runtime.  This also preloads it for immediate state snapshots.
+        ensure_runtime = getattr(agent, "ensure_character_runtime", None)
+        if ensure_runtime is not None:
+            await ensure_runtime(resolved.binding["instance_id"])
     except ValidationError:
         return _error_response("CONTRACT_VALIDATION", "新建会话请求无效")
     except CharacterNotFoundError:

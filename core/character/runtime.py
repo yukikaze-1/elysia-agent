@@ -20,6 +20,7 @@ from core.schema.types import SessionId
 
 if TYPE_CHECKING:
     from frontend_contract.rest import CharacterPublicStateView
+    from core.character.runtime_profile import RuntimeCharacterProfile
     from core.personality.engine import CharacterEngine
     from core.memory.scoped_long_term import ScopedLongTermMemory
     from core.memory.consolidator import MemoryConsolidator
@@ -38,6 +39,7 @@ class CharacterRuntime:
         memory_view: "ScopedLongTermMemory | None" = None,
         consolidator: "MemoryConsolidator | None" = None,
         reflector: "MemoryReflector | None" = None,
+        profile: "RuntimeCharacterProfile | None" = None,
     ):
         self.instance = instance
         self.definition = definition
@@ -46,6 +48,7 @@ class CharacterRuntime:
         self.memory_view = memory_view
         self.consolidator = consolidator
         self.reflector = reflector
+        self.profile = profile
         self._engine: "CharacterEngine | None" = None
         self.lock = asyncio.Lock()
         self.dirty = False

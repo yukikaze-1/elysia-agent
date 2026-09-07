@@ -47,7 +47,9 @@ class _LifecyclePersistence:
         _runtime_registry: CharacterRuntimeRegistry
         _instance_repo: CharacterInstanceRepository
         _make_runtime: Callable[[str], CharacterRuntime]
+        _load_runtime: Callable[[str], Awaitable[CharacterRuntime]]
         _make_engine: Callable[[CharacterRuntime], CharacterEngine]
+        ensure_character_runtime: Callable[[str], Awaitable[CharacterRuntime]]
         _default_binding: dict
         _mongo_ok: bool
         _milvus_ok: bool
@@ -187,6 +189,36 @@ class _LifecyclePersistence:
                                 mr_last_summary=runtime.state.mr_last_summary,
                             )
                         )
+                # The persisted active session may bind Cyrene or a custom
+                # instance.  Preload that exact runtime before WS/debug readers
+                # access the synchronous agent.character_engine property.
+                active_binding = self._session_manager.active.character_binding or {}
+                active_instance_id = active_binding.get("instance_id")
+                if active_instance_id and active_instance_id != instance_id:
+                    active_runtime = await self.ensure_character_runtime(active_instance_id)
+                    active_engine = active_runtime.ensure_engine(
+                        lambda: self._make_engine(active_runtime)
+                    )
+                    if active_runtime.instance.state is not None:
+                        if active_runtime.state.last_awareness_time:
+                            active_engine._last_awareness_time = (
+                                active_runtime.state.last_awareness_time
+                            )
+                        active_engine._reflector._restore_from_state()
+                        if active_runtime.reflector is not None and (
+                            active_runtime.state.mr_round_count
+                            or active_runtime.state.mr_new_memory_count
+                            or active_runtime.state.mr_last_summary
+                        ):
+                            active_runtime.reflector.restore_state(
+                                MemoryReflectorState(
+                                    mr_round_count=active_runtime.state.mr_round_count,
+                                    mr_new_memory_count=(
+                                        active_runtime.state.mr_new_memory_count
+                                    ),
+                                    mr_last_summary=active_runtime.state.mr_last_summary,
+                                )
+                            )
             # MongoDB 离线期间 session 可能有更新的 JSONL 快照，恢复到 MongoDB
             active = self._session_manager.active
             if os.path.exists(active.pending_file):

@@ -56,6 +56,9 @@ if TYPE_CHECKING:
     from Module.workflow_engine.mailbox import WorkflowMailbox
     from Module.stt.protocol import STTBackend
     from core.status import AgentStatus, CognitivePhaseController
+    from core.character.definition import CharacterDefinition
+    from core.character.instance import CharacterInstance
+    from core.character.revision import CharacterRevision
 
 from Module.output import OutputManager, ConsoleChannel
 from Module.workflow_contract.schema import WorkflowId
@@ -83,7 +86,13 @@ from core.personality import CharacterEngine
 from core.memory.memory_reflector import MemoryReflector
 from core.character.registry import CharacterRuntimeRegistry
 from core.character.runtime import CharacterRuntime
+from core.character.runtime_loader import CharacterRuntimeSourceLoader
+from core.character.runtime_profile import compile_runtime_profile
+from core.character.service import CharacterService
+from core.character.catalog import CharacterCatalog
 from core.storage.character_instance_repo import CharacterInstanceRepository
+from core.storage.character_repo import CharacterRepository
+from core.storage.character_revision_repo import CharacterRevisionRepository
 from core.storage.character_version_repo import CharacterVersionRepository
 from core.schema.types import IsoTimestamp, MessageId, SessionId
 from core.schema.utils import now_iso
@@ -224,21 +233,41 @@ class Agent(AgentLifecycle, AgentServer):
             "instance_id": "chi_builtin_elysia",
         }
         self._builtin_source = BuiltinCharacterSource()
+        # Character REST and runtime loading share one repository/service graph.
+        # Separate instances previously made a just-created custom definition
+        # invisible to the Agent's runtime factory until another connection cycle.
+        self._character_repo = CharacterRepository(base_url=db_cfg.mongodb_uri)
+        self._character_revision_repo = CharacterRevisionRepository(
+            base_url=db_cfg.mongodb_uri
+        )
+        self._character_catalog = CharacterCatalog(source=self._builtin_source)
+        self._character_service = CharacterService(
+            repo=self._character_repo,
+            rev_repo=self._character_revision_repo,
+            catalog=self._character_catalog,
+            user_identity_store=self._user_identity_store,
+        )
+        self._runtime_source_loader = CharacterRuntimeSourceLoader(
+            characters=self._character_service,
+            instances=self._instance_repo,
+            builtins=self._builtin_source,
+            owner_user_id=self._user_identity.userId,
+        )
 
-        def _make_runtime(instance_id: str) -> CharacterRuntime:
-            """按 instance_id 构造 CharacterRuntime（内置角色经 BuiltinCharacterSource）。
-
-            非内置 instance 当前由 character_profiles gate（阶段 D+ 才启用），此路径
-            只服务内置 elysia/cyrene —— 角色名从 instance_id 前缀剥离回 role_name。
-            """
-            role_name = instance_id.removeprefix("chi_builtin_")
-            definition, revision, instance = self._builtin_source.load(role_name)
+        def _assemble_runtime(
+            definition: "CharacterDefinition",
+            revision: "CharacterRevision",
+            instance: "CharacterInstance",
+        ) -> CharacterRuntime:
+            """从已解析的精确 revision 构造一个 instance-scoped runtime。"""
+            profile = compile_runtime_profile(definition, revision)
+            character_config = profile.config
             # Task 7（记忆 v2 隔离）：scoped 三组件——memory_view（ScopedLongTermMemory）
             # + per-runtime consolidator/reflector。scope 按 instance 固定，view 复用同一
             # LongTermMemory（_long_term），但读写全部作用域过滤。
             scope = MemoryScope(
                 user_id=self._user_identity.userId,
-                character_instance_id=instance_id,
+                character_instance_id=instance.instanceId,
             )
             memory_view = self._long_term.for_scope(scope)
             rt = CharacterRuntime(
@@ -247,10 +276,11 @@ class Agent(AgentLifecycle, AgentServer):
                 revision=revision,
                 user_identity=self._user_identity,
                 memory_view=memory_view,
+                profile=profile,
                 consolidator=MemoryConsolidator(
                     llm=self._llm,
                     memory=memory_view,
-                    character_name=self._character.name,
+                    character_name=character_config.name,
                     user_name=self._user_name,
                 ),
                 # MemoryReflector 的 session 原用于 save_state() 计数器持久化；per-runtime
@@ -259,7 +289,7 @@ class Agent(AgentLifecycle, AgentServer):
                     llm=self._llm,
                     memory=memory_view,
                     session=None,
-                    character_name=self._character.name,
+                    character_name=character_config.name,
                     user_name=self._user_name,
                 ),
             )
@@ -272,17 +302,36 @@ class Agent(AgentLifecycle, AgentServer):
             rt.set_persist_fn(self._persist_runtime_factory(rt))
             return rt
 
+        def _make_runtime(instance_id: str) -> CharacterRuntime:
+            """Synchronously construct only a trusted file-backed built-in."""
+            if not instance_id.startswith("chi_builtin_"):
+                raise RuntimeError(
+                    f"custom runtime {instance_id} 必须通过异步存储 loader 构造"
+                )
+            role_name = instance_id.removeprefix("chi_builtin_")
+            return _assemble_runtime(*self._builtin_source.load(role_name))
+
+        async def _load_runtime(instance_id: str) -> CharacterRuntime:
+            """Load an exact built-in/custom source and assemble its runtime."""
+            source = await self._runtime_source_loader.load(instance_id)
+            return _assemble_runtime(*source)
+
         def _make_engine(runtime: CharacterRuntime) -> CharacterEngine:
             """从 runtime 构造 CharacterEngine（M3: 每 instance 一个 engine，state 权威 =
             runtime.state，与 runtime.state 共享同一引用）。
             """
+            profile = runtime.profile or compile_runtime_profile(
+                runtime.definition, runtime.revision
+            )
+            runtime.profile = profile
+            character_config = profile.config
             return CharacterEngine(
                 llm=self._llm,
                 state=runtime.state,
-                character_name=self._character.name,
+                character_name=character_config.name,
                 user_name=self._user_name,
-                base_personality=self._character.base_personality,
-                character_config=self._character,
+                base_personality=character_config.base_personality,
+                character_config=character_config,
                 output=self._output,
                 version_repo=self._version_repo,
                 instance_id=runtime.instance.instanceId,
@@ -290,6 +339,7 @@ class Agent(AgentLifecycle, AgentServer):
             )
 
         self._make_runtime = _make_runtime
+        self._load_runtime = _load_runtime
         self._make_engine = _make_engine
 
         # 默认 instance（内置 Elysia）：构造 runtime + engine 并注册入 registry。
@@ -352,7 +402,7 @@ class Agent(AgentLifecycle, AgentServer):
             # Task 11（M3）：注入 runtime registry + factory——_prepare_turn 经
             # binding → registry.get(instance_id) → runtime.engine 解析当前回合引擎。
             runtime_registry=self._runtime_registry,
-            runtime_factory=self._make_runtime,
+            runtime_factory=self._load_runtime,
             engine_factory=self._make_engine,
         )
         self._cognitive.configure(
@@ -908,8 +958,20 @@ class Agent(AgentLifecycle, AgentServer):
         return await self._session_manager.resolve(conversation_id, protocol_version)
 
     async def switch_session(self, sid: SessionId):
-        """切换到目标会话（直通 SessionManager——engine attach + 活动指针更新）。"""
+        """Load the bound runtime before changing the active-session pointer."""
+        target = await self._session_manager.resolve(sid, 2)
+        binding = target.character_binding or self._default_binding
+        instance_id = binding.get("instance_id") or self._default_binding["instance_id"]
+        await self.ensure_character_runtime(instance_id)
         return await self._session_manager.switch(sid)
+
+    async def ensure_character_runtime(self, instance_id: str) -> CharacterRuntime:
+        """Ensure a built-in/custom runtime and its engine are ready for UI/chat."""
+        runtime = await self._runtime_registry.get_or_load(
+            instance_id, lambda: self._load_runtime(instance_id)
+        )
+        runtime.ensure_engine(lambda: self._make_engine(runtime))
+        return runtime
 
     @property
     def long_term(self):
@@ -1088,8 +1150,14 @@ class Agent(AgentLifecycle, AgentServer):
         """
         binding = self._session_manager.active.character_binding or self._default_binding
         instance_id = binding.get("instance_id") or self._default_binding["instance_id"]
-        runtime = self._runtime_registry.get(
-            instance_id, lambda: self._make_runtime(instance_id))
+        runtime = self._runtime_registry.get_existing(instance_id)
+        if runtime is None:
+            # This synchronous debug/read interface cannot perform Mongo I/O.
+            # Built-ins can still be materialised from trusted files; custom
+            # runtimes are preloaded by start/create/switch/turn preparation.
+            runtime = self._runtime_registry.get(
+                instance_id, lambda: self._make_runtime(instance_id)
+            )
         return runtime.ensure_engine(lambda: self._make_engine(runtime))
 
     @property
