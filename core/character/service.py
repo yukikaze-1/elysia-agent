@@ -389,6 +389,34 @@ class CharacterService:
             return None
         return _detail(*pair)
 
+    async def resolve_runtime_source(
+        self, character_id: str, *, revision: int | None = None,
+    ) -> tuple[CharacterDefinition, CharacterRevision]:
+        """Resolve one exact immutable revision for runtime construction.
+
+        This domain API deliberately returns internal models rather than REST
+        DTOs.  A requested historical revision is never replaced with the current
+        pointer, and a missing/corrupt revision fails closed.
+        """
+        builtin_pair = self._catalog_pair(character_id)
+        if builtin_pair is not None:
+            definition, current = builtin_pair
+            if revision is not None and revision != current.revision:
+                raise CharacterNotFoundError(character_id)
+            return definition, _normalise_revision(current)
+
+        await self._ensure_connected()
+        definition = await self.repo.get_definition(character_id)
+        if definition is None:
+            raise CharacterNotFoundError(character_id)
+        selected_revision = revision or definition.currentRevision
+        content = await self.rev_repo.get_revision(character_id, selected_revision)
+        if content is None:
+            raise CharacterStorageUnavailableError(
+                f"角色 revision 缺失: {character_id}@{selected_revision}"
+            )
+        return definition, _normalise_revision(content)
+
     async def list(
         self,
         *,
