@@ -282,9 +282,11 @@ def create_app(
     # 注意：create_app 是同步函数（def，非 async def）——不能 await。repo 连接是惰性的：
     # connect() 由首次 CRUD 操作的 fail-closed 路径触发（未连接即抛 StorageUnavailableError → 503）。
     from core.character.service import CharacterService
+    from core.character.session_binding import CharacterSessionBindingService
     from core.profile.profile_store import UserIdentityStore
     from core.storage.character_repo import CharacterRepository
     from core.storage.character_revision_repo import CharacterRevisionRepository
+    from core.storage.character_instance_repo import CharacterInstanceRepository
     from core.character.catalog import CharacterCatalog
     from core.character.builtin_source import BuiltinCharacterSource
     from core.input.character_routes import register_character_routes
@@ -303,7 +305,15 @@ def create_app(
     app["character_service"] = CharacterService(
         repo=CharacterRepository(), rev_repo=CharacterRevisionRepository(),
         catalog=CharacterCatalog(source=BuiltinCharacterSource()),
-        user_identity_store=getattr(agent, "_user_identity_store", None) or UserIdentityStore(),
+        user_identity_store=app["user_identity_store"],
+    )
+    app["character_session_binding_service"] = CharacterSessionBindingService(
+        character_service=app["character_service"],
+        instance_repo=(
+            getattr(agent, "_instance_repo", None)
+            or CharacterInstanceRepository()
+        ),
+        user_identity_store=app["user_identity_store"],
     )
     register_character_routes(app, _check_auth)
 

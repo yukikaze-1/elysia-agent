@@ -17,11 +17,17 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 from bson import ObjectId
 from bson.errors import InvalidId
+from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from core.agent import Agent
 
 from core.input._common import _archive_to_client, _archive_msg_to_contract
+from core.character.service import (
+    CharacterArchivedError,
+    CharacterNotFoundError,
+    CharacterStorageUnavailableError,
+)
 from core.memory.session_manager import SessionBusyError
 from core.schema.message import Message, MessageRole
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart
@@ -151,7 +157,11 @@ def _parse_resource_before(value: str | None) -> tuple[str, int] | None:
 # ── 契约转换 helpers ────────────────────────────────────────────────────────
 
 
-def _to_contract_summary(s: SessionSummary, active_id: str) -> rest_contract.SessionSummary:
+def _to_contract_summary(
+    s: SessionSummary,
+    active_id: str,
+    character: rest_contract.CharacterBindingSnapshot | None = None,
+) -> rest_contract.SessionSummary:
     """仓库 SessionSummary dataclass → 契约 SessionSummary（title 空时缺省省略）。"""
     return rest_contract.SessionSummary(
         conversationId=str(s.session_id),
@@ -159,6 +169,7 @@ def _to_contract_summary(s: SessionSummary, active_id: str) -> rest_contract.Ses
         messageCount=s.message_count,
         updatedAt=s.updated_at,
         active=(str(s.session_id) == str(active_id)),
+        character=character,
     )
 
 
@@ -168,7 +179,17 @@ def _contract_messages(messages: list[Message]) -> list[rest_contract.Message]:
     return [m for m in (_archive_msg_to_contract(d) for d in client_msgs) if m]
 
 
-async def _session_summary(agent: "Agent", sid: str,
+async def _character_snapshot(
+    app: web.Application, value: object,
+) -> rest_contract.CharacterBindingSnapshot | None:
+    try:
+        return await app["character_session_binding_service"].snapshot(value)
+    except Exception:
+        logger.warning("session character snapshot 解析失败", exc_info=True)
+        return None
+
+
+async def _session_summary(app: web.Application, agent: "Agent", sid: str,
                            message_count: int) -> rest_contract.SessionSummary | None:
     """构造单会话 SessionSummary：摘要取 SessionManager 的 Mongo+本地合并视图，
     messageCount 用归档计数（消息总数，比会话窗口更准确）。
@@ -187,7 +208,8 @@ async def _session_summary(agent: "Agent", sid: str,
         return None
     if summary_item is None:
         return None
-    summary = _to_contract_summary(summary_item, active_id)
+    character = await _character_snapshot(app, summary_item.character_binding)
+    summary = _to_contract_summary(summary_item, active_id, character)
     summary.messageCount = message_count
     return summary
 
@@ -439,10 +461,15 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
             logger.debug("count_by_session 失败 sid=%s，保留窗口数", s.session_id, exc_info=True)
             return None
 
-    counts = await asyncio.gather(*(_count(s) for s in items))
+    counts, characters = await asyncio.gather(
+        asyncio.gather(*(_count(s) for s in items)),
+        asyncio.gather(*(
+            _character_snapshot(request.app, s.character_binding) for s in items
+        )),
+    )
     summaries = []
-    for s, count in zip(items, counts):
-        summary = _to_contract_summary(s, manager.active_id)
+    for s, count, character in zip(items, counts, characters):
+        summary = _to_contract_summary(s, manager.active_id, character)
         if count is not None:
             summary.messageCount = count
         summaries.append(summary)
@@ -460,11 +487,28 @@ async def sessions_create_handler(request: web.Request) -> web.Response:
         raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except Exception:
         return _error_response("CONTRACT_VALIDATION", "无效的 JSON 请求体")
-    title = body.get("title")
-    if title is not None and not isinstance(title, str):
-        return _error_response("CONTRACT_VALIDATION", "title 必须是字符串")
-    summary = await agent.session_manager.create(title=title or "")
-    resp = _to_contract_summary(summary, agent.active_session_id)
+    try:
+        wire = rest_contract.SessionCreateRequest.model_validate(body)
+        resolved = await request.app["character_session_binding_service"].resolve_for_create(
+            wire.characterId,
+        )
+    except ValidationError:
+        return _error_response("CONTRACT_VALIDATION", "新建会话请求无效")
+    except CharacterNotFoundError:
+        return _error_response("CHARACTER_NOT_FOUND", "角色不存在", 404)
+    except CharacterArchivedError:
+        return _error_response("CHARACTER_ARCHIVED", "archived 角色不可用于新会话", 409)
+    except (CharacterStorageUnavailableError, StorageUnavailableError):
+        return _error_response(
+            "CHARACTER_STORAGE_UNAVAILABLE", "角色存储不可用", 503, retryable=True,
+        )
+    summary = await agent.session_manager.create(
+        title=wire.title or "",
+        character_binding=resolved.binding,
+    )
+    resp = _to_contract_summary(
+        summary, agent.active_session_id, resolved.snapshot,
+    )
     return web.json_response(resp.wire_dict())
 
 
@@ -475,14 +519,18 @@ async def sessions_detail_handler(request: web.Request) -> web.Response:
     if not await _session_exists(agent, sid):
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
     total = await agent.message_repo.count_by_session(SessionId(sid))
-    summary = await _session_summary(agent, sid, total)
+    summary = await _session_summary(request.app, agent, sid, total)
     if summary is None:
         # has_session 通过但 list_all 未命中（Mongo 离线等极端场景）→ 兜底空摘要。
         # BE-P1-05 clean-start：default 恒有本地摘要（updatedAt=now）——本兜底对
         # default 不再触发，updatedAt 非空可解析（详见 SessionManager._merged_summaries）。
+        character = await _character_snapshot(
+            request.app,
+            getattr(agent.session_manager.get(SessionId(sid)), "character_binding", None),
+        )
         summary = rest_contract.SessionSummary(
             conversationId=sid, messageCount=total, updatedAt="",
-            active=(str(sid) == str(agent.active_session_id)))
+            active=(str(sid) == str(agent.active_session_id)), character=character)
     messages, _ = await agent.message_repo.query_page(SessionId(sid), limit=20)
     resp = rest_contract.SessionDetail(
         session=summary, messages=_contract_messages(messages), active=summary.active)
@@ -506,7 +554,7 @@ async def sessions_rename_handler(request: web.Request) -> web.Response:
         return _error_response("CONTRACT_VALIDATION", "缺少 title 或类型错误")
     await agent.session_manager.rename(sid, title)
     total = await agent.message_repo.count_by_session(SessionId(sid))
-    summary = await _session_summary(agent, sid, total)
+    summary = await _session_summary(request.app, agent, sid, total)
     if summary is None:
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
     return web.json_response(summary.wire_dict())

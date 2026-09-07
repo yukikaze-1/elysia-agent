@@ -18,10 +18,12 @@
 
 import base64
 from datetime import datetime
+from unittest.mock import AsyncMock
 
 import pytest
 
 from core.cognitive.generation_registry import GenerationRegistry
+from core.character.service import CharacterNotFoundError
 from core.memory.session_manager import SessionManager
 from core.schema.message import MessageId, UserMessage, AssistantMessage
 from core.schema.part import TextPart, ImagePart, VideoPart, FilePart, AudioPart, StickerPart
@@ -315,7 +317,8 @@ class TestSessionsCRUD:
 
     @pytest.mark.asyncio
     async def test_create_returns_summary(self, aiohttp_client):
-        app = _make_app(_FakeAgent())
+        agent = _FakeAgent()
+        app = _make_app(agent)
         client = await aiohttp_client(app)
         resp = await client.post("/api/sessions", json={"title": "我的会话"})
         assert resp.status == 200
@@ -325,6 +328,22 @@ class TestSessionsCRUD:
         assert data["messageCount"] == 0
         assert data["active"] is False
         assert "updatedAt" in data
+        assert data["character"] == {
+            "characterId": "chr_builtin_elysia",
+            "characterInstanceId": "chi_builtin_elysia",
+            "characterRevision": 1,
+            "displayName": "Elysia",
+            "presentation": {
+                "avatarAssetId": None,
+                "live2dModelId": None,
+                "themeColor": None,
+            },
+        }
+        session = agent.session_manager.get(data["conversationId"])
+        assert session.character_binding == {
+            "character_id": "chr_builtin_elysia",
+            "instance_id": "chi_builtin_elysia",
+        }
 
     @pytest.mark.asyncio
     async def test_create_without_title_omits_field(self, aiohttp_client):
@@ -335,6 +354,48 @@ class TestSessionsCRUD:
         data = await resp.json()
         assert data["conversationId"].startswith("conv_")
         assert "title" not in data  # 未命名缺省省略
+
+    @pytest.mark.asyncio
+    async def test_create_explicit_character_and_replay_summary(self, aiohttp_client):
+        agent = _FakeAgent()
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        created = await client.post("/api/sessions", json={
+            "title": "Cyrene",
+            "characterId": "chr_builtin_cyrene",
+        })
+        assert created.status == 200
+        data = await created.json()
+        assert data["character"]["characterId"] == "chr_builtin_cyrene"
+        assert data["character"]["characterInstanceId"] == "chi_builtin_cyrene"
+        sid = data["conversationId"]
+
+        listed = await client.get("/api/sessions")
+        item = next(
+            row for row in (await listed.json())["sessions"]
+            if row["conversationId"] == sid
+        )
+        assert item["character"] == data["character"]
+        detail = await client.get(f"/api/sessions/{sid}")
+        assert (await detail.json())["session"]["character"] == data["character"]
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_unknown_character_and_unknown_request_field(
+        self, aiohttp_client,
+    ):
+        app = _make_app(_FakeAgent())
+        app["character_session_binding_service"].resolve_for_create = AsyncMock(
+            side_effect=CharacterNotFoundError("chr_missing"),
+        )
+        client = await aiohttp_client(app)
+        missing = await client.post("/api/sessions", json={
+            "characterId": "chr_missing",
+        })
+        assert missing.status == 404
+        assert (await missing.json())["code"] == "CHARACTER_NOT_FOUND"
+        invalid = await client.post("/api/sessions", json={"unknown": True})
+        assert invalid.status == 400
+        assert (await invalid.json())["code"] == "CONTRACT_VALIDATION"
 
     @pytest.mark.asyncio
     async def test_list_active_fill_and_search(self, aiohttp_client):

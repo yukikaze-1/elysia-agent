@@ -51,3 +51,17 @@ async def test_offline_get_raises():
     repo = CharacterInstanceRepository(db=None)
     with pytest.raises(Exception):
         await repo.get("chi_x")
+
+
+@pytest.mark.asyncio
+async def test_get_canonical_filters_owner_character_and_flag():
+    repo = CharacterInstanceRepository(db=FakeDocumentDBBackend())
+    await repo.save(_inst(
+        instanceId="chi_a", characterId="chr_a", ownerUserId="usr_a", canonical=True,
+    ))
+    await repo.save(_inst(
+        instanceId="chi_b", characterId="chr_a", ownerUserId="usr_b", canonical=True,
+    ))
+    got = await repo.get_canonical("usr_a", "chr_a")
+    assert got is not None and got.instanceId == "chi_a"
+    assert await repo.get_canonical("usr_a", "chr_missing") is None

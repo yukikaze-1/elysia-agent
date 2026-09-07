@@ -35,6 +35,11 @@ class CharacterInstanceRepository(Repository):
         try:
             self._db = DocumentDBFactory.create("mongodb/default", base_url=self._base_url)
             await self._db.ensure_index(COLLECTION, [("instance_id", 1)], unique=True)
+            await self._db.ensure_index(
+                COLLECTION,
+                [("owner_user_id", 1), ("character_id", 1), ("canonical", 1)],
+                unique=True,
+            )
             return True
         except Exception as e:
             logger.warning("CharacterInstanceRepository: MongoDB unavailable (%s)", e)
@@ -54,6 +59,26 @@ class CharacterInstanceRepository(Repository):
             raise StorageUnavailableError("CharacterInstanceRepository 未连接")
         db = self._db
         docs = await self._call(lambda: db.find(COLLECTION, {"instance_id": instance_id}, limit=1))
+        if not docs:
+            return None
+        return CharacterInstance.model_validate(self._from_doc(docs[0]))
+
+    async def get_canonical(
+        self, owner_user_id: str, character_id: str,
+    ) -> CharacterInstance | None:
+        """按用户与角色取得 canonical instance；不存在返回 None。"""
+        if self._db is None:
+            raise StorageUnavailableError("CharacterInstanceRepository 未连接")
+        db = self._db
+        docs = await self._call(lambda: db.find(
+            COLLECTION,
+            {
+                "owner_user_id": owner_user_id,
+                "character_id": character_id,
+                "canonical": True,
+            },
+            limit=1,
+        ))
         if not docs:
             return None
         return CharacterInstance.model_validate(self._from_doc(docs[0]))
