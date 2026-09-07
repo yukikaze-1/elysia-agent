@@ -3,10 +3,13 @@
 阶段 D 路由的可靠测试点是 `_character_error_response`（Service 异常 → ProtocolError
 映射），它是纯函数、确定性、无 I/O。完整 aiohttp 路由冒烟在阶段 G/联调做（需装 Agent）。
 """
+import json
+
 from core.input.character_routes import _character_error_response
 from core.character.service import (
     CharacterNotFoundError, CharacterImmutableError, CharacterArchivedError,
     CharacterValidationError, RevisionConflictError, CharacterStorageUnavailableError,
+    CharacterPreviewUnavailableError, CharacterStateConflictError, CharacterBusyError,
 )
 from core.storage.base import StorageUnavailableError
 
@@ -56,12 +59,38 @@ def test_archived_maps_to_409():
     assert r is not None and r.status == 409
 
 
+def test_preview_unavailable_maps_to_stable_retryable_code():
+    r = _character_error_response(CharacterPreviewUnavailableError("x"))
+    assert r is not None and r.status == 503
+    body = json.loads(r.text)
+    assert body["code"] == "CHARACTER_PREVIEW_FAILED"
+    assert body["retryable"] is True
+    assert body["retryAfterMs"] == 1000
+
+
+def test_state_conflict_exposes_current_version_and_retry_hint():
+    r = _character_error_response(CharacterStateConflictError("chi", 9))
+    assert r is not None and r.status == 409
+    body = json.loads(r.text)
+    assert body["code"] == "CHARACTER_STATE_CONFLICT"
+    assert body["details"] == {"currentStateVersion": 9}
+    assert body["retryable"] is True
+
+
+def test_busy_exposes_retry_hint():
+    r = _character_error_response(CharacterBusyError("chi"))
+    assert r is not None and r.status == 409
+    body = json.loads(r.text)
+    assert body["code"] == "CHARACTER_BUSY"
+    assert body["retryAfterMs"] == 500
+
+
 # ── 阶段 G REST GET /api/character-instances/{id}/state（只读 fail-closed）──
 
 
 @pytest.mark.asyncio
 async def test_instance_state_returns_public_state(aiohttp_client):
-    """GET /api/character-instances/{id}/state 返回产品态(含 state 子结构)。"""
+    """GET /api/character-instances/{id}/state 返回 Stage G 嵌套产品态。"""
     from core.input.server import create_app
 
     agent = _make_agent()  # test helper; ensure has character_runtime_registry
@@ -81,8 +110,8 @@ async def test_instance_state_returns_public_state(aiohttp_client):
 
 
 @pytest.mark.asyncio
-async def test_instance_state_missing_returns_503(aiohttp_client):
-    """未注册 instance → fail-closed 503(不懒建)。"""
+async def test_instance_state_missing_returns_404(aiohttp_client):
+    """未注册 instance → 404（不懒建）。"""
     from core.input.server import create_app
 
     agent = _make_agent()
@@ -91,6 +120,6 @@ async def test_instance_state_missing_returns_503(aiohttp_client):
     client = await aiohttp_client(app)
     try:
         resp = await client.get("/api/character-instances/chi_builtin_nonexistent/state")
-        assert resp.status == 503
+        assert resp.status == 404
     finally:
         await agent.stop()

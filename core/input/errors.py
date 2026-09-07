@@ -13,17 +13,22 @@ from frontend_contract.rest import ProtocolError
 
 
 def _protocol_error_response(code: str, message: str, status: int = 401,
-                             retryable: bool = False) -> web.Response:
-    """构造统一错误信封响应（code/message/retryable/requestId/error/details）。
+                             retryable: bool = False, *,
+                             details: dict[str, object] | None = None,
+                             retry_after_ms: int | None = None) -> web.Response:
+    """构造统一错误信封响应（含公开安全详情与可选重试等待）。
 
     Args:
         code: 稳定错误码。
         message: 公开说明。
         status: HTTP 状态码。
         retryable: 是否可重试（错误码目录定义；CONNECTION_LIMITED=true，AUTH/REQUEST 等 false）。
+        details: 仅允许公开安全字段（不得带正文、密钥或本地路径）。
+        retry_after_ms: 服务端建议的下次尝试等待毫秒数。
     """
     env = ProtocolError(
         code=code, message=message, retryable=retryable,
         requestId=f"req_{uuid.uuid4().hex[:24]}", error=message,
+        details=details or {}, retryAfterMs=retry_after_ms,
     ).wire_dict()
     return web.json_response(env, status=status)
