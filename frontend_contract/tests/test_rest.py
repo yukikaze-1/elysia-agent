@@ -466,8 +466,12 @@ class TestRestEnums:
 
 @pytest.mark.unit
 def test_character_list_response_has_more_cursor():
-    from frontend_contract.rest import CharacterListResponse, CharacterSummary
-    resp = CharacterListResponse(items=[CharacterSummary(characterId="a", displayName="A")],
+    from frontend_contract.rest import CharacterListResponse, CharacterSummary, CharacterPresentation
+    resp = CharacterListResponse(items=[CharacterSummary(
+                                     characterId="a", source="custom", mutable=True, status="active",
+                                     currentRevision=1, displayName="A", description="", aliases=[],
+                                     presentation=CharacterPresentation(),
+                                     updatedAt="2026-09-04T00:00:00Z")],
                                  has_more=False).wire_dict()
     assert resp["has_more"] is False and "cursor" not in resp  # cursor 缺省省略
 
@@ -476,10 +480,32 @@ def test_character_list_response_has_more_cursor():
 def test_character_mutation_result_shape():
     from frontend_contract.rest import (CharacterMutationResult, CharacterDetail,
                                         CharacterSummary, CharacterRevisionResponse,
-                                        CharacterStateImpact)
-    detail = CharacterDetail(summary=CharacterSummary(characterId="a", displayName="A"),
-                             current=CharacterRevisionResponse(characterId="a", revision=1,
-                                                               displayName="A", createdAt="2026-09-04T00:00:00Z"))
+                                        CharacterStateImpact, CharacterPresentation,
+                                        CharacterPromptProfile, CharacterRuntimeDefaults)
+    from frontend_contract.rest import (
+        CharacterRuntimeVoice, CharacterRuntimeEmotion, CharacterRuntimeProactive,
+    )
+    detail = CharacterDetail(
+        summary=CharacterSummary(
+            characterId="a", source="custom", mutable=True, status="active",
+            currentRevision=1, displayName="A", description="", aliases=[],
+            presentation=CharacterPresentation(),
+            updatedAt="2026-09-04T00:00:00Z"),
+        current=CharacterRevisionResponse(
+            characterId="a", revision=1, schemaVersion=1, displayName="A",
+            description="", aliases=[],
+            promptProfile=CharacterPromptProfile(
+                corePersonality="a", relationshipStyle="b", emotionStyle="",
+                speakingStyle="c", conversationInitiative="", examples=[]),
+            runtimeDefaults=CharacterRuntimeDefaults(
+                voice=CharacterRuntimeVoice(),
+                emotion=CharacterRuntimeEmotion(idleExpressions=[]),
+                wakeWords=[],
+                proactive=CharacterRuntimeProactive(
+                    enabled=False, intervalSeconds=1800, triggers=[])),
+            presentation=CharacterPresentation(), checksum="checksum",
+            compilerVersion=1, createdBy="system",
+            createdAt="2026-09-04T00:00:00Z"))
     m = CharacterMutationResult(character=detail,
                                 stateImpact=CharacterStateImpact(statePolicy="preserve",
                                                                   affectedInstances=0, pendingInstances=0,
@@ -490,6 +516,10 @@ def test_character_mutation_result_shape():
 
 @pytest.mark.unit
 def test_character_archive_result_character_summary():
-    from frontend_contract.rest import CharacterArchiveResult, CharacterSummary
-    a = CharacterArchiveResult(character=CharacterSummary(characterId="a", displayName="A")).wire_dict()
+    from frontend_contract.rest import CharacterArchiveResult, CharacterSummary, CharacterPresentation
+    a = CharacterArchiveResult(character=CharacterSummary(
+        characterId="a", source="custom", mutable=True, status="archived",
+        currentRevision=1, displayName="A", description="", aliases=[],
+        presentation=CharacterPresentation(),
+        updatedAt="2026-09-04T00:00:00Z")).wire_dict()
     assert a["character"]["characterId"] == "a"

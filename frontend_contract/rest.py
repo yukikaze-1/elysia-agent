@@ -13,12 +13,14 @@
   （不引 core.schema.Message），发送点把 core.schema.Message 经 `_archive_to_client` 转成客户端 dict 后
   构造本模型（block_index → content_type 归一化，对齐 session 回放 wire）。
 """
+from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any, Literal, Optional
+import re
+from typing import Annotated, Any, Literal, Optional
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from frontend_contract.base import ContractModel
+from frontend_contract.base import ContractModel, TsNull
 
 
 # ────────────────────── 非判别受限字段枚举（plan Task 7，StrEnum） ──────────────────────
@@ -185,6 +187,8 @@ class ProtocolError(ContractModel):
     requestId: str = Field(description="关联请求 ID（每请求独立 UUID，非三位计数器）")
     error: str = Field(description="兼容别名，构造时恒等于 message")
     details: dict[str, Any] = Field(default_factory=dict, description="公开安全详情（禁密钥/正文/路径）")
+    retryAfterMs: Optional[int] = Field(default=None, ge=0,
+                                        description="建议重试等待毫秒数，可缺省")
 
 
 # ────────────────────── Provider 测试（/api/providers/test） ──────────────────────
@@ -561,153 +565,527 @@ class StickerListResponse(ContractModel):
 # ─────────────── 阶段 C+E 多角色 Profile（Task 9；本批仅契约建模，wire 由 build_server_info flag 抑制） ───────────────
 
 
-class UserIdentityProfile(ContractModel):
-    """用户最小身份（阶段 C+E；GET /api/me / PUT /api/me）。"""
+# ─────────────── Stage H 角色/身份 REST wire 契约（架构稿 §11/§13/§14/§17） ───────────────
 
-    userId: str = Field(default="usr_local_default", description="用户 ID（本地默认单用户）")
-    displayName: str = Field(default="", description="展示名")
-    preferredAddress: Optional[str] = Field(
-        default=None, description="用户希望被称呼的方式（可缺省）")
-    pronouns: str = Field(default="她", description="代词（称呼第三人称）")
-    locale: str = Field(default="zh-CN", description="语言区域")
-    timezone: str = Field(default="Asia/Shanghai", description="时区")
-    initialized: bool = Field(default=False, description="是否已完成初始化引导")
-    defaultCharacterId: Optional[str] = Field(
-        default=None, description="默认角色 ID（可缺省）")
-    revision: int = Field(default=1, description="版本号（乐观并发）")
+
+class CharacterSource(StrEnum):
+    BUILTIN = "builtin"
+    CUSTOM = "custom"
+
+
+class CharacterStatus(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class CharacterCreatedBy(StrEnum):
+    SYSTEM = "system"
+    USER = "user"
+    MIGRATION = "migration"
+
+
+class CharacterStatePolicy(StrEnum):
+    PRESERVE = "preserve"
+    RESET_EVOLUTION = "reset_evolution"
+
+
+class CharacterResetField(StrEnum):
+    SELF_L2 = "self_l2"
+    STATE_L3 = "state_l3"
+    SPEAKING_STYLE_C6 = "speaking_style_c6"
+    REFLECTOR = "reflector"
+    MOOD = "mood"
+
+
+class CharacterValidationSeverity(StrEnum):
+    ERROR = "error"
+    WARNING = "warning"
+
+
+def _utc_iso(value: str) -> str:
+    """Validate the wire timestamp without silently normalising it."""
+    if not isinstance(value, str) or not (value.endswith("Z") or value.endswith("+00:00")):
+        raise ValueError("timestamp must be UTC ISO-8601 with Z or +00:00")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError as exc:
+        raise ValueError("timestamp must be valid ISO-8601") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise ValueError("timestamp must be UTC")
+    return value
+
+
+def _text(value: str, *, maximum: int, required: bool = True) -> str:
+    if not value.strip() and (required or value != ""):
+        raise ValueError("text must not be blank")
+    if len(value) > maximum:
+        raise ValueError(f"text exceeds {maximum} characters")
+    return value
+
+
+def _required_text(value: str) -> str:
+    if not value.strip():
+        raise ValueError("text must not be blank")
+    return value
+
+
+def _validate_alias_values(values: list[str]) -> list[str]:
+    if len({value.strip() for value in values}) != len(values):
+        raise ValueError("aliases must be unique")
+    return [_text(value, maximum=32) for value in values]
+
+
+def _validate_json_pointer(value: str) -> str:
+    if not value.startswith("/"):
+        raise ValueError("path must be a JSON Pointer")
+    return _required_text(value)
+
+
+_SAFE_CSS_NAMES = frozenset({
+    "aliceblue", "antiquewhite", "aqua", "aquamarine", "azure", "beige", "bisque",
+    "black", "blanchedalmond", "blue", "blueviolet", "brown", "burlywood",
+    "cadetblue", "chartreuse", "chocolate", "coral", "cornflowerblue", "cornsilk",
+    "crimson", "cyan", "darkblue", "darkcyan", "darkgoldenrod", "darkgray",
+    "darkgreen", "darkgrey", "darkkhaki", "darkmagenta", "darkolivegreen",
+    "darkorange", "darkorchid", "darkred", "darksalmon", "darkseagreen",
+    "darkslateblue", "darkslategray", "darkslategrey", "darkturquoise",
+    "darkviolet", "deeppink", "deepskyblue", "dimgray", "dimgrey", "dodgerblue",
+    "firebrick", "floralwhite", "forestgreen", "fuchsia", "gainsboro", "ghostwhite",
+    "gold", "goldenrod", "gray", "green", "greenyellow", "grey", "honeydew",
+    "hotpink", "indianred", "indigo", "ivory", "khaki", "lavender", "lavenderblush",
+    "lawngreen", "lemonchiffon", "lightblue", "lightcoral", "lightcyan",
+    "lightgoldenrodyellow", "lightgray", "lightgreen", "lightgrey", "lightpink",
+    "lightsalmon", "lightseagreen", "lightskyblue", "lightslategray",
+    "lightslategrey", "lightsteelblue", "lightyellow", "lime", "limegreen",
+    "linen", "magenta", "maroon", "mediumaquamarine", "mediumblue", "mediumorchid",
+    "mediumpurple", "mediumseagreen", "mediumslateblue", "mediumspringgreen",
+    "mediumturquoise", "mediumvioletred", "midnightblue", "mintcream", "mistyrose",
+    "moccasin", "navajowhite", "navy", "oldlace", "olive", "olivedrab", "orange",
+    "orangered", "orchid", "palegoldenrod", "palegreen", "paleturquoise",
+    "palevioletred", "papayawhip", "peachpuff", "peru", "pink", "plum", "powderblue",
+    "purple", "rebeccapurple", "red", "rosybrown", "royalblue", "saddlebrown",
+    "salmon", "sandybrown", "seagreen", "seashell", "sienna", "silver", "skyblue",
+    "slateblue", "slategray", "slategrey", "snow", "springgreen", "steelblue",
+    "tan", "teal", "thistle", "tomato", "transparent", "turquoise", "violet",
+    "wheat", "white", "whitesmoke", "yellow", "yellowgreen",
+})
+
+
+def _registry_ref(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not value.strip() or len(value) > 200 or any(ord(ch) < 0x20 for ch in value):
+        raise ValueError("managed asset IDs must be short opaque IDs")
+    if re.match(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|/|\\|[A-Za-z]:[\\/])", value):
+        raise ValueError("managed asset IDs cannot be paths or URLs")
+    if ".." in value:
+        raise ValueError("managed asset IDs cannot contain parent traversal")
+    return value
+
+
+def _theme_color(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if len(value) > 64 or any(ord(ch) < 0x20 for ch in value):
+        raise ValueError("unsafe theme color")
+    lower = value.lower()
+    if lower in {"inherit", "currentcolor", "initial", "unset", "revert"}:
+        raise ValueError("unsafe theme color")
+    if re.fullmatch(r"#[0-9a-fA-F]{3,8}", value):
+        return value
+    if re.fullmatch(r"(?:rgb|rgba|hsl|hsla)\([\d.,%\s]+\)", value):
+        return value
+    if lower in _SAFE_CSS_NAMES:
+        return value
+    raise ValueError("themeColor must be a safe CSS color")
+
+
+class UserIdentityProfile(ContractModel):
+    """GET /api/me response; timestamps are part of the frozen profile wire."""
+
+    model_config = ConfigDict(extra="forbid")
+    userId: str = Field(min_length=1, description="用户 ID（本地默认单用户）")
+    displayName: str = Field(description="展示名")
+    preferredAddress: Annotated[Optional[str], TsNull()] = Field(
+        default=None, description="用户希望被称呼的方式")
+    pronouns: Annotated[Optional[str], TsNull()] = Field(default="她", description="代词")
+    locale: str = Field(description="语言区域")
+    timezone: str = Field(description="时区")
+    initialized: bool = Field(description="是否已完成初始化引导")
+    defaultCharacterId: Annotated[Optional[str], TsNull()] = Field(default=None, description="默认角色 ID")
+    revision: int = Field(ge=1, description="版本号（乐观并发）")
+    createdAt: str = Field(description="创建时间（UTC ISO）")
+    updatedAt: str = Field(description="更新时间（UTC ISO）")
+
+    _validate_display_name = field_validator("displayName")(lambda v: _text(v, maximum=64))
+    _validate_user_id = field_validator("userId")(_required_text)
+    _validate_optional_fields = field_validator(
+        "preferredAddress", "pronouns", "defaultCharacterId"
+    )(
+        lambda v: _text(v, maximum=200) if v is not None else v
+    )
+    _validate_locale = field_validator("locale", "timezone")(
+        lambda v: _text(v, maximum=100)
+    )
+    _validate_timestamps = field_validator("createdAt", "updatedAt")(_utc_iso)
+
+
+class UserIdentityUpdate(ContractModel):
+    """PUT /api/me request; omitted nullable fields are interpreted by the route."""
+
+    model_config = ConfigDict(extra="forbid")
+    displayName: str = Field(description="展示名")
+    preferredAddress: Optional[str] = None
+    pronouns: Optional[str] = None
+    locale: str
+    timezone: str
+    defaultCharacterId: Optional[str] = None
+    expectedRevision: int = Field(ge=1)
+
+    _validate_display_name = field_validator("displayName")(lambda v: _text(v, maximum=64))
+    _validate_optional_names = field_validator(
+        "preferredAddress", "pronouns", "defaultCharacterId"
+    )(
+        lambda v: _text(v, maximum=200) if v is not None else v
+    )
+    _validate_locale = field_validator("locale", "timezone")(lambda v: _text(v, maximum=128))
+
+
+class CharacterPresentation(ContractModel):
+    """Managed presentation references; arbitrary URLs/paths are rejected."""
+
+    model_config = ConfigDict(extra="forbid")
+    avatarAssetId: Annotated[Optional[str], TsNull()] = None
+    live2dModelId: Annotated[Optional[str], TsNull()] = None
+    themeColor: Annotated[Optional[str], TsNull()] = None
+
+    _validate_refs = field_validator("avatarAssetId", "live2dModelId")(_registry_ref)
+    _validate_theme = field_validator("themeColor")(_theme_color)
+
+
+class CharacterBindingSnapshot(ContractModel):
+    """Stable character binding summary embedded in session-facing payloads."""
+
+    model_config = ConfigDict(extra="forbid")
+    characterId: str = Field(min_length=1)
+    characterInstanceId: str = Field(min_length=1)
+    characterRevision: int = Field(ge=1)
+    displayName: str = Field(max_length=64)
+    presentation: CharacterPresentation
+
+    _validate_ids = field_validator("characterId", "characterInstanceId")(_required_text)
+    _validate_display_name = field_validator("displayName")(
+        lambda v: _text(v, maximum=64)
+    )
+
+
+class CharacterExample(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    user: str = Field(min_length=1, max_length=1000)
+    assistant: str = Field(min_length=1, max_length=1000)
+
+    _validate_text = field_validator("user", "assistant")(
+        lambda v: _text(v, maximum=1000)
+    )
+
+
+class CharacterPromptProfile(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    corePersonality: str = Field(max_length=12000)
+    relationshipStyle: str = Field(max_length=6000)
+    emotionStyle: str = Field(max_length=5000)
+    speakingStyle: str = Field(max_length=6000)
+    conversationInitiative: str = Field(max_length=3000)
+    examples: list[CharacterExample] = Field(max_length=20)
+
+    _validate_required = field_validator(
+        "corePersonality", "relationshipStyle", "speakingStyle"
+    )(lambda v: _text(v, maximum=12000))
+    _validate_optional_text = field_validator(
+        "emotionStyle", "conversationInitiative"
+    )(lambda v: _text(v, maximum=5000, required=False))
+
+
+class CharacterRuntimeVoice(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    providerId: Annotated[Optional[str], TsNull()] = None
+    voiceId: Annotated[Optional[str], TsNull()] = None
+
+    _validate_refs = field_validator("providerId", "voiceId")(_registry_ref)
+
+
+class CharacterRuntimeEmotion(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    idleExpressions: list[str] = Field(max_length=16)
+
+    _validate_items = field_validator("idleExpressions")(
+        lambda values: [_text(value, maximum=64) for value in values]
+    )
+
+
+class CharacterRuntimeProactive(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    intervalSeconds: int = Field(ge=0)
+    triggers: list[str] = Field(max_length=20)
+
+    _validate_items = field_validator("triggers")(
+        lambda values: [_text(value, maximum=64) for value in values]
+    )
+
+
+class CharacterRuntimeDefaults(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    voice: CharacterRuntimeVoice
+    emotion: CharacterRuntimeEmotion
+    wakeWords: list[str] = Field(max_length=20)
+    proactive: CharacterRuntimeProactive
+
+    _validate_wake_words = field_validator("wakeWords")(
+        lambda values: [_text(value, maximum=32) for value in values]
+    )
+
+
+class CharacterDraft(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    displayName: str = Field(max_length=64)
+    description: str = Field(max_length=500)
+    aliases: list[str] = Field(max_length=10)
+    promptProfile: CharacterPromptProfile
+    runtimeDefaults: CharacterRuntimeDefaults
+    presentation: CharacterPresentation
+    openingMessage: Optional[str] = Field(default=None, max_length=1000)
+
+    _validate_display_name = field_validator("displayName")(lambda v: _text(v, maximum=64))
+    _validate_aliases = field_validator("aliases")(_validate_alias_values)
+    _validate_opening_message = field_validator("openingMessage")(
+        lambda v: _text(v, maximum=1000, required=False) if v is not None else v
+    )
+
+
+class CharacterRevisionContent(ContractModel):
+    """Full immutable revision content returned by detail/rollback/create."""
+
+    model_config = ConfigDict(extra="forbid")
+    characterId: str = Field(min_length=1)
+    revision: int = Field(ge=1)
+    schemaVersion: int = Field(ge=1)
+    displayName: str = Field(max_length=64)
+    description: str = Field(max_length=500)
+    aliases: list[str] = Field(max_length=10)
+    promptProfile: CharacterPromptProfile
+    runtimeDefaults: CharacterRuntimeDefaults
+    presentation: CharacterPresentation
+    openingMessage: Annotated[Optional[str], TsNull()] = Field(default=None, max_length=1000)
+    checksum: str = Field(min_length=1)
+    compilerVersion: int = Field(ge=1)
+    createdBy: CharacterCreatedBy
+    createdAt: str
+
+    _validate_timestamp = field_validator("createdAt")(_utc_iso)
+    _validate_character_id = field_validator("characterId")(_required_text)
+    _validate_display_name = field_validator("displayName")(
+        lambda v: _text(v, maximum=64)
+    )
+    _validate_aliases = field_validator("aliases")(_validate_alias_values)
+    _validate_checksum = field_validator("checksum")(_required_text)
+    _validate_opening_message = field_validator("openingMessage")(
+        lambda v: _text(v, maximum=1000, required=False) if v is not None else v
+    )
+
+
+# Kept as a source-compatible name for callers from Stage D; both names point to
+# the exact same strict wire model in the generated contract.
+CharacterRevisionResponse = CharacterRevisionContent
 
 
 class CharacterSummary(ContractModel):
-    """内置角色摘要（阶段 C+E，角色列表）。"""
+    model_config = ConfigDict(extra="forbid")
+    characterId: str = Field(min_length=1)
+    source: CharacterSource
+    mutable: bool
+    status: CharacterStatus
+    currentRevision: int = Field(ge=1)
+    displayName: str = Field(max_length=64)
+    description: str = Field(max_length=500)
+    aliases: list[str] = Field(default_factory=list, max_length=10)
+    presentation: CharacterPresentation
+    updatedAt: str
 
-    characterId: str = Field(description="角色 ID")
-    displayName: str = Field(description="展示名")
-    source: str = Field(default="builtin", description="角色来源")
-    status: str = Field(default="active", description="角色状态")
+    _validate_timestamp = field_validator("updatedAt")(_utc_iso)
+    _validate_character_id = field_validator("characterId")(_required_text)
+    _validate_display_name = field_validator("displayName")(
+        lambda v: _text(v, maximum=64)
+    )
+    _validate_aliases = field_validator("aliases")(_validate_alias_values)
 
 
 class CharacterInstanceSummary(ContractModel):
-    """角色实例摘要（阶段 C+E，会话绑定展示）。"""
+    """角色实例摘要（仅绑定列表使用；不暴露内部演化状态）。"""
 
-    instanceId: str = Field(description="实例 ID")
-    characterId: str = Field(description="角色 ID")
-    revision: int = Field(default=1, description="角色修订号")
-    stateVersion: int = Field(default=1, description="实例状态版本")
+    model_config = ConfigDict(extra="forbid")
+    instanceId: str = Field(min_length=1)
+    characterId: str = Field(min_length=1)
+    revision: int = Field(default=1, ge=1)
+    stateVersion: int = Field(default=1, ge=1)
+
+    _validate_ids = field_validator("instanceId", "characterId")(_required_text)
 
 
 class MoodState(ContractModel):
-    """心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。"""
-    label: str = Field(description="心情标签")
-    intensity: float = Field(default=0.5, description="心情强度 0-1")
-    updatedAt: str = Field(description="心情更新时间(ISO)")
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(max_length=100)
+    intensity: float = Field(default=0.5, ge=0, le=1)
+    updatedAt: str
+
+    _validate_timestamp = field_validator("updatedAt")(_utc_iso)
+    _validate_label = field_validator("label")(
+        lambda v: _text(v, maximum=100)
+    )
 
 
 class CharacterPublicStateView(ContractModel):
-    """角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。
+    """WS/REST shared product view; Stage G freezes this nested state line format."""
 
-    mood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt
-    可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。
-    """
-    mood: MoodState = Field(description="当前心情")
-    currentActivity: Optional[str] = Field(default=None, description="当前活动(可缺省)")
-    lastInteractionAt: Optional[str] = Field(default=None, description="最近交互时间(可缺省)")
-    proactiveEnabled: bool = Field(default=False, description="主动搭话是否开启")
-    updatedAt: str = Field(description="产品态更新时间(ISO)")
+    model_config = ConfigDict(extra="forbid")
+    mood: MoodState
+    currentActivity: Optional[str] = Field(default=None, max_length=200)
+    lastInteractionAt: Optional[str] = None
+    proactiveEnabled: bool = False
+    updatedAt: str
+
+    _validate_timestamps = field_validator("updatedAt", "lastInteractionAt")(
+        lambda v: _utc_iso(v) if v is not None else v
+    )
+    _validate_activity = field_validator("currentActivity")(
+        lambda v: _text(v, maximum=200, required=False) if v is not None else v
+    )
 
 
 class CharacterPublicState(ContractModel):
-    """角色产品态(REST GET /api/character-instances/{id}/state)。
+    """GET /api/character-instances/{id}/state — identity/version + nested state."""
 
-    由阶段 C+E 扁平 mood:str + instanceId 泛化而来——flat mood 移除、instanceId 改名
-    characterInstanceId(对齐 WS CharacterStateChangedMessage 与架构稿 §12.4)。
-    """
-    characterId: str = Field(description="角色 ID")
-    characterInstanceId: str = Field(description="角色实例 ID")
-    characterRevision: int = Field(default=1, description="角色修订号")
-    stateVersion: int = Field(default=1, description="实例状态版本")
-    state: CharacterPublicStateView = Field(description="产品态视图")
+    model_config = ConfigDict(extra="forbid")
+    characterId: str = Field(min_length=1)
+    characterInstanceId: str = Field(min_length=1)
+    characterRevision: int = Field(default=1, ge=1)
+    stateVersion: int = Field(default=1, ge=1)
+    state: CharacterPublicStateView
 
-
-# ─────────────── Stage D 自定义角色持久化契约 DTO（Task 4A） ───────────────
+    _validate_ids = field_validator("characterId", "characterInstanceId")(_required_text)
 
 
 class CharacterListResponse(ContractModel):
-    """角色列表（分页沿用 has_more + cursor 约定）。"""
+    model_config = ConfigDict(extra="forbid")
     items: list[CharacterSummary]
-    has_more: bool = Field(default=False, description="是否还有更多")
-    cursor: Optional[str] = Field(default=None, description="不透明游标，客户端不得解析")
+    has_more: bool
+    cursor: Optional[str] = None
 
 
 class CharacterRevisionSummary(ContractModel):
-    """角色版本摘要（列表）。"""
-    characterId: str
-    revision: int = Field(default=1, ge=1)
-    displayName: str
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    checksum: str = Field(min_length=1)
+    createdBy: CharacterCreatedBy
     createdAt: str
-    createdBy: str = "system"
 
-
-class CharacterRevisionResponse(ContractModel):
-    """当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。"""
-    characterId: str
-    revision: int = Field(default=1, ge=1)
-    schemaVersion: int = Field(default=1, ge=1)
-    displayName: str
-    description: str = ""
-    aliases: list[str] = Field(default_factory=list)
-    promptProfile: dict[str, Any] = Field(default_factory=dict)
-    runtimeDefaults: dict[str, Any] = Field(default_factory=dict)
-    presentation: dict[str, Any] = Field(default_factory=dict)
-    openingMessage: Optional[str] = None
-    checksum: str = ""
-    compilerVersion: int = Field(default=1, ge=1)
-    createdBy: str = "system"
-    createdAt: str
+    _validate_timestamp = field_validator("createdAt")(_utc_iso)
+    _validate_checksum = field_validator("checksum")(_required_text)
 
 
 class CharacterDetail(ContractModel):
-    """角色详情（summary + 当前 revision）。"""
+    model_config = ConfigDict(extra="forbid")
     summary: CharacterSummary
-    current: CharacterRevisionResponse
+    current: CharacterRevisionContent
 
 
 class CharacterStateImpact(ContractModel):
-    """编辑/回滚的状态影响。"""
-    statePolicy: str = "preserve"
-    affectedInstances: int = 0
-    pendingInstances: int = 0
-    resetFields: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+    statePolicy: CharacterStatePolicy
+    affectedInstances: int = Field(ge=0)
+    pendingInstances: int = Field(ge=0)
+    resetFields: list[CharacterResetField] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def _check_counts_and_fields(self) -> "CharacterStateImpact":
+        if self.pendingInstances > self.affectedInstances:
+            raise ValueError("pendingInstances cannot exceed affectedInstances")
+        if self.statePolicy is CharacterStatePolicy.PRESERVE and self.resetFields:
+            raise ValueError("preserve mutations must not reset fields")
+        return self
 
 
 class CharacterMutationResult(ContractModel):
-    """角色变更结果（新详情 + 状态影响）。"""
+    model_config = ConfigDict(extra="forbid")
     character: CharacterDetail
     stateImpact: CharacterStateImpact
 
 
 class CharacterValidationIssue(ContractModel):
-    """校验问题（severity/code/path/message）。"""
-    severity: str
-    code: str
-    path: str
-    message: str
+    model_config = ConfigDict(extra="forbid")
+    severity: CharacterValidationSeverity
+    code: str = Field(max_length=100)
+    path: str = Field(max_length=512)
+    message: str = Field(max_length=2000)
+
+    _validate_code = field_validator("code")(_required_text)
+    _validate_path = field_validator("path")(_validate_json_pointer)
+    _validate_message = field_validator("message")(_required_text)
 
 
 class CharacterValidationResult(ContractModel):
-    """角色草稿校验结果（无效草稿也是 200+valid=false）。"""
+    model_config = ConfigDict(extra="forbid")
     valid: bool
-    issues: list[CharacterValidationIssue]
-    estimatedPromptChars: Optional[int] = None
+    issues: list[CharacterValidationIssue] = Field(max_length=100)
+    estimatedPromptChars: Optional[int] = Field(default=None, ge=0)
 
 
 class CharacterRevisionListResponse(ContractModel):
-    """角色版本列表（分页）。"""
+    model_config = ConfigDict(extra="forbid")
     items: list[CharacterRevisionSummary]
-    has_more: bool = Field(default=False, description="是否还有更多")
-    cursor: Optional[str] = Field(default=None, description="不透明游标，客户端不得解析")
+    has_more: bool
+    cursor: Optional[str] = None
 
 
 class CharacterArchiveResult(ContractModel):
-    """归档结果。"""
+    model_config = ConfigDict(extra="forbid")
     character: CharacterSummary
-    userProfile: Optional[UserIdentityProfile] = Field(default=None, description="归档默认角色时返回新档案")
+    userProfile: Optional[UserIdentityProfile] = None
+
+
+class CharacterPreviewRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    draft: CharacterDraft
+    userMessage: str = Field(min_length=1, max_length=20000)
+
+    _validate_message = field_validator("userMessage")(lambda v: _text(v, maximum=20000))
+
+
+class CharacterPreviewUsage(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    input: Optional[int] = Field(default=None, ge=0)
+    output: Optional[int] = Field(default=None, ge=0)
+    total: Optional[int] = Field(default=None, ge=0)
+
+
+class CharacterPreviewResult(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    ephemeral: Literal[True] = True
+    reply: str
+    model: Optional[str] = None
+    usage: Optional[CharacterPreviewUsage] = None
+
+    _validate_model = field_validator("model")(
+        lambda v: _required_text(v) if v is not None else v
+    )
+
+
+class CharacterResetRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    expectedStateVersion: int = Field(ge=1)
+
+
+class CharacterResetResult(ContractModel):
+    model_config = ConfigDict(extra="forbid")
+    state: CharacterPublicState
+    resetFields: list[CharacterResetField] = Field(max_length=5)

@@ -6,6 +6,7 @@ from frontend_contract.ws_message import (
 from frontend_contract.rest import CharacterPublicStateView, MoodState
 
 pytestmark = pytest.mark.unit
+_TS = "2026-09-05T00:00:00Z"
 
 
 class TestMoodState:
@@ -17,15 +18,15 @@ class TestMoodState:
 class TestPublicStateView:
     def test_view_fields(self):
         v = CharacterPublicStateView(
-            mood=MoodState(label="开心", intensity=0.72, updatedAt="t"),
+            mood=MoodState(label="开心", intensity=0.72, updatedAt=_TS),
             currentActivity=None, lastInteractionAt=None,
-            proactiveEnabled=False, updatedAt="t")
+            proactiveEnabled=False, updatedAt=_TS)
         assert v.proactiveEnabled is False
 
     def test_view_wire_dict(self):
         v = CharacterPublicStateView(
-            mood=MoodState(label="开心", intensity=0.72, updatedAt="t"),
-            proactiveEnabled=False, updatedAt="t")
+            mood=MoodState(label="开心", intensity=0.72, updatedAt=_TS),
+            proactiveEnabled=False, updatedAt=_TS)
         d = v.wire_dict()
         assert d["mood"]["label"] == "开心"
         assert "currentActivity" not in d  # None 缺省省略
@@ -36,8 +37,8 @@ class TestCharacterStateChangedMessage:
         msg = CharacterStateChangedMessage(
             characterId="chr_elysia", characterInstanceId="chi_builtin_elysia",
             stateVersion=3, state=CharacterPublicStateView(
-                mood=MoodState(label="开心", intensity=0.72, updatedAt="t"),
-                proactiveEnabled=False, updatedAt="t"))
+                mood=MoodState(label="开心", intensity=0.72, updatedAt=_TS),
+                proactiveEnabled=False, updatedAt=_TS))
         assert msg.type == "character.state.changed"
 
     def test_is_server_message_member(self):

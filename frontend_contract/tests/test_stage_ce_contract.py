@@ -16,9 +16,11 @@ from frontend_contract.rest import (
     CharacterSummary,
     MoodState,
     UserIdentityProfile,
+    CharacterPresentation,
 )
 
 pytestmark = pytest.mark.unit
+_TS = "2026-09-05T00:00:00Z"
 
 
 def test_server_info_character_profiles_false():
@@ -33,7 +35,9 @@ def test_server_info_character_profiles_false():
 
 def test_user_identity_profile_dto():
     dto = UserIdentityProfile(
-        userId="usr_local_default", displayName="妖梦", pronouns="她", initialized=False)
+        userId="usr_local_default", displayName="妖梦", pronouns="她",
+        locale="zh-CN", timezone="Asia/Shanghai", initialized=False, revision=1,
+        createdAt=_TS, updatedAt=_TS)
     assert dto.pronouns == "她"
     assert dto.initialized is False
     assert dto.userId == "usr_local_default"
@@ -45,14 +49,19 @@ def test_user_identity_profile_dto():
 def test_user_identity_profile_model_validate_round_trip():
     """model_validate 往返：构造 → wire_dict → 反序列化 → 语义等值。"""
     dto = UserIdentityProfile(
-        userId="usr_local_default", displayName="妖梦", pronouns="她", initialized=False)
+        userId="usr_local_default", displayName="妖梦", pronouns="她",
+        locale="zh-CN", timezone="Asia/Shanghai", initialized=False, revision=1,
+        createdAt=_TS, updatedAt=_TS)
     rt = UserIdentityProfile.model_validate(dto.model_dump())
     assert rt.model_dump() == dto.model_dump()
     assert rt.pronouns == "她"
 
 
 def test_character_summary_dto():
-    dto = CharacterSummary(characterId="elysia", displayName="Elysia")
+    dto = CharacterSummary(
+        characterId="elysia", source="builtin", mutable=False, status="active",
+        currentRevision=1, displayName="Elysia", description="", aliases=[],
+        presentation=CharacterPresentation(), updatedAt=_TS)
     assert dto.characterId == "elysia"
     assert dto.displayName == "Elysia"
     assert dto.source == "builtin"
@@ -72,10 +81,12 @@ def test_character_instance_summary_dto():
 
 
 def test_character_public_state_dto():
-    dto = CharacterPublicState(characterId="elysia", characterInstanceId="inst_1",
-                               state=CharacterPublicStateView(
-                                   mood=MoodState(label="平静", intensity=0.5, updatedAt="t"),
-                                   proactiveEnabled=False, updatedAt="t"))
+    dto = CharacterPublicState(
+        characterId="elysia", characterInstanceId="inst_1", characterRevision=1,
+        stateVersion=1,
+        state=CharacterPublicStateView(
+            mood=MoodState(label="平静", intensity=0.5, updatedAt=_TS),
+            proactiveEnabled=False, updatedAt=_TS))
     assert dto.characterId == "elysia"
     assert dto.characterInstanceId == "inst_1"
     assert dto.characterRevision == 1
