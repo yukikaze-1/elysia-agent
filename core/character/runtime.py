@@ -92,6 +92,8 @@ class CharacterRuntime:
         last = self._last_public_state
         if last is None:
             return True
+        if last.mood is None or new_view.mood is None:
+            return last.mood is not new_view.mood
         return (last.mood.label != new_view.mood.label
                 or last.mood.intensity != new_view.mood.intensity)
 

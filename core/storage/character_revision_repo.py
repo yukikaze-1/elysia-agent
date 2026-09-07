@@ -116,6 +116,29 @@ class CharacterRevisionRepository(Repository):
         )
         return [_from_doc(d) for d in docs]
 
+    async def list_revisions_page(
+        self, character_id: str, *, cursor: int | None = None, limit: int = 50
+    ) -> tuple[list[CharacterRevision], bool]:
+        """Return one revision page and whether another page exists.
+
+        The repository uses the numeric revision only internally.  REST exposes an
+        opaque encoded cursor through CharacterService, so clients never learn this
+        storage detail.
+        """
+        if self._db is None:
+            raise StorageUnavailableError("CharacterRevisionRepository 未连接")
+        filt: dict = {"character_id": character_id}
+        if cursor is not None:
+            filt["revision"] = {"$lt": cursor}
+        docs = await self._call(
+            lambda: self._db.find(  # type: ignore[union-attr]
+                COLLECTION, filt, sort=[("revision", -1)], limit=limit + 1
+            ),
+            reason="CharacterRevisionRepository.list_revisions_page 查失败",
+        )
+        has_more = len(docs) > limit
+        return ([_from_doc(d) for d in docs[:limit]], has_more)
+
     async def max_revision(self, character_id: str) -> int:
         if self._db is None:
             raise StorageUnavailableError("CharacterRevisionRepository 未连接")

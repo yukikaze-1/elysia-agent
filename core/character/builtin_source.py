@@ -47,17 +47,28 @@ class BuiltinCharacterSource:
             characterId=character_id,
             revision=1,
             displayName=cfg.name,
+            description=f"内置角色「{cfg.name}」。",
+            aliases=[],
             promptProfile={
                 "corePersonality": core_personality,
+                "relationshipStyle": "保持自然、尊重的关系边界。",
+                "emotionStyle": "根据上下文自然表达情绪。",
                 "speakingStyle": speaking_style,
-                # relationshipStyle/emotionStyle/conversationInitiative 本批留空（渲染走模板）
+                "conversationInitiative": "在合适时主动回应用户。",
+                "examples": [],
             },
             runtimeDefaults={
+                "voice": {"providerId": None, "voiceId": None},
                 "emotion": {"idleExpressions": cfg.emotion.idle_expressions},
                 "wakeWords": cfg.wake_words,
                 "proactive": {"enabled": cfg.proactive.enabled,
-                              "interval": cfg.proactive.interval,
+                              "intervalSeconds": cfg.proactive.interval,
                               "triggers": cfg.proactive.triggers},
+            },
+            presentation={
+                "avatarAssetId": None,
+                "live2dModelId": None,
+                "themeColor": None,
             },
             checksum=hashlib.sha256(core_personality.encode("utf-8")).hexdigest(),
         )

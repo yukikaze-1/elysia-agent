@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 
 from core.profile.user_identity import UserIdentity, LOCAL_DEFAULT_PRONOMS
@@ -22,32 +23,36 @@ class UserIdentityStore:
     def __init__(self, *, storage_path: str | None = None):
         self._storage_path = Path(storage_path) if storage_path else None
         self._cached: UserIdentity | None = None
+        self._lock = threading.RLock()
 
     def bootstrap(self, user_name: str) -> UserIdentity:
         """若不存在则从 user_name 建 initialized=false 的 bootstrap profile（幂等）。"""
-        if self._cached is not None:
-            return self._cached
-        if self._storage_path and self._storage_path.exists():
-            self._cached = self._load_from_file()
+        with self._lock:
             if self._cached is not None:
                 return self._cached
-        self._cached = UserIdentity(displayName=user_name, pronouns=LOCAL_DEFAULT_PRONOMS)
-        self._persist(self._cached)
-        return self._cached
+            if self._storage_path and self._storage_path.exists():
+                self._cached = self._load_from_file()
+                if self._cached is not None:
+                    return self._cached
+            self._cached = UserIdentity(displayName=user_name, pronouns=LOCAL_DEFAULT_PRONOMS)
+            self._persist(self._cached)
+            return self._cached
 
     def get(self) -> UserIdentity | None:
-        if self._cached is not None:
+        with self._lock:
+            if self._cached is not None:
+                return self._cached
+            if self._storage_path and self._storage_path.exists():
+                self._cached = self._load_from_file()
             return self._cached
-        if self._storage_path and self._storage_path.exists():
-            self._cached = self._load_from_file()
-        return self._cached
 
     def save(self, identity: UserIdentity) -> UserIdentity:
         """写前 touch（updatedAt + revision++）。"""
-        identity.touch()
-        self._cached = identity
-        self._persist(identity)
-        return identity
+        with self._lock:
+            identity.touch()
+            self._cached = identity
+            self._persist(identity)
+            return identity
 
     def update_if_revision(self, expected_revision: int,
                            updates: dict[str, object]) -> UserIdentity | None:
@@ -62,27 +67,28 @@ class UserIdentityStore:
         不存在的字段会抛 ValueError（pydantic strict）→ 500；正确行为是忽略未知输入
         （前端可能带多余字段），不阻断合法更新。
         """
-        cur = self.get()
-        if cur is None:
-            return None
-        if cur.revision != expected_revision:
-            return None
-        # 白名单：仅 UserIdentity 可更新字段；userId/revision/createdAt/updatedAt 只读
-        _UPDATABLE = (
-            "displayName", "preferredAddress", "pronouns", "locale",
-            "timezone", "defaultCharacterId", "initialized",
-        )
-        new = cur.model_copy(deep=True)
-        for k, v in updates.items():
-            if k not in _UPDATABLE:
-                continue  # C3：未知/只读字段跳过，不 setattr（避免 pydantic ValueError → 500）
-            if k == "initialized":
-                v = True  # 只能置 true，不能改回 false
-            setattr(new, k, v)
-        new.touch()
-        self._cached = new
-        self._persist(new)
-        return new
+        with self._lock:
+            cur = self.get()
+            if cur is None:
+                return None
+            if cur.revision != expected_revision:
+                return None
+            # 白名单：仅 UserIdentity 可更新字段；userId/revision/createdAt/updatedAt 只读
+            _UPDATABLE = (
+                "displayName", "preferredAddress", "pronouns", "locale",
+                "timezone", "defaultCharacterId", "initialized",
+            )
+            new = cur.model_copy(deep=True)
+            for k, v in updates.items():
+                if k not in _UPDATABLE:
+                    continue  # 未知/只读字段跳过（避免直接 setattr 抛 500）
+                if k == "initialized":
+                    v = True  # 只能置 true，不能改回 false
+                setattr(new, k, v)
+            new.touch()
+            self._cached = new
+            self._persist(new)
+            return new
 
     # ---- 持久化 ----
 

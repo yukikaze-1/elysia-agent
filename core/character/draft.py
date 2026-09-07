@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 RESERVED_TAGS = ("<conflict_rules>", "<output_format>", "<tts_markup>", "<tools>")
 """保留 Framework 标签白名单——authored 内容出现即 hard error（不得越过 Framework）。"""
@@ -25,6 +25,7 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 class ConversationExample(BaseModel):
     """一组 user/assistant few-shot。"""
+    model_config = ConfigDict(extra="forbid")
     user: str = Field(min_length=1, max_length=1000)
     assistant: str = Field(min_length=1, max_length=1000)
 
@@ -73,6 +74,7 @@ def validate_semantic(text: str) -> list[ValidationIssue]:
 
 class PromptProfile(BaseModel):
     """draft 的结构化 prompt 剖面。"""
+    model_config = ConfigDict(extra="forbid")
     corePersonality: str = Field(min_length=1, max_length=12000)
     relationshipStyle: str = Field(min_length=1, max_length=6000)
     emotionStyle: str = Field(default="", max_length=5000)
@@ -83,6 +85,7 @@ class PromptProfile(BaseModel):
 
 class RuntimeDefaults(BaseModel):
     """运行时默认值（声音/表情/唤醒词/主动）。"""
+    model_config = ConfigDict(extra="forbid")
     voice: dict[str, object] = Field(default_factory=dict)
     emotion: dict[str, object] = Field(default_factory=dict)
     wakeWords: list[str] = Field(default_factory=list, max_length=20)
@@ -91,6 +94,7 @@ class RuntimeDefaults(BaseModel):
 
 class Presentation(BaseModel):
     """展示引用（受管 asset/model ID，禁本地路径/任意 URL）。"""
+    model_config = ConfigDict(extra="forbid")
     avatarAssetId: str | None = None
     live2dModelId: str | None = None
     themeColor: str | None = None
@@ -98,6 +102,7 @@ class Presentation(BaseModel):
 
 class CharacterDraft(BaseModel):
     """用户提交的完整角色表单。"""
+    model_config = ConfigDict(extra="forbid")
     displayName: str = Field(min_length=1, max_length=64)
     description: str = Field(default="", max_length=500)
     aliases: list[str] = Field(default_factory=list, max_length=10)
@@ -109,7 +114,10 @@ class CharacterDraft(BaseModel):
     @field_validator("displayName")
     @classmethod
     def _trim_display_name(cls, v: str) -> str:
-        return v.strip()
+        value = v.strip()
+        if not value:
+            raise ValueError("displayName must not be blank")
+        return value
 
     @field_validator("aliases")
     @classmethod
@@ -117,6 +125,9 @@ class CharacterDraft(BaseModel):
         seen: dict[str, str] = {}
         for alias in v:
             norm = alias.strip().casefold()
+            clean = alias.strip()
+            if clean and len(clean) > 64:
+                raise ValueError("aliases must not exceed 64 characters")
             if norm and norm not in seen:
-                seen[norm] = alias.strip()
+                seen[norm] = clean
         return list(seen.values())

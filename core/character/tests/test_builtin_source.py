@@ -22,8 +22,10 @@ def test_builtin_source_load_elysia():
     assert len(revision.promptProfile["corePersonality"]) > 100
     # speakingStyle 从 config.yaml personality.speaking_style 加载
     assert revision.promptProfile["speakingStyle"]
-    # C1/C2/C3 无源字段本批留空
-    assert revision.promptProfile.get("relationshipStyle") in (None, "")
+    # Stage H revisions expose the complete frozen prompt profile.
+    assert revision.promptProfile["relationshipStyle"]
+    assert revision.promptProfile["emotionStyle"]
+    assert revision.promptProfile["conversationInitiative"]
 
 
 def test_builtin_source_load_cyrene():

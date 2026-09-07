@@ -55,7 +55,7 @@ class TestRuntimePublicState:
         from core.schema.character import CharacterRuntimeState
         rt = CharacterRuntime(
             instance=MagicMock(instanceId="chi_builtin_elysia", stateVersion=1,
-                               updatedAt="t"),
+                               updatedAt="2026-09-05T00:00:00Z"),
             definition=MagicMock(), revision=MagicMock(revision=1),
             user_identity=MagicMock())
         rt.state = CharacterRuntimeState(
