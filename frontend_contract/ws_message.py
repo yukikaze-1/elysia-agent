@@ -13,7 +13,12 @@ from typing import Annotated, Any, Literal, Optional, Union
 from pydantic import ConfigDict, Discriminator, Field
 
 from frontend_contract.base import ContractModel, TsNull
-from frontend_contract.rest import CharacterPublicStateView, ConversationUsage, FinishReason
+from frontend_contract.rest import (
+    CharacterBindingSnapshot,
+    CharacterPublicStateView,
+    ConversationUsage,
+    FinishReason,
+)
 from frontend_contract.version import PROTOCOL_VERSION
 
 # ────────────────────── 非判别受限字段枚举（plan Task 6，StrEnum） ──────────────────────
@@ -217,6 +222,10 @@ class SessionMessageItem(ContractModel):
     duration_ms: Optional[float] = Field(default=None, description="工具耗时毫秒（可为小数），可缺省")
     truncated: Optional[bool] = Field(default=None, description="内容是否截断，可缺省")
     token_usage: Optional[TokenUsage] = Field(default=None, description="消息附带的 token 统计，可缺省")
+    character: Optional[CharacterBindingSnapshot] = Field(
+        default=None,
+        description="assistant 实际生成角色的不可变审计快照；user/tool 消息缺省",
+    )
 
 
 class ServiceCapability(ContractModel):
@@ -457,7 +466,7 @@ class CharacterStateChangedMessage(ContractModel):
     客户端只按同一 instance 内严格递增的 stateVersion 应用事件,不能用时间字符串替代顺序。
     """
     type: Literal["character.state.changed"] = "character.state.changed"
-    conversationId: Optional[str] = Field(default=None, description="会话 ID(可缺省)")
+    conversationId: str = Field(min_length=1, description="会话 ID")
     characterId: str = Field(description="角色 ID")
     characterInstanceId: str = Field(description="角色实例 ID")
     characterRevision: int = Field(default=1, description="角色修订号")

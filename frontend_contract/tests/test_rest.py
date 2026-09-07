@@ -39,6 +39,7 @@ from frontend_contract.rest import (
     SearchMessageItem,
     SearchMessagesResponse,
     SessionActivateResult,
+    SessionCreateRequest,
     SessionDetail,
     SessionListResult,
     SessionSummary,
@@ -434,6 +435,49 @@ def test_conversation_usage_wire():
     """ConversationUsage：total + byModel（generation.completed 会话累计）。"""
     d = ConversationUsage(total=42, byModel={"fake/test": 42}).wire_dict()
     assert d == {"total": 42, "byModel": {"fake/test": 42}}
+
+
+@pytest.mark.unit
+def test_session_create_request_is_strict_and_character_optional():
+    request = SessionCreateRequest(title="和 Cyrene 聊天", characterId="chr_builtin_cyrene")
+    assert request.wire_dict() == {
+        "title": "和 Cyrene 聊天",
+        "characterId": "chr_builtin_cyrene",
+    }
+    assert SessionCreateRequest().wire_dict() == {}
+    with pytest.raises(Exception):
+        SessionCreateRequest.model_validate({"title": "x", "unknown": True})
+
+
+@pytest.mark.unit
+def test_session_and_assistant_archive_expose_strict_character_snapshot():
+    snapshot = {
+        "characterId": "chr_builtin_elysia",
+        "characterInstanceId": "chi_builtin_elysia",
+        "characterRevision": 1,
+        "displayName": "Elysia",
+        "presentation": {
+            "avatarAssetId": None,
+            "live2dModelId": None,
+            "themeColor": None,
+        },
+    }
+    summary = SessionSummary(
+        conversationId="conv_1", messageCount=1, updatedAt="t", active=False,
+        character=snapshot,
+    ).wire_dict()
+    assert summary["character"] == snapshot
+    message = Message.model_validate({
+        "role": "assistant", "content": [], "parts": [],
+        "message_id": "msg_1", "timestamp": "t", "character": snapshot,
+    }).wire_dict()
+    assert message["character"]["characterInstanceId"] == "chi_builtin_elysia"
+    with pytest.raises(Exception):
+        Message.model_validate({
+            "role": "assistant", "content": [], "parts": [],
+            "message_id": "msg_1", "timestamp": "t",
+            "character": {**snapshot, "unknown": True},
+        })
 
 
 # ── Literal → StrEnum 统一（plan Task 7） ─────────────────────────────────

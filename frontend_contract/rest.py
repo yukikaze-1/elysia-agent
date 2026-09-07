@@ -278,6 +278,10 @@ class Message(ContractModel):
     tool_calls: Optional[list[dict[str, Any]]] = Field(
         default=None, description="工具调用列表，可缺省")
     token_usage: Optional[dict[str, Any]] = Field(default=None, description="token 统计，可缺省")
+    character: Optional["CharacterBindingSnapshot"] = Field(
+        default=None,
+        description="assistant 实际生成角色的不可变审计快照；user/tool 消息缺省",
+    )
     message_id: str = Field(min_length=1, description="消息 ID（归档消息 ID 非空不变量，spec D5）")
     timestamp: str = Field(description="ISO 时间戳")
     session_id: str = Field(default="", description="会话 ID")
@@ -307,6 +311,14 @@ class MessagesResponse(ContractModel):
 # ────────────────────── 批次 3 v2 契约：多会话/历史/搜索/资源/状态（BE-030/031/032 + BE-024） ──────────────────────
 
 
+class SessionCreateRequest(ContractModel):
+    """POST /api/sessions 请求；角色缺省时由后端解析用户默认角色。"""
+
+    model_config = ConfigDict(extra="forbid")
+    title: Optional[str] = Field(default=None, max_length=200)
+    characterId: Optional[str] = Field(default=None, min_length=1, max_length=200)
+
+
 class SessionSummary(ContractModel):
     """会话摘要（/api/sessions 列表条目 / 创建 / 重命名响应）。
 
@@ -319,6 +331,10 @@ class SessionSummary(ContractModel):
     messageCount: int = Field(description="会话消息条数")
     updatedAt: str = Field(description="最近更新时间（UTC ISO）")
     active: bool = Field(description="是否为当前活动会话")
+    character: Optional["CharacterBindingSnapshot"] = Field(
+        default=None,
+        description="会话绑定角色快照；仅 legacy 未迁移会话可缺省",
+    )
 
 
 class SessionListResult(ContractModel):
@@ -777,6 +793,12 @@ class CharacterBindingSnapshot(ContractModel):
     _validate_display_name = field_validator("displayName")(
         lambda v: _text(v, maximum=64)
     )
+
+
+# Message / SessionSummary 定义在角色契约段之前，显式收口其前向引用，保证
+# schema 生成器和运行时 model_validate 都解析为严格 CharacterBindingSnapshot。
+Message.model_rebuild()
+SessionSummary.model_rebuild()
 
 
 class CharacterExample(ContractModel):

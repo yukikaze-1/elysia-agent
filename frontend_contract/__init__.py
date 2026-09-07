@@ -72,6 +72,7 @@ from frontend_contract.rest import (  # noqa: F401
     SearchMessageItem,
     SearchMessagesResponse,
     SessionActivateResult,
+    SessionCreateRequest,
     SessionDetail,
     SessionListResult,
     SessionSummary,
@@ -325,6 +326,7 @@ __all__ = [
     "Message",
     "MessagesResponse",
     # 批次 3 v2 契约（rest.py）
+    "SessionCreateRequest",
     "SessionSummary",
     "SessionListResult",
     "SessionDetail",

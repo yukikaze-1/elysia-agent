@@ -69,6 +69,44 @@ def test_session_message_has_conversation_id():
 
 
 @pytest.mark.unit
+def test_session_message_item_preserves_character_snapshot():
+    item = w.SessionMessageItem(
+        role="assistant", content="hi", message_id="m1", timestamp="t1",
+        character={
+            "characterId": "chr_builtin_elysia",
+            "characterInstanceId": "chi_builtin_elysia",
+            "characterRevision": 1,
+            "displayName": "Elysia",
+            "presentation": {
+                "avatarAssetId": None,
+                "live2dModelId": None,
+                "themeColor": None,
+            },
+        },
+    )
+    assert item.wire_dict()["character"]["characterRevision"] == 1
+
+
+@pytest.mark.unit
+def test_character_state_changed_requires_conversation_id():
+    with pytest.raises(Exception):
+        w.CharacterStateChangedMessage.model_validate({
+            "characterId": "chr_builtin_elysia",
+            "characterInstanceId": "chi_builtin_elysia",
+            "characterRevision": 1,
+            "stateVersion": 1,
+            "state": {
+                "mood": {
+                    "label": "平静", "intensity": 0.5,
+                    "updatedAt": "2026-09-07T00:00:00Z",
+                },
+                "proactiveEnabled": False,
+                "updatedAt": "2026-09-07T00:00:00Z",
+            },
+        })
+
+
+@pytest.mark.unit
 def test_server_info_message_wire():
     """server_info：protocol_version/server_version/features/services；features 全 false 默认。"""
     msg = w.ServerInfoMessage(
