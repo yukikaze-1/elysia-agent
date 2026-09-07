@@ -39,6 +39,7 @@ class CharacterInstanceRepository(Repository):
                 COLLECTION,
                 [("owner_user_id", 1), ("character_id", 1), ("canonical", 1)],
                 unique=True,
+                partialFilterExpression={"canonical": True},
             )
             return True
         except Exception as e:
