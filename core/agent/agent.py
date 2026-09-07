@@ -304,7 +304,10 @@ class Agent(AgentLifecycle, AgentServer):
         default_runtime.bind_engine(default_engine)
         self._default_engine = default_engine
         # 默认会话 binding 指向内置 Elysia instance（M3 权威）。
-        self._session_manager.active.character_binding = dict(self._default_binding)
+        self._session_manager.set_character_binding(
+            self._session_manager.active_id,
+            self._default_binding,
+        )
 
         self._prompt = PromptAssembler(
             self._character, self._session_manager.active, self._long_term,

@@ -130,6 +130,14 @@ class _LifecyclePersistence:
         # 无条件 load_active：确保默认会话进入 _loaded（shutdown save_all() 依赖，
         # 否则 MongoDB 离线期间的内存会话在关闭时不会落 JSONL）
         await self._session_manager.load_active()
+        # Stage H：持久化文档可能是无 binding 的 legacy default，或携带早期
+        # camelCase binding。加载完成后统一归一；仅缺失时才回退内置 Elysia，
+        # 不覆盖已经持久化的显式角色选择。
+        loaded_binding = self._session_manager.active.character_binding
+        self._session_manager.set_character_binding(
+            self._session_manager.active_id,
+            loaded_binding or getattr(self, "_default_binding", None),
+        )
         # B2/P2-01：扫描所有 pending JSONL 会话（非活动也在内），Mongo 可用时导入
         try:
             recovered = await self._session_manager.recover_pending_sessions(

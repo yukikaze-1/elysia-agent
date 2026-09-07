@@ -71,9 +71,10 @@ class FakeSessionRepo:
                 doc.get("ss") or ServiceState(),
                 doc.get("cb") or {})
 
-    async def create(self, sid, title=""):
+    async def create(self, sid, title="", character_binding=None):
         self.created.append((sid, title))
         self.sessions[sid] = {"messages": [], "title": title,
+                              "cb": character_binding,
                               "updated_at": f"2026-08-04T01:{len(self.created):02d}Z"}
 
     async def rename(self, sid, title):
@@ -98,6 +99,7 @@ class FakeSessionRepo:
                 message_count=len(doc.get("messages", [])),
                 updated_at=doc.get("updated_at", ""),
                 title=doc.get("title", ""),
+                character_binding=doc.get("cb"),
             ))
         # 模拟 repo 排序：updated_at DESC
         summaries.sort(key=lambda s: s.updated_at, reverse=True)
@@ -604,6 +606,31 @@ async def test_create_title_optional_and_not_active():
     summary = await m.create()
     assert summary.title == ""
     assert summary.active is False
+
+
+@pytest.mark.asyncio
+async def test_create_persists_and_caches_normalized_character_binding():
+    repo = FakeSessionRepo()
+    manager = _make_manager(repo)
+    summary = await manager.create(
+        title="Cyrene",
+        character_binding={
+            "characterId": "chr_builtin_cyrene",
+            "instanceId": "chi_builtin_cyrene",
+            "ignored": True,
+        },
+    )
+    expected = {
+        "character_id": "chr_builtin_cyrene",
+        "instance_id": "chi_builtin_cyrene",
+    }
+    assert summary.character_binding == expected
+    assert repo.sessions[summary.session_id]["cb"] == expected
+    assert manager.get(summary.session_id).character_binding == expected
+
+    listed, _, _ = await manager.list()
+    item = next(s for s in listed if s.session_id == summary.session_id)
+    assert item.character_binding == expected
 
 
 @pytest.mark.asyncio

@@ -345,6 +345,7 @@ async def test_service_state_roundtrip():
 async def test_character_binding_roundtrip_mock_mongo():
     """character_binding 经 save/load 5 元组回显（Mongo mock 路径），重启后仍可恢复。"""
     binding = {"instanceId": "chi_legacy_abc", "characterId": "legacy"}
+    expected = {"instance_id": "chi_legacy_abc", "character_id": "legacy"}
     repo = MagicMock()
     doc: dict = {}
 
@@ -367,7 +368,8 @@ async def test_character_binding_roundtrip_mock_mongo():
     await s.save()
     loaded = SessionMemory(session_id="t", repo=repo)
     await loaded.load("t")
-    assert loaded.character_binding == binding
+    assert doc["character_binding"] == expected
+    assert loaded.character_binding == expected
 
 
 @pytest.mark.unit
@@ -376,6 +378,7 @@ async def test_character_binding_roundtrip_jsonl(tmp_path):
     """character_binding 经 JSONL save/load 往返（Mongo 离线 fallback 路径）。"""
     import json
     binding = {"instanceId": "chi_legacy_def", "characterId": "legacy"}
+    expected = {"instance_id": "chi_legacy_def", "character_id": "legacy"}
     pending = os.path.join(str(tmp_path), "session_cb.json")
     s = SessionMemory(session_id=SessionId("cb"))
     s._pending_file = pending  # noqa: SLF001
@@ -385,7 +388,7 @@ async def test_character_binding_roundtrip_jsonl(tmp_path):
     loaded = SessionMemory(session_id=SessionId("cb"))
     loaded._pending_file = pending  # noqa: SLF001
     assert await loaded.load_from_jsonl() is True
-    assert loaded.character_binding == binding
+    assert loaded.character_binding == expected
     # 清理
     os.remove(pending)
 

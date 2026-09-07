@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from paths import ProjectPath
 
+from core.character.binding import CharacterBinding, normalize_character_binding
 from core.schema.utils import now_iso
 from core.schema.types import SessionId
 from core.storage.base import StorageUnavailableError
@@ -359,7 +360,11 @@ class SessionManager:
 
     # ---- CRUD ----
 
-    async def create(self, title: str = "") -> SessionSummary:
+    async def create(
+        self,
+        title: str = "",
+        character_binding: object = None,
+    ) -> SessionSummary:
         """创建空会话：conv_<uuid4 hex[:12]>，落库（repo.create）+ 立即入内存缓存。
 
         9abc P1-1：create 后追加 ``ensure_loaded(sid)``——把新会话放入内存缓存 +
@@ -368,18 +373,21 @@ class SessionManager:
         成功后 text/附件/voice 携带该 conversationId 不再被严格检查判为幽灵会话。
         """
         sid = SessionId(f"conv_{uuid.uuid4().hex[:12]}")
+        binding = normalize_character_binding(character_binding)
         try:
-            await self._repo.create(sid, title)
+            await self._repo.create(sid, title, character_binding=binding)
         except StorageUnavailableError:
             # B2/P1-01：repo 未连接 → 进程内继续（local_summary 降级），不抛给 REST
             logger.debug("SessionManager.create: Mongo 离线，仅进程内创建 %s", sid)
-        await self.ensure_loaded(sid)
+        session = await self.ensure_loaded(sid)
+        session.character_binding = binding
         summary = SessionSummary(
             session_id=sid,
             message_count=0,
             updated_at=now_iso(),
             title=title,
             active=False,
+            character_binding=binding,
         )
         self._local_summaries[sid] = summary
         if title:
@@ -395,6 +403,7 @@ class SessionManager:
             updated_at=summary.updated_at,
             title=summary.title,
             active=summary.active,
+            character_binding=normalize_character_binding(summary.character_binding),
         )
 
     async def _merged_summaries(self) -> list[SessionSummary]:
@@ -424,7 +433,19 @@ class SessionManager:
             current.updated_at = max(current.updated_at, local.updated_at)
             if sid in self._local_title_overrides or not current.title:
                 current.title = local.title
+            if local.character_binding is not None:
+                current.character_binding = normalize_character_binding(local.character_binding)
         return list(merged.values())
+
+    def set_character_binding(self, sid: SessionId, value: object) -> CharacterBinding | None:
+        """设置缓存会话及本地摘要的规范化 binding；持久化仍由 create/save 边界负责。"""
+        sid = SessionId(sid)
+        binding = normalize_character_binding(value)
+        self.get(sid).character_binding = binding
+        summary = self._local_summaries.get(sid)
+        if summary is not None:
+            summary.character_binding = normalize_character_binding(binding)
+        return binding
 
     async def get_summary(self, sid: SessionId) -> SessionSummary | None:
         """获取单会话摘要；Mongo 离线时同样可返回本地创建/重命名结果。"""
@@ -483,7 +504,10 @@ class SessionManager:
         current = self._local_summaries.get(sid)
         if current is None:
             current = SessionSummary(
-                session_id=sid, message_count=0, updated_at=now_iso(), title=title)
+                session_id=sid, message_count=0, updated_at=now_iso(), title=title,
+                character_binding=normalize_character_binding(
+                    getattr(self._sessions.get(sid), "character_binding", None)),
+            )
             self._local_summaries[sid] = current
         else:
             current.title = title
@@ -674,7 +698,10 @@ class SessionManager:
         恒不被覆盖，重启不清空 LLM 上下文窗口。
         """
         try:
-            inserted = await self._repo.ensure_exists(DEFAULT_SESSION)
+            inserted = await self._repo.ensure_exists(
+                DEFAULT_SESSION,
+                character_binding=self.active.character_binding,
+            )
             if inserted:
                 logger.debug("default 会话文档已新建（clean-start）")
         except Exception:
@@ -722,7 +749,9 @@ class SessionManager:
                 if summary is None:
                     summary = SessionSummary(
                         session_id=sid, message_count=len(session.messages),
-                        updated_at=now_iso(), title=_derive_title(session.messages))
+                        updated_at=now_iso(), title=_derive_title(session.messages),
+                        character_binding=normalize_character_binding(session.character_binding),
+                    )
                     self._local_summaries[sid] = summary
                 else:
                     summary.message_count = len(session.messages)

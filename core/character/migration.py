@@ -36,6 +36,6 @@ def migrate_legacy_sessions(sessions: list) -> list[dict]:
         sid = session.session_id
         iid = legacy_instance_id(sid)
         # 每旧 session 独立 legacy instance，state 原样（不合并）
-        session.character_binding = {"instanceId": iid, "characterId": "legacy"}
+        session.character_binding = {"instance_id": iid, "character_id": "legacy"}
         records.append({"session_id": sid, "legacy_instance_id": iid, "character_id": "legacy"})
     return records

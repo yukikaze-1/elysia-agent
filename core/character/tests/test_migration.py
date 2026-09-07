@@ -27,11 +27,11 @@ def test_migrate_legacy_sessions_writes_binding_and_records():
     records = migrate_legacy_sessions([s1, s2])
 
     assert s1.character_binding == {
-        "instanceId": legacy_instance_id("conv_a"),
-        "characterId": "legacy",
+        "instance_id": legacy_instance_id("conv_a"),
+        "character_id": "legacy",
     }
-    assert s2.character_binding["instanceId"] == legacy_instance_id("conv_b")
-    assert s2.character_binding["characterId"] == "legacy"
+    assert s2.character_binding["instance_id"] == legacy_instance_id("conv_b")
+    assert s2.character_binding["character_id"] == "legacy"
     assert len(records) == 2
     assert records[0]["session_id"] == "conv_a"
     assert records[0]["legacy_instance_id"] == legacy_instance_id("conv_a")

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 from paths import ProjectPath
 
+from core.character.binding import CharacterBinding, normalize_character_binding
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.character import CharacterState
 from core.schema.memory_reflector import MemoryReflectorState
@@ -100,7 +101,7 @@ class SessionMemory:
         self.character_state = character_state or CharacterState(session_id=session_id)
         self.service_state = service_state or ServiceState()
         # 架构稿 §15.3：session 绑定角色实例（M1 只写不权威）
-        self.character_binding: dict | None = None
+        self.character_binding: CharacterBinding | None = None
         self.own_life: str = ""
         self._memory_reflector = None
         # B2/P1-01：最近一次 load 是否因存储不可用而失败（区别于「not found 新会话」）。
@@ -310,7 +311,7 @@ class SessionMemory:
                                         and hasattr(self._memory_reflector, "save_state")
                                      else None),
                     service_state=self.service_state,
-                    character_binding=self.character_binding,
+                    character_binding=normalize_character_binding(self.character_binding),
                 )
                 # Mongo durable → 本地 pending JSONL 冗余，删除（只有 durable success 才删）
                 if os.path.exists(self._pending_file):
@@ -336,7 +337,7 @@ class SessionMemory:
                                        and hasattr(self._memory_reflector, "save_state")
                                     else {}),
                 "service_state": self.service_state.model_dump(mode="json"),
-                "character_binding": self.character_binding or {},
+                "character_binding": normalize_character_binding(self.character_binding) or {},
                 "updated_at": now_iso(),
             }
             os.makedirs(os.path.dirname(self._pending_file), exist_ok=True)
@@ -416,7 +417,7 @@ class SessionMemory:
                 for field in type(ss).model_fields:
                     setattr(self.service_state, field, getattr(ss, field))
             # 恢复 character_binding（架构稿 §15.3）
-            self.character_binding = doc.get("character_binding") or None
+            self.character_binding = normalize_character_binding(doc.get("character_binding"))
             return True
         except Exception:
             logger.warning("从 %s 恢复 session 失败", self._pending_file, exc_info=True)
@@ -440,7 +441,7 @@ class SessionMemory:
             if result is not None:
                 messages, cs, rs, ss, cb = result
                 self._session_id = sid
-                self.character_binding = cb or None
+                self.character_binding = normalize_character_binding(cb)
                 self._messages = deque(messages[-self._max_messages:], maxlen=self._max_messages)
                 # 原地更新 character_state
                 for field in type(cs).model_fields:

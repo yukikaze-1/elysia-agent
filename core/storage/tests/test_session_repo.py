@@ -121,6 +121,27 @@ class TestSessionRepository:
         docs = asyncio.run(fake.find("sessions", {}))
         assert docs[0]["title"] == ""
 
+    def test_create_and_list_normalize_character_binding(self):
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        asyncio.run(repo.create(
+            SessionId("s1"),
+            character_binding={
+                "characterId": "chr_builtin_cyrene",
+                "instanceId": "chi_builtin_cyrene",
+                "ignored": True,
+            },
+        ))
+        docs = asyncio.run(fake.find("sessions", {}))
+        expected = {
+            "character_id": "chr_builtin_cyrene",
+            "instance_id": "chi_builtin_cyrene",
+        }
+        assert docs[0]["character_binding"] == expected
+        summaries = asyncio.run(repo.list_all())
+        assert summaries[0].character_binding == expected
+
     def test_rename_updates_title_returns_true(self):
         import asyncio
         fake = FakeDocumentDBBackend()

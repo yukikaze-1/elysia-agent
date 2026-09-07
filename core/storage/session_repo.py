@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
+from core.character.binding import CharacterBinding, normalize_character_binding
 from core.schema.utils import now_iso
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.character import CharacterState
@@ -52,6 +53,7 @@ class SessionSummary:
     updated_at: IsoTimestamp
     title: str = ""
     active: bool = False  # 是否为当前活动会话（由 SessionManager.list 填充）
+    character_binding: CharacterBinding | None = None
 
 
 class SessionRepository(Repository):
@@ -113,7 +115,7 @@ class SessionRepository(Repository):
                    character_state: CharacterState,
                    reflector_state: MemoryReflectorState | None = None,
                    service_state: ServiceState | None = None,
-                   character_binding: dict | None = None) -> None:
+                   character_binding: object = None) -> None:
         """保存或更新 session。
 
         Args:
@@ -139,7 +141,7 @@ class SessionRepository(Repository):
             "character_state": character_state.model_dump(mode="json"),
             "reflector_state": reflector_state.model_dump(mode="json") if reflector_state else {},
             "service_state": service_state.model_dump(mode="json") if service_state else {},
-            "character_binding": character_binding or {},
+            "character_binding": normalize_character_binding(character_binding) or {},
             "updated_at": now_iso(),
         }
         # 标题语义：显式 title（create/rename 写入）必须保留；
@@ -157,7 +159,12 @@ class SessionRepository(Repository):
             reason="SessionRepository.save 写入失败",
         )
 
-    async def create(self, session_id: SessionId, title: str = "") -> None:
+    async def create(
+        self,
+        session_id: SessionId,
+        title: str = "",
+        character_binding: object = None,
+    ) -> None:
         """创建会话（写入 title 与空消息体）。
 
         create 后 title 由 save() 保留（save 不覆盖非空 title 除非显式）。
@@ -177,6 +184,7 @@ class SessionRepository(Repository):
             "session_id": session_id,
             "title": title,
             "messages": [],
+            "character_binding": normalize_character_binding(character_binding) or {},
             "updated_at": now_iso(),
         }
         await self._call(
@@ -186,7 +194,11 @@ class SessionRepository(Repository):
             reason="SessionRepository.create 写入失败",
         )
 
-    async def ensure_exists(self, session_id: SessionId) -> bool:
+    async def ensure_exists(
+        self,
+        session_id: SessionId,
+        character_binding: object = None,
+    ) -> bool:
         """确保会话文档存在（$setOnInsert——绝不覆盖既有文档字段）。
 
         clean-start 会话发现（BE-P1-05）：eager default 会话启动时 best-effort 落库。
@@ -227,6 +239,7 @@ class SessionRepository(Repository):
                     "session_id": session_id,
                     "title": "",
                     "messages": [],
+                    "character_binding": normalize_character_binding(character_binding) or {},
                     "updated_at": now_iso(),
                 }},
                 upsert=True,
@@ -258,7 +271,10 @@ class SessionRepository(Repository):
         return result > 0
 
     async def load(self, session_id: SessionId
-                   ) -> tuple[list[Message], CharacterState, MemoryReflectorState, ServiceState, dict] | None:
+                   ) -> tuple[
+                       list[Message], CharacterState, MemoryReflectorState,
+                       ServiceState, CharacterBinding | None,
+                   ] | None:
         """加载 session。
 
         Args:
@@ -293,7 +309,7 @@ class SessionRepository(Repository):
         rs = MemoryReflectorState.model_validate(rs_data) if rs_data else MemoryReflectorState()
         ss_data = doc.get("service_state", {})
         ss = ServiceState.model_validate(ss_data) if ss_data else ServiceState()
-        cb_data = doc.get("character_binding") or {}
+        cb_data = normalize_character_binding(doc.get("character_binding"))
         return messages, cs, rs, ss, cb_data
 
     async def delete(self, session_id: SessionId) -> int:
@@ -335,6 +351,7 @@ class SessionRepository(Repository):
                 message_count=len(d.get("messages", [])),
                 updated_at=d.get("updated_at", ""),
                 title=d.get("title", ""),
+                character_binding=normalize_character_binding(d.get("character_binding")),
             )
             for d in docs
         ]
