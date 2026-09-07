@@ -31,6 +31,7 @@ class TestV2StateSnapshot:
                 # 排空建连帧: 读到 server_info 后,应再收一条 character.state.changed
                 saw_server_info = False
                 saw_state_changed = False
+                expression = None
                 for _ in range(10):
                     msg = await asyncio.wait_for(ws.receive(), timeout=5)
                     if msg.type != WSMsgType.TEXT:
@@ -40,9 +41,17 @@ class TestV2StateSnapshot:
                         saw_server_info = True
                     if t == "character.state.changed":
                         saw_state_changed = True
+                    if t == "expression":
+                        expression = json.loads(msg.data)
+                    if saw_state_changed and expression is not None:
                         break
                 assert saw_server_info, "v2 建连应先收 server_info"
                 assert saw_state_changed, "v2 建连应发 character.state.changed 快照"
+                assert expression is not None
+                assert expression["conversationId"] == "default"
+                assert expression["characterId"] == "chr_builtin_elysia"
+                assert expression["characterInstanceId"] == "chi_builtin_elysia"
+                assert expression["characterRevision"] == 1
         finally:
             await agent.stop()
 

@@ -16,7 +16,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from paths import ProjectPath
 
@@ -395,33 +395,34 @@ class CharacterEngine:
     # 情绪引擎方法（委托给 EmotionDetector）
     # ================================================================
 
-    def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> None:
+    def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None,
+                         *, ctx: Any | None = None) -> None:
         """处理 STT 音频情绪事件。
 
         Args:
             emotion_tag: 音频识别的情绪标签。
             events: 音频事件列表（如 Laughter、Cry、Applause）。
         """
-        self._emotion.analyze_user_stt(emotion_tag, events)
+        self._emotion.analyze_user_stt(emotion_tag, events, ctx=ctx)
 
-    def analyze_user(self, text: str) -> None:
+    def analyze_user(self, text: str, *, ctx: Any | None = None) -> None:
         """关键词检测用户消息中的情绪。
 
         Args:
             text: 用户消息文本。
         """
-        self._emotion.analyze_user(text)
+        self._emotion.analyze_user(text, ctx=ctx)
 
-    def analyze_assistant(self, text: str) -> None:
+    def analyze_assistant(self, text: str, *, ctx: Any | None = None) -> None:
         """衰减助手回复后的情绪强度。
 
         Args:
             text: 助手回复文本（当前未使用，保留接口兼容）。
         """
-        self._emotion.analyze_assistant(text)
+        self._emotion.analyze_assistant(text, ctx=ctx)
 
-    async def push_idle_expression(self) -> None:
-        await self._emotion.push_idle_expression()
+    async def push_idle_expression(self, *, ctx: Any | None = None) -> None:
+        await self._emotion.push_idle_expression(ctx=ctx)
 
     # ---- 内部委托方法（向后兼容：测试直接访问这些私有 API）----
 
@@ -456,4 +457,3 @@ class CharacterEngine:
     @_idle_expressions.setter
     def _idle_expressions(self, value: list[str]):
         self._emotion._idle_expressions = value
-

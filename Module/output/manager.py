@@ -19,6 +19,17 @@ from Module.output.protocol import ChannelCapability, OutputChannel
 from frontend_contract.ws_message import MessageChannel, SegmentKind
 
 
+def _character_event_kwargs(ctx: Any) -> dict[str, Any]:
+    """把冻结的 GenerationContext 转成 OutputChannel 表现事件参数。"""
+    return {
+        "conversation_id": getattr(ctx, "conversation_id", None),
+        "generation_id": getattr(ctx, "generation_id", None),
+        "character_id": getattr(ctx, "character_id", None) or None,
+        "character_instance_id": getattr(ctx, "character_instance_id", None) or None,
+        "character_revision": getattr(ctx, "character_revision", None) or None,
+    }
+
+
 class OutputManager:
     """输出管理器 — 多通道广播 + capability 过滤 + 流式协调。"""
 
@@ -177,6 +188,7 @@ class OutputManager:
         *,
         channels: list[OutputChannel] | None = None,
         capability: ChannelCapability | None = None,
+        ctx: Any | None = None,
     ) -> None:
         """广播表情/情绪变更。
 
@@ -186,9 +198,23 @@ class OutputManager:
             channels: 候选通道列表，为 None 则使用全部已注册通道。
             capability: 能力标记，默认自动设为 EXPRESSION。
         """
+        target_capability = capability or ChannelCapability.EXPRESSION
+        if ctx is None:
+            await self._broadcast(
+                "on_expression", expression, intensity=intensity,
+                channels=channels, capability=target_capability,
+            )
+            return
+
+        v1, v2 = self._split_versions(channels)
         await self._broadcast(
             "on_expression", expression, intensity=intensity,
-            channels=channels, capability=capability or ChannelCapability.EXPRESSION,
+            channels=v1, capability=target_capability,
+        )
+        await self._broadcast(
+            "on_expression", expression, intensity=intensity,
+            **_character_event_kwargs(ctx),
+            channels=v2, capability=target_capability,
         )
 
     async def action(
@@ -553,16 +579,23 @@ class OutputManager:
         ctx.close_segment()
 
     async def mood(self, expression: str, intensity: float = 1.0,
-                   *, channels: list[OutputChannel] | None = None) -> None:
-        """心情：v1 发 expression；v2 捕获不发（mood 由 turn_completed 落位）。
+                   *, channels: list[OutputChannel] | None = None,
+                   ctx: Any | None = None) -> None:
+        """心情：v1 保持旧帧；有冻结上下文时 v2 发送带身份 expression。
 
         Args:
             expression: 心情标识。
             intensity: 强度 0.0~1.0。
         """
-        v1, _v2 = self._split_versions(channels)
+        v1, v2 = self._split_versions(channels)
         await self._broadcast("on_expression", expression, intensity=intensity,
                               channels=v1, capability=ChannelCapability.EXPRESSION)
+        if ctx is not None:
+            await self._broadcast(
+                "on_expression", expression, intensity=intensity,
+                **_character_event_kwargs(ctx),
+                channels=v2, capability=ChannelCapability.EXPRESSION,
+            )
 
     async def turn_completed(self, finish_reason: str, usage: Any, model: str, mood: str | None,
                              ctx: Any, *, channels: list[OutputChannel] | None = None,

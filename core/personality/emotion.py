@@ -4,6 +4,7 @@
 """
 import logging
 import random
+from typing import Any
 
 from core.schema.character import CharacterRuntimeState
 from Module.output import OutputManager
@@ -79,7 +80,7 @@ class EmotionDetector:
 
     # ---- 公共方法 ----
 
-    def analyze_user(self, text: str) -> None:
+    def analyze_user(self, text: str, *, ctx: Any | None = None) -> None:
         """关键词 mood 检测。匹配到非 neutral mood 时更新 state 并推送表情。
 
         Args:
@@ -95,12 +96,12 @@ class EmotionDetector:
         if detected != current:
             self._state.mood = detected
             self._state.mood_intensity = min(1.0, intensity + 0.1)
-            self._push_expression(detected, intensity)
+            self._push_expression(detected, intensity, ctx=ctx)
             logger.debug("心情 (关键词): %s → %s", current, detected)
         else:
             self._state.mood_intensity = min(1.0, intensity + 0.05)
 
-    def analyze_assistant(self, _text: str) -> None:
+    def analyze_assistant(self, _text: str, *, ctx: Any | None = None) -> None:
         """每轮回复后衰减 mood intensity。mood 文本由 LLM 下轮 <mood> 更新。
 
         Args:
@@ -110,9 +111,10 @@ class EmotionDetector:
         new_intensity = max(0.1, intensity - 0.15)
         self._state.mood_intensity = new_intensity
         if new_intensity < 0.2:
-            self._push_idle()
+            self._push_idle(ctx=ctx)
 
-    def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None) -> None:
+    def analyze_user_stt(self, emotion_tag: str, events: list[str] | None = None,
+                         *, ctx: Any | None = None) -> None:
         """处理 STT 音频事件，推送对应表情。mood 决策交给 LLM（通过 C5 Sensory）。
 
         Args:
@@ -122,15 +124,15 @@ class EmotionDetector:
         if events:
             for evt in events:
                 if evt == "Laughter":
-                    _schedule(self._output.expression("laugh", intensity=0.7))
+                    self._schedule_expression("laugh", 0.7, ctx)
                 elif evt == "Cry":
-                    _schedule(self._output.expression("cry", intensity=0.8))
+                    self._schedule_expression("cry", 0.8, ctx)
                 elif evt == "Applause":
-                    _schedule(self._output.expression("surprised", intensity=0.5))
+                    self._schedule_expression("surprised", 0.5, ctx)
 
-    async def push_idle_expression(self) -> None:
+    async def push_idle_expression(self, *, ctx: Any | None = None) -> None:
         """推送一个随机空闲表情（周期性或在进入 IDLE 时调用）。"""
-        self._push_idle()
+        self._push_idle(ctx=ctx)
 
     # ---- 私有方法 ----
 
@@ -155,17 +157,26 @@ class EmotionDetector:
         best_key = max(scores, key=lambda k: scores[k])
         return best_key
 
-    def _push_expression(self, mood_text: str, intensity: float) -> None:
+    def _schedule_expression(self, expression: str, intensity: float,
+                             ctx: Any | None) -> None:
+        """调度表现帧；有回合上下文时把冻结身份一并交给输出层。"""
+        if ctx is None:
+            _schedule(self._output.expression(expression, intensity=intensity))
+        else:
+            _schedule(self._output.expression(expression, intensity=intensity, ctx=ctx))
+
+    def _push_expression(self, mood_text: str, intensity: float,
+                         *, ctx: Any | None = None) -> None:
         """推送表情到输出通道。
 
         Args:
             mood_text: 情绪描述文本（纯字符串）。
             intensity: 情绪强度（0.0-1.0）。
         """
-        _schedule(self._output.expression(mood_text, intensity=intensity))
+        self._schedule_expression(mood_text, intensity, ctx)
 
-    def _push_idle(self) -> None:
+    def _push_idle(self, *, ctx: Any | None = None) -> None:
         """推送一个空闲表情。"""
         if self._idle_expressions:
             expr = random.choice(self._idle_expressions)
-            _schedule(self._output.expression(expr, intensity=0.3))
+            self._schedule_expression(expr, 0.3, ctx)

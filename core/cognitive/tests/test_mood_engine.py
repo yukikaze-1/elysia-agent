@@ -109,6 +109,29 @@ class TestApplyMood:
         assert target.character_state.mood != "开心"
         output.mood.assert_called_once_with("开心", 0.8)
 
+    def test_apply_mood_forwards_frozen_character_context(self):
+        """v2 mood 表现帧使用本回合冻结的 generation/角色身份。"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from core.cognitive.generation import GenerationContext
+        from core.cognitive.loop import _apply_mood
+
+        ctx = GenerationContext(
+            generation_id="gen_1", user_message_id="msg_u1",
+            assistant_message_id="msg_a1", conversation_id="conv_1",
+            character_id="chr_elysia", character_instance_id="chi_1",
+            character_revision=3,
+        )
+        engine = MagicMock()
+        engine.state.mood = "平静"
+        tts_mgr = MagicMock()
+        output = AsyncMock()
+
+        asyncio.run(_apply_mood(
+            "开心|0.8", engine, tts_mgr, output, ctx=ctx))
+
+        output.mood.assert_awaited_once_with("开心", 0.8, ctx=ctx)
+
 
 @pytest.mark.unit
 class TestMoodToTtsEmotion:

@@ -27,6 +27,16 @@ def _ctx() -> GenerationContext:
     return ctx
 
 
+def _character_ctx() -> GenerationContext:
+    ctx = GenerationContext(
+        generation_id="gen_1", user_message_id="msg_u1", assistant_message_id="msg_a1",
+        conversation_id="conv_1", character_id="chr_elysia",
+        character_instance_id="chi_1", character_revision=3,
+    )
+    ctx.open_segment(MessageChannel.PUBLIC_REPLY, SegmentKind.TEXT)
+    return ctx
+
+
 @pytest.mark.unit
 class TestVersionFanOut:
     @pytest.mark.asyncio
@@ -82,6 +92,20 @@ class TestVersionFanOut:
         # v2 不发 expression（mood 由 turn_completed 落位）
         v2_sent = [c.args[0] for c in v2_ws.send_json.await_args_list]
         assert all(s.get("type") != "expression" for s in v2_sent)
+
+    @pytest.mark.asyncio
+    async def test_mood_with_character_context_fans_out_identity_to_v2(self):
+        mgr, v1_ws, v2_ws = _make_channels()
+        await mgr.mood("开心", 0.8, ctx=_character_ctx())
+        assert v1_ws.send_json.await_args.args[0] == {
+            "type": "expression", "expression": "开心", "intensity": 0.8,
+        }
+        assert v2_ws.send_json.await_args.args[0] == {
+            "type": "expression", "expression": "开心", "intensity": 0.8,
+            "conversationId": "conv_1", "generationId": "gen_1",
+            "characterId": "chr_elysia", "characterInstanceId": "chi_1",
+            "characterRevision": 3,
+        }
 
     @pytest.mark.asyncio
     async def test_turn_completed_v1_noop_v2_completed(self):

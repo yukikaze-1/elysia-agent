@@ -34,12 +34,13 @@ logger = logging.getLogger(__name__)
 
 
 async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamManager,
-                      output: OutputManager, target_session: "SessionMemory | None" = None) -> None:
+                      output: OutputManager, target_session: "SessionMemory | None" = None,
+                      ctx: GenerationContext | None = None) -> None:
     """解析 <mood> 标签内容，更新 CharacterState + 统一心情发射 + TTS emotion。
 
     支持格式: "情绪文本" 或 "情绪文本|强度"（强度 0.1–1.0）。
     更新实例权威 engine.state 的 mood / mood_intensity（F1-b 翻转，spec §6.3），
-    经 output.mood() 统一发射（v1 发 expression、v2 捕获不发——mood 由 turn_completed 落位），
+    经 output.mood() 统一发射（v1 保持旧帧；v2 有 generation 时携带冻结角色身份），
     设置 TTS 情绪参数。
     （target_session 保留因签名稳定——调用点 + loop.py re-export 仍传；本函数不再读它。）
     """
@@ -62,7 +63,10 @@ async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamMan
     prev = state.mood
     state.mood = mood_text
     state.mood_intensity = intensity
-    await output.mood(mood_text, intensity)
+    if ctx is None:
+        await output.mood(mood_text, intensity)
+    else:
+        await output.mood(mood_text, intensity, ctx=ctx)
     tts_mgr.set_emotion(mood_text)
     if prev != mood_text:
         logger.info("心情: %s → %s (%.0f%%)", prev, mood_text, intensity * 100)
@@ -242,7 +246,7 @@ class CognitiveStreaming:
         if event.type == StreamEventType.MOOD:
             if self._engine:
                 await _apply_mood(event.text, self._engine, self._tts_mgr,
-                                  self._output, session)
+                                  self._output, session, ctx=self._generation_ctx)
             self._mood_applied = True
 
         elif event.type == StreamEventType.INNER_VOICE:

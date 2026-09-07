@@ -69,7 +69,7 @@ class CognitiveFinalize:
         if not self._engine or self._mood_applied:
             return
         logger.debug("心情: <mood> 未检测到，使用关键词 fallback")
-        self._engine.analyze_user(user_message)
+        self._engine.analyze_user(user_message, ctx=self._generation_ctx)
         # M3（Task 12，plan-defect 修正）：mood 读端迁移——读 self._engine.state
         # （实例权威）。此前回退读 target.character_state.mood（非权威——Task 10
         # 后 _apply_mood 写 engine.state），导致 LLM 未输出 <mood> 时读到 stale/default。
@@ -115,7 +115,7 @@ class CognitiveFinalize:
         if not public_text.strip():
             return
         if self._engine:
-            self._engine.analyze_assistant(public_text)
+            self._engine.analyze_assistant(public_text, ctx=self._generation_ctx)
         if speaking_started:
             return
         await self._output.typing(False)

@@ -664,7 +664,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         """think_loop 前置：STT 情绪分析 + 后台任务结果唤醒消息。"""
         if self._engine:
             if stt_emotion and stt_emotion != "NEUTRAL":
-                self._engine.analyze_user_stt(stt_emotion, stt_events)
+                self._engine.analyze_user_stt(
+                    stt_emotion, stt_events, ctx=self._generation_ctx)
         if is_task_result and task_result_context:
             return self._build_wake_up_message(task_result_context)
         return user_message

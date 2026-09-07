@@ -272,8 +272,22 @@ async def _open_ws_connection(
         # （非权威——M3 后 state 权威在 runtime.state，session.character_state 不再被写）。
         # agent.character_engine 经 registry 解析当前会话绑定 instance 的 engine（Task 11）。
         cs = agent.character_engine.state
+        expression_identity = {}
+        if protocol_version >= 2:
+            registry = getattr(agent, "character_runtime_registry", None)
+            binding = getattr(agent.session_manager.active, "character_binding", None) or {}
+            instance_id = binding.get("instance_id") or "chi_builtin_elysia"
+            runtime = registry.get_existing(instance_id) if registry is not None else None
+            if runtime is not None:
+                expression_identity = {
+                    "conversationId": str(agent.session.session_id),
+                    "characterId": runtime.definition.characterId,
+                    "characterInstanceId": runtime.instance.instanceId,
+                    "characterRevision": runtime.revision.revision,
+                }
         await ws.send_json(ExpressionMessage(
             expression=cs.mood, intensity=cs.mood_intensity,
+            **expression_identity,
         ).wire_dict())
     except Exception:
         logger.debug("Failed to send mood on connect", exc_info=True)
