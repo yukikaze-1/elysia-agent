@@ -403,3 +403,25 @@ async def test_character_binding_defaults_none_when_absent():
     sm = SessionMemory(session_id=SessionId("t"), repo=repo)
     await sm.load("t")
     assert sm.character_binding is None
+
+
+@pytest.mark.unit
+def test_messages_for_client_translates_assistant_character_snapshot():
+    from core.schema.message import AssistantMessage
+    from core.schema.part import TextPart
+
+    session = SessionMemory(session_id=SessionId("conv_character"))
+    session.add_message(AssistantMessage.model_validate({
+        "content": [TextPart(content="hi")],
+        "message_id": "msg_character",
+        "character": {
+            "character_id": "chr_builtin_elysia",
+            "character_instance_id": "chi_builtin_elysia",
+            "character_revision": 1,
+            "display_name": "Elysia",
+            "presentation": {},
+        },
+    }))
+    wire = session.messages_for_client()[0]
+    assert wire["character"]["characterInstanceId"] == "chi_builtin_elysia"
+    assert "character_instance_id" not in wire["character"]

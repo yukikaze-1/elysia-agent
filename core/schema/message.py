@@ -8,7 +8,7 @@ role 字段 frozen，构造时自动填值。
 from enum import StrEnum
 from typing import Literal, NotRequired, Sequence, TypedDict, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from core.schema.error_type import ErrorType
 
@@ -25,6 +25,67 @@ class MessageRole(StrEnum):
     ASSISTANT = "assistant"
     TOOL = "tool"
     SYSTEM = "system"
+
+
+class CharacterPresentationSnapshot(BaseModel):
+    """assistant 历史审计所需的稳定展示引用（内部 snake_case）。"""
+
+    model_config = ConfigDict(extra="forbid")
+    avatar_asset_id: str | None = None
+    live2d_model_id: str | None = None
+    theme_color: str | None = None
+
+
+class CharacterMessageSnapshot(BaseModel):
+    """一次 assistant 生成实际使用的不可变角色身份快照。"""
+
+    model_config = ConfigDict(extra="forbid")
+    character_id: str = Field(min_length=1)
+    character_instance_id: str = Field(min_length=1)
+    character_revision: int = Field(ge=1)
+    display_name: str = Field(min_length=1)
+    presentation: CharacterPresentationSnapshot = Field(
+        default_factory=CharacterPresentationSnapshot,
+    )
+
+
+class CharacterPresentationWire(TypedDict):
+    avatarAssetId: str | None
+    live2dModelId: str | None
+    themeColor: str | None
+
+
+class CharacterSnapshotWire(TypedDict):
+    characterId: str
+    characterInstanceId: str
+    characterRevision: int
+    displayName: str
+    presentation: CharacterPresentationWire
+
+
+def character_snapshot_to_wire(
+    value: CharacterMessageSnapshot | dict | None,
+) -> CharacterSnapshotWire | None:
+    """把内部 assistant 快照显式翻译为 REST/WS camelCase wire。"""
+    if value is None:
+        return None
+    snapshot = (
+        value
+        if isinstance(value, CharacterMessageSnapshot)
+        else CharacterMessageSnapshot.model_validate(value)
+    )
+    presentation = snapshot.presentation
+    return CharacterSnapshotWire(
+        characterId=snapshot.character_id,
+        characterInstanceId=snapshot.character_instance_id,
+        characterRevision=snapshot.character_revision,
+        displayName=snapshot.display_name,
+        presentation=CharacterPresentationWire(
+            avatarAssetId=presentation.avatar_asset_id,
+            live2dModelId=presentation.live2d_model_id,
+            themeColor=presentation.theme_color,
+        ),
+    )
 
 
 class UserMessage(BaseModel):
@@ -47,6 +108,7 @@ class AssistantMessage(BaseModel):
     block_index: dict[str, list[int]] | None = None  # {"markdown": [3,7], "code": [1]}
     inner_voice: str | None = None
     token_usage: TokenUsageSummary | None = None
+    character: CharacterMessageSnapshot | None = None
     # 批次 3（multi-session）：可选归属会话 ID，空串 = 未归属（对齐 UserMessage）
     session_id: SessionId = SessionId("")
     metadata: dict = Field(default_factory=dict)
@@ -107,6 +169,7 @@ class ClientAssistantMessage(_ClientMessageBase, total=False):
     tool_calls: list[dict]
     token_usage: dict
     content_type: dict
+    character: CharacterSnapshotWire
 
 
 class ClientToolMessage(TypedDict):

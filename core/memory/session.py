@@ -28,6 +28,7 @@ from core.schema.message import (
     ClientUserMessage,
     Message,
     ToolResultMessage,
+    character_snapshot_to_wire,
 )
 from core.schema.utils import now_iso
 from core.schema.part import TextPart
@@ -241,6 +242,9 @@ class SessionMemory:
                 }
                 if isinstance(msg, AssistantMessage):
                     _e = cast(ClientAssistantMessage, chat_entry)
+                    character = character_snapshot_to_wire(msg.character)
+                    if character is not None:
+                        _e["character"] = character
                     if msg.inner_voice:
                         _e["inner_voice"] = msg.inner_voice
                     if msg.tool_calls:

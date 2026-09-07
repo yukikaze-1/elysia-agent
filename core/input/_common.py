@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from core.schema.message import Message
+from core.schema.message import Message, character_snapshot_to_wire
 from core.schema.utils import now_iso
 from frontend_contract import (
     AcceptedUserAckMessage,
@@ -112,6 +112,9 @@ def _archive_to_client(msgs: list[Message]) -> list[dict]:
     result = []
     for msg in msgs:
         entry = msg.model_dump(mode="json")
+        character = character_snapshot_to_wire(entry.pop("character", None))
+        if character is not None:
+            entry["character"] = character
         mongo_id = entry.get("metadata", {}).pop("_mongo_id", None)
         if mongo_id:
             entry["_id"] = mongo_id

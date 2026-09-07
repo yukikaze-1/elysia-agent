@@ -361,7 +361,7 @@ class WebSocketChannel(OutputChannel):
             characterRevision=character_revision,
         ).wire_dict())
 
-    async def on_character_state_changed(self, *, conversation_id: str | None = None,
+    async def on_character_state_changed(self, *, conversation_id: str,
                                          character_id: str,
                                          character_instance_id: str,
                                          character_revision: int,

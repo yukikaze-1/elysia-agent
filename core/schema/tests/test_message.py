@@ -2,7 +2,15 @@
 """core/schema/message.py 测试。"""
 import pytest
 from pydantic import ValidationError
-from core.schema.message import ClientToolMessage, MessageRole, UserMessage, AssistantMessage, ToolResultMessage
+from core.schema.message import (
+    AssistantMessage,
+    CharacterMessageSnapshot,
+    ClientToolMessage,
+    MessageRole,
+    ToolResultMessage,
+    UserMessage,
+    character_snapshot_to_wire,
+)
 from core.schema.part import TextPart
 from core.schema.types import MessageId, SessionId, ToolCallId
 from core.schema.error_type import ErrorType
@@ -132,6 +140,47 @@ class TestAssistantMessage:
         )
         assert msg.session_id == "sess-42"
         assert isinstance(msg.session_id, str)
+
+    def test_character_snapshot_round_trip_and_wire_translation(self):
+        msg = AssistantMessage.model_validate({
+            "content": [{"type": "text", "content": "hi"}],
+            "message_id": "msg-character",
+            "character": {
+                "character_id": "chr_builtin_elysia",
+                "character_instance_id": "chi_builtin_elysia",
+                "character_revision": 2,
+                "display_name": "Elysia",
+                "presentation": {
+                    "avatar_asset_id": "asset_avatar",
+                    "live2d_model_id": None,
+                    "theme_color": "#88aaff",
+                },
+            },
+        })
+        assert isinstance(msg.character, CharacterMessageSnapshot)
+        wire = character_snapshot_to_wire(msg.character)
+        assert wire == {
+            "characterId": "chr_builtin_elysia",
+            "characterInstanceId": "chi_builtin_elysia",
+            "characterRevision": 2,
+            "displayName": "Elysia",
+            "presentation": {
+                "avatarAssetId": "asset_avatar",
+                "live2dModelId": None,
+                "themeColor": "#88aaff",
+            },
+        }
+
+    def test_character_snapshot_rejects_unknown_fields(self):
+        with pytest.raises(ValidationError):
+            CharacterMessageSnapshot.model_validate({
+                "character_id": "chr_a",
+                "character_instance_id": "chi_a",
+                "character_revision": 1,
+                "display_name": "A",
+                "presentation": {},
+                "unknown": True,
+            })
 
 
 @pytest.mark.unit

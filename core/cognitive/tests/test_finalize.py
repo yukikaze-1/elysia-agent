@@ -46,6 +46,7 @@ async def test_v2_mood_change_emits_state():
     args = host._output._broadcast.await_args
     assert args.kwargs["channels"] == [v2_channel]
     assert args.kwargs["character_id"] == "chr_elysia"
+    assert args.kwargs["conversation_id"] == "default"
 
 
 @pytest.mark.asyncio
@@ -63,3 +64,36 @@ async def test_no_mood_change_does_not_emit():
     host._current_runtime.has_public_state_changed.return_value = False
     await CognitiveFinalize._emit_state_change_if_needed(host, SessionId("default"))
     host._output._broadcast.assert_not_awaited()
+
+
+def test_turn_character_snapshot_uses_frozen_generation_identity():
+    host = MagicMock()
+    host._generation_ctx.character_id = "chr_builtin_cyrene"
+    host._generation_ctx.character_instance_id = "chi_builtin_cyrene"
+    host._generation_ctx.character_revision = 3
+    host._current_runtime.definition.characterId = "chr_builtin_cyrene"
+    host._current_runtime.instance.instanceId = "chi_builtin_cyrene"
+    host._current_runtime.revision.revision = 3
+    host._current_runtime.revision.displayName = "Cyrene"
+    host._current_runtime.revision.presentation = {
+        "avatarAssetId": "asset_cyrene",
+        "live2dModelId": None,
+        "themeColor": "#88aaff",
+    }
+    snapshot = CognitiveFinalize._turn_character_snapshot(host)
+    assert snapshot is not None
+    assert snapshot.character_id == "chr_builtin_cyrene"
+    assert snapshot.character_instance_id == "chi_builtin_cyrene"
+    assert snapshot.character_revision == 3
+    assert snapshot.display_name == "Cyrene"
+
+
+def test_turn_character_snapshot_rejects_runtime_identity_mismatch():
+    host = MagicMock()
+    host._generation_ctx.character_id = "chr_a"
+    host._generation_ctx.character_instance_id = "chi_a"
+    host._generation_ctx.character_revision = 1
+    host._current_runtime.definition.characterId = "chr_b"
+    host._current_runtime.instance.instanceId = "chi_a"
+    host._current_runtime.revision.revision = 1
+    assert CognitiveFinalize._turn_character_snapshot(host) is None

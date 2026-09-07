@@ -11,7 +11,11 @@ import logging
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from frontend_contract.ws_message import MessageChannel, SegmentKind
-from core.schema.message import AssistantMessage
+from core.schema.message import (
+    AssistantMessage,
+    CharacterMessageSnapshot,
+    CharacterPresentationSnapshot,
+)
 from core.schema.token import TokenUsageSummary
 from core.schema.types import SessionId
 from core.text.parts import BlockRef, build_parts
@@ -31,6 +35,10 @@ if TYPE_CHECKING:
     from core.character.runtime import CharacterRuntime
 
 logger = logging.getLogger(__name__)
+
+
+def _optional_snapshot_ref(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 class CognitiveFinalize:
@@ -67,6 +75,39 @@ class CognitiveFinalize:
         # 后 _apply_mood 写 engine.state），导致 LLM 未输出 <mood> 时读到 stale/default。
         fallback_mood = self._engine.state.mood if self._engine else None
         self._tts_mgr.set_emotion(fallback_mood)
+
+    def _turn_character_snapshot(self) -> CharacterMessageSnapshot | None:
+        """从本回合冻结 identity + 对应 runtime 构造归档审计快照。"""
+        ctx = self._generation_ctx
+        runtime = self._current_runtime
+        if ctx is None or runtime is None:
+            return None
+        if not (
+            ctx.character_id
+            and ctx.character_instance_id
+            and ctx.character_revision >= 1
+        ):
+            return None
+        if (
+            runtime.definition.characterId != ctx.character_id
+            or runtime.instance.instanceId != ctx.character_instance_id
+            or runtime.revision.revision != ctx.character_revision
+        ):
+            logger.error("回合角色 identity 与 runtime 不一致，拒绝写入错误审计快照")
+            return None
+        raw = runtime.revision.presentation
+        presentation = raw if isinstance(raw, dict) else {}
+        return CharacterMessageSnapshot(
+            character_id=ctx.character_id,
+            character_instance_id=ctx.character_instance_id,
+            character_revision=ctx.character_revision,
+            display_name=runtime.revision.displayName,
+            presentation=CharacterPresentationSnapshot(
+                avatar_asset_id=_optional_snapshot_ref(presentation.get("avatarAssetId")),
+                live2d_model_id=_optional_snapshot_ref(presentation.get("live2dModelId")),
+                theme_color=_optional_snapshot_ref(presentation.get("themeColor")),
+            ),
+        )
 
     async def _emit_final_public_text(self, public_text: str,
                                       speaking_started: bool) -> None:
@@ -115,6 +156,8 @@ class CognitiveFinalize:
                 rounds=list(self._token_tracker.current_turn_usages),
                 turn_total=sum(r.total_tokens for r in self._token_tracker.current_turn_usages),
             ) if self._token_tracker and self._token_tracker.current_turn_usages else None,
+            session_id=target.session_id,
+            character=self._turn_character_snapshot(),
         ))
         if self._response_recorder is not None:
             self._response_recorder.record(
@@ -264,7 +307,11 @@ class CognitiveFinalize:
             _v1, v2 = self._output._split_versions()  # noqa: SLF001 —— OutputManager 无公开 broadcast
             await self._output._broadcast(  # noqa: SLF001
                 "on_character_state_changed",
-                conversation_id=conversation_id,
+                conversation_id=(
+                    conversation_id
+                    or ctx.conversation_id
+                    or self._session.session_id
+                ),
                 character_id=runtime.definition.characterId,
                 character_instance_id=runtime.instance.instanceId,
                 character_revision=runtime.revision.revision,

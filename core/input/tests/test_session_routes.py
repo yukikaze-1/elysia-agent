@@ -815,6 +815,46 @@ class TestMessagesHistory:
         assert data2["total"] == 5
 
     @pytest.mark.asyncio
+    async def test_assistant_history_exposes_character_snapshot_only_on_assistant(
+        self, aiohttp_client,
+    ):
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_test_character")
+        await _append(agent, "conv_test_character", UserMessage(
+            content=[TextPart(content="hi")], message_id=MessageId("msg_user"),
+        ))
+        await _append(agent, "conv_test_character", AssistantMessage.model_validate({
+            "content": [{"type": "text", "content": "hello"}],
+            "message_id": "msg_assistant",
+            "session_id": "conv_test_character",
+            "character": {
+                "character_id": "chr_builtin_cyrene",
+                "character_instance_id": "chi_builtin_cyrene",
+                "character_revision": 1,
+                "display_name": "Cyrene",
+                "presentation": {},
+            },
+        }))
+        app = _make_app(agent)
+        client = await aiohttp_client(app)
+        response = await client.get("/api/sessions/conv_test_character/messages")
+        assert response.status == 200
+        messages = (await response.json())["messages"]
+        by_id = {message["message_id"]: message for message in messages}
+        assert "character" not in by_id["msg_user"]
+        assert by_id["msg_assistant"]["character"] == {
+            "characterId": "chr_builtin_cyrene",
+            "characterInstanceId": "chi_builtin_cyrene",
+            "characterRevision": 1,
+            "displayName": "Cyrene",
+            "presentation": {
+                "avatarAssetId": None,
+                "live2dModelId": None,
+                "themeColor": None,
+            },
+        }
+
+    @pytest.mark.asyncio
     async def test_malformed_before_cursor_400(self, aiohttp_client):
         """畸形 before 游标 → 400 CONTRACT_VALIDATION（验收修复：原 ObjectId 未捕获 500）。"""
         agent = _FakeAgent()
