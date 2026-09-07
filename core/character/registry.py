@@ -7,9 +7,10 @@ SessionManager.evict_if_needed() 逐出后才 release()。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import OrderedDict
-from typing import Callable
+from typing import Awaitable, Callable
 
 from core.character.runtime import CharacterRuntime
 
@@ -21,6 +22,10 @@ class CharacterRuntimeRegistry:
         self._max_size = max_size
         self._runtimes: OrderedDict[str, CharacterRuntime] = OrderedDict()
         self._session_binding_index: set[str] | None = None   # M3 激活
+        # Async storage-backed loads must be single-flight per instance.  Locks are
+        # retained for the bounded set of instance IDs seen by this process so a
+        # failed load cannot race a queued retry through a replacement lock.
+        self._load_locks: dict[str, asyncio.Lock] = {}
 
     def get(self, instance_id: str, factory: Callable[[], CharacterRuntime]) -> CharacterRuntime:
         if instance_id in self._runtimes:
@@ -30,6 +35,38 @@ class CharacterRuntimeRegistry:
         self._runtimes[instance_id] = rt
         self._evict_if_needed()
         return rt
+
+    async def get_or_load(
+        self,
+        instance_id: str,
+        loader: Callable[[], Awaitable[CharacterRuntime]],
+    ) -> CharacterRuntime:
+        """Return a cached runtime or load it exactly once from async storage.
+
+        The old synchronous ``get`` remains for trusted built-ins and unit-test
+        pre-seeding.  Custom instances require Mongo reads and therefore must use
+        this path; they are never fabricated by stripping an instance ID prefix.
+        """
+        existing = self._runtimes.get(instance_id)
+        if existing is not None:
+            self._runtimes.move_to_end(instance_id)
+            return existing
+
+        lock = self._load_locks.setdefault(instance_id, asyncio.Lock())
+        async with lock:
+            existing = self._runtimes.get(instance_id)
+            if existing is not None:
+                self._runtimes.move_to_end(instance_id)
+                return existing
+            runtime = await loader()
+            if runtime.instance.instanceId != instance_id:
+                raise ValueError(
+                    "runtime loader returned mismatched instance: "
+                    f"expected {instance_id}, got {runtime.instance.instanceId}"
+                )
+            self._runtimes[instance_id] = runtime
+            self._evict_if_needed()
+            return runtime
 
     def get_existing(self, instance_id: str) -> "CharacterRuntime | None":
         """只读解析已构建 runtime——不懒建(区别于 get,后者 factory 会建)。

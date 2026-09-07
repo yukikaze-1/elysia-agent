@@ -207,10 +207,48 @@ def test_loop_injects_runtime_registry():
     且 mixin 改名 _engine —— 不再有 _character_engine 属性。"""
     from core.character.registry import CharacterRuntimeRegistry
     reg = CharacterRuntimeRegistry()
-    loop = _make_loop(runtime_registry=reg, runtime_factory=lambda iid: None, engine_factory=lambda rt: None)
+    async def runtime_factory(_instance_id):
+        return None
+
+    loop = _make_loop(runtime_registry=reg, runtime_factory=runtime_factory,
+                      engine_factory=lambda rt: None)
     assert loop._registry is reg
     assert loop._runtime_factory is not None and loop._engine_factory is not None
     assert not hasattr(loop, "_character_engine")   # B1: mixin 改名 _engine
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_async_loads_unseeded_custom_runtime_once():
+    """Custom registry misses await the storage loader and cache its result."""
+    reg = CharacterRuntimeRegistry()
+    rt = _make_rt(instance_id="chi_custom_a", character_id="chr_custom_a")
+    calls = 0
+
+    async def runtime_factory(instance_id):
+        nonlocal calls
+        calls += 1
+        assert instance_id == "chi_custom_a"
+        await asyncio.sleep(0)
+        return rt
+
+    loop = _make_loop(runtime_registry=reg, runtime_factory=runtime_factory)
+    sm = SessionMemory(session_id=SessionId("custom"))
+    sm.character_binding = {
+        "character_id": "chr_custom_a",
+        "instance_id": "chi_custom_a",
+    }
+    loop._session_resolver = AsyncMock(return_value=sm)
+
+    for _ in range(2):
+        setup = await loop._prepare_turn(
+            user_message="你好", user_name="妖梦", stt_emotion="", content=None,
+            message_id=None, conversation_id=SessionId("custom"), protocol_version=2,
+        )
+        assert setup is not None
+
+    assert calls == 1
+    assert loop._current_runtime is rt
+    await loop._output.close()
 
 
 @pytest.mark.asyncio

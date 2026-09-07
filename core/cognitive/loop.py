@@ -149,7 +149,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         prompt_recorder: "PromptRecorder | None" = None,
         generation_registry: "GenerationRegistry | None" = None,
         runtime_registry: "CharacterRuntimeRegistry | None" = None,
-        runtime_factory: "Callable[[str], CharacterRuntime] | None" = None,
+        runtime_factory: "Callable[[str], Awaitable[CharacterRuntime]] | None" = None,
         engine_factory: "Callable[[CharacterRuntime], CharacterEngine] | None" = None,
     ):
         """初始化认知循环。
@@ -193,8 +193,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                                      if generation_registry is not None
                                      else GenerationRegistry())
         # Task 7（B1）：character runtime 绑定层注入——registry 按 instance_id 解析
-        # runtime，runtime_factory 构造 CharacterRuntime，engine_factory 由 runtime
-        # 构造 CharacterEngine（本批：单例 engine + 标记，inert，可接受）。
+        # runtime。runtime_factory 是异步存储 loader（custom 需要读 Mongo），
+        # engine_factory 再从冻结 revision 构造 instance-scoped engine。
         self._registry = runtime_registry
         self._runtime_factory = runtime_factory
         self._engine_factory = engine_factory
@@ -357,13 +357,13 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             )
         return self._registry
 
-    def _require_runtime_factory(self, instance_id: str) -> CharacterRuntime:
+    async def _require_runtime_factory(self, instance_id: str) -> CharacterRuntime:
         """registry 未命中时构造 runtime；factory 未注入 → 清晰 RuntimeError。"""
         if self._runtime_factory is None:
             raise RuntimeError(
                 f"runtime_factory 未注入——registry 未命中 {instance_id} 时无法构造 runtime"
             )
-        return self._runtime_factory(instance_id)
+        return await self._runtime_factory(instance_id)
 
     def _require_engine_factory(self, runtime: CharacterRuntime) -> CharacterEngine:
         """runtime 无 engine 时构造；engine_factory 未注入 → 清晰 RuntimeError。"""
@@ -398,12 +398,15 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
 
         gen_conversation_id = conversation_id or target.session_id
         # Task 8（B1 闭环）：从 session.character_binding 解析 instance_id，
-        # 经 registry.get（同步，不 await）→ runtime.ensure_engine → self._engine。
+        # 经 registry.get_or_load（同 instance 单飞异步加载）→
+        # runtime.ensure_engine → self._engine。
         # binding 缺 instance_id/character_id 时回退内置 Elysia。
         binding = target.character_binding or {}
         instance_id = binding.get("instance_id") or DEFAULT_INSTANCE_ID
         registry = self._require_runtime_registry()
-        runtime = registry.get(instance_id, lambda: self._require_runtime_factory(instance_id))
+        runtime = await registry.get_or_load(
+            instance_id, lambda: self._require_runtime_factory(instance_id)
+        )
         engine = runtime.ensure_engine(lambda: self._require_engine_factory(runtime))
         self._session = target
         self._prompt.set_session(target)

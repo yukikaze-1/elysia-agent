@@ -1,4 +1,6 @@
 # core/character/tests/test_registry.py
+import asyncio
+
 import pytest
 pytestmark = pytest.mark.service   # 内存 LRU
 from core.character.registry import CharacterRuntimeRegistry
@@ -25,6 +27,37 @@ def test_registry_get_caches():
     assert rt.instance.instanceId == "chi_1"
     rt2 = reg.get("chi_1", _factory("chi_1"))
     assert rt2 is rt   # 缓存命中
+
+
+@pytest.mark.asyncio
+async def test_registry_async_load_is_single_flight():
+    reg = CharacterRuntimeRegistry()
+    calls = 0
+
+    async def load():
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)
+        return _factory("chi_async")()
+
+    first, second = await asyncio.gather(
+        reg.get_or_load("chi_async", load),
+        reg.get_or_load("chi_async", load),
+    )
+
+    assert first is second
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_registry_rejects_mismatched_async_loader_result():
+    reg = CharacterRuntimeRegistry()
+
+    async def load():
+        return _factory("chi_wrong")()
+
+    with pytest.raises(ValueError, match="mismatched instance"):
+        await reg.get_or_load("chi_expected", load)
 
 
 def test_registry_invalidate():
