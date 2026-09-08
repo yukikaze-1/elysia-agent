@@ -38,7 +38,7 @@ async def test_v2_fallback_emits_segment_not_message():
         "你好", [], "", False, "用户", 1, [],
         "你好",
         conversation_id="default",
-        session=MagicMock(),
+        session=MagicMock(session_id=SessionId("default")),
     )
     loop._output.segment_completed.assert_awaited()
     assert sent == []  # 未发 v1 message 帧
@@ -56,7 +56,7 @@ async def test_v2_fallback_completes_existing_segment():
         "你好", [], "", False, "用户", 1, [],
         "你好",
         conversation_id="default",
-        session=MagicMock(),
+        session=MagicMock(session_id=SessionId("default")),
     )
     loop._output.segment_started.assert_not_awaited()          # 不重复 open
     assert loop._generation_ctx.current_segment_id is None     # 段已关闭
@@ -77,6 +77,6 @@ async def test_v1_fallback_still_emits_message():
         "你好", [], "", False, "用户", 1, [],
         "你好",
         conversation_id="default",
-        session=MagicMock(),
+        session=MagicMock(session_id=SessionId("default")),
     )
     assert len(sent) == 1  # v1 仍发 MessageObj

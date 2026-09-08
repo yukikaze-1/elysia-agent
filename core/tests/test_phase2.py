@@ -5,16 +5,11 @@ Run:
 """
 
 import asyncio
-import sys
-from pathlib import Path
 
 import pytest
 
 from Module.embedding import EmbeddingFactory
 from core.memory.scope import MemoryScope
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 
 @pytest.fixture(scope="session", autouse=True)
 def _cleanup_embedding():

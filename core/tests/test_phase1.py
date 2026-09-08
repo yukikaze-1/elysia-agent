@@ -7,12 +7,8 @@ or:
 """
 
 import asyncio
-import sys
-from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.schema import RequestId
 from core.schema.event import InterruptData, StateChangeData, UserInputData
