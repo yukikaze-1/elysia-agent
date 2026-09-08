@@ -973,7 +973,10 @@ class Agent(AgentLifecycle, AgentServer):
 
     async def switch_session(self, sid: SessionId):
         """Load the bound runtime before changing the active-session pointer."""
-        target = await self._session_manager.resolve(sid, 2)
+        # Keep Agent's historical internal lazy-switch semantics. Product v2
+        # activate routes validate has_session() before calling this method, while
+        # tests/embedded callers may intentionally switch to a fresh local session.
+        target = await self._session_manager.ensure_loaded(sid)
         binding = target.character_binding or self._default_binding
         instance_id = binding.get("instance_id") or self._default_binding["instance_id"]
         await self.ensure_character_runtime(instance_id)

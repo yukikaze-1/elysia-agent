@@ -171,6 +171,11 @@ class _LifecyclePersistence:
                     for field in type(inst.state).model_fields:
                         setattr(runtime.state, field, getattr(inst.state, field))
                     runtime.stateVersion = inst.stateVersion
+                    # persist_fn closes over runtime.instance and reads its CAS
+                    # token; synchronize both trackers after the in-place restore.
+                    runtime.instance.state = runtime.state
+                    runtime.instance.stateVersion = inst.stateVersion
+                    runtime.instance.updatedAt = inst.updatedAt
                     if runtime.state.last_awareness_time:
                         engine._last_awareness_time = runtime.state.last_awareness_time
                     engine._reflector._restore_from_state()
