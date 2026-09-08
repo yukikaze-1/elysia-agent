@@ -12,6 +12,7 @@ from core.character.definition import CharacterDefinition
 from core.character.draft import CharacterDraft
 from core.character.instance import CharacterInstance
 from core.character.revision import CharacterRevision
+from core.character.registry import CharacterRuntimeRegistry
 from core.character.runtime import CharacterRuntime
 from core.character.service import (
     CharacterBusyError,
@@ -28,6 +29,7 @@ from core.profile.user_identity import UserIdentity
 from core.schema.character import CharacterRuntimeState
 from core.schema.types import SessionId
 from core.storage.character_repo import CharacterRepository
+from core.storage.character_instance_repo import CharacterInstanceRepository
 from core.storage.character_revision_repo import CharacterRevisionRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
@@ -65,12 +67,18 @@ def _draft(**overrides: object) -> CharacterDraft:
     return CharacterDraft(**values)
 
 
-def _make_service() -> CharacterService:
+def _make_service(
+    *,
+    instance_repo: CharacterInstanceRepository | None = None,
+    runtime_registry: CharacterRuntimeRegistry | None = None,
+) -> CharacterService:
     return CharacterService(
         repo=CharacterRepository(db=FakeDocumentDBBackend()),
         rev_repo=CharacterRevisionRepository(db=FakeDocumentDBBackend()),
         catalog=CharacterCatalog(source=BuiltinCharacterSource()),
         user_identity_store=UserIdentityStore(),
+        instance_repo=instance_repo,
+        runtime_registry=runtime_registry,
     )
 
 
@@ -152,6 +160,136 @@ async def test_revision_page_and_mutation_cas_include_state_policy() -> None:
             expected_revision=1,
             state_policy="preserve",
         )
+
+
+@pytest.mark.parametrize(
+    ("state_policy", "expected_self_l2"),
+    [("preserve", "持续演化的自我"), ("reset_evolution", "")],
+)
+@pytest.mark.asyncio
+async def test_revision_propagates_to_follow_latest_instances_only(
+    state_policy: str, expected_self_l2: str,
+) -> None:
+    instance_repo = CharacterInstanceRepository(db=FakeDocumentDBBackend())
+    registry = CharacterRuntimeRegistry()
+    service = _make_service(
+        instance_repo=instance_repo, runtime_registry=registry,
+    )
+    detail = await service.create(_draft(), owner_user_id="usr_local_default")
+    character_id = detail.summary.characterId
+    state = CharacterRuntimeState(
+        instance_id="chi_follow",
+        session_id=SessionId("session_follow"),
+        source_revision=1,
+        self_l2="持续演化的自我",
+        state_l3="近期状态",
+        mood="开心",
+        mood_intensity=0.8,
+    )
+    follow = CharacterInstance(
+        instanceId="chi_follow",
+        characterId=character_id,
+        revision=1,
+        revisionPolicy="follow_latest",
+        stateVersion=4,
+        state=state,
+    )
+    pinned = CharacterInstance(
+        instanceId="chi_pinned",
+        characterId=character_id,
+        revision=1,
+        revisionPolicy="pinned",
+        stateVersion=2,
+        state=state.model_copy(
+            deep=True,
+            update={"instance_id": "chi_pinned", "session_id": SessionId("session_pinned")},
+        ),
+    )
+    await instance_repo.save(follow)
+    await instance_repo.save(pinned)
+    runtime = CharacterRuntime(
+        instance=follow.model_copy(deep=True),
+        definition=CharacterDefinition(
+            characterId=character_id, source="custom", mutable=True,
+        ),
+        revision=CharacterRevision(
+            characterId=character_id, revision=1, displayName="Stage H 角色",
+        ),
+        user_identity=UserIdentity(
+            userId="usr_local_default", displayName="测试用户",
+        ),
+    )
+    registry.get("chi_follow", lambda: runtime)
+
+    result = await service.update(
+        character_id,
+        _draft(displayName="Stage H 角色 v2"),
+        expected_revision=1,
+        state_policy=state_policy,
+    )
+
+    assert result.stateImpact.affectedInstances == 1
+    assert result.stateImpact.pendingInstances == 0
+    updated = await instance_repo.get("chi_follow")
+    assert updated is not None and updated.state is not None
+    assert updated.revision == 2
+    assert updated.stateVersion == 5
+    assert updated.state.source_revision == 2
+    assert updated.state.self_l2 == expected_self_l2
+    if state_policy == "reset_evolution":
+        assert updated.state.state_l3 == ""
+        assert updated.state.mood == "平静"
+    else:
+        assert updated.state.state_l3 == "近期状态"
+        assert updated.state.mood == "开心"
+    untouched = await instance_repo.get("chi_pinned")
+    assert untouched is not None and untouched.revision == 1
+    assert untouched.stateVersion == 2
+    assert registry.get_existing("chi_follow") is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_recovers_unmarked_published_reset_policy() -> None:
+    """Definition 已发布但 pending marker 未写入时，runtime load 仍可恢复策略。"""
+    instance_repo = CharacterInstanceRepository(db=FakeDocumentDBBackend())
+    service = _make_service(instance_repo=instance_repo)
+    detail = await service.create(_draft(), owner_user_id="usr_local_default")
+    character_id = detail.summary.characterId
+    await instance_repo.save(CharacterInstance(
+        instanceId="chi_interrupted",
+        characterId=character_id,
+        revision=1,
+        revisionPolicy="follow_latest",
+        stateVersion=3,
+        state=CharacterRuntimeState(
+            instance_id="chi_interrupted",
+            session_id=SessionId("session_interrupted"),
+            source_revision=1,
+            self_l2="必须被清空",
+            state_l3="也必须被清空",
+        ),
+    ))
+    revision = service._revision_from_draft(
+        character_id,
+        _draft(displayName="中断后的 v2"),
+        revision=2,
+        state_policy="reset_evolution",
+    )
+    await service.rev_repo.append_revision(revision)
+    assert await service.repo.cas_revision_pointer(
+        character_id, 1, 2, updated_at="2026-09-08T00:00:00+00:00"
+    )
+    stale = await instance_repo.get("chi_interrupted")
+    assert stale is not None and stale.pendingRevision is None
+
+    recovered = await service.reconcile_instance_revision(stale)
+
+    assert recovered.revision == 2
+    assert recovered.stateVersion == 4
+    assert recovered.state is not None
+    assert recovered.state.source_revision == 2
+    assert recovered.state.self_l2 == ""
+    assert recovered.state.state_l3 == ""
 
 
 @pytest.mark.asyncio

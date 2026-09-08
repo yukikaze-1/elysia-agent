@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 COLLECTION = "character_instances"
 _TOP_LEVEL_KEYS = {
     "instanceId": "instance_id", "characterId": "character_id",
+    "revisionPolicy": "revision_policy", "pendingRevision": "pending_revision",
+    "pendingStatePolicy": "pending_state_policy",
     "ownerUserId": "owner_user_id", "stateVersion": "state_version",
     "createdAt": "created_at", "updatedAt": "updated_at",
 }
@@ -84,6 +86,30 @@ class CharacterInstanceRepository(Repository):
             return None
         return CharacterInstance.model_validate(self._from_doc(docs[0]))
 
+    async def list_by_character(
+        self,
+        character_id: str,
+        *,
+        owner_user_id: str | None = None,
+        limit: int = 10_000,
+    ) -> list[CharacterInstance]:
+        """列出角色实例，供 revision propagation 使用。
+
+        revisionPolicy 的过滤在模型层完成：Stage H 前创建的记录没有持久化该
+        字段，模型默认值会把它们按 follow_latest 解释；数据库查询若直接要求
+        ``revision_policy=follow_latest`` 会漏掉这些合法旧记录。
+        """
+        if self._db is None:
+            raise StorageUnavailableError("CharacterInstanceRepository 未连接")
+        query: dict[str, object] = {"character_id": character_id}
+        if owner_user_id is not None:
+            query["owner_user_id"] = owner_user_id
+        db = self._db
+        docs = await self._call(
+            lambda: db.find(COLLECTION, query, sort=[("instance_id", 1)], limit=limit)
+        )
+        return [CharacterInstance.model_validate(self._from_doc(doc)) for doc in docs]
+
     async def save(self, instance: CharacterInstance) -> None:
         if self._db is None:
             raise StorageUnavailableError("CharacterInstanceRepository 未连接")
@@ -103,6 +129,72 @@ class CharacterInstanceRepository(Repository):
             {"instance_id": instance_id, "state_version": expected},
             {"$set": {"state": new_state.model_dump(mode="json"), "state_version": new_version,
                       "updated_at": now_iso()}},
+        ))
+        return mod > 0
+
+    async def set_pending_revision(
+        self,
+        instance_id: str,
+        *,
+        expected_revision: int,
+        expected_pending_revision: int | None,
+        pending_revision: int,
+        state_policy: str,
+    ) -> bool:
+        """为 follow_latest instance 持久化待应用 revision/statePolicy。"""
+        if self._db is None:
+            raise StorageUnavailableError("CharacterInstanceRepository 未连接")
+        db = self._db
+        mod = await self._call(lambda: db.update_one(
+            COLLECTION,
+            {
+                "instance_id": instance_id,
+                "revision": expected_revision,
+                "pending_revision": expected_pending_revision,
+            },
+            {"$set": {
+                "pending_revision": pending_revision,
+                "pending_state_policy": state_policy,
+                "updated_at": now_iso(),
+            }},
+        ))
+        return mod > 0
+
+    async def cas_apply_revision(
+        self,
+        instance_id: str,
+        *,
+        expected_revision: int,
+        expected_state_version: int,
+        expected_pending_revision: int | None,
+        new_revision: int,
+        new_state: "CharacterRuntimeState",
+        new_version: int,
+    ) -> bool:
+        """原子应用 revision/state policy，并递增 stateVersion。
+
+        pending marker 也进入 CAS 条件，避免并发的下一次角色编辑刚写入更新 marker
+        时，被较旧的 runtime reconcile 清掉。
+        """
+        if self._db is None:
+            raise StorageUnavailableError("CharacterInstanceRepository 未连接")
+        db = self._db
+        mod = await self._call(lambda: db.update_one(
+            COLLECTION,
+            {
+                "instance_id": instance_id,
+                "revision": expected_revision,
+                "state_version": expected_state_version,
+                "pending_revision": expected_pending_revision,
+            },
+            {"$set": {
+                "revision": new_revision,
+                "state": new_state.model_dump(mode="json"),
+                "state_version": new_version,
+                "pending_revision": None,
+                "pending_state_policy": None,
+                "updated_at": now_iso(),
+            }},
         ))
         return mod > 0
 

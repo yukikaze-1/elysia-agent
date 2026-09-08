@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Callable, TypedDict, cast
 
 from aiohttp import web
@@ -29,6 +31,7 @@ from core.character.service import (
     CharacterValidationError,
     RevisionConflictError,
 )
+from core.character.runtime_loader import CharacterRuntimeSourceError
 from core.input.errors import _protocol_error_response
 from core.storage.base import StorageUnavailableError
 from frontend_contract.rest import (
@@ -161,6 +164,47 @@ def _wire_update_body(body: dict) -> tuple[CharacterDraft, int, str]:
 
 def _service(app: web.Application) -> CharacterService:
     return app["character_service"]
+
+
+def _require_character_mutation_idle(app: web.Application) -> None:
+    """Do not replace a runtime profile while a turn/TTS is in flight."""
+    agent = app["agent"]
+    status = getattr(agent, "status", None)
+    if status is not None and not status.is_accepting_input:
+        raise CharacterBusyError("agent")
+
+
+@asynccontextmanager
+async def _character_mutation_guard(
+    app: web.Application,
+) -> AsyncIterator[None]:
+    """Serialize role replacement against CognitiveLoop.process()."""
+    agent = app["agent"]
+    _require_character_mutation_idle(app)
+    cognitive = getattr(agent, "cognitive", None)
+    process_lock = getattr(cognitive, "_process_lock", None)
+    if process_lock is None:
+        yield
+        return
+    if process_lock.locked():
+        raise CharacterBusyError("agent")
+    async with process_lock:
+        _require_character_mutation_idle(app)
+        yield
+
+
+async def _load_instance_runtime(agent: object, instance_id: str) -> "CharacterRuntime":
+    registry = getattr(agent, "character_runtime_registry", None)
+    runtime = registry.get_existing(instance_id) if registry is not None else None
+    if runtime is not None:
+        return cast("CharacterRuntime", runtime)
+    ensure = getattr(agent, "ensure_character_runtime", None)
+    if ensure is None:
+        raise CharacterInstanceNotFoundError(instance_id)
+    try:
+        return cast("CharacterRuntime", await ensure(instance_id))
+    except CharacterRuntimeSourceError:
+        raise CharacterInstanceNotFoundError(instance_id) from None
 
 
 def _query_params(request: web.Request, *, allowed: set[str]) -> _QueryParams:
@@ -301,12 +345,13 @@ async def _characters_get(request: web.Request) -> web.Response:
 
 async def _characters_update(request: web.Request) -> web.Response:
     try:
-        body = await _json_body(request)
-        draft, expected, policy = _wire_update_body(body)
-        result = await _service(request.app).update(
-            request.match_info["id"], draft,
-            expected_revision=expected, state_policy=policy,
-        )
+        async with _character_mutation_guard(request.app):
+            body = await _json_body(request)
+            draft, expected, policy = _wire_update_body(body)
+            result = await _service(request.app).update(
+                request.match_info["id"], draft,
+                expected_revision=expected, state_policy=policy,
+            )
         return web.json_response(result.wire_dict(), status=200)
     except (web.HTTPBadRequest, ValidationError, ValueError):
         return _protocol_error_response("CHARACTER_VALIDATION", "角色内容校验失败", 400)
@@ -365,25 +410,26 @@ async def _characters_revisions(request: web.Request) -> web.Response:
 
 async def _characters_rollback(request: web.Request) -> web.Response:
     try:
-        body = await _json_body(request)
-        allowed = {"targetRevision", "expectedRevision", "statePolicy"}
-        if set(body) != allowed:
-            raise ValueError("rollback fields mismatch")
-        target = body["targetRevision"]
-        expected = body["expectedRevision"]
-        policy = body["statePolicy"]
-        if (
-            any(not isinstance(value, int) or isinstance(value, bool) or value < 1
-                for value in (target, expected))
-            or policy not in {item.value for item in CharacterStatePolicy}
-        ):
-            raise ValueError("rollback values invalid")
-        result = await _service(request.app).rollback(
-            request.match_info["id"],
-            target_revision=target,
-            expected_revision=expected,
-            state_policy=policy,
-        )
+        async with _character_mutation_guard(request.app):
+            body = await _json_body(request)
+            allowed = {"targetRevision", "expectedRevision", "statePolicy"}
+            if set(body) != allowed:
+                raise ValueError("rollback fields mismatch")
+            target = body["targetRevision"]
+            expected = body["expectedRevision"]
+            policy = body["statePolicy"]
+            if (
+                any(not isinstance(value, int) or isinstance(value, bool) or value < 1
+                    for value in (target, expected))
+                or policy not in {item.value for item in CharacterStatePolicy}
+            ):
+                raise ValueError("rollback values invalid")
+            result = await _service(request.app).rollback(
+                request.match_info["id"],
+                target_revision=target,
+                expected_revision=expected,
+                state_policy=policy,
+            )
         return web.json_response(result.wire_dict(), status=200)
     except (web.HTTPBadRequest, ValidationError, ValueError):
         return _protocol_error_response("CHARACTER_VALIDATION", "回滚请求无效", 400)
@@ -410,12 +456,9 @@ async def _instance_state_get(request: web.Request) -> web.Response:
     agent = request.app["agent"]
     instance_id = request.match_info["id"]
     try:
-        registry = getattr(agent, "character_runtime_registry", None)
-        runtime = registry.get_existing(instance_id) if registry is not None else None
-        if runtime is None:
-            raise CharacterInstanceNotFoundError(instance_id)
+        runtime = await _load_instance_runtime(agent, instance_id)
         return web.json_response(
-            _public_state(cast("CharacterRuntime", runtime)).wire_dict(), status=200
+            _public_state(runtime).wire_dict(), status=200
         )
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
@@ -428,8 +471,7 @@ async def _instance_reset_evolution(request: web.Request) -> web.Response:
     instance_id = request.match_info["id"]
     try:
         request_model = CharacterResetRequest.model_validate(await _json_body(request))
-        registry = getattr(agent, "character_runtime_registry", None)
-        runtime = registry.get_existing(instance_id) if registry is not None else None
+        runtime = await _load_instance_runtime(agent, instance_id)
         repo = getattr(agent, "_instance_repo", None)
         if repo is None:
             raise CharacterStorageUnavailableError("CharacterInstanceRepository 未装配")
@@ -445,10 +487,10 @@ async def _instance_reset_evolution(request: web.Request) -> web.Response:
         reset_state = await _service(request.app).reset_evolution(
             instance_id,
             expected_state_version=request_model.expectedStateVersion,
-            runtime=cast("CharacterRuntime | None", runtime),
+            runtime=runtime,
             persist=persist,
         )
-        public = _public_state(cast("CharacterRuntime", runtime))
+        public = _public_state(runtime)
         result = CharacterResetResult(
             state=public,
             resetFields=list(RESET_FIELDS),

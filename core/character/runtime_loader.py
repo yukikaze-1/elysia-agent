@@ -74,6 +74,12 @@ class CharacterRuntimeSourceLoader:
             # Do not expose whether another user's instance exists.
             raise CharacterInstanceNotFoundError(instance_id)
 
+        # follow_latest is reconciled before resolving the exact revision.  This
+        # also recovers a Definition update that committed before its per-instance
+        # pending marker could be written.
+        if instance.revisionPolicy == "follow_latest":
+            instance = await self._characters.reconcile_instance_revision(instance)
+
         definition, revision = await self._characters.resolve_runtime_source(
             instance.characterId, revision=instance.revision
         )

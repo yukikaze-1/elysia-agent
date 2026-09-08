@@ -246,6 +246,8 @@ class Agent(AgentLifecycle, AgentServer):
             rev_repo=self._character_revision_repo,
             catalog=self._character_catalog,
             user_identity_store=self._user_identity_store,
+            instance_repo=self._instance_repo,
+            runtime_registry=self._runtime_registry,
         )
         self._runtime_source_loader = CharacterRuntimeSourceLoader(
             characters=self._character_service,

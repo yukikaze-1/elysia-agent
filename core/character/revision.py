@@ -6,6 +6,8 @@ relationshipStyle/emotionStyle/conversationInitiative 本批显式留空（渲�
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from core.schema.utils import now_iso
@@ -27,5 +29,10 @@ class CharacterRevision(BaseModel):
     openingMessage: str | None = None
     checksum: str = ""
     compilerVersion: int = Field(default=1, ge=1)
+    # Internal audit/reconciliation metadata.  It is deliberately not exposed by
+    # CharacterRevisionContent, but lets an outdated follow_latest instance recover
+    # the requested transition even if the cross-collection pending write was
+    # interrupted after publishing this revision.
+    statePolicy: Literal["preserve", "reset_evolution"] = "preserve"
     createdBy: str = "system"              # system/user/migration
     createdAt: str = Field(default_factory=now_iso)

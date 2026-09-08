@@ -10,9 +10,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from core.character.catalog import CharacterCatalog
 from core.character.definition import CharacterDefinition
@@ -50,11 +51,15 @@ from frontend_contract.rest import (
 )
 
 if TYPE_CHECKING:
+    from core.character.instance import CharacterInstance
+    from core.character.registry import CharacterRuntimeRegistry
     from core.character.runtime import CharacterRuntime
     from core.schema.character import CharacterRuntimeState
+    from core.storage.character_instance_repo import CharacterInstanceRepository
 
 
 MAX_CHARACTER_LIST_SCAN = 10_000
+INSTANCE_RECONCILE_RETRIES = 3
 RESET_FIELDS = [
     CharacterResetField.SELF_L2,
     CharacterResetField.STATE_L3,
@@ -63,6 +68,7 @@ RESET_FIELDS = [
     CharacterResetField.MOOD,
 ]
 BUILTIN_FALLBACK_CHARACTER_ID = "chr_builtin_elysia"
+logger = logging.getLogger(__name__)
 
 
 class CharacterError(RuntimeError):
@@ -242,7 +248,9 @@ def _normalise_revision(revision: CharacterRevision) -> CharacterRevision:
 def _revision_wire(revision: CharacterRevision) -> CharacterRevisionContent:
     """Construct the strict public revision model (the dict boundary)."""
     normalised = _normalise_revision(revision)
-    return CharacterRevisionContent.model_validate(normalised.model_dump(mode="json"))
+    return CharacterRevisionContent.model_validate(
+        normalised.model_dump(mode="json", exclude={"statePolicy"})
+    )
 
 
 def _summary(defn: CharacterDefinition, revision: CharacterRevision) -> CharacterSummary:
@@ -280,16 +288,25 @@ def _detail(defn: CharacterDefinition, revision: CharacterRevision) -> Character
     )
 
 
-def _state_impact(policy: str) -> CharacterStateImpact:
+def _parse_state_policy(policy: str) -> CharacterStatePolicy:
     try:
-        parsed = CharacterStatePolicy(policy)
+        return CharacterStatePolicy(policy)
     except ValueError:
         raise CharacterValidationError("statePolicy 无效") from None
+
+
+def _state_impact(
+    policy: str,
+    *,
+    affected_instances: int = 0,
+    pending_instances: int = 0,
+) -> CharacterStateImpact:
+    parsed = _parse_state_policy(policy)
     fields = RESET_FIELDS if parsed is CharacterStatePolicy.RESET_EVOLUTION else []
     return CharacterStateImpact(
         statePolicy=parsed,
-        affectedInstances=0,
-        pendingInstances=0,
+        affectedInstances=affected_instances,
+        pendingInstances=pending_instances,
         resetFields=fields,
     )
 
@@ -304,12 +321,17 @@ class CharacterService:
         rev_repo: CharacterRevisionRepository,
         catalog: CharacterCatalog | None,
         user_identity_store: UserIdentityStore,
+        instance_repo: "CharacterInstanceRepository | None" = None,
+        runtime_registry: "CharacterRuntimeRegistry | None" = None,
     ):
         self.repo = repo
         self.rev_repo = rev_repo
         self.catalog = catalog
         self.user_identity_store = user_identity_store
+        self.instance_repo = instance_repo
+        self.runtime_registry = runtime_registry
         self._connected = False
+        self._instances_connected = False
         self._builtin_entries: list[
             tuple[CharacterDefinition, CharacterRevision]
         ] | None = None
@@ -583,7 +605,7 @@ class CharacterService:
         err = await self._raise_on_validation(draft)
         if err:
             raise err
-        impact = _state_impact(state_policy)
+        policy = _parse_state_policy(state_policy).value
         builtin_definition = self.catalog.get(character_id) if self.catalog is not None else None
         if builtin_definition is not None and not builtin_definition.mutable:
             raise CharacterImmutableError(character_id)
@@ -595,8 +617,14 @@ class CharacterService:
             raise CharacterImmutableError(character_id)
         if definition.status == "archived":
             raise CharacterArchivedError(character_id)
+        if definition.currentRevision != expected_revision:
+            raise RevisionConflictError(character_id, definition.currentRevision)
+        affected = await self._follow_latest_instances(character_id)
+        self._raise_if_loaded_runtimes_busy(affected)
         new_revision = await self.rev_repo.max_revision(character_id) + 1
-        content = self._revision_from_draft(character_id, draft, revision=new_revision)
+        content = self._revision_from_draft(
+            character_id, draft, revision=new_revision, state_policy=policy
+        )
         await self.rev_repo.append_revision(content)
         updated_at = now_iso()
         ok = await self.repo.cas_revision_pointer(
@@ -607,9 +635,16 @@ class CharacterService:
             raise RevisionConflictError(character_id, definition.currentRevision)
         definition.currentRevision = new_revision
         definition.updatedAt = updated_at
+        pending = await self._propagate_revision(
+            affected, new_revision=new_revision, state_policy=policy
+        )
         return CharacterMutationResult(
             character=_detail(definition, content),
-            stateImpact=impact,
+            stateImpact=_state_impact(
+                policy,
+                affected_instances=len(affected),
+                pending_instances=pending,
+            ),
         )
 
     async def clone(
@@ -687,7 +722,7 @@ class CharacterService:
         expected_revision: int,
         state_policy: str = "preserve",
     ) -> CharacterMutationResult:
-        impact = _state_impact(state_policy)
+        policy = _parse_state_policy(state_policy).value
         builtin_definition = self.catalog.get(character_id) if self.catalog is not None else None
         if builtin_definition is not None and not builtin_definition.mutable:
             raise CharacterImmutableError(character_id)
@@ -699,6 +734,10 @@ class CharacterService:
             raise CharacterImmutableError(character_id)
         if definition.status == "archived":
             raise CharacterArchivedError(character_id)
+        if definition.currentRevision != expected_revision:
+            raise RevisionConflictError(character_id, definition.currentRevision)
+        affected = await self._follow_latest_instances(character_id)
+        self._raise_if_loaded_runtimes_busy(affected)
         old = await self.rev_repo.get_revision(character_id, target_revision)
         if old is None:
             raise CharacterNotFoundError(character_id)
@@ -706,7 +745,12 @@ class CharacterService:
         old = _normalise_revision(old)
         content = old.model_copy(
             deep=True,
-            update={"revision": new_revision, "createdBy": "user", "createdAt": now_iso()},
+            update={
+                "revision": new_revision,
+                "statePolicy": policy,
+                "createdBy": "user",
+                "createdAt": now_iso(),
+            },
         )
         if not content.checksum:
             content.checksum = _checksum(content)
@@ -720,9 +764,16 @@ class CharacterService:
             raise RevisionConflictError(character_id, definition.currentRevision)
         definition.currentRevision = new_revision
         definition.updatedAt = updated_at
+        pending = await self._propagate_revision(
+            affected, new_revision=new_revision, state_policy=policy
+        )
         return CharacterMutationResult(
             character=_detail(definition, content),
-            stateImpact=impact,
+            stateImpact=_state_impact(
+                policy,
+                affected_instances=len(affected),
+                pending_instances=pending,
+            ),
         )
 
     async def preview(
@@ -778,6 +829,289 @@ class CharacterService:
             runtime.instance.updatedAt = now_iso()
             _clear_runtime_components(runtime)
             return runtime.state
+
+    async def reconcile_instance_revision(
+        self, instance: "CharacterInstance"
+    ) -> "CharacterInstance":
+        """Apply the latest published revision to one follow_latest instance.
+
+        This is called both eagerly after PUT/rollback and lazily by the runtime
+        loader.  The lazy path is the recovery mechanism for an interruption between
+        publishing the Definition pointer and writing an instance pending marker.
+        """
+        repo = await self._ensure_instance_repo_connected()
+        if repo is None or instance.revisionPolicy == "pinned":
+            return instance
+        await self._ensure_connected()
+
+        instance_id = instance.instanceId
+        for _ in range(INSTANCE_RECONCILE_RETRIES):
+            current = await repo.get(instance_id)
+            if current is None:
+                raise CharacterInstanceNotFoundError(instance_id)
+            if current.revisionPolicy == "pinned":
+                return current
+            definition = await self._get_definition(current.characterId)
+            if definition is None:
+                raise CharacterNotFoundError(current.characterId)
+            target_revision = definition.currentRevision
+            if current.revision > target_revision:
+                raise CharacterStorageUnavailableError(
+                    f"instance revision 超前于 Definition: {instance_id}"
+                )
+
+            state = current.state
+            needs_transition = (
+                current.revision != target_revision
+                or current.pendingRevision is not None
+                or state is None
+                or state.source_revision != target_revision
+            )
+            if not needs_transition:
+                return current
+
+            policy = await self._effective_transition_policy(
+                current.characterId,
+                from_revision=current.revision,
+                to_revision=target_revision,
+                pending_policy=current.pendingStatePolicy,
+            )
+            if state is None:
+                from core.schema.character import CharacterRuntimeState
+                from core.schema.types import SessionId
+
+                candidate = CharacterRuntimeState(
+                    instance_id=current.instanceId,
+                    session_id=SessionId(current.instanceId),
+                    source_revision=target_revision,
+                )
+            else:
+                candidate = state.model_copy(deep=True)
+                candidate.source_revision = target_revision
+                candidate.updated_at = now_iso()
+            if policy == "reset_evolution":
+                _clear_evolution(candidate)
+
+            transitioned_at = now_iso()
+            candidate.updated_at = transitioned_at
+            new_version = current.stateVersion + 1
+            ok = await repo.cas_apply_revision(
+                instance_id,
+                expected_revision=current.revision,
+                expected_state_version=current.stateVersion,
+                expected_pending_revision=current.pendingRevision,
+                new_revision=target_revision,
+                new_state=candidate,
+                new_version=new_version,
+            )
+            if ok:
+                current.revision = target_revision
+                current.state = candidate
+                current.stateVersion = new_version
+                current.pendingRevision = None
+                current.pendingStatePolicy = None
+                current.updatedAt = transitioned_at
+                return current
+
+        latest = await repo.get(instance_id)
+        raise CharacterStateConflictError(
+            instance_id,
+            None if latest is None else latest.stateVersion,
+        )
+
+    async def _effective_transition_policy(
+        self,
+        character_id: str,
+        *,
+        from_revision: int,
+        to_revision: int,
+        pending_policy: str | None,
+    ) -> Literal["preserve", "reset_evolution"]:
+        """Combine skipped revision policies; reset_evolution always dominates."""
+        if pending_policy == "reset_evolution":
+            return "reset_evolution"
+        for revision_number in range(from_revision + 1, to_revision + 1):
+            revision = await self.rev_repo.get_revision(character_id, revision_number)
+            if revision is None:
+                raise CharacterStorageUnavailableError(
+                    f"角色 revision 缺失: {character_id}@{revision_number}"
+                )
+            if revision.statePolicy == "reset_evolution":
+                return "reset_evolution"
+        return "preserve"
+
+    async def _ensure_instance_repo_connected(
+        self,
+    ) -> "CharacterInstanceRepository | None":
+        repo = self.instance_repo
+        if repo is None:
+            return None
+        if not self._instances_connected:
+            if not await repo.connect():
+                raise CharacterStorageUnavailableError(
+                    "CharacterInstanceRepository 连接失败"
+                )
+            self._instances_connected = True
+        return repo
+
+    async def _follow_latest_instances(
+        self, character_id: str
+    ) -> list["CharacterInstance"]:
+        repo = await self._ensure_instance_repo_connected()
+        if repo is None:
+            return []
+        instances = await repo.list_by_character(
+            character_id, limit=MAX_CHARACTER_LIST_SCAN
+        )
+        return [
+            instance
+            for instance in instances
+            if instance.revisionPolicy == "follow_latest"
+        ]
+
+    @staticmethod
+    def _runtime_is_busy(runtime: "CharacterRuntime") -> bool:
+        if runtime.lock.locked() or bool(getattr(runtime, "_busy", False)):
+            return True
+        engine = runtime.engine
+        locks = [
+            getattr(getattr(engine, "_reflector", None), "_reflect_lock", None),
+            getattr(getattr(engine, "_compression", None), "_compression_lock", None),
+            getattr(getattr(runtime, "reflector", None), "_lock", None),
+        ]
+        return any(lock is not None and lock.locked() for lock in locks)
+
+    def _raise_if_loaded_runtimes_busy(
+        self, instances: list["CharacterInstance"]
+    ) -> None:
+        registry = self.runtime_registry
+        if registry is None:
+            return
+        for instance in instances:
+            runtime = registry.get_existing(instance.instanceId)
+            if runtime is not None and self._runtime_is_busy(runtime):
+                raise CharacterBusyError(instance.instanceId)
+
+    async def _propagate_revision(
+        self,
+        instances: list["CharacterInstance"],
+        *,
+        new_revision: int,
+        state_policy: str,
+    ) -> int:
+        """Eagerly apply a published revision; leave recoverable work pending."""
+        pending = 0
+        for instance in instances:
+            try:
+                applied = await self._apply_published_revision(
+                    instance,
+                    new_revision=new_revision,
+                    state_policy=state_policy,
+                )
+            except (
+                CharacterBusyError,
+                CharacterStateConflictError,
+                StorageUnavailableError,
+            ):
+                logger.warning(
+                    "character revision propagation pending: %s -> %s",
+                    instance.instanceId,
+                    new_revision,
+                    exc_info=True,
+                )
+                applied = False
+            if not applied:
+                pending += 1
+        return pending
+
+    async def _apply_published_revision(
+        self,
+        instance: "CharacterInstance",
+        *,
+        new_revision: int,
+        state_policy: str,
+    ) -> bool:
+        repo = await self._ensure_instance_repo_connected()
+        if repo is None:
+            return True
+        registry = self.runtime_registry
+        runtime = (
+            registry.get_existing(instance.instanceId)
+            if registry is not None
+            else None
+        )
+        if runtime is not None:
+            assert registry is not None
+            if self._runtime_is_busy(runtime):
+                return False
+            async with runtime.lock:
+                if self._runtime_is_busy_except_instance_lock(runtime):
+                    return False
+                # Persist the exact old-revision runtime state before replacing its
+                # engine/profile.  The subsequent CAS transition starts from this
+                # freshly persisted stateVersion.
+                await runtime.flush()
+                await self._stage_pending_revision(
+                    instance.instanceId,
+                    new_revision=new_revision,
+                    state_policy=state_policy,
+                )
+                reconciled = await self.reconcile_instance_revision(instance)
+            registry.invalidate(instance.instanceId, "character revision changed")
+            return reconciled.revision >= new_revision
+
+        await self._stage_pending_revision(
+            instance.instanceId,
+            new_revision=new_revision,
+            state_policy=state_policy,
+        )
+        reconciled = await self.reconcile_instance_revision(instance)
+        return reconciled.revision >= new_revision
+
+    @staticmethod
+    def _runtime_is_busy_except_instance_lock(runtime: "CharacterRuntime") -> bool:
+        if bool(getattr(runtime, "_busy", False)):
+            return True
+        engine = runtime.engine
+        locks = [
+            getattr(getattr(engine, "_reflector", None), "_reflect_lock", None),
+            getattr(getattr(engine, "_compression", None), "_compression_lock", None),
+            getattr(getattr(runtime, "reflector", None), "_lock", None),
+        ]
+        return any(lock is not None and lock.locked() for lock in locks)
+
+    async def _stage_pending_revision(
+        self,
+        instance_id: str,
+        *,
+        new_revision: int,
+        state_policy: str,
+    ) -> bool:
+        repo = await self._ensure_instance_repo_connected()
+        if repo is None:
+            return True
+        for _ in range(INSTANCE_RECONCILE_RETRIES):
+            current = await repo.get(instance_id)
+            if current is None or current.revisionPolicy == "pinned":
+                return True
+            if current.revision >= new_revision and current.pendingRevision is None:
+                return True
+            target = max(new_revision, current.pendingRevision or new_revision)
+            effective_policy = (
+                "reset_evolution"
+                if "reset_evolution"
+                in {state_policy, current.pendingStatePolicy}
+                else "preserve"
+            )
+            if await repo.set_pending_revision(
+                instance_id,
+                expected_revision=current.revision,
+                expected_pending_revision=current.pendingRevision,
+                pending_revision=target,
+                state_policy=effective_policy,
+            ):
+                return True
+        return False
 
     # ---- internal helpers ----
 
@@ -847,6 +1181,7 @@ class CharacterService:
         *,
         revision: int,
         created_by: str = "user",
+        state_policy: Literal["preserve", "reset_evolution"] = "preserve",
     ) -> CharacterRevision:
         profile = {
             "corePersonality": draft.promptProfile.corePersonality,
@@ -876,6 +1211,7 @@ class CharacterService:
             runtimeDefaults=runtime,
             presentation=presentation,
             openingMessage=draft.openingMessage,
+            statePolicy=state_policy,
             createdBy=created_by,
         )
         revision_model.checksum = _checksum(revision_model)

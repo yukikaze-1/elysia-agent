@@ -3,9 +3,14 @@
 阶段 D 路由的可靠测试点是 `_character_error_response`（Service 异常 → ProtocolError
 映射），它是纯函数、确定性、无 I/O。完整 aiohttp 路由冒烟在阶段 G/联调做（需装 Agent）。
 """
+import asyncio
 import json
+from types import SimpleNamespace
 
-from core.input.character_routes import _character_error_response
+from core.input.character_routes import (
+    _character_error_response,
+    _character_mutation_guard,
+)
 from core.character.service import (
     CharacterNotFoundError, CharacterImmutableError, CharacterArchivedError,
     CharacterValidationError, RevisionConflictError, CharacterStorageUnavailableError,
@@ -83,6 +88,29 @@ def test_busy_exposes_retry_hint():
     body = json.loads(r.text)
     assert body["code"] == "CHARACTER_BUSY"
     assert body["retryAfterMs"] == 500
+
+
+@pytest.mark.asyncio
+async def test_character_mutation_guard_owns_turn_lock_and_rejects_busy() -> None:
+    process_lock = asyncio.Lock()
+    status = SimpleNamespace(is_accepting_input=True)
+    app = {
+        "agent": SimpleNamespace(
+            status=status,
+            cognitive=SimpleNamespace(_process_lock=process_lock),
+        )
+    }
+
+    async with _character_mutation_guard(app):  # type: ignore[arg-type]
+        assert process_lock.locked()
+
+    await process_lock.acquire()
+    try:
+        with pytest.raises(CharacterBusyError):
+            async with _character_mutation_guard(app):  # type: ignore[arg-type]
+                pass
+    finally:
+        process_lock.release()
 
 
 # ── 阶段 G REST GET /api/character-instances/{id}/state（只读 fail-closed）──

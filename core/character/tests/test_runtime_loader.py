@@ -33,6 +33,7 @@ async def test_custom_runtime_loads_its_pinned_revision() -> None:
         instanceId="chi_custom_a",
         characterId="chr_custom_a",
         revision=3,
+        revisionPolicy="pinned",
         ownerUserId="usr_local_default",
     )
     definition = CharacterDefinition(
@@ -106,7 +107,8 @@ async def test_builtin_survives_instance_storage_outage() -> None:
 @pytest.mark.asyncio
 async def test_non_builtin_instance_cannot_reference_builtin_definition() -> None:
     instance = CharacterInstance(
-        instanceId="chi_spoof", characterId="chr_builtin_elysia"
+        instanceId="chi_spoof", characterId="chr_builtin_elysia",
+        revisionPolicy="pinned",
     )
     definition = CharacterDefinition(
         characterId="chr_builtin_elysia", source="builtin"
