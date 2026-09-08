@@ -267,6 +267,88 @@
           "title": "ArchivePart",
           "type": "object"
         },
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
         "Message": {
           "description": "归档消息契约视图（wire 形状自建，不引 core.schema.Message）。\n\n发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：\nblock_index → content_type 归一化（对齐 session 回放 wire 命名）。\n除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，\n保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。",
           "properties": {
@@ -282,6 +364,18 @@
               "default": null,
               "description": "Mongo 归档 ID，可缺省（wire 键为 _id，Python 字段名不能以下划线开头）",
               "title": "Id"
+            },
+            "character": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CharacterBindingSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
             },
             "content": {
               "description": "原始内容（parts dict 列表或纯文本）",
@@ -538,6 +632,88 @@
           ],
           "title": "ArchivePart",
           "type": "object"
+        },
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
         }
       },
       "description": "归档消息契约视图（wire 形状自建，不引 core.schema.Message）。\n\n发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：\nblock_index → content_type 归一化（对齐 session 回放 wire 命名）。\n除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，\n保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。",
@@ -554,6 +730,18 @@
           "default": null,
           "description": "Mongo 归档 ID，可缺省（wire 键为 _id，Python 字段名不能以下划线开头）",
           "title": "Id"
+        },
+        "character": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CharacterBindingSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
         },
         "content": {
           "description": "原始内容（parts dict 列表或纯文本）",
@@ -1188,8 +1376,64 @@
           "type": "string"
         }
       },
-      "description": "音频流开始（stream_id = playback ID）。",
+      "description": "音频流开始（stream_id = playback ID）；角色字段出现时必须完整。",
       "properties": {
+        "characterId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色 ID，可缺省",
+          "title": "Characterid"
+        },
+        "characterInstanceId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色实例 ID，可缺省",
+          "title": "Characterinstanceid"
+        },
+        "characterRevision": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色修订号，可缺省",
+          "title": "Characterrevision"
+        },
+        "conversationId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "会话 ID，可缺省",
+          "title": "Conversationid"
+        },
         "durationMs": {
           "anyOf": [
             {
@@ -1207,6 +1451,20 @@
           "$ref": "#/$defs/AudioFormat",
           "default": "wav",
           "description": "音频格式"
+        },
+        "generationId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "生成 ID；预览等非生成音频可缺省",
+          "title": "Generationid"
         },
         "sampleRate": {
           "anyOf": [
@@ -1313,42 +1571,138 @@
     },
     "CharacterArchiveResult": {
       "$defs": {
-        "CharacterSummary": {
-          "description": "内置角色摘要（阶段 C+E，角色列表）。",
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
           "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterSource": {
+          "enum": [
+            "builtin",
+            "custom"
+          ],
+          "title": "CharacterSource",
+          "type": "string"
+        },
+        "CharacterStatus": {
+          "enum": [
+            "active",
+            "archived"
+          ],
+          "title": "CharacterStatus",
+          "type": "string"
+        },
+        "CharacterSummary": {
+          "additionalProperties": false,
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Aliases",
+              "type": "array"
+            },
             "characterId": {
-              "description": "角色 ID",
+              "minLength": 1,
               "title": "Characterid",
               "type": "string"
             },
+            "currentRevision": {
+              "minimum": 1,
+              "title": "Currentrevision",
+              "type": "integer"
+            },
+            "description": {
+              "maxLength": 500,
+              "title": "Description",
+              "type": "string"
+            },
             "displayName": {
-              "description": "展示名",
+              "maxLength": 64,
               "title": "Displayname",
               "type": "string"
             },
+            "mutable": {
+              "title": "Mutable",
+              "type": "boolean"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            },
             "source": {
-              "default": "builtin",
-              "description": "角色来源",
-              "title": "Source",
-              "type": "string"
+              "$ref": "#/$defs/CharacterSource"
             },
             "status": {
-              "default": "active",
-              "description": "角色状态",
-              "title": "Status",
+              "$ref": "#/$defs/CharacterStatus"
+            },
+            "updatedAt": {
+              "title": "Updatedat",
               "type": "string"
             }
           },
           "required": [
             "characterId",
-            "displayName"
+            "source",
+            "mutable",
+            "status",
+            "currentRevision",
+            "displayName",
+            "description",
+            "presentation",
+            "updatedAt"
           ],
           "title": "CharacterSummary",
           "type": "object"
         },
         "UserIdentityProfile": {
-          "description": "用户最小身份（阶段 C+E；GET /api/me / PUT /api/me）。",
+          "additionalProperties": false,
+          "description": "GET /api/me response; timestamps are part of the frozen profile wire.",
           "properties": {
+            "createdAt": {
+              "description": "创建时间（UTC ISO）",
+              "title": "Createdat",
+              "type": "string"
+            },
             "defaultCharacterId": {
               "anyOf": [
                 {
@@ -1359,23 +1713,20 @@
                 }
               ],
               "default": null,
-              "description": "默认角色 ID（可缺省）",
+              "description": "默认角色 ID",
               "title": "Defaultcharacterid"
             },
             "displayName": {
-              "default": "",
               "description": "展示名",
               "title": "Displayname",
               "type": "string"
             },
             "initialized": {
-              "default": false,
               "description": "是否已完成初始化引导",
               "title": "Initialized",
               "type": "boolean"
             },
             "locale": {
-              "default": "zh-CN",
               "description": "语言区域",
               "title": "Locale",
               "type": "string"
@@ -1390,39 +1741,60 @@
                 }
               ],
               "default": null,
-              "description": "用户希望被称呼的方式（可缺省）",
+              "description": "用户希望被称呼的方式",
               "title": "Preferredaddress"
             },
             "pronouns": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "default": "她",
-              "description": "代词（称呼第三人称）",
-              "title": "Pronouns",
-              "type": "string"
+              "description": "代词",
+              "title": "Pronouns"
             },
             "revision": {
-              "default": 1,
               "description": "版本号（乐观并发）",
+              "minimum": 1,
               "title": "Revision",
               "type": "integer"
             },
             "timezone": {
-              "default": "Asia/Shanghai",
               "description": "时区",
               "title": "Timezone",
               "type": "string"
             },
+            "updatedAt": {
+              "description": "更新时间（UTC ISO）",
+              "title": "Updatedat",
+              "type": "string"
+            },
             "userId": {
-              "default": "usr_local_default",
               "description": "用户 ID（本地默认单用户）",
+              "minLength": 1,
               "title": "Userid",
               "type": "string"
             }
           },
+          "required": [
+            "userId",
+            "displayName",
+            "locale",
+            "timezone",
+            "initialized",
+            "revision",
+            "createdAt",
+            "updatedAt"
+          ],
           "title": "UserIdentityProfile",
           "type": "object"
         }
       },
-      "description": "归档结果。",
+      "additionalProperties": false,
       "properties": {
         "character": {
           "$ref": "#/$defs/CharacterSummary"
@@ -1436,8 +1808,7 @@
               "type": "null"
             }
           ],
-          "default": null,
-          "description": "归档默认角色时返回新档案"
+          "default": null
         }
       },
       "required": [
@@ -1446,29 +1817,239 @@
       "title": "CharacterArchiveResult",
       "type": "object"
     },
+    "CharacterBindingSnapshot": {
+      "$defs": {
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Stable character binding summary embedded in session-facing payloads.",
+      "properties": {
+        "characterId": {
+          "minLength": 1,
+          "title": "Characterid",
+          "type": "string"
+        },
+        "characterInstanceId": {
+          "minLength": 1,
+          "title": "Characterinstanceid",
+          "type": "string"
+        },
+        "characterRevision": {
+          "minimum": 1,
+          "title": "Characterrevision",
+          "type": "integer"
+        },
+        "displayName": {
+          "maxLength": 64,
+          "title": "Displayname",
+          "type": "string"
+        },
+        "presentation": {
+          "$ref": "#/$defs/CharacterPresentation"
+        }
+      },
+      "required": [
+        "characterId",
+        "characterInstanceId",
+        "characterRevision",
+        "displayName",
+        "presentation"
+      ],
+      "title": "CharacterBindingSnapshot",
+      "type": "object"
+    },
     "CharacterDetail": {
       "$defs": {
-        "CharacterRevisionResponse": {
-          "description": "当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。",
+        "CharacterCreatedBy": {
+          "enum": [
+            "system",
+            "user",
+            "migration"
+          ],
+          "title": "CharacterCreatedBy",
+          "type": "string"
+        },
+        "CharacterExample": {
+          "additionalProperties": false,
+          "properties": {
+            "assistant": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Assistant",
+              "type": "string"
+            },
+            "user": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user",
+            "assistant"
+          ],
+          "title": "CharacterExample",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterPromptProfile": {
+          "additionalProperties": false,
+          "properties": {
+            "conversationInitiative": {
+              "maxLength": 3000,
+              "title": "Conversationinitiative",
+              "type": "string"
+            },
+            "corePersonality": {
+              "maxLength": 12000,
+              "title": "Corepersonality",
+              "type": "string"
+            },
+            "emotionStyle": {
+              "maxLength": 5000,
+              "title": "Emotionstyle",
+              "type": "string"
+            },
+            "examples": {
+              "items": {
+                "$ref": "#/$defs/CharacterExample"
+              },
+              "maxItems": 20,
+              "title": "Examples",
+              "type": "array"
+            },
+            "relationshipStyle": {
+              "maxLength": 6000,
+              "title": "Relationshipstyle",
+              "type": "string"
+            },
+            "speakingStyle": {
+              "maxLength": 6000,
+              "title": "Speakingstyle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "corePersonality",
+            "relationshipStyle",
+            "emotionStyle",
+            "speakingStyle",
+            "conversationInitiative",
+            "examples"
+          ],
+          "title": "CharacterPromptProfile",
+          "type": "object"
+        },
+        "CharacterRevisionContent": {
+          "additionalProperties": false,
+          "description": "Full immutable revision content returned by detail/rollback/create.",
           "properties": {
             "aliases": {
               "items": {
                 "type": "string"
               },
+              "maxItems": 10,
               "title": "Aliases",
               "type": "array"
             },
             "characterId": {
+              "minLength": 1,
               "title": "Characterid",
               "type": "string"
             },
             "checksum": {
-              "default": "",
+              "minLength": 1,
               "title": "Checksum",
               "type": "string"
             },
             "compilerVersion": {
-              "default": 1,
               "minimum": 1,
               "title": "Compilerversion",
               "type": "integer"
@@ -1478,22 +2059,22 @@
               "type": "string"
             },
             "createdBy": {
-              "default": "system",
-              "title": "Createdby",
-              "type": "string"
+              "$ref": "#/$defs/CharacterCreatedBy"
             },
             "description": {
-              "default": "",
+              "maxLength": 500,
               "title": "Description",
               "type": "string"
             },
             "displayName": {
+              "maxLength": 64,
               "title": "Displayname",
               "type": "string"
             },
             "openingMessage": {
               "anyOf": [
                 {
+                  "maxLength": 1000,
                   "type": "string"
                 },
                 {
@@ -1504,28 +2085,20 @@
               "title": "Openingmessage"
             },
             "presentation": {
-              "additionalProperties": true,
-              "title": "Presentation",
-              "type": "object"
+              "$ref": "#/$defs/CharacterPresentation"
             },
             "promptProfile": {
-              "additionalProperties": true,
-              "title": "Promptprofile",
-              "type": "object"
+              "$ref": "#/$defs/CharacterPromptProfile"
             },
             "revision": {
-              "default": 1,
               "minimum": 1,
               "title": "Revision",
               "type": "integer"
             },
             "runtimeDefaults": {
-              "additionalProperties": true,
-              "title": "Runtimedefaults",
-              "type": "object"
+              "$ref": "#/$defs/CharacterRuntimeDefaults"
             },
             "schemaVersion": {
-              "default": 1,
               "minimum": 1,
               "title": "Schemaversion",
               "type": "integer"
@@ -1533,50 +2106,214 @@
           },
           "required": [
             "characterId",
+            "revision",
+            "schemaVersion",
             "displayName",
+            "description",
+            "aliases",
+            "promptProfile",
+            "runtimeDefaults",
+            "presentation",
+            "checksum",
+            "compilerVersion",
+            "createdBy",
             "createdAt"
           ],
-          "title": "CharacterRevisionResponse",
+          "title": "CharacterRevisionContent",
           "type": "object"
         },
-        "CharacterSummary": {
-          "description": "内置角色摘要（阶段 C+E，角色列表）。",
+        "CharacterRuntimeDefaults": {
+          "additionalProperties": false,
           "properties": {
+            "emotion": {
+              "$ref": "#/$defs/CharacterRuntimeEmotion"
+            },
+            "proactive": {
+              "$ref": "#/$defs/CharacterRuntimeProactive"
+            },
+            "voice": {
+              "$ref": "#/$defs/CharacterRuntimeVoice"
+            },
+            "wakeWords": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Wakewords",
+              "type": "array"
+            }
+          },
+          "required": [
+            "voice",
+            "emotion",
+            "wakeWords",
+            "proactive"
+          ],
+          "title": "CharacterRuntimeDefaults",
+          "type": "object"
+        },
+        "CharacterRuntimeEmotion": {
+          "additionalProperties": false,
+          "properties": {
+            "idleExpressions": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "title": "Idleexpressions",
+              "type": "array"
+            }
+          },
+          "required": [
+            "idleExpressions"
+          ],
+          "title": "CharacterRuntimeEmotion",
+          "type": "object"
+        },
+        "CharacterRuntimeProactive": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "intervalSeconds": {
+              "minimum": 0,
+              "title": "Intervalseconds",
+              "type": "integer"
+            },
+            "triggers": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Triggers",
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "intervalSeconds",
+            "triggers"
+          ],
+          "title": "CharacterRuntimeProactive",
+          "type": "object"
+        },
+        "CharacterRuntimeVoice": {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Providerid"
+            },
+            "voiceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Voiceid"
+            }
+          },
+          "title": "CharacterRuntimeVoice",
+          "type": "object"
+        },
+        "CharacterSource": {
+          "enum": [
+            "builtin",
+            "custom"
+          ],
+          "title": "CharacterSource",
+          "type": "string"
+        },
+        "CharacterStatus": {
+          "enum": [
+            "active",
+            "archived"
+          ],
+          "title": "CharacterStatus",
+          "type": "string"
+        },
+        "CharacterSummary": {
+          "additionalProperties": false,
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Aliases",
+              "type": "array"
+            },
             "characterId": {
-              "description": "角色 ID",
+              "minLength": 1,
               "title": "Characterid",
               "type": "string"
             },
+            "currentRevision": {
+              "minimum": 1,
+              "title": "Currentrevision",
+              "type": "integer"
+            },
+            "description": {
+              "maxLength": 500,
+              "title": "Description",
+              "type": "string"
+            },
             "displayName": {
-              "description": "展示名",
+              "maxLength": 64,
               "title": "Displayname",
               "type": "string"
             },
+            "mutable": {
+              "title": "Mutable",
+              "type": "boolean"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            },
             "source": {
-              "default": "builtin",
-              "description": "角色来源",
-              "title": "Source",
-              "type": "string"
+              "$ref": "#/$defs/CharacterSource"
             },
             "status": {
-              "default": "active",
-              "description": "角色状态",
-              "title": "Status",
+              "$ref": "#/$defs/CharacterStatus"
+            },
+            "updatedAt": {
+              "title": "Updatedat",
               "type": "string"
             }
           },
           "required": [
             "characterId",
-            "displayName"
+            "source",
+            "mutable",
+            "status",
+            "currentRevision",
+            "displayName",
+            "description",
+            "presentation",
+            "updatedAt"
           ],
           "title": "CharacterSummary",
           "type": "object"
         }
       },
-      "description": "角色详情（summary + 当前 revision）。",
+      "additionalProperties": false,
       "properties": {
         "current": {
-          "$ref": "#/$defs/CharacterRevisionResponse"
+          "$ref": "#/$defs/CharacterRevisionContent"
         },
         "summary": {
           "$ref": "#/$defs/CharacterSummary"
@@ -1587,6 +2324,286 @@
         "current"
       ],
       "title": "CharacterDetail",
+      "type": "object"
+    },
+    "CharacterDraft": {
+      "$defs": {
+        "CharacterExample": {
+          "additionalProperties": false,
+          "properties": {
+            "assistant": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Assistant",
+              "type": "string"
+            },
+            "user": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user",
+            "assistant"
+          ],
+          "title": "CharacterExample",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterPromptProfile": {
+          "additionalProperties": false,
+          "properties": {
+            "conversationInitiative": {
+              "maxLength": 3000,
+              "title": "Conversationinitiative",
+              "type": "string"
+            },
+            "corePersonality": {
+              "maxLength": 12000,
+              "title": "Corepersonality",
+              "type": "string"
+            },
+            "emotionStyle": {
+              "maxLength": 5000,
+              "title": "Emotionstyle",
+              "type": "string"
+            },
+            "examples": {
+              "items": {
+                "$ref": "#/$defs/CharacterExample"
+              },
+              "maxItems": 20,
+              "title": "Examples",
+              "type": "array"
+            },
+            "relationshipStyle": {
+              "maxLength": 6000,
+              "title": "Relationshipstyle",
+              "type": "string"
+            },
+            "speakingStyle": {
+              "maxLength": 6000,
+              "title": "Speakingstyle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "corePersonality",
+            "relationshipStyle",
+            "emotionStyle",
+            "speakingStyle",
+            "conversationInitiative",
+            "examples"
+          ],
+          "title": "CharacterPromptProfile",
+          "type": "object"
+        },
+        "CharacterRuntimeDefaults": {
+          "additionalProperties": false,
+          "properties": {
+            "emotion": {
+              "$ref": "#/$defs/CharacterRuntimeEmotion"
+            },
+            "proactive": {
+              "$ref": "#/$defs/CharacterRuntimeProactive"
+            },
+            "voice": {
+              "$ref": "#/$defs/CharacterRuntimeVoice"
+            },
+            "wakeWords": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Wakewords",
+              "type": "array"
+            }
+          },
+          "required": [
+            "voice",
+            "emotion",
+            "wakeWords",
+            "proactive"
+          ],
+          "title": "CharacterRuntimeDefaults",
+          "type": "object"
+        },
+        "CharacterRuntimeEmotion": {
+          "additionalProperties": false,
+          "properties": {
+            "idleExpressions": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "title": "Idleexpressions",
+              "type": "array"
+            }
+          },
+          "required": [
+            "idleExpressions"
+          ],
+          "title": "CharacterRuntimeEmotion",
+          "type": "object"
+        },
+        "CharacterRuntimeProactive": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "intervalSeconds": {
+              "minimum": 0,
+              "title": "Intervalseconds",
+              "type": "integer"
+            },
+            "triggers": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Triggers",
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "intervalSeconds",
+            "triggers"
+          ],
+          "title": "CharacterRuntimeProactive",
+          "type": "object"
+        },
+        "CharacterRuntimeVoice": {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Providerid"
+            },
+            "voiceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Voiceid"
+            }
+          },
+          "title": "CharacterRuntimeVoice",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Aliases",
+          "type": "array"
+        },
+        "description": {
+          "maxLength": 500,
+          "title": "Description",
+          "type": "string"
+        },
+        "displayName": {
+          "maxLength": 64,
+          "title": "Displayname",
+          "type": "string"
+        },
+        "openingMessage": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Openingmessage"
+        },
+        "presentation": {
+          "$ref": "#/$defs/CharacterPresentation"
+        },
+        "promptProfile": {
+          "$ref": "#/$defs/CharacterPromptProfile"
+        },
+        "runtimeDefaults": {
+          "$ref": "#/$defs/CharacterRuntimeDefaults"
+        }
+      },
+      "required": [
+        "displayName",
+        "description",
+        "aliases",
+        "promptProfile",
+        "runtimeDefaults",
+        "presentation"
+      ],
+      "title": "CharacterDraft",
       "type": "object"
     },
     "CharacterEngineInfo": {
@@ -1653,28 +2670,52 @@
       "title": "CharacterEngineInfo",
       "type": "object"
     },
+    "CharacterExample": {
+      "additionalProperties": false,
+      "properties": {
+        "assistant": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Assistant",
+          "type": "string"
+        },
+        "user": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "User",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user",
+        "assistant"
+      ],
+      "title": "CharacterExample",
+      "type": "object"
+    },
     "CharacterInstanceSummary": {
-      "description": "角色实例摘要（阶段 C+E，会话绑定展示）。",
+      "additionalProperties": false,
+      "description": "角色实例摘要（仅绑定列表使用；不暴露内部演化状态）。",
       "properties": {
         "characterId": {
-          "description": "角色 ID",
+          "minLength": 1,
           "title": "Characterid",
           "type": "string"
         },
         "instanceId": {
-          "description": "实例 ID",
+          "minLength": 1,
           "title": "Instanceid",
           "type": "string"
         },
         "revision": {
           "default": 1,
-          "description": "角色修订号",
+          "minimum": 1,
           "title": "Revision",
           "type": "integer"
         },
         "stateVersion": {
           "default": 1,
-          "description": "实例状态版本",
+          "minimum": 1,
           "title": "Stateversion",
           "type": "integer"
         }
@@ -1688,41 +2729,131 @@
     },
     "CharacterListResponse": {
       "$defs": {
-        "CharacterSummary": {
-          "description": "内置角色摘要（阶段 C+E，角色列表）。",
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
           "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterSource": {
+          "enum": [
+            "builtin",
+            "custom"
+          ],
+          "title": "CharacterSource",
+          "type": "string"
+        },
+        "CharacterStatus": {
+          "enum": [
+            "active",
+            "archived"
+          ],
+          "title": "CharacterStatus",
+          "type": "string"
+        },
+        "CharacterSummary": {
+          "additionalProperties": false,
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Aliases",
+              "type": "array"
+            },
             "characterId": {
-              "description": "角色 ID",
+              "minLength": 1,
               "title": "Characterid",
               "type": "string"
             },
+            "currentRevision": {
+              "minimum": 1,
+              "title": "Currentrevision",
+              "type": "integer"
+            },
+            "description": {
+              "maxLength": 500,
+              "title": "Description",
+              "type": "string"
+            },
             "displayName": {
-              "description": "展示名",
+              "maxLength": 64,
               "title": "Displayname",
               "type": "string"
             },
+            "mutable": {
+              "title": "Mutable",
+              "type": "boolean"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            },
             "source": {
-              "default": "builtin",
-              "description": "角色来源",
-              "title": "Source",
-              "type": "string"
+              "$ref": "#/$defs/CharacterSource"
             },
             "status": {
-              "default": "active",
-              "description": "角色状态",
-              "title": "Status",
+              "$ref": "#/$defs/CharacterStatus"
+            },
+            "updatedAt": {
+              "title": "Updatedat",
               "type": "string"
             }
           },
           "required": [
             "characterId",
-            "displayName"
+            "source",
+            "mutable",
+            "status",
+            "currentRevision",
+            "displayName",
+            "description",
+            "presentation",
+            "updatedAt"
           ],
           "title": "CharacterSummary",
           "type": "object"
         }
       },
-      "description": "角色列表（分页沿用 has_more + cursor 约定）。",
+      "additionalProperties": false,
       "properties": {
         "cursor": {
           "anyOf": [
@@ -1734,12 +2865,9 @@
             }
           ],
           "default": null,
-          "description": "不透明游标，客户端不得解析",
           "title": "Cursor"
         },
         "has_more": {
-          "default": false,
-          "description": "是否还有更多",
           "title": "Has More",
           "type": "boolean"
         },
@@ -1752,18 +2880,28 @@
         }
       },
       "required": [
-        "items"
+        "items",
+        "has_more"
       ],
       "title": "CharacterListResponse",
       "type": "object"
     },
     "CharacterMutationResult": {
       "$defs": {
+        "CharacterCreatedBy": {
+          "enum": [
+            "system",
+            "user",
+            "migration"
+          ],
+          "title": "CharacterCreatedBy",
+          "type": "string"
+        },
         "CharacterDetail": {
-          "description": "角色详情（summary + 当前 revision）。",
+          "additionalProperties": false,
           "properties": {
             "current": {
-              "$ref": "#/$defs/CharacterRevisionResponse"
+              "$ref": "#/$defs/CharacterRevisionContent"
             },
             "summary": {
               "$ref": "#/$defs/CharacterSummary"
@@ -1776,27 +2914,155 @@
           "title": "CharacterDetail",
           "type": "object"
         },
-        "CharacterRevisionResponse": {
-          "description": "当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。",
+        "CharacterExample": {
+          "additionalProperties": false,
+          "properties": {
+            "assistant": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Assistant",
+              "type": "string"
+            },
+            "user": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user",
+            "assistant"
+          ],
+          "title": "CharacterExample",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterPromptProfile": {
+          "additionalProperties": false,
+          "properties": {
+            "conversationInitiative": {
+              "maxLength": 3000,
+              "title": "Conversationinitiative",
+              "type": "string"
+            },
+            "corePersonality": {
+              "maxLength": 12000,
+              "title": "Corepersonality",
+              "type": "string"
+            },
+            "emotionStyle": {
+              "maxLength": 5000,
+              "title": "Emotionstyle",
+              "type": "string"
+            },
+            "examples": {
+              "items": {
+                "$ref": "#/$defs/CharacterExample"
+              },
+              "maxItems": 20,
+              "title": "Examples",
+              "type": "array"
+            },
+            "relationshipStyle": {
+              "maxLength": 6000,
+              "title": "Relationshipstyle",
+              "type": "string"
+            },
+            "speakingStyle": {
+              "maxLength": 6000,
+              "title": "Speakingstyle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "corePersonality",
+            "relationshipStyle",
+            "emotionStyle",
+            "speakingStyle",
+            "conversationInitiative",
+            "examples"
+          ],
+          "title": "CharacterPromptProfile",
+          "type": "object"
+        },
+        "CharacterResetField": {
+          "enum": [
+            "self_l2",
+            "state_l3",
+            "speaking_style_c6",
+            "reflector",
+            "mood"
+          ],
+          "title": "CharacterResetField",
+          "type": "string"
+        },
+        "CharacterRevisionContent": {
+          "additionalProperties": false,
+          "description": "Full immutable revision content returned by detail/rollback/create.",
           "properties": {
             "aliases": {
               "items": {
                 "type": "string"
               },
+              "maxItems": 10,
               "title": "Aliases",
               "type": "array"
             },
             "characterId": {
+              "minLength": 1,
               "title": "Characterid",
               "type": "string"
             },
             "checksum": {
-              "default": "",
+              "minLength": 1,
               "title": "Checksum",
               "type": "string"
             },
             "compilerVersion": {
-              "default": 1,
               "minimum": 1,
               "title": "Compilerversion",
               "type": "integer"
@@ -1806,22 +3072,22 @@
               "type": "string"
             },
             "createdBy": {
-              "default": "system",
-              "title": "Createdby",
-              "type": "string"
+              "$ref": "#/$defs/CharacterCreatedBy"
             },
             "description": {
-              "default": "",
+              "maxLength": 500,
               "title": "Description",
               "type": "string"
             },
             "displayName": {
+              "maxLength": 64,
               "title": "Displayname",
               "type": "string"
             },
             "openingMessage": {
               "anyOf": [
                 {
+                  "maxLength": 1000,
                   "type": "string"
                 },
                 {
@@ -1832,28 +3098,20 @@
               "title": "Openingmessage"
             },
             "presentation": {
-              "additionalProperties": true,
-              "title": "Presentation",
-              "type": "object"
+              "$ref": "#/$defs/CharacterPresentation"
             },
             "promptProfile": {
-              "additionalProperties": true,
-              "title": "Promptprofile",
-              "type": "object"
+              "$ref": "#/$defs/CharacterPromptProfile"
             },
             "revision": {
-              "default": 1,
               "minimum": 1,
               "title": "Revision",
               "type": "integer"
             },
             "runtimeDefaults": {
-              "additionalProperties": true,
-              "title": "Runtimedefaults",
-              "type": "object"
+              "$ref": "#/$defs/CharacterRuntimeDefaults"
             },
             "schemaVersion": {
-              "default": 1,
               "minimum": 1,
               "title": "Schemaversion",
               "type": "integer"
@@ -1861,76 +3119,252 @@
           },
           "required": [
             "characterId",
+            "revision",
+            "schemaVersion",
             "displayName",
+            "description",
+            "aliases",
+            "promptProfile",
+            "runtimeDefaults",
+            "presentation",
+            "checksum",
+            "compilerVersion",
+            "createdBy",
             "createdAt"
           ],
-          "title": "CharacterRevisionResponse",
+          "title": "CharacterRevisionContent",
           "type": "object"
         },
+        "CharacterRuntimeDefaults": {
+          "additionalProperties": false,
+          "properties": {
+            "emotion": {
+              "$ref": "#/$defs/CharacterRuntimeEmotion"
+            },
+            "proactive": {
+              "$ref": "#/$defs/CharacterRuntimeProactive"
+            },
+            "voice": {
+              "$ref": "#/$defs/CharacterRuntimeVoice"
+            },
+            "wakeWords": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Wakewords",
+              "type": "array"
+            }
+          },
+          "required": [
+            "voice",
+            "emotion",
+            "wakeWords",
+            "proactive"
+          ],
+          "title": "CharacterRuntimeDefaults",
+          "type": "object"
+        },
+        "CharacterRuntimeEmotion": {
+          "additionalProperties": false,
+          "properties": {
+            "idleExpressions": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "title": "Idleexpressions",
+              "type": "array"
+            }
+          },
+          "required": [
+            "idleExpressions"
+          ],
+          "title": "CharacterRuntimeEmotion",
+          "type": "object"
+        },
+        "CharacterRuntimeProactive": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "intervalSeconds": {
+              "minimum": 0,
+              "title": "Intervalseconds",
+              "type": "integer"
+            },
+            "triggers": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Triggers",
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "intervalSeconds",
+            "triggers"
+          ],
+          "title": "CharacterRuntimeProactive",
+          "type": "object"
+        },
+        "CharacterRuntimeVoice": {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Providerid"
+            },
+            "voiceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Voiceid"
+            }
+          },
+          "title": "CharacterRuntimeVoice",
+          "type": "object"
+        },
+        "CharacterSource": {
+          "enum": [
+            "builtin",
+            "custom"
+          ],
+          "title": "CharacterSource",
+          "type": "string"
+        },
         "CharacterStateImpact": {
-          "description": "编辑/回滚的状态影响。",
+          "additionalProperties": false,
           "properties": {
             "affectedInstances": {
-              "default": 0,
+              "minimum": 0,
               "title": "Affectedinstances",
               "type": "integer"
             },
             "pendingInstances": {
-              "default": 0,
+              "minimum": 0,
               "title": "Pendinginstances",
               "type": "integer"
             },
             "resetFields": {
               "items": {
-                "type": "string"
+                "$ref": "#/$defs/CharacterResetField"
               },
+              "maxItems": 5,
               "title": "Resetfields",
               "type": "array"
             },
             "statePolicy": {
-              "default": "preserve",
-              "title": "Statepolicy",
-              "type": "string"
+              "$ref": "#/$defs/CharacterStatePolicy"
             }
           },
+          "required": [
+            "statePolicy",
+            "affectedInstances",
+            "pendingInstances"
+          ],
           "title": "CharacterStateImpact",
           "type": "object"
         },
+        "CharacterStatePolicy": {
+          "enum": [
+            "preserve",
+            "reset_evolution"
+          ],
+          "title": "CharacterStatePolicy",
+          "type": "string"
+        },
+        "CharacterStatus": {
+          "enum": [
+            "active",
+            "archived"
+          ],
+          "title": "CharacterStatus",
+          "type": "string"
+        },
         "CharacterSummary": {
-          "description": "内置角色摘要（阶段 C+E，角色列表）。",
+          "additionalProperties": false,
           "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Aliases",
+              "type": "array"
+            },
             "characterId": {
-              "description": "角色 ID",
+              "minLength": 1,
               "title": "Characterid",
               "type": "string"
             },
+            "currentRevision": {
+              "minimum": 1,
+              "title": "Currentrevision",
+              "type": "integer"
+            },
+            "description": {
+              "maxLength": 500,
+              "title": "Description",
+              "type": "string"
+            },
             "displayName": {
-              "description": "展示名",
+              "maxLength": 64,
               "title": "Displayname",
               "type": "string"
             },
+            "mutable": {
+              "title": "Mutable",
+              "type": "boolean"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            },
             "source": {
-              "default": "builtin",
-              "description": "角色来源",
-              "title": "Source",
-              "type": "string"
+              "$ref": "#/$defs/CharacterSource"
             },
             "status": {
-              "default": "active",
-              "description": "角色状态",
-              "title": "Status",
+              "$ref": "#/$defs/CharacterStatus"
+            },
+            "updatedAt": {
+              "title": "Updatedat",
               "type": "string"
             }
           },
           "required": [
             "characterId",
-            "displayName"
+            "source",
+            "mutable",
+            "status",
+            "currentRevision",
+            "displayName",
+            "description",
+            "presentation",
+            "updatedAt"
           ],
           "title": "CharacterSummary",
           "type": "object"
         }
       },
-      "description": "角色变更结果（新详情 + 状态影响）。",
+      "additionalProperties": false,
       "properties": {
         "character": {
           "$ref": "#/$defs/CharacterDetail"
@@ -1946,12 +3380,135 @@
       "title": "CharacterMutationResult",
       "type": "object"
     },
-    "CharacterPublicState": {
+    "CharacterPresentation": {
+      "additionalProperties": false,
+      "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+      "properties": {
+        "avatarAssetId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Avatarassetid"
+        },
+        "live2dModelId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Live2Dmodelid"
+        },
+        "themeColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Themecolor"
+        }
+      },
+      "title": "CharacterPresentation",
+      "type": "object"
+    },
+    "CharacterPreviewRequest": {
       "$defs": {
-        "CharacterPublicStateView": {
-          "description": "角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。\n\nmood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt\n可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。",
+        "CharacterDraft": {
+          "additionalProperties": false,
           "properties": {
-            "currentActivity": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Aliases",
+              "type": "array"
+            },
+            "description": {
+              "maxLength": 500,
+              "title": "Description",
+              "type": "string"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "openingMessage": {
+              "anyOf": [
+                {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Openingmessage"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            },
+            "promptProfile": {
+              "$ref": "#/$defs/CharacterPromptProfile"
+            },
+            "runtimeDefaults": {
+              "$ref": "#/$defs/CharacterRuntimeDefaults"
+            }
+          },
+          "required": [
+            "displayName",
+            "description",
+            "aliases",
+            "promptProfile",
+            "runtimeDefaults",
+            "presentation"
+          ],
+          "title": "CharacterDraft",
+          "type": "object"
+        },
+        "CharacterExample": {
+          "additionalProperties": false,
+          "properties": {
+            "assistant": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Assistant",
+              "type": "string"
+            },
+            "user": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user",
+            "assistant"
+          ],
+          "title": "CharacterExample",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
               "anyOf": [
                 {
                   "type": "string"
@@ -1961,7 +3518,439 @@
                 }
               ],
               "default": null,
-              "description": "当前活动(可缺省)",
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterPromptProfile": {
+          "additionalProperties": false,
+          "properties": {
+            "conversationInitiative": {
+              "maxLength": 3000,
+              "title": "Conversationinitiative",
+              "type": "string"
+            },
+            "corePersonality": {
+              "maxLength": 12000,
+              "title": "Corepersonality",
+              "type": "string"
+            },
+            "emotionStyle": {
+              "maxLength": 5000,
+              "title": "Emotionstyle",
+              "type": "string"
+            },
+            "examples": {
+              "items": {
+                "$ref": "#/$defs/CharacterExample"
+              },
+              "maxItems": 20,
+              "title": "Examples",
+              "type": "array"
+            },
+            "relationshipStyle": {
+              "maxLength": 6000,
+              "title": "Relationshipstyle",
+              "type": "string"
+            },
+            "speakingStyle": {
+              "maxLength": 6000,
+              "title": "Speakingstyle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "corePersonality",
+            "relationshipStyle",
+            "emotionStyle",
+            "speakingStyle",
+            "conversationInitiative",
+            "examples"
+          ],
+          "title": "CharacterPromptProfile",
+          "type": "object"
+        },
+        "CharacterRuntimeDefaults": {
+          "additionalProperties": false,
+          "properties": {
+            "emotion": {
+              "$ref": "#/$defs/CharacterRuntimeEmotion"
+            },
+            "proactive": {
+              "$ref": "#/$defs/CharacterRuntimeProactive"
+            },
+            "voice": {
+              "$ref": "#/$defs/CharacterRuntimeVoice"
+            },
+            "wakeWords": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Wakewords",
+              "type": "array"
+            }
+          },
+          "required": [
+            "voice",
+            "emotion",
+            "wakeWords",
+            "proactive"
+          ],
+          "title": "CharacterRuntimeDefaults",
+          "type": "object"
+        },
+        "CharacterRuntimeEmotion": {
+          "additionalProperties": false,
+          "properties": {
+            "idleExpressions": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "title": "Idleexpressions",
+              "type": "array"
+            }
+          },
+          "required": [
+            "idleExpressions"
+          ],
+          "title": "CharacterRuntimeEmotion",
+          "type": "object"
+        },
+        "CharacterRuntimeProactive": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "intervalSeconds": {
+              "minimum": 0,
+              "title": "Intervalseconds",
+              "type": "integer"
+            },
+            "triggers": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Triggers",
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "intervalSeconds",
+            "triggers"
+          ],
+          "title": "CharacterRuntimeProactive",
+          "type": "object"
+        },
+        "CharacterRuntimeVoice": {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Providerid"
+            },
+            "voiceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Voiceid"
+            }
+          },
+          "title": "CharacterRuntimeVoice",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/CharacterDraft"
+        },
+        "userMessage": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Usermessage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "draft",
+        "userMessage"
+      ],
+      "title": "CharacterPreviewRequest",
+      "type": "object"
+    },
+    "CharacterPreviewResult": {
+      "$defs": {
+        "CharacterPreviewUsage": {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Input"
+            },
+            "output": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output"
+            },
+            "total": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Total"
+            }
+          },
+          "title": "CharacterPreviewUsage",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "ephemeral": {
+          "const": true,
+          "default": true,
+          "title": "Ephemeral",
+          "type": "boolean"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "reply": {
+          "title": "Reply",
+          "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CharacterPreviewUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "reply"
+      ],
+      "title": "CharacterPreviewResult",
+      "type": "object"
+    },
+    "CharacterPreviewUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output"
+        },
+        "total": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total"
+        }
+      },
+      "title": "CharacterPreviewUsage",
+      "type": "object"
+    },
+    "CharacterPromptProfile": {
+      "$defs": {
+        "CharacterExample": {
+          "additionalProperties": false,
+          "properties": {
+            "assistant": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Assistant",
+              "type": "string"
+            },
+            "user": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user",
+            "assistant"
+          ],
+          "title": "CharacterExample",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "conversationInitiative": {
+          "maxLength": 3000,
+          "title": "Conversationinitiative",
+          "type": "string"
+        },
+        "corePersonality": {
+          "maxLength": 12000,
+          "title": "Corepersonality",
+          "type": "string"
+        },
+        "emotionStyle": {
+          "maxLength": 5000,
+          "title": "Emotionstyle",
+          "type": "string"
+        },
+        "examples": {
+          "items": {
+            "$ref": "#/$defs/CharacterExample"
+          },
+          "maxItems": 20,
+          "title": "Examples",
+          "type": "array"
+        },
+        "relationshipStyle": {
+          "maxLength": 6000,
+          "title": "Relationshipstyle",
+          "type": "string"
+        },
+        "speakingStyle": {
+          "maxLength": 6000,
+          "title": "Speakingstyle",
+          "type": "string"
+        }
+      },
+      "required": [
+        "corePersonality",
+        "relationshipStyle",
+        "emotionStyle",
+        "speakingStyle",
+        "conversationInitiative",
+        "examples"
+      ],
+      "title": "CharacterPromptProfile",
+      "type": "object"
+    },
+    "CharacterPublicState": {
+      "$defs": {
+        "CharacterPublicStateView": {
+          "additionalProperties": false,
+          "description": "WS/REST shared product view; Stage G freezes this nested state line format.",
+          "properties": {
+            "currentActivity": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
               "title": "Currentactivity"
             },
             "lastInteractionAt": {
@@ -1974,21 +3963,17 @@
                 }
               ],
               "default": null,
-              "description": "最近交互时间(可缺省)",
               "title": "Lastinteractionat"
             },
             "mood": {
-              "$ref": "#/$defs/MoodState",
-              "description": "当前心情"
+              "$ref": "#/$defs/MoodState"
             },
             "proactiveEnabled": {
               "default": false,
-              "description": "主动搭话是否开启",
               "title": "Proactiveenabled",
               "type": "boolean"
             },
             "updatedAt": {
-              "description": "产品态更新时间(ISO)",
               "title": "Updatedat",
               "type": "string"
             }
@@ -2001,21 +3986,21 @@
           "type": "object"
         },
         "MoodState": {
-          "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+          "additionalProperties": false,
           "properties": {
             "intensity": {
               "default": 0.5,
-              "description": "心情强度 0-1",
+              "maximum": 1,
+              "minimum": 0,
               "title": "Intensity",
               "type": "number"
             },
             "label": {
-              "description": "心情标签",
+              "maxLength": 100,
               "title": "Label",
               "type": "string"
             },
             "updatedAt": {
-              "description": "心情更新时间(ISO)",
               "title": "Updatedat",
               "type": "string"
             }
@@ -2028,31 +4013,31 @@
           "type": "object"
         }
       },
-      "description": "角色产品态(REST GET /api/character-instances/{id}/state)。\n\n由阶段 C+E 扁平 mood:str + instanceId 泛化而来——flat mood 移除、instanceId 改名\ncharacterInstanceId(对齐 WS CharacterStateChangedMessage 与架构稿 §12.4)。",
+      "additionalProperties": false,
+      "description": "GET /api/character-instances/{id}/state — identity/version + nested state.",
       "properties": {
         "characterId": {
-          "description": "角色 ID",
+          "minLength": 1,
           "title": "Characterid",
           "type": "string"
         },
         "characterInstanceId": {
-          "description": "角色实例 ID",
+          "minLength": 1,
           "title": "Characterinstanceid",
           "type": "string"
         },
         "characterRevision": {
           "default": 1,
-          "description": "角色修订号",
+          "minimum": 1,
           "title": "Characterrevision",
           "type": "integer"
         },
         "state": {
-          "$ref": "#/$defs/CharacterPublicStateView",
-          "description": "产品态视图"
+          "$ref": "#/$defs/CharacterPublicStateView"
         },
         "stateVersion": {
           "default": 1,
-          "description": "实例状态版本",
+          "minimum": 1,
           "title": "Stateversion",
           "type": "integer"
         }
@@ -2068,21 +4053,21 @@
     "CharacterPublicStateView": {
       "$defs": {
         "MoodState": {
-          "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+          "additionalProperties": false,
           "properties": {
             "intensity": {
               "default": 0.5,
-              "description": "心情强度 0-1",
+              "maximum": 1,
+              "minimum": 0,
               "title": "Intensity",
               "type": "number"
             },
             "label": {
-              "description": "心情标签",
+              "maxLength": 100,
               "title": "Label",
               "type": "string"
             },
             "updatedAt": {
-              "description": "心情更新时间(ISO)",
               "title": "Updatedat",
               "type": "string"
             }
@@ -2095,11 +4080,13 @@
           "type": "object"
         }
       },
-      "description": "角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。\n\nmood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt\n可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。",
+      "additionalProperties": false,
+      "description": "WS/REST shared product view; Stage G freezes this nested state line format.",
       "properties": {
         "currentActivity": {
           "anyOf": [
             {
+              "maxLength": 200,
               "type": "string"
             },
             {
@@ -2107,7 +4094,6 @@
             }
           ],
           "default": null,
-          "description": "当前活动(可缺省)",
           "title": "Currentactivity"
         },
         "lastInteractionAt": {
@@ -2120,21 +4106,17 @@
             }
           ],
           "default": null,
-          "description": "最近交互时间(可缺省)",
           "title": "Lastinteractionat"
         },
         "mood": {
-          "$ref": "#/$defs/MoodState",
-          "description": "当前心情"
+          "$ref": "#/$defs/MoodState"
         },
         "proactiveEnabled": {
           "default": false,
-          "description": "主动搭话是否开启",
           "title": "Proactiveenabled",
           "type": "boolean"
         },
         "updatedAt": {
-          "description": "产品态更新时间(ISO)",
           "title": "Updatedat",
           "type": "string"
         }
@@ -2222,213 +4204,69 @@
       "title": "CharacterReflectorInfo",
       "type": "object"
     },
-    "CharacterRevisionListResponse": {
+    "CharacterResetRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedStateVersion": {
+          "minimum": 1,
+          "title": "Expectedstateversion",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "expectedStateVersion"
+      ],
+      "title": "CharacterResetRequest",
+      "type": "object"
+    },
+    "CharacterResetResult": {
       "$defs": {
-        "CharacterRevisionSummary": {
-          "description": "角色版本摘要（列表）。",
+        "CharacterPublicState": {
+          "additionalProperties": false,
+          "description": "GET /api/character-instances/{id}/state — identity/version + nested state.",
           "properties": {
             "characterId": {
+              "minLength": 1,
               "title": "Characterid",
               "type": "string"
             },
-            "createdAt": {
-              "title": "Createdat",
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
               "type": "string"
             },
-            "createdBy": {
-              "default": "system",
-              "title": "Createdby",
-              "type": "string"
-            },
-            "displayName": {
-              "title": "Displayname",
-              "type": "string"
-            },
-            "revision": {
+            "characterRevision": {
               "default": 1,
               "minimum": 1,
-              "title": "Revision",
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "state": {
+              "$ref": "#/$defs/CharacterPublicStateView"
+            },
+            "stateVersion": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Stateversion",
               "type": "integer"
             }
           },
           "required": [
             "characterId",
-            "displayName",
-            "createdAt"
+            "characterInstanceId",
+            "state"
           ],
-          "title": "CharacterRevisionSummary",
-          "type": "object"
-        }
-      },
-      "description": "角色版本列表（分页）。",
-      "properties": {
-        "cursor": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "不透明游标，客户端不得解析",
-          "title": "Cursor"
-        },
-        "has_more": {
-          "default": false,
-          "description": "是否还有更多",
-          "title": "Has More",
-          "type": "boolean"
-        },
-        "items": {
-          "items": {
-            "$ref": "#/$defs/CharacterRevisionSummary"
-          },
-          "title": "Items",
-          "type": "array"
-        }
-      },
-      "required": [
-        "items"
-      ],
-      "title": "CharacterRevisionListResponse",
-      "type": "object"
-    },
-    "CharacterRevisionResponse": {
-      "description": "当前 revision 完整详情（契约层独立类型，不引用 core.CharacterRevision）。",
-      "properties": {
-        "aliases": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Aliases",
-          "type": "array"
-        },
-        "characterId": {
-          "title": "Characterid",
-          "type": "string"
-        },
-        "checksum": {
-          "default": "",
-          "title": "Checksum",
-          "type": "string"
-        },
-        "compilerVersion": {
-          "default": 1,
-          "minimum": 1,
-          "title": "Compilerversion",
-          "type": "integer"
-        },
-        "createdAt": {
-          "title": "Createdat",
-          "type": "string"
-        },
-        "createdBy": {
-          "default": "system",
-          "title": "Createdby",
-          "type": "string"
-        },
-        "description": {
-          "default": "",
-          "title": "Description",
-          "type": "string"
-        },
-        "displayName": {
-          "title": "Displayname",
-          "type": "string"
-        },
-        "openingMessage": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Openingmessage"
-        },
-        "presentation": {
-          "additionalProperties": true,
-          "title": "Presentation",
+          "title": "CharacterPublicState",
           "type": "object"
         },
-        "promptProfile": {
-          "additionalProperties": true,
-          "title": "Promptprofile",
-          "type": "object"
-        },
-        "revision": {
-          "default": 1,
-          "minimum": 1,
-          "title": "Revision",
-          "type": "integer"
-        },
-        "runtimeDefaults": {
-          "additionalProperties": true,
-          "title": "Runtimedefaults",
-          "type": "object"
-        },
-        "schemaVersion": {
-          "default": 1,
-          "minimum": 1,
-          "title": "Schemaversion",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "characterId",
-        "displayName",
-        "createdAt"
-      ],
-      "title": "CharacterRevisionResponse",
-      "type": "object"
-    },
-    "CharacterRevisionSummary": {
-      "description": "角色版本摘要（列表）。",
-      "properties": {
-        "characterId": {
-          "title": "Characterid",
-          "type": "string"
-        },
-        "createdAt": {
-          "title": "Createdat",
-          "type": "string"
-        },
-        "createdBy": {
-          "default": "system",
-          "title": "Createdby",
-          "type": "string"
-        },
-        "displayName": {
-          "title": "Displayname",
-          "type": "string"
-        },
-        "revision": {
-          "default": 1,
-          "minimum": 1,
-          "title": "Revision",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "characterId",
-        "displayName",
-        "createdAt"
-      ],
-      "title": "CharacterRevisionSummary",
-      "type": "object"
-    },
-    "CharacterStateChangedMessage": {
-      "$defs": {
         "CharacterPublicStateView": {
-          "description": "角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。\n\nmood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt\n可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。",
+          "additionalProperties": false,
+          "description": "WS/REST shared product view; Stage G freezes this nested state line format.",
           "properties": {
             "currentActivity": {
               "anyOf": [
                 {
+                  "maxLength": 200,
                   "type": "string"
                 },
                 {
@@ -2436,7 +4274,6 @@
                 }
               ],
               "default": null,
-              "description": "当前活动(可缺省)",
               "title": "Currentactivity"
             },
             "lastInteractionAt": {
@@ -2449,21 +4286,1090 @@
                 }
               ],
               "default": null,
-              "description": "最近交互时间(可缺省)",
               "title": "Lastinteractionat"
             },
             "mood": {
-              "$ref": "#/$defs/MoodState",
-              "description": "当前心情"
+              "$ref": "#/$defs/MoodState"
             },
             "proactiveEnabled": {
               "default": false,
-              "description": "主动搭话是否开启",
               "title": "Proactiveenabled",
               "type": "boolean"
             },
             "updatedAt": {
-              "description": "产品态更新时间(ISO)",
+              "title": "Updatedat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mood",
+            "updatedAt"
+          ],
+          "title": "CharacterPublicStateView",
+          "type": "object"
+        },
+        "CharacterResetField": {
+          "enum": [
+            "self_l2",
+            "state_l3",
+            "speaking_style_c6",
+            "reflector",
+            "mood"
+          ],
+          "title": "CharacterResetField",
+          "type": "string"
+        },
+        "MoodState": {
+          "additionalProperties": false,
+          "properties": {
+            "intensity": {
+              "default": 0.5,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Intensity",
+              "type": "number"
+            },
+            "label": {
+              "maxLength": 100,
+              "title": "Label",
+              "type": "string"
+            },
+            "updatedAt": {
+              "title": "Updatedat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "updatedAt"
+          ],
+          "title": "MoodState",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "resetFields": {
+          "items": {
+            "$ref": "#/$defs/CharacterResetField"
+          },
+          "maxItems": 5,
+          "title": "Resetfields",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/CharacterPublicState"
+        }
+      },
+      "required": [
+        "state",
+        "resetFields"
+      ],
+      "title": "CharacterResetResult",
+      "type": "object"
+    },
+    "CharacterRevisionContent": {
+      "$defs": {
+        "CharacterCreatedBy": {
+          "enum": [
+            "system",
+            "user",
+            "migration"
+          ],
+          "title": "CharacterCreatedBy",
+          "type": "string"
+        },
+        "CharacterExample": {
+          "additionalProperties": false,
+          "properties": {
+            "assistant": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Assistant",
+              "type": "string"
+            },
+            "user": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user",
+            "assistant"
+          ],
+          "title": "CharacterExample",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterPromptProfile": {
+          "additionalProperties": false,
+          "properties": {
+            "conversationInitiative": {
+              "maxLength": 3000,
+              "title": "Conversationinitiative",
+              "type": "string"
+            },
+            "corePersonality": {
+              "maxLength": 12000,
+              "title": "Corepersonality",
+              "type": "string"
+            },
+            "emotionStyle": {
+              "maxLength": 5000,
+              "title": "Emotionstyle",
+              "type": "string"
+            },
+            "examples": {
+              "items": {
+                "$ref": "#/$defs/CharacterExample"
+              },
+              "maxItems": 20,
+              "title": "Examples",
+              "type": "array"
+            },
+            "relationshipStyle": {
+              "maxLength": 6000,
+              "title": "Relationshipstyle",
+              "type": "string"
+            },
+            "speakingStyle": {
+              "maxLength": 6000,
+              "title": "Speakingstyle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "corePersonality",
+            "relationshipStyle",
+            "emotionStyle",
+            "speakingStyle",
+            "conversationInitiative",
+            "examples"
+          ],
+          "title": "CharacterPromptProfile",
+          "type": "object"
+        },
+        "CharacterRuntimeDefaults": {
+          "additionalProperties": false,
+          "properties": {
+            "emotion": {
+              "$ref": "#/$defs/CharacterRuntimeEmotion"
+            },
+            "proactive": {
+              "$ref": "#/$defs/CharacterRuntimeProactive"
+            },
+            "voice": {
+              "$ref": "#/$defs/CharacterRuntimeVoice"
+            },
+            "wakeWords": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Wakewords",
+              "type": "array"
+            }
+          },
+          "required": [
+            "voice",
+            "emotion",
+            "wakeWords",
+            "proactive"
+          ],
+          "title": "CharacterRuntimeDefaults",
+          "type": "object"
+        },
+        "CharacterRuntimeEmotion": {
+          "additionalProperties": false,
+          "properties": {
+            "idleExpressions": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "title": "Idleexpressions",
+              "type": "array"
+            }
+          },
+          "required": [
+            "idleExpressions"
+          ],
+          "title": "CharacterRuntimeEmotion",
+          "type": "object"
+        },
+        "CharacterRuntimeProactive": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "intervalSeconds": {
+              "minimum": 0,
+              "title": "Intervalseconds",
+              "type": "integer"
+            },
+            "triggers": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Triggers",
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "intervalSeconds",
+            "triggers"
+          ],
+          "title": "CharacterRuntimeProactive",
+          "type": "object"
+        },
+        "CharacterRuntimeVoice": {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Providerid"
+            },
+            "voiceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Voiceid"
+            }
+          },
+          "title": "CharacterRuntimeVoice",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Full immutable revision content returned by detail/rollback/create.",
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Aliases",
+          "type": "array"
+        },
+        "characterId": {
+          "minLength": 1,
+          "title": "Characterid",
+          "type": "string"
+        },
+        "checksum": {
+          "minLength": 1,
+          "title": "Checksum",
+          "type": "string"
+        },
+        "compilerVersion": {
+          "minimum": 1,
+          "title": "Compilerversion",
+          "type": "integer"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/CharacterCreatedBy"
+        },
+        "description": {
+          "maxLength": 500,
+          "title": "Description",
+          "type": "string"
+        },
+        "displayName": {
+          "maxLength": 64,
+          "title": "Displayname",
+          "type": "string"
+        },
+        "openingMessage": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Openingmessage"
+        },
+        "presentation": {
+          "$ref": "#/$defs/CharacterPresentation"
+        },
+        "promptProfile": {
+          "$ref": "#/$defs/CharacterPromptProfile"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtimeDefaults": {
+          "$ref": "#/$defs/CharacterRuntimeDefaults"
+        },
+        "schemaVersion": {
+          "minimum": 1,
+          "title": "Schemaversion",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "characterId",
+        "revision",
+        "schemaVersion",
+        "displayName",
+        "description",
+        "aliases",
+        "promptProfile",
+        "runtimeDefaults",
+        "presentation",
+        "checksum",
+        "compilerVersion",
+        "createdBy",
+        "createdAt"
+      ],
+      "title": "CharacterRevisionContent",
+      "type": "object"
+    },
+    "CharacterRevisionListResponse": {
+      "$defs": {
+        "CharacterCreatedBy": {
+          "enum": [
+            "system",
+            "user",
+            "migration"
+          ],
+          "title": "CharacterCreatedBy",
+          "type": "string"
+        },
+        "CharacterRevisionSummary": {
+          "additionalProperties": false,
+          "properties": {
+            "checksum": {
+              "minLength": 1,
+              "title": "Checksum",
+              "type": "string"
+            },
+            "createdAt": {
+              "title": "Createdat",
+              "type": "string"
+            },
+            "createdBy": {
+              "$ref": "#/$defs/CharacterCreatedBy"
+            },
+            "revision": {
+              "minimum": 1,
+              "title": "Revision",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "revision",
+            "checksum",
+            "createdBy",
+            "createdAt"
+          ],
+          "title": "CharacterRevisionSummary",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "has_more": {
+          "title": "Has More",
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/CharacterRevisionSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items",
+        "has_more"
+      ],
+      "title": "CharacterRevisionListResponse",
+      "type": "object"
+    },
+    "CharacterRevisionResponse": {
+      "$defs": {
+        "CharacterCreatedBy": {
+          "enum": [
+            "system",
+            "user",
+            "migration"
+          ],
+          "title": "CharacterCreatedBy",
+          "type": "string"
+        },
+        "CharacterExample": {
+          "additionalProperties": false,
+          "properties": {
+            "assistant": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Assistant",
+              "type": "string"
+            },
+            "user": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user",
+            "assistant"
+          ],
+          "title": "CharacterExample",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterPromptProfile": {
+          "additionalProperties": false,
+          "properties": {
+            "conversationInitiative": {
+              "maxLength": 3000,
+              "title": "Conversationinitiative",
+              "type": "string"
+            },
+            "corePersonality": {
+              "maxLength": 12000,
+              "title": "Corepersonality",
+              "type": "string"
+            },
+            "emotionStyle": {
+              "maxLength": 5000,
+              "title": "Emotionstyle",
+              "type": "string"
+            },
+            "examples": {
+              "items": {
+                "$ref": "#/$defs/CharacterExample"
+              },
+              "maxItems": 20,
+              "title": "Examples",
+              "type": "array"
+            },
+            "relationshipStyle": {
+              "maxLength": 6000,
+              "title": "Relationshipstyle",
+              "type": "string"
+            },
+            "speakingStyle": {
+              "maxLength": 6000,
+              "title": "Speakingstyle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "corePersonality",
+            "relationshipStyle",
+            "emotionStyle",
+            "speakingStyle",
+            "conversationInitiative",
+            "examples"
+          ],
+          "title": "CharacterPromptProfile",
+          "type": "object"
+        },
+        "CharacterRuntimeDefaults": {
+          "additionalProperties": false,
+          "properties": {
+            "emotion": {
+              "$ref": "#/$defs/CharacterRuntimeEmotion"
+            },
+            "proactive": {
+              "$ref": "#/$defs/CharacterRuntimeProactive"
+            },
+            "voice": {
+              "$ref": "#/$defs/CharacterRuntimeVoice"
+            },
+            "wakeWords": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Wakewords",
+              "type": "array"
+            }
+          },
+          "required": [
+            "voice",
+            "emotion",
+            "wakeWords",
+            "proactive"
+          ],
+          "title": "CharacterRuntimeDefaults",
+          "type": "object"
+        },
+        "CharacterRuntimeEmotion": {
+          "additionalProperties": false,
+          "properties": {
+            "idleExpressions": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "title": "Idleexpressions",
+              "type": "array"
+            }
+          },
+          "required": [
+            "idleExpressions"
+          ],
+          "title": "CharacterRuntimeEmotion",
+          "type": "object"
+        },
+        "CharacterRuntimeProactive": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "intervalSeconds": {
+              "minimum": 0,
+              "title": "Intervalseconds",
+              "type": "integer"
+            },
+            "triggers": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Triggers",
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "intervalSeconds",
+            "triggers"
+          ],
+          "title": "CharacterRuntimeProactive",
+          "type": "object"
+        },
+        "CharacterRuntimeVoice": {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Providerid"
+            },
+            "voiceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Voiceid"
+            }
+          },
+          "title": "CharacterRuntimeVoice",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Full immutable revision content returned by detail/rollback/create.",
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Aliases",
+          "type": "array"
+        },
+        "characterId": {
+          "minLength": 1,
+          "title": "Characterid",
+          "type": "string"
+        },
+        "checksum": {
+          "minLength": 1,
+          "title": "Checksum",
+          "type": "string"
+        },
+        "compilerVersion": {
+          "minimum": 1,
+          "title": "Compilerversion",
+          "type": "integer"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/CharacterCreatedBy"
+        },
+        "description": {
+          "maxLength": 500,
+          "title": "Description",
+          "type": "string"
+        },
+        "displayName": {
+          "maxLength": 64,
+          "title": "Displayname",
+          "type": "string"
+        },
+        "openingMessage": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Openingmessage"
+        },
+        "presentation": {
+          "$ref": "#/$defs/CharacterPresentation"
+        },
+        "promptProfile": {
+          "$ref": "#/$defs/CharacterPromptProfile"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtimeDefaults": {
+          "$ref": "#/$defs/CharacterRuntimeDefaults"
+        },
+        "schemaVersion": {
+          "minimum": 1,
+          "title": "Schemaversion",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "characterId",
+        "revision",
+        "schemaVersion",
+        "displayName",
+        "description",
+        "aliases",
+        "promptProfile",
+        "runtimeDefaults",
+        "presentation",
+        "checksum",
+        "compilerVersion",
+        "createdBy",
+        "createdAt"
+      ],
+      "title": "CharacterRevisionContent",
+      "type": "object"
+    },
+    "CharacterRevisionSummary": {
+      "$defs": {
+        "CharacterCreatedBy": {
+          "enum": [
+            "system",
+            "user",
+            "migration"
+          ],
+          "title": "CharacterCreatedBy",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "checksum": {
+          "minLength": 1,
+          "title": "Checksum",
+          "type": "string"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/CharacterCreatedBy"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision",
+        "checksum",
+        "createdBy",
+        "createdAt"
+      ],
+      "title": "CharacterRevisionSummary",
+      "type": "object"
+    },
+    "CharacterRuntimeDefaults": {
+      "$defs": {
+        "CharacterRuntimeEmotion": {
+          "additionalProperties": false,
+          "properties": {
+            "idleExpressions": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "title": "Idleexpressions",
+              "type": "array"
+            }
+          },
+          "required": [
+            "idleExpressions"
+          ],
+          "title": "CharacterRuntimeEmotion",
+          "type": "object"
+        },
+        "CharacterRuntimeProactive": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "intervalSeconds": {
+              "minimum": 0,
+              "title": "Intervalseconds",
+              "type": "integer"
+            },
+            "triggers": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Triggers",
+              "type": "array"
+            }
+          },
+          "required": [
+            "enabled",
+            "intervalSeconds",
+            "triggers"
+          ],
+          "title": "CharacterRuntimeProactive",
+          "type": "object"
+        },
+        "CharacterRuntimeVoice": {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Providerid"
+            },
+            "voiceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Voiceid"
+            }
+          },
+          "title": "CharacterRuntimeVoice",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "emotion": {
+          "$ref": "#/$defs/CharacterRuntimeEmotion"
+        },
+        "proactive": {
+          "$ref": "#/$defs/CharacterRuntimeProactive"
+        },
+        "voice": {
+          "$ref": "#/$defs/CharacterRuntimeVoice"
+        },
+        "wakeWords": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Wakewords",
+          "type": "array"
+        }
+      },
+      "required": [
+        "voice",
+        "emotion",
+        "wakeWords",
+        "proactive"
+      ],
+      "title": "CharacterRuntimeDefaults",
+      "type": "object"
+    },
+    "CharacterRuntimeEmotion": {
+      "additionalProperties": false,
+      "properties": {
+        "idleExpressions": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Idleexpressions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "idleExpressions"
+      ],
+      "title": "CharacterRuntimeEmotion",
+      "type": "object"
+    },
+    "CharacterRuntimeProactive": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "intervalSeconds": {
+          "minimum": 0,
+          "title": "Intervalseconds",
+          "type": "integer"
+        },
+        "triggers": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Triggers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "enabled",
+        "intervalSeconds",
+        "triggers"
+      ],
+      "title": "CharacterRuntimeProactive",
+      "type": "object"
+    },
+    "CharacterRuntimeVoice": {
+      "additionalProperties": false,
+      "properties": {
+        "providerId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Providerid"
+        },
+        "voiceId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voiceid"
+        }
+      },
+      "title": "CharacterRuntimeVoice",
+      "type": "object"
+    },
+    "CharacterStateChangedMessage": {
+      "$defs": {
+        "CharacterPublicStateView": {
+          "additionalProperties": false,
+          "description": "WS/REST shared product view; Stage G freezes this nested state line format.",
+          "properties": {
+            "currentActivity": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Currentactivity"
+            },
+            "lastInteractionAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Lastinteractionat"
+            },
+            "mood": {
+              "$ref": "#/$defs/MoodState"
+            },
+            "proactiveEnabled": {
+              "default": false,
+              "title": "Proactiveenabled",
+              "type": "boolean"
+            },
+            "updatedAt": {
               "title": "Updatedat",
               "type": "string"
             }
@@ -2476,21 +5382,21 @@
           "type": "object"
         },
         "MoodState": {
-          "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+          "additionalProperties": false,
           "properties": {
             "intensity": {
               "default": 0.5,
-              "description": "心情强度 0-1",
+              "maximum": 1,
+              "minimum": 0,
               "title": "Intensity",
               "type": "number"
             },
             "label": {
-              "description": "心情标签",
+              "maxLength": 100,
               "title": "Label",
               "type": "string"
             },
             "updatedAt": {
-              "description": "心情更新时间(ISO)",
               "title": "Updatedat",
               "type": "string"
             }
@@ -2522,17 +5428,10 @@
           "type": "integer"
         },
         "conversationId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "会话 ID(可缺省)",
-          "title": "Conversationid"
+          "description": "会话 ID",
+          "minLength": 1,
+          "title": "Conversationid",
+          "type": "string"
         },
         "state": {
           "$ref": "#/$defs/CharacterPublicStateView",
@@ -2552,6 +5451,7 @@
         }
       },
       "required": [
+        "conversationId",
         "characterId",
         "characterInstanceId",
         "state"
@@ -2560,85 +5460,214 @@
       "type": "object"
     },
     "CharacterStateImpact": {
-      "description": "编辑/回滚的状态影响。",
+      "$defs": {
+        "CharacterResetField": {
+          "enum": [
+            "self_l2",
+            "state_l3",
+            "speaking_style_c6",
+            "reflector",
+            "mood"
+          ],
+          "title": "CharacterResetField",
+          "type": "string"
+        },
+        "CharacterStatePolicy": {
+          "enum": [
+            "preserve",
+            "reset_evolution"
+          ],
+          "title": "CharacterStatePolicy",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
       "properties": {
         "affectedInstances": {
-          "default": 0,
+          "minimum": 0,
           "title": "Affectedinstances",
           "type": "integer"
         },
         "pendingInstances": {
-          "default": 0,
+          "minimum": 0,
           "title": "Pendinginstances",
           "type": "integer"
         },
         "resetFields": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/CharacterResetField"
           },
+          "maxItems": 5,
           "title": "Resetfields",
           "type": "array"
         },
         "statePolicy": {
-          "default": "preserve",
-          "title": "Statepolicy",
-          "type": "string"
+          "$ref": "#/$defs/CharacterStatePolicy"
         }
       },
+      "required": [
+        "statePolicy",
+        "affectedInstances",
+        "pendingInstances"
+      ],
       "title": "CharacterStateImpact",
       "type": "object"
     },
     "CharacterSummary": {
-      "description": "内置角色摘要（阶段 C+E，角色列表）。",
+      "$defs": {
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterSource": {
+          "enum": [
+            "builtin",
+            "custom"
+          ],
+          "title": "CharacterSource",
+          "type": "string"
+        },
+        "CharacterStatus": {
+          "enum": [
+            "active",
+            "archived"
+          ],
+          "title": "CharacterStatus",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
       "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Aliases",
+          "type": "array"
+        },
         "characterId": {
-          "description": "角色 ID",
+          "minLength": 1,
           "title": "Characterid",
           "type": "string"
         },
+        "currentRevision": {
+          "minimum": 1,
+          "title": "Currentrevision",
+          "type": "integer"
+        },
+        "description": {
+          "maxLength": 500,
+          "title": "Description",
+          "type": "string"
+        },
         "displayName": {
-          "description": "展示名",
+          "maxLength": 64,
           "title": "Displayname",
           "type": "string"
         },
+        "mutable": {
+          "title": "Mutable",
+          "type": "boolean"
+        },
+        "presentation": {
+          "$ref": "#/$defs/CharacterPresentation"
+        },
         "source": {
-          "default": "builtin",
-          "description": "角色来源",
-          "title": "Source",
-          "type": "string"
+          "$ref": "#/$defs/CharacterSource"
         },
         "status": {
-          "default": "active",
-          "description": "角色状态",
-          "title": "Status",
+          "$ref": "#/$defs/CharacterStatus"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
           "type": "string"
         }
       },
       "required": [
         "characterId",
-        "displayName"
+        "source",
+        "mutable",
+        "status",
+        "currentRevision",
+        "displayName",
+        "description",
+        "presentation",
+        "updatedAt"
       ],
       "title": "CharacterSummary",
       "type": "object"
     },
     "CharacterValidationIssue": {
-      "description": "校验问题（severity/code/path/message）。",
+      "$defs": {
+        "CharacterValidationSeverity": {
+          "enum": [
+            "error",
+            "warning"
+          ],
+          "title": "CharacterValidationSeverity",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
       "properties": {
         "code": {
+          "maxLength": 100,
           "title": "Code",
           "type": "string"
         },
         "message": {
+          "maxLength": 2000,
           "title": "Message",
           "type": "string"
         },
         "path": {
+          "maxLength": 512,
           "title": "Path",
           "type": "string"
         },
         "severity": {
-          "title": "Severity",
-          "type": "string"
+          "$ref": "#/$defs/CharacterValidationSeverity"
         }
       },
       "required": [
@@ -2653,23 +5682,25 @@
     "CharacterValidationResult": {
       "$defs": {
         "CharacterValidationIssue": {
-          "description": "校验问题（severity/code/path/message）。",
+          "additionalProperties": false,
           "properties": {
             "code": {
+              "maxLength": 100,
               "title": "Code",
               "type": "string"
             },
             "message": {
+              "maxLength": 2000,
               "title": "Message",
               "type": "string"
             },
             "path": {
+              "maxLength": 512,
               "title": "Path",
               "type": "string"
             },
             "severity": {
-              "title": "Severity",
-              "type": "string"
+              "$ref": "#/$defs/CharacterValidationSeverity"
             }
           },
           "required": [
@@ -2680,13 +5711,22 @@
           ],
           "title": "CharacterValidationIssue",
           "type": "object"
+        },
+        "CharacterValidationSeverity": {
+          "enum": [
+            "error",
+            "warning"
+          ],
+          "title": "CharacterValidationSeverity",
+          "type": "string"
         }
       },
-      "description": "角色草稿校验结果（无效草稿也是 200+valid=false）。",
+      "additionalProperties": false,
       "properties": {
         "estimatedPromptChars": {
           "anyOf": [
             {
+              "minimum": 0,
               "type": "integer"
             },
             {
@@ -2700,6 +5740,7 @@
           "items": {
             "$ref": "#/$defs/CharacterValidationIssue"
           },
+          "maxItems": 100,
           "title": "Issues",
           "type": "array"
         },
@@ -6240,12 +9281,82 @@
       "type": "object"
     },
     "ExpressionMessage": {
-      "description": "表情/情绪变更。",
+      "description": "表情/情绪变更；角色字段迁移期可缺省，出现时必须为完整三元组。",
       "properties": {
+        "characterId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色 ID，可缺省",
+          "title": "Characterid"
+        },
+        "characterInstanceId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色实例 ID，可缺省",
+          "title": "Characterinstanceid"
+        },
+        "characterRevision": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色修订号，可缺省",
+          "title": "Characterrevision"
+        },
+        "conversationId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "会话 ID，可缺省",
+          "title": "Conversationid"
+        },
         "expression": {
           "description": "表情/情绪标识",
           "title": "Expression",
           "type": "string"
+        },
+        "generationId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "生成 ID；非生成表现可缺省",
+          "title": "Generationid"
         },
         "intensity": {
           "anyOf": [
@@ -6516,6 +9627,7 @@
         "characterId": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -6529,6 +9641,7 @@
         "characterInstanceId": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -6542,6 +9655,7 @@
         "characterRevision": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -6701,6 +9815,7 @@
         "characterId": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -6714,6 +9829,7 @@
         "characterInstanceId": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -6727,6 +9843,7 @@
         "characterRevision": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -7159,6 +10276,7 @@
         "characterId": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -7172,6 +10290,7 @@
         "characterInstanceId": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -7185,6 +10304,7 @@
         "characterRevision": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -7518,6 +10638,175 @@
       "title": "InterruptMessage",
       "type": "object"
     },
+    "Live2DDirectiveMessage": {
+      "$defs": {
+        "Live2DDirectiveState": {
+          "description": "后端给 Live2D 的低优先级表现建议状态。",
+          "enum": [
+            "idle",
+            "listening",
+            "thinking",
+            "speaking",
+            "happy",
+            "sad",
+            "surprised"
+          ],
+          "title": "Live2DDirectiveState",
+          "type": "string"
+        }
+      },
+      "description": "后端 Live2D 表现建议；客户端按现实态优先级仲裁。",
+      "properties": {
+        "characterId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色 ID，可缺省",
+          "title": "Characterid"
+        },
+        "characterInstanceId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色实例 ID，可缺省",
+          "title": "Characterinstanceid"
+        },
+        "characterRevision": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "角色修订号，可缺省",
+          "title": "Characterrevision"
+        },
+        "conversationId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "会话 ID，可缺省",
+          "title": "Conversationid"
+        },
+        "durationMs": {
+          "anyOf": [
+            {
+              "maximum": 30000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "持续时间毫秒，可缺省",
+          "title": "Durationms"
+        },
+        "expression": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "表情资源标识，可缺省",
+          "title": "Expression"
+        },
+        "generationId": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "生成 ID；非生成指令可缺省",
+          "title": "Generationid"
+        },
+        "motion": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "动作资源标识，可缺省",
+          "title": "Motion"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "建议优先级 0~3，可缺省",
+          "title": "Priority"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Live2DDirectiveState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "低优先级表现状态，可缺省"
+        },
+        "type": {
+          "const": "live2d.directive",
+          "default": "live2d.directive",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "Live2DDirectiveMessage",
+      "type": "object"
+    },
     "LtmEntry": {
       "description": "长期记忆单条（ltm 列表，含 timestamp；lt_recent 面板条目不含）。",
       "properties": {
@@ -7771,6 +11060,88 @@
           ],
           "title": "ArchivePart",
           "type": "object"
+        },
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
         }
       },
       "description": "归档消息契约视图（wire 形状自建，不引 core.schema.Message）。\n\n发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：\nblock_index → content_type 归一化（对齐 session 回放 wire 命名）。\n除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，\n保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。",
@@ -7787,6 +11158,18 @@
           "default": null,
           "description": "Mongo 归档 ID，可缺省（wire 键为 _id，Python 字段名不能以下划线开头）",
           "title": "Id"
+        },
+        "character": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CharacterBindingSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
         },
         "content": {
           "description": "原始内容（parts dict 列表或纯文本）",
@@ -8009,6 +11392,88 @@
           "title": "ArchivePart",
           "type": "object"
         },
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
         "Message": {
           "description": "归档消息契约视图（wire 形状自建，不引 core.schema.Message）。\n\n发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：\nblock_index → content_type 归一化（对齐 session 回放 wire 命名）。\n除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，\n保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。",
           "properties": {
@@ -8024,6 +11489,18 @@
               "default": null,
               "description": "Mongo 归档 ID，可缺省（wire 键为 _id，Python 字段名不能以下划线开头）",
               "title": "Id"
+            },
+            "character": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CharacterBindingSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
             },
             "content": {
               "description": "原始内容（parts dict 列表或纯文本）",
@@ -8334,6 +11811,88 @@
           "title": "ArchivePart",
           "type": "object"
         },
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
         "Message": {
           "description": "归档消息契约视图（wire 形状自建，不引 core.schema.Message）。\n\n发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：\nblock_index → content_type 归一化（对齐 session 回放 wire 命名）。\n除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，\n保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。",
           "properties": {
@@ -8349,6 +11908,18 @@
               "default": null,
               "description": "Mongo 归档 ID，可缺省（wire 键为 _id，Python 字段名不能以下划线开头）",
               "title": "Id"
+            },
+            "character": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CharacterBindingSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
             },
             "content": {
               "description": "原始内容（parts dict 列表或纯文本）",
@@ -8614,6 +12185,88 @@
           "title": "ArchivePart",
           "type": "object"
         },
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
         "Message": {
           "description": "归档消息契约视图（wire 形状自建，不引 core.schema.Message）。\n\n发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：\nblock_index → content_type 归一化（对齐 session 回放 wire 命名）。\n除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，\n保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。",
           "properties": {
@@ -8629,6 +12282,18 @@
               "default": null,
               "description": "Mongo 归档 ID，可缺省（wire 键为 _id，Python 字段名不能以下划线开头）",
               "title": "Id"
+            },
+            "character": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CharacterBindingSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
             },
             "content": {
               "description": "原始内容（parts dict 列表或纯文本）",
@@ -8878,21 +12543,21 @@
       "type": "object"
     },
     "MoodState": {
-      "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+      "additionalProperties": false,
       "properties": {
         "intensity": {
           "default": 0.5,
-          "description": "心情强度 0-1",
+          "maximum": 1,
+          "minimum": 0,
           "title": "Intensity",
           "type": "number"
         },
         "label": {
-          "description": "心情标签",
+          "maxLength": 100,
           "title": "Label",
           "type": "string"
         },
         "updatedAt": {
-          "description": "心情更新时间(ISO)",
           "title": "Updatedat",
           "type": "string"
         }
@@ -9286,6 +12951,20 @@
           "description": "关联请求 ID（每请求独立 UUID，非三位计数器）",
           "title": "Requestid",
           "type": "string"
+        },
+        "retryAfterMs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "建议重试等待毫秒数，可缺省",
+          "title": "Retryafterms"
         },
         "retryable": {
           "default": false,
@@ -10203,7 +13882,7 @@
       "properties": {
         "character_profiles": {
           "default": false,
-          "description": "多角色 Profile（阶段 C+E；本批次恒 false，架构稿决策 #12）",
+          "description": "多角色 Profile（Stage H 门禁完成后由服务端如实开启）",
           "title": "Character Profiles",
           "type": "boolean"
         },
@@ -10272,7 +13951,7 @@
           "properties": {
             "character_profiles": {
               "default": false,
-              "description": "多角色 Profile（阶段 C+E；本批次恒 false，架构稿决策 #12）",
+              "description": "多角色 Profile（Stage H 门禁完成后由服务端如实开启）",
               "title": "Character Profiles",
               "type": "boolean"
             },
@@ -10775,8 +14454,64 @@
           "type": "object"
         },
         "AudioStartMessage": {
-          "description": "音频流开始（stream_id = playback ID）。",
+          "description": "音频流开始（stream_id = playback ID）；角色字段出现时必须完整。",
           "properties": {
+            "characterId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色 ID，可缺省",
+              "title": "Characterid"
+            },
+            "characterInstanceId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色实例 ID，可缺省",
+              "title": "Characterinstanceid"
+            },
+            "characterRevision": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色修订号，可缺省",
+              "title": "Characterrevision"
+            },
+            "conversationId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID，可缺省",
+              "title": "Conversationid"
+            },
             "durationMs": {
               "anyOf": [
                 {
@@ -10794,6 +14529,20 @@
               "$ref": "#/$defs/AudioFormat",
               "default": "wav",
               "description": "音频格式"
+            },
+            "generationId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "生成 ID；预览等非生成音频可缺省",
+              "title": "Generationid"
             },
             "sampleRate": {
               "anyOf": [
@@ -10856,10 +14605,49 @@
           "title": "CapabilitiesMessage",
           "type": "object"
         },
-        "CharacterPublicStateView": {
-          "description": "角色产品态子视图(架构稿 §12.4;REST 与 WS 共享)。\n\nmood 本批必填(产品态恒有心情,state.mood 默认「平静」);currentActivity/lastInteractionAt\n可缺省(None→wire 省略)。内部态(self_l2/state_l3/reflector_buffer 等)绝不外泄。",
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
           "properties": {
-            "currentActivity": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
               "anyOf": [
                 {
                   "type": "string"
@@ -10869,7 +14657,51 @@
                 }
               ],
               "default": null,
-              "description": "当前活动(可缺省)",
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
+        "CharacterPublicStateView": {
+          "additionalProperties": false,
+          "description": "WS/REST shared product view; Stage G freezes this nested state line format.",
+          "properties": {
+            "currentActivity": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
               "title": "Currentactivity"
             },
             "lastInteractionAt": {
@@ -10882,21 +14714,17 @@
                 }
               ],
               "default": null,
-              "description": "最近交互时间(可缺省)",
               "title": "Lastinteractionat"
             },
             "mood": {
-              "$ref": "#/$defs/MoodState",
-              "description": "当前心情"
+              "$ref": "#/$defs/MoodState"
             },
             "proactiveEnabled": {
               "default": false,
-              "description": "主动搭话是否开启",
               "title": "Proactiveenabled",
               "type": "boolean"
             },
             "updatedAt": {
-              "description": "产品态更新时间(ISO)",
               "title": "Updatedat",
               "type": "string"
             }
@@ -10928,17 +14756,10 @@
               "type": "integer"
             },
             "conversationId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "会话 ID(可缺省)",
-              "title": "Conversationid"
+              "description": "会话 ID",
+              "minLength": 1,
+              "title": "Conversationid",
+              "type": "string"
             },
             "state": {
               "$ref": "#/$defs/CharacterPublicStateView",
@@ -10958,6 +14779,7 @@
             }
           },
           "required": [
+            "conversationId",
             "characterId",
             "characterInstanceId",
             "state"
@@ -11240,12 +15062,82 @@
           "type": "object"
         },
         "ExpressionMessage": {
-          "description": "表情/情绪变更。",
+          "description": "表情/情绪变更；角色字段迁移期可缺省，出现时必须为完整三元组。",
           "properties": {
+            "characterId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色 ID，可缺省",
+              "title": "Characterid"
+            },
+            "characterInstanceId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色实例 ID，可缺省",
+              "title": "Characterinstanceid"
+            },
+            "characterRevision": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色修订号，可缺省",
+              "title": "Characterrevision"
+            },
+            "conversationId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID，可缺省",
+              "title": "Conversationid"
+            },
             "expression": {
               "description": "表情/情绪标识",
               "title": "Expression",
               "type": "string"
+            },
+            "generationId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "生成 ID；非生成表现可缺省",
+              "title": "Generationid"
             },
             "intensity": {
               "anyOf": [
@@ -11368,6 +15260,7 @@
             "characterId": {
               "anyOf": [
                 {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -11381,6 +15274,7 @@
             "characterInstanceId": {
               "anyOf": [
                 {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -11394,6 +15288,7 @@
             "characterRevision": {
               "anyOf": [
                 {
+                  "minimum": 1,
                   "type": "integer"
                 },
                 {
@@ -11553,6 +15448,7 @@
             "characterId": {
               "anyOf": [
                 {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -11566,6 +15462,7 @@
             "characterInstanceId": {
               "anyOf": [
                 {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -11579,6 +15476,7 @@
             "characterRevision": {
               "anyOf": [
                 {
+                  "minimum": 1,
                   "type": "integer"
                 },
                 {
@@ -11801,6 +15699,7 @@
             "characterId": {
               "anyOf": [
                 {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -11814,6 +15713,7 @@
             "characterInstanceId": {
               "anyOf": [
                 {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -11827,6 +15727,7 @@
             "characterRevision": {
               "anyOf": [
                 {
+                  "minimum": 1,
                   "type": "integer"
                 },
                 {
@@ -11986,6 +15887,173 @@
           "title": "ImagePart",
           "type": "object"
         },
+        "Live2DDirectiveMessage": {
+          "description": "后端 Live2D 表现建议；客户端按现实态优先级仲裁。",
+          "properties": {
+            "characterId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色 ID，可缺省",
+              "title": "Characterid"
+            },
+            "characterInstanceId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色实例 ID，可缺省",
+              "title": "Characterinstanceid"
+            },
+            "characterRevision": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "角色修订号，可缺省",
+              "title": "Characterrevision"
+            },
+            "conversationId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话 ID，可缺省",
+              "title": "Conversationid"
+            },
+            "durationMs": {
+              "anyOf": [
+                {
+                  "maximum": 30000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "持续时间毫秒，可缺省",
+              "title": "Durationms"
+            },
+            "expression": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "表情资源标识，可缺省",
+              "title": "Expression"
+            },
+            "generationId": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "生成 ID；非生成指令可缺省",
+              "title": "Generationid"
+            },
+            "motion": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "动作资源标识，可缺省",
+              "title": "Motion"
+            },
+            "priority": {
+              "anyOf": [
+                {
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "建议优先级 0~3，可缺省",
+              "title": "Priority"
+            },
+            "state": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Live2DDirectiveState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "低优先级表现状态，可缺省"
+            },
+            "type": {
+              "const": "live2d.directive",
+              "default": "live2d.directive",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "title": "Live2DDirectiveMessage",
+          "type": "object"
+        },
+        "Live2DDirectiveState": {
+          "description": "后端给 Live2D 的低优先级表现建议状态。",
+          "enum": [
+            "idle",
+            "listening",
+            "thinking",
+            "speaking",
+            "happy",
+            "sad",
+            "surprised"
+          ],
+          "title": "Live2DDirectiveState",
+          "type": "string"
+        },
         "MessageChannel": {
           "description": "分段通道（generation.segment.* 与父回复 channel；语义见 batch2 spec §3.2）。",
           "enum": [
@@ -12049,21 +16117,21 @@
           "type": "object"
         },
         "MoodState": {
-          "description": "心情产品态(架构稿 §12.4)——CharacterPublicStateView/CharacterStateChangedMessage 共享。",
+          "additionalProperties": false,
           "properties": {
             "intensity": {
               "default": 0.5,
-              "description": "心情强度 0-1",
+              "maximum": 1,
+              "minimum": 0,
               "title": "Intensity",
               "type": "number"
             },
             "label": {
-              "description": "心情标签",
+              "maxLength": 100,
               "title": "Label",
               "type": "string"
             },
             "updatedAt": {
-              "description": "心情更新时间(ISO)",
               "title": "Updatedat",
               "type": "string"
             }
@@ -12168,7 +16236,7 @@
           "properties": {
             "character_profiles": {
               "default": false,
-              "description": "多角色 Profile（阶段 C+E；本批次恒 false，架构稿决策 #12）",
+              "description": "多角色 Profile（Stage H 门禁完成后由服务端如实开启）",
               "title": "Character Profiles",
               "type": "boolean"
             },
@@ -12437,6 +16505,18 @@
         "SessionMessageItem": {
           "description": "会话历史中的单条消息（兼容用户/助手/工具结果平铺形状）。",
           "properties": {
+            "character": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CharacterBindingSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
+            },
             "content": {
               "anyOf": [
                 {
@@ -13845,6 +17925,7 @@
           "generation.segment.completed": "#/$defs/GenerationSegmentCompletedMessage",
           "generation.segment.started": "#/$defs/GenerationSegmentStartedMessage",
           "generation.started": "#/$defs/GenerationStartedMessage",
+          "live2d.directive": "#/$defs/Live2DDirectiveMessage",
           "message": "#/$defs/MessageMessage",
           "server_info": "#/$defs/ServerInfoMessage",
           "service_mode_result": "#/$defs/ServiceModeResultMessage",
@@ -13906,6 +17987,9 @@
         },
         {
           "$ref": "#/$defs/ExpressionMessage"
+        },
+        {
+          "$ref": "#/$defs/Live2DDirectiveMessage"
         },
         {
           "$ref": "#/$defs/StateMessage"
@@ -14137,6 +18221,41 @@
       "title": "SessionActivateResult",
       "type": "object"
     },
+    "SessionCreateRequest": {
+      "additionalProperties": false,
+      "description": "POST /api/sessions 请求；角色缺省时由后端解析用户默认角色。",
+      "properties": {
+        "characterId": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Characterid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "title": "SessionCreateRequest",
+      "type": "object"
+    },
     "SessionDetail": {
       "$defs": {
         "ArchivePart": {
@@ -14154,6 +18273,88 @@
           "title": "ArchivePart",
           "type": "object"
         },
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
         "Message": {
           "description": "归档消息契约视图（wire 形状自建，不引 core.schema.Message）。\n\n发送点把 core.schema.Message 经 _archive_to_client 转成客户端 dict 后构造本模型：\nblock_index → content_type 归一化（对齐 session 回放 wire 命名）。\n除前端消费字段（role/parts/content/content_type/inner_voice/tool_calls/token_usage）外，\n保留 _id/message_id/timestamp/session_id/metadata 及 tool 消息字段——wire 字节等价，不丢键。",
           "properties": {
@@ -14169,6 +18370,18 @@
               "default": null,
               "description": "Mongo 归档 ID，可缺省（wire 键为 _id，Python 字段名不能以下划线开头）",
               "title": "Id"
+            },
+            "character": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CharacterBindingSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
             },
             "content": {
               "description": "原始内容（parts dict 列表或纯文本）",
@@ -14381,6 +18594,18 @@
               "description": "是否为当前活动会话",
               "title": "Active",
               "type": "boolean"
+            },
+            "character": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CharacterBindingSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话绑定角色快照；仅 legacy 未迁移会话可缺省"
             },
             "conversationId": {
               "description": "会话 ID",
@@ -14728,6 +18953,88 @@
     },
     "SessionListResult": {
       "$defs": {
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
         "SessionSummary": {
           "description": "会话摘要（/api/sessions 列表条目 / 创建 / 重命名响应）。\n\nconversationId = 会话唯一标识（默认 \"default\"，新建 conv_<uuid4 hex[:12]>）；\ntitle 可空（创建后可无标题，首条用户消息自动取前 20 字，可被重命名覆盖）。",
           "properties": {
@@ -14735,6 +19042,18 @@
               "description": "是否为当前活动会话",
               "title": "Active",
               "type": "boolean"
+            },
+            "character": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CharacterBindingSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "会话绑定角色快照；仅 legacy 未迁移会话可缺省"
             },
             "conversationId": {
               "description": "会话 ID",
@@ -14871,6 +19190,88 @@
             "src"
           ],
           "title": "AudioPart",
+          "type": "object"
+        },
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
           "type": "object"
         },
         "FilePart": {
@@ -15035,6 +19436,18 @@
         "SessionMessageItem": {
           "description": "会话历史中的单条消息（兼容用户/助手/工具结果平铺形状）。",
           "properties": {
+            "character": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CharacterBindingSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
+            },
             "content": {
               "anyOf": [
                 {
@@ -15706,6 +20119,88 @@
           "title": "AudioPart",
           "type": "object"
         },
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        },
         "FilePart": {
           "description": "文件内容块（wire 镜像 core/schema/part.py FilePart）。",
           "properties": {
@@ -16153,6 +20648,18 @@
       },
       "description": "会话历史中的单条消息（兼容用户/助手/工具结果平铺形状）。",
       "properties": {
+        "character": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CharacterBindingSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "assistant 实际生成角色的不可变审计快照；user/tool 消息缺省"
+        },
         "content": {
           "anyOf": [
             {
@@ -16528,12 +21035,108 @@
       "type": "object"
     },
     "SessionSummary": {
+      "$defs": {
+        "CharacterBindingSnapshot": {
+          "additionalProperties": false,
+          "description": "Stable character binding summary embedded in session-facing payloads.",
+          "properties": {
+            "characterId": {
+              "minLength": 1,
+              "title": "Characterid",
+              "type": "string"
+            },
+            "characterInstanceId": {
+              "minLength": 1,
+              "title": "Characterinstanceid",
+              "type": "string"
+            },
+            "characterRevision": {
+              "minimum": 1,
+              "title": "Characterrevision",
+              "type": "integer"
+            },
+            "displayName": {
+              "maxLength": 64,
+              "title": "Displayname",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/CharacterPresentation"
+            }
+          },
+          "required": [
+            "characterId",
+            "characterInstanceId",
+            "characterRevision",
+            "displayName",
+            "presentation"
+          ],
+          "title": "CharacterBindingSnapshot",
+          "type": "object"
+        },
+        "CharacterPresentation": {
+          "additionalProperties": false,
+          "description": "Managed presentation references; arbitrary URLs/paths are rejected.",
+          "properties": {
+            "avatarAssetId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Avatarassetid"
+            },
+            "live2dModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Live2Dmodelid"
+            },
+            "themeColor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Themecolor"
+            }
+          },
+          "title": "CharacterPresentation",
+          "type": "object"
+        }
+      },
       "description": "会话摘要（/api/sessions 列表条目 / 创建 / 重命名响应）。\n\nconversationId = 会话唯一标识（默认 \"default\"，新建 conv_<uuid4 hex[:12]>）；\ntitle 可空（创建后可无标题，首条用户消息自动取前 20 字，可被重命名覆盖）。",
       "properties": {
         "active": {
           "description": "是否为当前活动会话",
           "title": "Active",
           "type": "boolean"
+        },
+        "character": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CharacterBindingSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "会话绑定角色快照；仅 legacy 未迁移会话可缺省"
         },
         "conversationId": {
           "description": "会话 ID",
@@ -19767,8 +24370,14 @@
       ]
     },
     "UserIdentityProfile": {
-      "description": "用户最小身份（阶段 C+E；GET /api/me / PUT /api/me）。",
+      "additionalProperties": false,
+      "description": "GET /api/me response; timestamps are part of the frozen profile wire.",
       "properties": {
+        "createdAt": {
+          "description": "创建时间（UTC ISO）",
+          "title": "Createdat",
+          "type": "string"
+        },
         "defaultCharacterId": {
           "anyOf": [
             {
@@ -19779,23 +24388,20 @@
             }
           ],
           "default": null,
-          "description": "默认角色 ID（可缺省）",
+          "description": "默认角色 ID",
           "title": "Defaultcharacterid"
         },
         "displayName": {
-          "default": "",
           "description": "展示名",
           "title": "Displayname",
           "type": "string"
         },
         "initialized": {
-          "default": false,
           "description": "是否已完成初始化引导",
           "title": "Initialized",
           "type": "boolean"
         },
         "locale": {
-          "default": "zh-CN",
           "description": "语言区域",
           "title": "Locale",
           "type": "string"
@@ -19810,35 +24416,124 @@
             }
           ],
           "default": null,
-          "description": "用户希望被称呼的方式（可缺省）",
+          "description": "用户希望被称呼的方式",
           "title": "Preferredaddress"
         },
         "pronouns": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": "她",
-          "description": "代词（称呼第三人称）",
-          "title": "Pronouns",
-          "type": "string"
+          "description": "代词",
+          "title": "Pronouns"
         },
         "revision": {
-          "default": 1,
           "description": "版本号（乐观并发）",
+          "minimum": 1,
           "title": "Revision",
           "type": "integer"
         },
         "timezone": {
-          "default": "Asia/Shanghai",
           "description": "时区",
           "title": "Timezone",
           "type": "string"
         },
+        "updatedAt": {
+          "description": "更新时间（UTC ISO）",
+          "title": "Updatedat",
+          "type": "string"
+        },
         "userId": {
-          "default": "usr_local_default",
           "description": "用户 ID（本地默认单用户）",
+          "minLength": 1,
           "title": "Userid",
           "type": "string"
         }
       },
+      "required": [
+        "userId",
+        "displayName",
+        "locale",
+        "timezone",
+        "initialized",
+        "revision",
+        "createdAt",
+        "updatedAt"
+      ],
       "title": "UserIdentityProfile",
+      "type": "object"
+    },
+    "UserIdentityUpdate": {
+      "additionalProperties": false,
+      "description": "PUT /api/me request; omitted nullable fields are interpreted by the route.",
+      "properties": {
+        "defaultCharacterId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Defaultcharacterid"
+        },
+        "displayName": {
+          "description": "展示名",
+          "title": "Displayname",
+          "type": "string"
+        },
+        "expectedRevision": {
+          "minimum": 1,
+          "title": "Expectedrevision",
+          "type": "integer"
+        },
+        "locale": {
+          "title": "Locale",
+          "type": "string"
+        },
+        "preferredAddress": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preferredaddress"
+        },
+        "pronouns": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pronouns"
+        },
+        "timezone": {
+          "title": "Timezone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName",
+        "locale",
+        "timezone",
+        "expectedRevision"
+      ],
+      "title": "UserIdentityUpdate",
       "type": "object"
     },
     "V2TextMessage": {
@@ -20610,6 +25305,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "447633fa17930d36",
+  "schemaHash": "dece6f372e22f4f5",
   "transportVersion": "2"
 }
