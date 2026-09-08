@@ -88,7 +88,7 @@ from core.character.registry import CharacterRuntimeRegistry
 from core.character.runtime import CharacterRuntime
 from core.character.runtime_loader import CharacterRuntimeSourceLoader
 from core.character.runtime_profile import compile_runtime_profile
-from core.character.service import CharacterService
+from core.character.service import CharacterService, CharacterStateConflictError
 from core.character.catalog import CharacterCatalog
 from core.storage.character_instance_repo import CharacterInstanceRepository
 from core.storage.character_repo import CharacterRepository
@@ -473,33 +473,45 @@ class Agent(AgentLifecycle, AgentServer):
         """构造 runtime 的 persist_fn（C1：捕获该 runtime 自身 instance，非硬编码 default）。
 
         flush 时把内存 CharacterRuntimeState 经 CharacterInstanceRepository
-        .cas_state_version 写回 CharacterInstance.state（I1：CAS 路径激活——此前仅
-        save 被调用，cas_state_version 是死代码）。CAS 失败（state_version 冲突/
-        runtime 未落库）时回退 save（upsert 兜底建档），保证新 instance 也能落库。
+        .cas_state_version 写回 CharacterInstance.state。只有确认文档不存在时才走
+        setOnInsert；CAS 冲突或存储异常必须 fail-closed，禁止用 upsert 覆盖并发状态。
         repo 连接在 _start_persistence（start()）完成，而 flush 在回合边界/shutdown
         触发——故此处经 self._instance_repo 延迟访问，不在此构造时断言已连接。
         """
         async def _persist(state: CharacterRuntimeState) -> None:
             inst = runtime.instance
-            inst.state = state
-            inst.stateVersion += 1
-            runtime.stateVersion = inst.stateVersion  # 与 runtime 跟踪字段保持一致（_lifecycle restore 亦同步）
-            inst.updatedAt = now_iso()
             repo = self._instance_repo
-            try:
-                ok = await repo.cas_state_version(
-                    inst.instanceId,
-                    expected=inst.stateVersion - 1,
-                    new_state=state,
-                    new_version=inst.stateVersion,
-                )
-            except Exception:
-                logger.debug("cas_state_version 失败，回退 save", exc_info=True)
-                ok = False
+            expected_version = inst.stateVersion
+            new_version = expected_version + 1
+            updated_at = now_iso()
+            ok = await repo.cas_state_version(
+                inst.instanceId,
+                expected=expected_version,
+                new_state=state,
+                new_version=new_version,
+            )
             if not ok:
-                # CAS 未命中：文档不存在（首次落库）或 state_version 冲突。作为兜底
-                # 走 upsert save，保持权威状态不丢；真实并发冲突由下次 CAS 拦截。
-                await repo.save(inst)
+                persisted = await repo.get(inst.instanceId)
+                if persisted is not None:
+                    raise CharacterStateConflictError(
+                        inst.instanceId, persisted.stateVersion
+                    )
+                candidate = inst.model_copy(deep=True)
+                candidate.state = state
+                candidate.stateVersion = new_version
+                candidate.updatedAt = updated_at
+                if not await repo.save_if_absent(candidate):
+                    persisted = await repo.get(inst.instanceId)
+                    raise CharacterStateConflictError(
+                        inst.instanceId,
+                        None if persisted is None else persisted.stateVersion,
+                    )
+
+            # Advance the in-memory CAS token only after the durable write succeeds.
+            inst.state = state
+            inst.stateVersion = new_version
+            inst.updatedAt = updated_at
+            runtime.stateVersion = new_version
         return _persist
 
     # ---- process_message ----

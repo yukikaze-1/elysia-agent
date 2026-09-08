@@ -26,6 +26,44 @@ async def test_get_save_roundtrip():
 
 
 @pytest.mark.asyncio
+async def test_save_if_absent_never_overwrites_existing_instance():
+    repo = CharacterInstanceRepository(db=FakeDocumentDBBackend())
+    await repo.save(_inst(
+        stateVersion=7,
+        state=CharacterRuntimeState(
+            instance_id="chi_x", session_id=SessionId("persisted"),
+        ),
+    ))
+    candidate = _inst(
+        stateVersion=2,
+        state=CharacterRuntimeState(
+            instance_id="chi_x", session_id=SessionId("candidate"),
+        ),
+    )
+
+    assert await repo.save_if_absent(candidate) is False
+    persisted = await repo.get("chi_x")
+    assert persisted is not None
+    assert persisted.stateVersion == 7
+    assert persisted.state is not None
+    assert persisted.state.session_id == SessionId("persisted")
+
+
+@pytest.mark.asyncio
+async def test_save_if_absent_creates_missing_instance():
+    repo = CharacterInstanceRepository(db=FakeDocumentDBBackend())
+    candidate = _inst(
+        stateVersion=2,
+        state=CharacterRuntimeState(
+            instance_id="chi_x", session_id=SessionId("candidate"),
+        ),
+    )
+
+    assert await repo.save_if_absent(candidate) is True
+    assert (await repo.get("chi_x")) == candidate
+
+
+@pytest.mark.asyncio
 async def test_cas_state_version_hit():
     repo = CharacterInstanceRepository(db=FakeDocumentDBBackend())
     await repo.connect()

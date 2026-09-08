@@ -118,6 +118,26 @@ class CharacterInstanceRepository(Repository):
         await self._call(lambda: db.update_one(
             COLLECTION, {"instance_id": instance.instanceId}, {"$set": self._to_doc(instance)}, upsert=True))
 
+    async def save_if_absent(self, instance: CharacterInstance) -> bool:
+        """Insert an initial instance without overwriting a concurrent creator."""
+        if self._db is None:
+            raise StorageUnavailableError("CharacterInstanceRepository 未连接")
+        db = self._db
+        await self._call(lambda: db.update_one(
+            COLLECTION,
+            {"instance_id": instance.instanceId},
+            {"$setOnInsert": self._to_doc(instance)},
+            upsert=True,
+        ))
+        persisted = await self.get(instance.instanceId)
+        return (
+            persisted is not None
+            and persisted.characterId == instance.characterId
+            and persisted.revision == instance.revision
+            and persisted.stateVersion == instance.stateVersion
+            and persisted.state == instance.state
+        )
+
     async def cas_state_version(self, instance_id: str, *, expected: int,
                                 new_state: "CharacterRuntimeState", new_version: int) -> bool:
         """CAS state_version：filter 恒含 state_version==expected + updated_at 必变。"""
