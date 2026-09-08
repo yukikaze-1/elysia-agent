@@ -21,15 +21,19 @@ core/character/
 ├── catalog.py            # CharacterCatalog — 只读内置角色目录（无 Mongo 也能列/校验）+ get_revision
 ├── runtime.py            # CharacterRuntime — 单实例运行时容器（快照 + 懒 engine + memory_view/consolidator/reflector 持有 + lock/dirty）【阶段 E/F 激活】
 ├── registry.py           # CharacterRuntimeRegistry — LRU 缓存 + _busy/_session_binding_index + flush_all/close_all【阶段 E 激活】
-├── migration.py          # 旧会话 shadow migration（legacy instance，架构稿 §15.3）
 └── tests/
     ├── test_models.py
     ├── test_builtin_source.py
+    ├── test_binding.py
     ├── test_draft.py
     ├── test_service.py
+    ├── test_service_stage_h.py
     ├── test_runtime.py
+    ├── test_runtime_loader.py
+    ├── test_runtime_profile.py
     ├── test_registry.py
-    └── test_migration.py
+    ├── test_session_binding.py
+    └── test_public_state.py
 ```
 
 > 相关配套：`CharacterRuntimeState`（instance-scoped 状态模型）在 [core/schema/character.py](../schema/character.py)；`CharacterInstanceRepository`（`character_instances` 集合持久化 + `state_version` CAS）在 [core/storage/character_instance_repo.py](../../storage/character_instance_repo.py)。
@@ -91,9 +95,9 @@ core/character/
 
 `engine.attach_session` / `engine.sync_reflector_to_state` / `session_manager.bind_character_engine` / `session._pre_save_hook` **全部删除**。reflector buffer 落盘改由 runtime 在回合边界统一持久化到 `CharacterRuntimeState`（`engine.sync_reflector_to_runtime_state`），不再借 `session.save()` 的 hook。会话切换不再有「单例 engine attach 新 session」的换绑动作——engine per-instance 永不换绑。
 
-### 旧会话 shadow migration（架构稿 §15.3）
+### 旧数据迁移（架构稿 §15.3-15.8）
 
-每个旧 session 建确定性 legacy instance（sessionId 哈希），`character_binding` 指向它；旧会话行为/状态不变。迁移期 legacy `character_state` 仍权威（M1）；**阶段 E 后 M3 切换已生效**——一律经 `CharacterRuntimeState`（instance-scoped），`session.character_state` 退役不作权威读取。
+**产品决策：开发阶段不迁移旧数据，直接上新，旧数据在部署时清库。** 因此 §15.3-15.8 的影子迁移设计不执行：不建立 legacy instance、不复制 `character_state` 到 instance、不做 character_versions / 旧 LTM `legacy_unscoped` / pending 迁移。`core/character/migration.py` 及其测试作为纯死代码（零生产引用）已删除。旧会话/旧集合的清理交由部署侧完成，代码内不写迁移/重置逻辑。
 
 ---
 
@@ -108,4 +112,4 @@ core/character/
 | [阶段 E Plan](../../docs/superpowers/plans/2026-09-04-character-stage-e-runtime-binding-plan.md) | 阶段 E 实施计划（14 Task） |
 | [阶段 F Spec](../../docs/superpowers/specs/2026-09-05-character-stage-f-memory-v2-isolation-design.md) | 记忆 v2 隔离设计（CharacterRuntime 持 memory_view/consolidator/reflector） |
 | [阶段 F Plan](../../docs/superpowers/plans/2026-09-05-character-stage-f-memory-v2-isolation-plan.md) | 阶段 F 实施计划 |
-| [架构稿](../../docs/2026-08-30-character-prompt-customization-backend-architecture-design.md) | 角色域完整设计（§5 领域模型 / §7 运行时 / §15 迁移） |
+| [架构稿](../../docs/2026-08-30-character-prompt-customization-backend-architecture-design.md) | 角色域完整设计（§5 领域模型 / §7 运行时 / §15 迁移——**§15 因「不迁移旧数据」决策不执行**） |

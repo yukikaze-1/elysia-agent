@@ -23,9 +23,10 @@
 | REST、公开状态与 WS 身份 | 已实现 | 角色管理、会话选角、公开状态/重置接口及 generation/expression/Live2D/TTS 身份链已接通 |
 | Revision 传播与状态策略 | 已实现 | `follow_latest`/`pinned`、`preserve`/`reset_evolution`、pending 对账与 `stateVersion` CAS 已落地 |
 | Feature flag 与生成契约 | 已实现 | 真实 Agent 发布 `character_profiles=true`；生成的 TS/schema/raw contract 与 Electron fail-closed 门禁已对齐 |
+| 旧数据迁移（§15.3-15.8） | 已移除 | **产品决策：开发阶段不迁移旧数据，直接上新，旧数据在部署时清库。** 迁移骨架 `core/character/migration.py` 为纯死代码（零生产引用），连同其测试一并删除；不接入 lifecycle、不复制 state、不做 character_versions / 旧 LTM `legacy_unscoped` / pending 迁移。§15.3-15.8 影子迁移设计不执行。 |
 | 阶段 H 发布验收 | 待人工验收 | 仍需在 Windows Electron 对真实后端完成连接、选角/建会话、编辑/回滚、状态重置、重连及迟到帧冒烟 |
 
-下文的 A–H 分阶段内容和第 19 节 checkbox 保留为原始设计与验收定义，不再充当实时进度台账；实时结论以本快照及独立联调记录为准。任务中心与 Neo4j 仍按原边界暂缓。
+下文的 A–H 分阶段内容和第 19 节 checkbox 保留为原始设计与验收定义，不再充当实时进度台账；实时结论以本快照及独立联调记录为准。任务中心与 Neo4j 仍按原边界暂缓。§15 的迁移设计因「不迁移旧数据」决策不再执行，其余章节（领域模型/运行时/契约）仍为权威目标架构。
 
 ---
 
