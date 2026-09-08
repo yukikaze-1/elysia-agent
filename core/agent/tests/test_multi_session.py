@@ -435,6 +435,10 @@ class TestCharacterPublicAccessors:
         """character_state_stream 恒 true(本批,与 build_server_info 一致)。"""
         assert agent.character_state_stream is True
 
+    def test_character_profiles_true(self, agent):
+        """Stage H 完成 runtime/prompt/state 门禁后公开角色资料能力。"""
+        assert agent.character_profiles is True
+
 
 class TestRestartReentrancy:
     """C4/P1-07：同一 Agent 实例 restart 可重入——状态复位，不重复/不丢失。"""

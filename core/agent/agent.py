@@ -1189,8 +1189,12 @@ class Agent(AgentLifecycle, AgentServer):
 
         与 build_server_info 的 ServerInfoFeatures.character_state_stream 保持一致,
         避免 ws_handler/finalize 的发射 gate 与 capabilities 各自硬编码漂移。
-        character_profiles 恒 false(capabilities.py:107 已硬编码,不引此属性)。
         """
+        return True
+
+    @property
+    def character_profiles(self) -> bool:
+        """角色资料能力开关（Stage H runtime/prompt/state 门禁已闭环）。"""
         return True
 
     @property

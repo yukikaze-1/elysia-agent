@@ -70,6 +70,7 @@ class TestBuildServerInfo:
             assert info.server_version.startswith(__version__)
             # features.media_upload 如实声明（批次 7 已实现）
             assert info.features.media_upload is True
+            assert info.features.character_profiles is True
             # build_sha 字段上 wire：与 get_build_sha() 一致；git 可用时非 None
             sha = get_build_sha()
             assert info.build_sha == sha
