@@ -2,9 +2,11 @@
 
 > 文档导航：[项目文档](README.md) → [Core 层](../README.md)
 
-角色域的领域模型 + 多角色运行时容器骨架。渐进式——在现有 `character/{name}/config.yaml` + `personality.md` 之上**加一层薄壳**（Pydantic 模型），不重写 manifest v2。
+角色域的领域模型 + 多角色运行时。在现有 `character/{name}/config.yaml` + `personality.md` 之上渐进演进，不重写 manifest v2。
 
-**阶段：** M1/M2（`stage-ce` + `stage-d`）+ **M3 目标态（阶段 E）**。`stage-ce` 建领域模型 + 运行时容器骨架，engine 仍为**全局单例**；`stage-d` 新增 Custom Character CRUD（`CharacterDraft`/`CharacterService`/持久化仓储 + REST `character_routes`），但 `character_profiles=false` 恒抑制，custom 不参与真实聊天。**阶段 E（2026-09）重构为 M3 目标态：Engine per-instance + `CharacterRuntimeRegistry` + instance-scoped `CharacterRuntimeState`**——`_prepare_turn` 从会话 binding 解析 instance → registry → runtime.engine，状态权威从 `session.character_state` 切换到 `runtime.state`（且 `CharacterInstance.state` 持久化落点）。此批**删除了 `attach_session`/`sync_reflector_to_state`/`bind_character_engine`/`_pre_save_hook` 耦合**。
+**当前阶段（2026-09-08）：** 阶段 A–G 的后端实现已落地，阶段 H 的后端代码与前后端契约对齐已完成；真实 `Agent` 现在发布 `character_profiles=true` 与 `character_state_stream=true`。Custom Character 已可经 canonical instance binding 进入真实聊天；Engine、状态、Prompt 与长期记忆均按 instance 隔离。Windows Electron 真机连接与交互冒烟仍是本轮发布验收项，不由本文档宣称已通过。
+
+演进背景：`stage-ce` 建立领域模型与运行时容器骨架，`stage-d` 增加 Custom Character CRUD，阶段 E 将 Engine 重构为 per-instance 的 M3 目标态并移除 `attach_session` 等换绑耦合，阶段 F 完成记忆作用域隔离，阶段 G/H 补齐产品状态、角色身份 wire、真实 custom runtime、版本传播与前端门禁。
 
 ## 文件布局
 
@@ -12,9 +14,9 @@
 core/character/
 ├── definition.py         # CharacterDefinition — 稳定角色身份（架构稿 §5.2）
 ├── revision.py           # CharacterRevision — 不可变角色设定快照（§5.3）
-├── instance.py           # CharacterInstance — 用户正在相处并持续演化体（§5）
+├── instance.py           # CharacterInstance — 演化体 + revision policy/pending revision（§5/§7.5）
 ├── draft.py              # CharacterDraft + ConversationExample — 用户提交草稿（双层校验，阶段 D）
-├── service.py            # CharacterService — CRUD 业务编排 + CAS 冲突（阶段 D）
+├── service.py            # CharacterService — CRUD + Revision/状态策略传播 + CAS（阶段 D/H）
 ├── builtin_source.py     # BuiltinCharacterSource — 从 character/{name}/config.yaml 构建内置角色
 ├── catalog.py            # CharacterCatalog — 只读内置角色目录（无 Mongo 也能列/校验）+ get_revision
 ├── runtime.py            # CharacterRuntime — 单实例运行时容器（快照 + 懒 engine + memory_view/consolidator/reflector 持有 + lock/dirty）【阶段 E/F 激活】
@@ -43,9 +45,9 @@ core/character/
 ### CharacterDraft + CharacterService（阶段 D：Custom CRUD）
 
 - **CharacterDraft**（[draft.py](draft.py)）：用户提交的完整角色表单（custom 唯一入口）。双层校验：第一层 Pydantic 字段边界（displayName 1-64 等，§8.1）；第二层 `validate_semantic`（保留标签 `<conflict_rules>` 等 / Jinja 分隔符 / NUL → hard error；关键字启发式 → warning）。`examples` 用 `ConversationExample` 子对象（每组 user/assistant ≤1000 字符）。
-- **CharacterService**（[service.py](service.py)）：create/get/list/update/clone/archive/rollback/validate 业务编排。**Revision-first 写序**（先 `append_revision` 再 `cas_revision_pointer`，CAS 失败回滚已 append revision——`current_revision` 永远指向 durable revision，架构稿 §10.1）；`create`/`update`/`rollback` 均产生新 Revision（append-only，不删历史）；`list`/`get` 合并内置（catalog）与 custom（repo）。
+- **CharacterService**（[service.py](service.py)）：create/get/list/update/clone/archive/rollback/validate 业务编排。**Revision-first 写序**（先 `append_revision` 再 `cas_revision_pointer`，CAS 失败回滚已 append revision——`current_revision` 永远指向 durable revision，架构稿 §10.1）；`create`/`update`/`rollback` 均产生新 Revision（append-only，不删历史）；`list`/`get` 合并内置（catalog）与 custom（repo）。阶段 H 中，update/rollback 还会枚举相关 instance：`follow_latest` 原子推进到新 revision，`pinned` 保持原 revision；`preserve` 保留演化态，`reset_evolution` 通过 `stateVersion` CAS 重置并审计。中断的跨集合传播由 pending 字段与 runtime 懒加载对账收敛。
 - **CharacterRepository / CharacterRevisionRepository**（[core/storage](../../storage/README.md)）：`characters` + `character_revisions` 集合。snake_case 落库（`character_id`/`current_revision`），CAS 用 `modified_count>0` + `$set` 恒定含必变字段 `updated_at`（后端只暴露 `modified_count`，对齐 `idempotency_repo.py` 先例）。
-- **border**：`character_profiles=false` 恒抑制（决策 #12）——custom 本批只被 CRUD，不参与真实聊天（阶段 E/H 开启）。
+- **能力边界**：真实 `Agent` 已在四道隔离门禁通过后发布 `character_profiles=true`；轻量 facade/test double 若未实现该能力属性，`build_server_info` 仍 fail-closed 为 `false`。启用能力后，generation、expression、Live2D 与 TTS 起始帧使用完整角色身份三元组，客户端不得回退猜测“当前角色”。
 
 ### BuiltinCharacterSource（渐进式）
 

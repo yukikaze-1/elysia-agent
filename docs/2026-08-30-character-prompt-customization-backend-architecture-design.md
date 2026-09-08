@@ -2,19 +2,36 @@
 
 > 文档导航：[项目文档](../README.md)
 >
-> **文档状态：** 架构设计稿（目标设计，未实现）
-> **日期：** 2026-08-30
+> **文档状态：** 权威目标架构；后端主体已实现，阶段 H 代码/契约对齐完成，真机联调待验收
+> **初版日期：** 2026-08-30
+> **最近核对：** 2026-09-08
 > **事实基线：** `192.168.1.18:~/elysia-agent@a410a9dd2167d47fcc4678e6b4d3d68eafe419ad`
+> **当前实现基线：** backend `e7b52954` + frontend `99d4cc1`（后续文档提交不计入功能基线）
 > **前后端契约冻结：** `character-contract-v1`（2026-08-30；与前端《Cyrene 多角色、用户身份与自定义角色前端架构设计》对齐）
 > **权威范围：** 角色定义、自定义角色、角色 Prompt、四层人格状态、会话绑定、用户最小身份、角色记忆隔离、角色运行态与前端契约
-> **验证口径：** 本文基于后端代码与现有文档静态核对；目标接口、集合与类均不代表已经实现
+> **验证口径：** 第 2 节保留初始事实基线；目标设计与当前实现状态分开表达，是否发布以本节状态快照和实际验收记录为准
 > **明确排除：** 任务中心继续暂缓；Neo4j 关系图谱暂不实现；本文不规定最终前端 UI 视觉稿
+
+---
+
+## 实施状态快照（2026-09-08）
+
+| 能力面 | 当前状态 | 实现结论 |
+|---|---|---|
+| Prompt 内容所有权、角色领域模型、UserIdentity、Custom CRUD | 已实现 | 内置与 custom 共用 Definition/Revision/Instance 模型，custom authored profile 可编译进入真实 Prompt |
+| per-instance runtime、会话 binding、状态与记忆隔离 | 已实现 | Session 绑定 canonical instance；Engine、CharacterRuntimeState、MemoryScope/Consolidator/Reflector 按 instance 隔离 |
+| REST、公开状态与 WS 身份 | 已实现 | 角色管理、会话选角、公开状态/重置接口及 generation/expression/Live2D/TTS 身份链已接通 |
+| Revision 传播与状态策略 | 已实现 | `follow_latest`/`pinned`、`preserve`/`reset_evolution`、pending 对账与 `stateVersion` CAS 已落地 |
+| Feature flag 与生成契约 | 已实现 | 真实 Agent 发布 `character_profiles=true`；生成的 TS/schema/raw contract 与 Electron fail-closed 门禁已对齐 |
+| 阶段 H 发布验收 | 待人工验收 | 仍需在 Windows Electron 对真实后端完成连接、选角/建会话、编辑/回滚、状态重置、重连及迟到帧冒烟 |
+
+下文的 A–H 分阶段内容和第 19 节 checkbox 保留为原始设计与验收定义，不再充当实时进度台账；实时结论以本快照及独立联调记录为准。任务中心与 Neo4j 仍按原边界暂缓。
 
 ---
 
 ## 0. 结论与冻结决策
 
-当前后端已经有一套可工作的角色 Prompt 和四层人格系统，但它的真实边界是：**进程启动时加载唯一角色，所有会话共享这份角色定义；每个会话各自保存一份人格演化状态。** 它还不是多角色系统，也不能只靠增加角色 CRUD 变成多角色系统。
+在 2026-08-30 的事实基线中，后端已经有一套可工作的角色 Prompt 和四层人格系统，但它的真实边界是：**进程启动时加载唯一角色，所有会话共享这份角色定义；每个会话各自保存一份人格演化状态。** 它当时还不是多角色系统，也不能只靠增加角色 CRUD 变成多角色系统。
 
 本设计冻结以下十二项核心决策：
 
@@ -39,7 +56,7 @@
 
 ### 1.1 产品背景
 
-Cyrene 的定位是情感陪伴软件。当前产品界面已经能展示聊天、Live2D 和心情，但后端仍默认：
+Cyrene 的定位是情感陪伴软件。立项事实基线中的产品界面已经能展示聊天、Live2D 和心情，但后端仍默认：
 
 - 角色固定为 `config.yaml -> agent.character -> character/elysia/config.yaml`；
 - 用户固定为 `agent.user_name: 妖梦`；
@@ -75,7 +92,7 @@ Cyrene 的定位是情感陪伴软件。当前产品界面已经能展示聊天�
 
 ---
 
-## 2. 当前实现事实基线
+## 2. 立项时实现事实基线
 
 本节只描述 `a410a9d` 基线中已经存在的行为。
 
@@ -1371,16 +1388,16 @@ POST 不传 `expectedRevision`；PUT 必传并与 currentRevision 一致，否�
 
 ### 12.1 Feature flag
 
-`ServerInfoFeatures` 新增：
+`ServerInfoFeatures` 的兼容默认值仍为：
 
 ```text
 character_profiles: bool = false
 character_state_stream: bool = false
 ```
 
-只有当 REST、session binding、runtime isolation、memory scope 和生成契约均完成后，才可将 `character_profiles=true`。状态事件未实现前 `character_state_stream=false`。
+默认 `false` 是 schema/旧实现的兼容语义，不代表当前真实 Agent 的运行值。REST、session binding、runtime isolation、memory scope、状态事件和生成契约门禁现已完成，`build_server_info()` 对真实 Agent 明确发送 `character_profiles=true`、`character_state_stream=true`；未提供能力属性的轻量 facade/test double 仍按 fail-closed 返回 `false`。
 
-安全放量时，false 状态可以省略这两个新 key；Electron 对缺失严格映射为 false。配置未开启时，运行时继续发送 legacy 帧，不提前夹带角色字段或新事件；新增 DTO/字段先只存在于 schema/golden 中供离线对拍。
+Electron 对 key 缺失或非布尔值严格映射为 `false`。当 `character_profiles=true` 时，服务端必须携带本文规定的完整角色身份，客户端也必须执行身份一致性门禁；能力关闭时才允许 legacy 无身份帧走兼容路径。
 
 ### 12.2 Session replay
 
@@ -1821,6 +1838,8 @@ Module/system_prompt/
 - 生成 TS/schema，前端 check-types；
 - Windows Electron 真机联调；
 - feature flag 最后开启。
+
+实现注记（2026-09-08）：后端功能、生成契约、能力开关及 Electron 静态对齐已完成；Windows Electron 对真实后端的最终人工冒烟仍待单独记录，因此此处不把“联调”写成已验收。
 
 ### 17.1 前后端并行开工与依赖门
 
