@@ -104,7 +104,7 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
             voice_realtime=True,   # 批次 6（BE-061）
             media_upload=True,     # 批次 7 已实现（POST /api/uploads）
             idempotency_durable=get_store().durable,  # D6c：true=跨重启持久化 / false=内存降级窗口
-            character_profiles=agent.character_profiles,
+            character_profiles=getattr(agent, "character_profiles", False),
             character_state_stream=True,  # 阶段 G: character.state.changed 事件已实现
         ),
         services={
