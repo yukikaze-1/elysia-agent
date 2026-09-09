@@ -334,14 +334,15 @@ class _LifecyclePersistence:
     async def _db_health_loop(self) -> None:
         """统一恢复协调器：每 60s 检查全部存储依赖，恢复触发补偿 hook（P1-05）。
 
-        覆盖 session/message/token/attachment/version/generation/desktop/LTM 全部
-        repo——不再只检查前四类。每个 repo 的 health_check 为真实 ping（断网即时
+        覆盖 session/message/token/attachment/version/generation/desktop/LTM/identity
+        全部 repo——不再只检查前四类。每个 repo 的 health_check 为真实 ping（断网即时
         感知，`_db is not None` 假阳性已消除）。恢复触发 = False→True 边界（既有）
-        ∪ 依赖自报需补偿（BE-P1-07 `_dependency_needs_recovery`：idempotency 接线
-        `configured and not durable`——首轮 prev={} 无边界可依、离线启动首轮探测前
-        Mongo 已恢复时也当轮触发；configured guard 防 repo-None 时 durable 恒 False
-        的每轮空转死循环，S4）。触发后调用各 repo 补偿 hook（session 加载 pending、
-        LTM 同步脏条目、generation 崩溃残留清理、idempotency reconcile）。
+        ∪ 依赖自报需补偿（BE-P1-07 / P0-2 `_dependency_needs_recovery`：idempotency
+        接线 `configured and not durable`、identity 接线「权威 store 尚未装载成功」——
+        首轮 prev={} 无边界可依、离线启动首轮探测前 Mongo 已恢复时也当轮触发；
+        guard 防 repo-None/非权威时每轮空转死循环，S4）。触发后调用各 repo 补偿 hook
+        （session 加载 pending、LTM 同步脏条目、generation 崩溃残留清理、identity 重载
+        权威档案、idempotency reconcile）。
 
         Raises:
             单轮探测失败仅记日志，不中断循环。
@@ -464,14 +465,28 @@ class _LifecyclePersistence:
             return False
 
     def _dependency_needs_recovery(self, name: str) -> bool:
-        """依赖自报需补偿（BE-P1-07）：probe 为 true 不足以判定「已对齐」。
+        """依赖自报需补偿（BE-P1-07 / P0-2）：probe 为 true 不足以判定「已对齐」。
 
         首轮 prev={} 时 False→True 边界不可得（离线启动、首轮探测前 Mongo 已恢复——
-        health_check 内部重连直接返回 true）。本轮仅 idempotency 接线：configured 且
-        durable=False（= 操作级降级 ∨ 未 reconcile 记录）→ 执行 recover；configured
-        guard 防 repo-None（纯内存/未配置）时 durable 恒 False 的每轮空转死循环（S4）。
+        health_check 内部重连直接返回 true）。本轮接线两类：
+
+        - ``identity``（P0-2）：权威 store 已装配但**尚未装载成功**（缓存不可用）→ 当轮
+          补触发重载。否则「离线启动 + 首轮探测即 healthy」会让权威缓存永远是 None，
+          后续聊天持续 STORAGE_UNAVAILABLE。装载成功后 ``is_available`` 为 true，不再
+          重复装载。
+        - ``idempotency``：configured 且 durable=False（= 操作级降级 ∨ 未 reconcile
+          记录）→ 执行 recover；configured guard 防 repo-None（纯内存/未配置）时
+          durable 恒 False 的每轮空转死循环（S4）。
+
         其余依赖保持边界触发（已知潜在同类项，YAGNI 不推广）。
         """
+        if name == "identity":
+            store = getattr(self, "_user_identity_store", None)
+            return bool(
+                store is not None
+                and getattr(store, "is_authoritative", False)
+                and not store.is_available
+            )
         if name != "idempotency":
             return False
         from core.storage.idempotency import get_store

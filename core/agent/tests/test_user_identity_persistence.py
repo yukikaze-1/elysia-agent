@@ -5,7 +5,9 @@
 本文件用同一份假 Mongo 数据跨两个 Agent 实例验证重启后档案与 revision 不变。
 """
 
+import asyncio
 import os
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -31,6 +33,38 @@ def _make_agent(db: FakeDocumentDBBackend) -> Agent:
     agent._user_identity_repo._db = db          # noqa: SLF001
     agent._user_identity_repo._injected_db = True  # noqa: SLF001
     return agent
+
+
+def _isolate_probes(agent: Agent) -> None:
+    """除 identity 外全部探针恒 False——避免其它恢复 hook 触达真实 DB（测试聚焦身份）。"""
+    for owner in (agent._session_manager, agent._message_repo,   # noqa: SLF001
+                  agent._token_repo, agent._version_repo,        # noqa: SLF001
+                  agent._long_term, agent.idempotency_repo):     # noqa: SLF001
+        owner.health_check = AsyncMock(return_value=False)
+
+
+async def _run_health_rounds(agent: Agent, n_rounds: int) -> None:
+    """在单次真实 `_db_health_loop` 任务内跑 n 轮探测/恢复。
+
+    asyncio.sleep 替换为「前 n 轮立即返回、此后抛 CancelledError」——每轮 = 一次完整
+    探测 + 恢复触发判定（技法同 core/agent/tests/test_lifecycle_idempotency.py）。
+    """
+    rounds_done = 0
+
+    async def _fast_sleep(*args: object, **kwargs: object) -> None:
+        nonlocal rounds_done
+        if rounds_done >= n_rounds:
+            raise asyncio.CancelledError
+        rounds_done += 1
+
+    with patch("core.agent._lifecycle_persistence.asyncio.sleep",
+               side_effect=_fast_sleep):
+        task = asyncio.create_task(agent._db_health_loop())  # noqa: SLF001
+        try:
+            await asyncio.wait_for(task, timeout=5.0)
+        except asyncio.CancelledError:
+            pass
+    assert rounds_done == n_rounds, "health loop 未跑满预期轮次"
 
 
 @pytest.mark.asyncio
@@ -196,5 +230,69 @@ async def test_identity_reloaded_after_mongo_recovery():
         assert snapshot.revision == 2
         assert snapshot.displayName == "妖梦"
         assert snapshot.preferredAddress == "主人"
+    finally:
+        await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_identity_recovered_on_first_healthy_probe():
+    """P0-2：离线启动 + 首轮探测即 healthy（prev={} 无 False→True 边界）也必须重载权威档案。
+
+    否则 identity 缓存永远为 None，后续聊天持续 STORAGE_UNAVAILABLE。
+    """
+    db = _DurableFakeDB()
+    seed = _make_agent(db)
+    await seed.start()
+    try:
+        await seed._user_identity_store.update_if_revision(  # noqa: SLF001
+            1, {"displayName": "妖梦", "preferredAddress": "主人",
+                "pronouns": "她", "initialized": True})
+    finally:
+        await seed.stop()
+
+    agent = _make_agent(db)
+    agent._user_identity_repo.connect = AsyncMock(return_value=False)  # noqa: SLF001
+    await agent.start()
+    try:
+        assert agent.user_identity_store.get() is None
+        # Mongo 在健康循环首轮探测前已恢复：撤销打桩（探针直接 True）
+        del agent._user_identity_repo.connect  # noqa: SLF001
+        _isolate_probes(agent)
+
+        await _run_health_rounds(agent, 1)
+
+        loaded = agent.user_identity_store.get()
+        assert loaded is not None
+        assert loaded.revision == 2              # 用 Mongo 权威，非本地 bootstrap 的 revision 1
+        assert loaded.displayName == "妖梦"
+        assert loaded.preferredAddress == "主人"
+        assert agent.user_identity_store.is_available is True
+        assert agent._user_identity.revision == 2        # agent 侧同步  # noqa: SLF001
+        assert agent._user_identity.displayName == "妖梦"  # noqa: SLF001
+    finally:
+        await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_identity_recovery_retries_on_later_rounds_while_failing():
+    """恢复失败 → 保持 fail-closed，健康循环后续轮次继续重试（不静默放弃）。"""
+    agent = Agent(config=AppConfig())
+    attempts = 0
+
+    async def _down() -> bool:
+        nonlocal attempts
+        attempts += 1
+        return False
+
+    agent._user_identity_repo.connect = _down      # type: ignore[method-assign]  # noqa: SLF001
+    await agent.start()
+    try:
+        _isolate_probes(agent)
+        before = attempts
+        await _run_health_rounds(agent, 3)
+
+        assert attempts - before >= 3            # 每轮都重试
+        assert agent.user_identity_store.get() is None
+        assert agent.user_identity_store.is_available is False
     finally:
         await agent.stop()
