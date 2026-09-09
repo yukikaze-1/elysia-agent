@@ -40,6 +40,7 @@
 |------|------|
 | [多角色、角色 Prompt 与自定义角色后端架构设计](2026-08-30-character-prompt-customization-backend-architecture-design.md) | 现有十二段 Prompt/四层人格事实基线，Definition/Revision/Instance/UserIdentity 分层，角色状态与记忆隔离，`character-contract-v1` 前后端冻结契约，REST/WS、存储、迁移、测试及分阶段实施门禁 |
 | [Stage H 真实联调后端整改与复验清单](review/2026-09-09-多角色Stage-H真实联调后端整改与复验清单.md) | Windows Electron 真实联调后剩余的 reset 并发、UserIdentity 持久化、preview、校验错误、pinned 夹具及单用户范围决策；第二轮 P0-1 tail lease / P0-2 身份进入 Prompt / P0-3 身份 fail-closed / P1 归档一致性 |
+| [Stage H 第二轮联调后续整改清单（后端）](review/2026-09-10-多角色Stage-H第二轮联调后续整改清单-后端.md) | 第二轮真实联调结论；修复 pinned fixture 非法 createdBy、cleanup 遗留 revisions，冻结 A/B tail 强串行验收口径并规定最终复验门禁 |
 
 ### 架构与模块化评估
 
