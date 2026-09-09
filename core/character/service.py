@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from core.character.registry import CharacterRuntimeRegistry
     from core.character.runtime import CharacterRuntime
     from core.character.runtime_profile import RuntimeCharacterProfile
+    from core.profile.user_identity import UserIdentity
     from core.schema.character import CharacterRuntimeState
     from core.storage.character_instance_repo import CharacterInstanceRepository
 
@@ -696,17 +697,14 @@ class CharacterService:
             raise CharacterImmutableError(character_id)
         if definition.status == "archived":
             raise CharacterArchivedError(character_id)
+        # P1（归档一致性）：**先**把默认角色指向改到可用回退角色，**再**归档。
+        # 反序（先归档再改档案）在 profile CAS 冲突/存储失败时会留下
+        # 「defaultCharacterId 仍指向已归档角色」的悬空引用；本序下 profile 更新
+        # 失败则整个归档在写角色前失败——角色保持 active、档案未变，完全可恢复。
+        profile_wire = await self._retarget_default_character(character_id)
         await self.repo.archive(character_id)
         definition.status = "archived"
         definition.updatedAt = now_iso()
-        profile = self.user_identity_store.get()
-        profile_wire = None
-        if profile is not None and profile.defaultCharacterId == character_id:
-            replacement = self._fallback_character_id(character_id)
-            updated = await self.user_identity_store.update_if_revision(
-                profile.revision, {"defaultCharacterId": replacement}
-            )
-            profile_wire = updated or self.user_identity_store.get()
         from frontend_contract.rest import UserIdentityProfile
 
         return CharacterArchiveResult(
@@ -717,6 +715,33 @@ class CharacterService:
                 else UserIdentityProfile(**profile_wire.model_dump())
             ),
         )
+
+    # 默认角色回退的 CAS 重试上界（并发改档案时的有限重试；不引入无限循环）
+    DEFAULT_RETARGET_ATTEMPTS = 3
+
+    async def _retarget_default_character(
+        self, character_id: str
+    ) -> "UserIdentity | None":
+        """归档前把 defaultCharacterId 从被归档角色改到可用回退角色。
+
+        有限 CAS 重试（并发改档案时重新读取 revision 后重试）。存储不可用或重试
+        耗尽 → 抛错让归档整体失败（角色保持 active，不留悬空默认角色）。
+        """
+        replacement = self._fallback_character_id(character_id)
+        for _ in range(self.DEFAULT_RETARGET_ATTEMPTS):
+            profile = self.user_identity_store.get()
+            if profile is None:
+                return None
+            if profile.defaultCharacterId != character_id:
+                # 默认角色不是被归档角色——无需改动，响应沿用既有 None 语义。
+                return None
+            updated = await self.user_identity_store.update_if_revision(
+                profile.revision, {"defaultCharacterId": replacement}
+            )
+            if updated is not None:
+                return updated
+            # CAS 冲突（并发写档案）→ 重读后重试；耗尽则整体失败。
+        raise RevisionConflictError(character_id)
 
     async def rollback(
         self,
