@@ -24,6 +24,7 @@
 | Revision 传播与状态策略 | 已实现 | `follow_latest`/`pinned`、`preserve`/`reset_evolution`、pending 对账与 `stateVersion` CAS 已落地 |
 | Feature flag 与生成契约 | 已实现 | 真实 Agent 发布 `character_profiles=true`；生成的 TS/schema/raw contract 与 Electron fail-closed 门禁已对齐 |
 | 旧数据迁移（§15.3-15.8） | 已移除 | **产品决策：开发阶段不迁移旧数据，直接上新，旧数据在部署时清库。** 迁移骨架 `core/character/migration.py` 为纯死代码（零生产引用），连同其测试一并删除；不接入 lifecycle、不复制 state、不做 character_versions / 旧 LTM `legacy_unscoped` / pending 迁移。§15.3-15.8 影子迁移设计不执行。 |
+| 多用户 owner 隔离 | 已决策：V1 单用户 | **BE-STAGEH-06**：`ownerUserId` 是未来多用户预留；当前 access token 不映射 user principal（`usr_local_default` 固定）。「无权访问其他 owner 数据」记为 N/A — 单用户，不用第二 token 假测；多用户为独立架构工作（§13.3）。 |
 | 阶段 H 发布验收 | 待人工验收 | 仍需在 Windows Electron 对真实后端完成连接、选角/建会话、编辑/回滚、状态重置、重连及迟到帧冒烟 |
 
 下文的 A–H 分阶段内容和第 19 节 checkbox 保留为原始设计与验收定义，不再充当实时进度台账；实时结论以本快照及独立联调记录为准。任务中心与 Neo4j 仍按原边界暂缓。§15 的迁移设计因「不迁移旧数据」决策不再执行，其余章节（领域模型/运行时/契约）仍为权威目标架构。
@@ -1376,7 +1377,7 @@ POST 不传 `expectedRevision`；PUT 必传并与 currentRevision 一致，否�
 | 查询/更新/归档/回滚成功 | 200 |
 | 请求结构或角色内容不合法 | 400 |
 | 未认证 | 401 |
-| 无权访问其他 owner 数据 | 403 或按项目防枚举策略返回 404 |
+| 无权访问其他 owner 数据 | 403 或按项目防枚举策略返回 404（**V1 单用户：N/A**，见 §13.3） |
 | 角色/实例不存在 | 404 |
 | revision/stateVersion 冲突、busy、绑定不可改 | 409 |
 | 角色/Prompt 体积过大 | 413 |
@@ -1549,6 +1550,19 @@ character.catalog.changed
 - clone 内置角色允许，clone 他人 custom 在未来多用户模式下默认禁止；
 - 日志只记录 IDs、revision、长度、checksum 和错误码，不记录角色全文；
 - Debug PromptRecorder 仍可能包含全文，必须维持 debug 认证和部署隔离。
+
+**V1 单用户产品范围（BE-STAGEH-06 决策）**：`ownerUserId` 是**未来多用户隔离的预留字段**，
+当前 `AGENT_ACCESS_TOKEN` 只判断请求是否来自获准的产品客户端，**不映射用户身份**——
+`UserIdentity.userId` 固定 `usr_local_default`，character create/clone/list 直接用该常量，
+部分 get/update/archive 按 characterId 读取、没有 current-owner 参数。因此：
+
+- 「无权访问其他 owner 数据」（403/404）在 V1 记为 **N/A — 单用户**，不得用第二个 token
+  伪造 `ownerUserId=usr_other` 声称已验收（假绿）；
+- 保留未知 character/instance、archived 角色与安全 404/409 的既有真实联调结果；
+- **不删除** repository 中的 owner 字段与查询能力；
+- 真正多用户是独立架构工作（token/session → principal 映射、request context 全链传播、
+  全部资源 owner 校验、防枚举、双 principal 正反向集成测试、token 轮换/审计），
+  不塞进 Stage H 修复提交。
 
 ### 13.4 资产安全
 

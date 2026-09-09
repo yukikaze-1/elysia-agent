@@ -49,6 +49,16 @@ fail-closed 放行条件（任一满足即放行）：
 
 **批次 8a（`2c5a293`）**：放行后的安全提示由 `warn_if_unsecured` 输出——非回环绑定下仅配置一个 token（`AGENT_ACCESS_TOKEN` / `SERVER_AUTH_TOKEN` 缺一）→ 输出 **WARNING 级告警**，建议补齐另一个 token（否则管理端点回退用 access_token 校验或保持匿名）；两者都空 → ERROR 级告警（正常路径已被 fail-closed 前置拦截，除非显式 insecure opt-in）。
 
+### 1.5 单用户语义（V1，BE-STAGEH-06）
+
+**`AGENT_ACCESS_TOKEN` 是「获准的产品客户端」凭据，不是用户账号**——它不映射稳定 user principal：
+
+- request 上没有 user 身份；`UserIdentity.userId` 固定 `usr_local_default`；
+- character create/clone/list 等路径直接使用该常量，部分 get/update/archive 按 characterId 读取、无 current-owner 参数；
+- 因此**再配置一个有效 token 不会得到第二个用户**：用第二 token 注入 `ownerUserId=usr_other` 声称完成「403/404 owner 隔离」验收是假绿。
+
+V1 保持单用户产品范围：「无权访问其他 owner 数据」记为 **N/A — 单用户**；保留未知 character/instance、archived 角色与安全 404/409 的既有真实联调结果；repository 中 `owner_user_id` 字段与查询能力**保留**（未来多用户隔离预留，见架构稿 §13.3）。多用户是独立架构工作（principal 映射、request context 传播、全资源 owner 校验、防枚举、双 principal 集成测试、token 轮换/审计），不属 Stage H 范围。
+
 ## 2. TLS / HTTPS-WSS 部署
 
 后端**不内建 TLS**——生产由反向代理终止 TLS。推荐部署形态：
