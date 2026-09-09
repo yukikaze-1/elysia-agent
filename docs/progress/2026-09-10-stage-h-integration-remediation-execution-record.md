@@ -2,8 +2,8 @@
 
 > 文档导航：[项目文档](../../README.md) → [docs 文档索引](../README.md) → [多角色 Stage H 真实联调后端整改与复验清单](../review/2026-09-09-多角色Stage-H真实联调后端整改与复验清单.md)
 
-- **后端基线：** `main@65295a90` → **`main@d394f931`**（第一轮 6 个实现/决策提交）→ **`main@9bca4246`**（第二轮 4 项遗留整改 + 类型/文档/测试修正，见 §5）
-- **实现范围：** 清单 §1.2 全部 6 项（BE-STAGEH-01 ~ 06）+ 第二轮 §1.4 的 P0-1/P0-2/P0-3/P1
+- **后端基线：** `main@65295a90` → **`main@d394f931`**（第一轮 6 个实现/决策提交）→ **`main@9bca4246`**（第二轮 4 项遗留整改 + 类型/文档/测试修正，见 §5）→ **复核遗留 P0-R1/P0-R2**（`ac5ad2ea` / `0c5c45c5`，见 §6）
+- **实现范围：** 清单 §1.2 全部 6 项（BE-STAGEH-01 ~ 06）+ 第二轮 §1.4 的 P0-1/P0-2/P0-3/P1 + 复核 §1.5 的 P0-R1/P0-R2
 - **门禁：** ruff ✅ / `make check-types` ✅ 0 漂移 / `make pyright` ✅ 0 错误 / `make test-normal` ✅ **4099 passed, 2 skipped**（第一轮）→ 第二轮见 §5.8 / `make test-quick` ✅
 - **契约：** `schemaHash` **未变化**（两轮合计 0 个 `frontend_contract/` 或 `frontend/src/types/` 文件改动）
 
@@ -258,3 +258,77 @@ pinned seed 的真实库执行（`STAGE_H_FIXTURES=1 … seed_stage_h_pinned.py`
 `close_all → rt.flush → CharacterStateConflictError: chi_builtin_elysia`（DB `state_version` 与
 runtime 内存 CAS token 不一致；全日志仅 1 次）。影响面是关机时最后一次 runtime flush 被跳过
 （`close_all` 逐实例 flush，首个失败即抛出）。建议后续单独排查（并发写入方或重复 runtime 实例）。
+
+---
+
+## 6. 第二轮复核遗留修复（P0-R1 / P0-R2，2026-09-10）
+
+第二轮交付后复核发现两个未被定向测试覆盖的 P0 缺口。两者都不改 wire contract。
+
+### 6.1 交付清单
+
+| 任务 | 结论 | 提交 |
+|---|---|---|
+| P0-R1 tail 闭包晚读 `self._engine` | ✅ 已修复 | `ac5ad2ea` |
+| P0-R2 identity 首轮探测即健康时不触发恢复 | ✅ 已修复 | `0c5c45c5` |
+
+**仍未关闭：** 真实 Windows Electron 复验（§11 第 9~13 行）与 pinned seed 的真实库执行。
+
+### 6.2 P0-R1：tail 闭包必须使用本回合捕获的 Engine
+
+**根因：** `_archive_final_turn` 在 `create_task` 前捕获了 `runtime`/`target`（session），
+但闭包内仍写 `engine=self._engine`——该属性在 **tail task 执行时**才被读取。后台任务被
+调度后，下一轮 `_prepare_turn` 会重新赋值 `self._engine`；于是 A 角色上一轮的
+`buffer_message()`/CharacterReflector 会写进 B 角色的 Engine。
+
+**实现（`core/cognitive/finalize.py`）：** `create_task` 前急切捕获 `engine = self._engine`，
+闭包只使用局部 `engine`；`_after_response(engine=None)` 回退 `self._engine` 仅保留给
+直接调用/测试路径（`core/tests/test_phase3.py`）。后台执行与 tail lease 语义不变——
+异常/取消/shutdown/`create_task()` 失败路径仍释放 lease 与 session work reservation。
+
+**测试证据（`core/cognitive/tests/test_generation_tail_lease.py::
+test_tail_captures_turn_engine_not_next_turn_engine`）：** A 轮用 `engine_a` 调
+`_archive_final_turn()` → tail task 创建后、执行前把 `loop._engine` 换成 `engine_b` →
+等待 tail 完成 → `engine_a.buffer_message` 调用 **1 次**、`engine_b.buffer_message`
+**从未调用**、`is_generation_busy is False`。反向验证：临时改回 `engine=self._engine`
+该测试即失败（`Expected 'buffer_message' to have been called once. Called 0 times.`）。
+
+### 6.3 P0-R2：identity 在「首轮探测即健康」时也必须补偿装载
+
+**根因：** 恢复触发 = False→True 边界 ∪ `_dependency_needs_recovery(name)`，而后者只处理
+`idempotency`。离线启动后若 Mongo 在健康循环首轮探测前已恢复：`prev={}` 不存在边界，
+`identity.health_check()` 内部重连直接返回 True → `_recover_dependency("identity")`
+永不执行 → 权威身份缓存恒为 `None` → 后续聊天持续 `STORAGE_UNAVAILABLE`。
+
+**实现（`core/agent/_lifecycle_persistence.py::_dependency_needs_recovery`）：** 新增
+identity 分支——权威 store 已装配（`is_authoritative`）但尚未装载成功（`not is_available`）
+→ 当轮补触发重载；装载成功后 `is_available` 为 true，不再重复（避免每轮空转）。
+恢复失败 → `_recover_dependency` 返回 False → 该依赖本轮记 False，后续轮次按边界继续重试，
+身份保持 fail-closed；重载走 `repo.get` / `bootstrap_if_absent`，不会覆盖 Mongo 中更高
+revision 的档案。`/ready` 的 identity 门禁不变。
+
+**测试证据（`core/agent/tests/test_user_identity_persistence.py`）：**
+
+| 测试 | 断言 |
+|---|---|
+| `test_identity_recovered_on_first_healthy_probe` | 离线启动（`get() is None`）→ 撤销 connect 打桩使**首轮探测即 True** → 跑 1 轮真实 `_db_health_loop`（`asyncio.sleep` 打桩技法同 `test_lifecycle_idempotency.py`）→ 装载到 **revision 2**（非本地 bootstrap 的 1）/`displayName=妖梦`/`preferredAddress=主人`，`agent._user_identity` 同步 |
+| `test_identity_recovery_retries_on_later_rounds_while_failing` | connect 持续失败 → 3 轮真实循环内重试 ≥3 次，`get()` 仍为 None、`is_available` 为 False（fail-closed） |
+
+反向验证：临时移除 identity 分支，`test_identity_recovered_on_first_healthy_probe` 即失败。
+
+### 6.4 门禁与契约（本次复核轮）
+
+| 门禁 | 结果 |
+|---|---|
+| 定向（清单 §4 的 9 个文件） | ✅ **71 passed**（新增 3 条） |
+| `make lint` | ✅ All checks passed |
+| `make pyright` | ✅ 0 errors, 0 warnings |
+| `make check-types` | ✅ 0 漂移 + 41 错误码单源一致 |
+| `core/agent/tests/` + `core/cognitive/tests/` | ✅ 426 passed |
+| `make test-normal`（完整集 `not slow and not external`） | ✅ **4144 passed, 2 skipped**（76 deselected） |
+
+**契约：无前端契约变更**——`git diff --name-only <本轮基线>..HEAD -- frontend_contract/ frontend/src/types/`
+为 0 文件，`schemaHash` 未变化（`dece6f372e22f4f5`）。
+
+**运行版本：** 本次修复**未**重启后端服务（按交接要求，由用户手动启动）；线上进程仍是
+上一版 `96a60f1f`，本轮两个提交需在下次启动后生效。
