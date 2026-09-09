@@ -219,6 +219,40 @@ async def test_tail_lease_released_on_shutdown_skip():
 
 
 @pytest.mark.asyncio
+async def test_tail_captures_turn_engine_not_next_turn_engine():
+    """P0-1：tail task 必须用本回合捕获的 engine——晚读 self._engine 会把 A 轮
+    的 buffer_message/CharacterReflector 写进下一轮 B 角色的 engine。
+
+    复现：A 轮创建 tail task 后、tail 真正执行前，立即把 loop._engine 换成 engine_b。
+    """
+    rt = _rt()
+    loop = _make_loop(rt)
+    rt.consolidator = None
+    rt.reflector = None
+
+    engine_a = MagicMock()
+    engine_a.buffer_message = MagicMock(return_value=None)
+    engine_b = MagicMock()
+    engine_b.buffer_message = MagicMock(return_value=None)
+    loop._engine = engine_a
+
+    assert rt.try_begin_generation() is True
+    loop._current_runtime = rt
+    target = _target_session()
+
+    tail = await _run_archive(loop, target)
+    # tail 已创建但尚未执行——模拟下一轮 _prepare_turn 换绑 engine
+    loop._engine = engine_b
+    rt.end_generation()
+    await asyncio.wait_for(tail, timeout=5)
+
+    engine_a.buffer_message.assert_called_once()
+    engine_b.buffer_message.assert_not_called()
+    assert rt.is_generation_busy is False
+    await loop._output.close()
+
+
+@pytest.mark.asyncio
 async def test_tail_lease_awaits_reflector_task():
     """engine.buffer_message 返回的反思 task 必须被 tail 持有到结束。"""
     rt = _rt()

@@ -177,9 +177,12 @@ class CognitiveFinalize:
             await self._session_work_reserver(target.session_id)
             background_reserved = True
 
-        # Task 7（记忆 v2 隔离）：create_task 前急切读出 runtime——anti-race，与上方
-        # target/self._engine 同构。per-turn 不重绑 self._consolidator（会跨 instance 写错）。
+        # Task 7（记忆 v2 隔离）：create_task 前急切读出本轮 runtime + engine——anti-race。
+        # 后台 task 被调度后，下一轮 _prepare_turn 会重新赋值 self._engine；闭包若晚读，
+        # A 角色上一轮的 buffer_message/CharacterReflector 会写进 B 角色的 engine。
+        # 本回合的 session（target）/engine/consolidator/reflector 必须同属已完成回合。
         runtime = self._current_runtime
+        engine = self._engine
 
         # BE-STAGEH-01：tail lease——主回合 lease 由 process() 在返回时释放，但
         # 记忆沉淀/性格反思/MemoryReflector/会话保存仍在后台 task 中运行。tail
@@ -191,7 +194,7 @@ class CognitiveFinalize:
             try:
                 reflect_task = await self._after_response(
                     user_message, public_text,
-                    session=target, engine=self._engine,
+                    session=target, engine=engine,
                     consolidator=runtime.consolidator if runtime else None,
                     memory_reflector=runtime.reflector if runtime else None,
                 )

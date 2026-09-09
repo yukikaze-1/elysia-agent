@@ -889,7 +889,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             session: 批次 3 本轮目标会话（局部捕获——save 归属，防 active 切换后
                 in-flight 异步延续落错会话；None 时回退 self._session）
             engine: 批次 3 本轮 CharacterEngine（局部捕获——buffer_message 归属；
-                None 时回退 self._engine）
+                None 时回退 self._engine，仅服务直接调用/测试路径——生产后台 tail
+                一律传 create_task 前捕获的本回合 engine，避免晚读到下一轮的角色）
             consolidator: Task 7（记忆 v2 隔离）本轮 runtime 的 per-runtime consolidator
                 （局部捕获——防 resolver 切走后异步延续落错 instance；None 时回退
                 self._consolidator，仍保持 None，仅作兼容 fallback）
