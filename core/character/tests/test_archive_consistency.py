@@ -204,7 +204,13 @@ async def test_archive_default_retarget_survives_restart():
 @pytest.mark.asyncio
 async def test_archive_fails_closed_when_authoritative_identity_unavailable():
     """权威身份不可用 → 无法保证「归档后默认角色指向可用角色」，整体失败且角色保持 active。"""
-    store = UserIdentityStore(repo=UserIdentityRepository(db=None))
+    class _DownRepo(UserIdentityRepository):
+        """确定性离线：不触发任何真实连接（DocumentDBFactory 会读 env 里的 MONGODB_URI）。"""
+
+        async def connect(self) -> bool:
+            return False
+
+    store = UserIdentityStore(repo=_DownRepo())
     assert await store.connect(user_name="妖梦") is None
     assert store.get() is None
 
