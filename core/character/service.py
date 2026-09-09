@@ -699,7 +699,7 @@ class CharacterService:
         profile_wire = None
         if profile is not None and profile.defaultCharacterId == character_id:
             replacement = self._fallback_character_id(character_id)
-            updated = self.user_identity_store.update_if_revision(
+            updated = await self.user_identity_store.update_if_revision(
                 profile.revision, {"defaultCharacterId": replacement}
             )
             profile_wire = updated or self.user_identity_store.get()

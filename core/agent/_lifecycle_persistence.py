@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from core.desktop.bridge import DesktopToolBridge
     from core.character.runtime import CharacterRuntime
     from core.storage.character_instance_repo import CharacterInstanceRepository
+    from core.profile.profile_store import UserIdentityStore
+    from core.profile.user_identity import UserIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,9 @@ class _LifecyclePersistence:
         _long_term: LongTermMemory
         _message_repo: MessageRepository
         _version_repo: CharacterVersionRepository
+        _user_identity_store: "UserIdentityStore | None"
+        _user_name: str
+        _user_identity: "UserIdentity"
         _runtime_registry: CharacterRuntimeRegistry
         _instance_repo: CharacterInstanceRepository
         _make_runtime: Callable[[str], CharacterRuntime]
@@ -74,6 +79,16 @@ class _LifecyclePersistence:
         Returns:
             (mongo_ok, milvus_ok) 两个布尔值，分别表示 MongoDB 和 Milvus 是否连接成功。
         """
+        # BE-STAGEH-02：用户身份权威装载——Mongo user_identity_profiles 就绪后覆盖
+        # __init__ 的本地 bootstrap（否则重启回到 initialized=false/revision 1）。
+        # repo 不可用时 store 内部降级本地并记日志；MagicMock agent 无此挂点时跳过。
+        identity_store = getattr(self, "_user_identity_store", None)
+        if identity_store is not None:
+            try:
+                self._user_identity = await identity_store.connect(
+                    user_name=self._user_name)
+            except Exception:
+                logger.warning("用户身份装载失败，降级为本地 bootstrap", exc_info=True)
         mongo_ok, milvus_ok = await asyncio.gather(
             self._session_manager.connect_db(),
             self._long_term.connect(),
@@ -532,6 +547,16 @@ class _LifecyclePersistence:
             logger.warning("Idempotency repo close timed out")
         except Exception:
             logger.warning("Idempotency repo close failed", exc_info=True)
+
+        # BE-STAGEH-02：用户身份 repo 关闭（Mongo 权威连接；异常不阻断关停）
+        identity_store = getattr(self, "_user_identity_store", None)
+        if identity_store is not None:
+            try:
+                await asyncio.wait_for(identity_store.close(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.warning("UserIdentityStore close timed out")
+            except Exception:
+                logger.warning("UserIdentityStore close failed", exc_info=True)
 
         logger.debug("Shutting down embedding factory...")
         try:

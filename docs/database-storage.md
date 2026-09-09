@@ -1,6 +1,6 @@
 # 数据库存储表格
 
-项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **9 个集合**（Milvus 1 + MongoDB 8），外加若干内存/文件存储结构。没有使用 SQL 数据库。
+项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **13 个集合**（Milvus 1 + MongoDB 12），外加若干内存/文件存储结构。没有使用 SQL 数据库。
 
 | 集合 | 位置 | 用途 | 保留策略 |
 |------|------|------|----------|
@@ -9,6 +9,10 @@
 | `message_archive` | MongoDB | 对话消息永久归档 | 永久, 只增不删 |
 | `token_usage` | MongoDB | LLM token 统计 | 永久, 只增不删 |
 | `character_versions` | MongoDB | L2/C6 性格版本历史 | 永久，per content_type 独立计数 |
+| `characters` | MongoDB | 角色 Definition（`character-contract-v1`） | 永久；`character_id` 唯一索引，`status=archived` 软删 |
+| `character_revisions` | MongoDB | 角色 Revision 快照（append-only） | 永久；`(character_id, revision)` 唯一索引 |
+| `character_instances` | MongoDB | 角色实例 + `CharacterRuntimeState` | 永久；`instance_id` 唯一 + canonical 部分唯一索引 |
+| `user_identity_profiles` | MongoDB | 用户最小身份（BE-STAGEH-02，Mongo 权威） | 永久；`user_id` 唯一索引，revision CAS |
 | `generations` | MongoDB | generation 生命周期状态（BE-024） | 30天 TTL（按真实 BSON Date `ttl_expires_at`） |
 | `attachments` | MongoDB | 附件元数据（BE-070，fail-closed） | TTL 不设，生命周期由 GC 管（软删 24h / 未关联 7d） |
 | `desktop_calls` | MongoDB | 桌面工具调用状态（批次 4） | 30天 TTL（按真实 BSON Date `ttl_expires_at`） |
@@ -183,6 +187,23 @@
 
 **索引**: `call_id` unique + `(status, updated_at)` + `ttl_expires_at` TTL。
 **TTL**: 30 天（`expireAfterSeconds` 按真实 BSON Date `ttl_expires_at` 过期，与 generations 对齐）。
+
+### 集合: `user_identity_profiles`（数据库: `default`，BE-STAGEH-02）
+
+用户最小身份（`UserIdentity`），`UserIdentityRepository`。**Mongo 是权威事实源**——修复前只有进程内缓存，重启后端后 `/api/me` 回到 bootstrap。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `user_id` | String | 本地用户稳定 ID（首版 `usr_local_default`） |
+| `display_name` / `preferred_address` | String / String? | 显示名 / 希望被如何称呼 |
+| `pronouns` / `locale` / `timezone` | String | 代词（全局唯一）/ 语言 / 时区 |
+| `initialized` | Bool | 仅 UX 标记（是否已确认），只可由 false → true |
+| `default_character_id` | String? | 新会话默认角色 |
+| `revision` | Int | 乐观并发版本，从 1 起 |
+| `created_at` / `updated_at` | String（ISO） | 创建 / 最后更新 |
+
+**索引**: `user_id` unique。
+**写入语义**: 首次空库 `$setOnInsert` 原子 bootstrap（并发启动只有一个 winner）；更新走 `revision` CAS，`$set` 同一原子操作内递增 revision + 刷新 updated_at。repo 未连接时写路径 fail-closed（503 `STORAGE_UNAVAILABLE`）。
 
 ---
 

@@ -255,7 +255,11 @@ async def _me_put(request: web.Request) -> web.Response:
             else "chr_builtin_elysia"
         ),
     }
-    new = store.update_if_revision(wire.expectedRevision, updates)
+    try:
+        new = await store.update_if_revision(wire.expectedRevision, updates)
+    except StorageUnavailableError:
+        return _protocol_error_response(
+            "STORAGE_UNAVAILABLE", "用户身份存储不可用", 503, retryable=True)
     if new is None:
         current = store.get()
         details = {} if current is None else {"currentRevision": current.revision}

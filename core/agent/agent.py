@@ -98,6 +98,7 @@ from core.schema.types import IsoTimestamp, MessageId, SessionId
 from core.schema.utils import now_iso
 from core.schema.character import CharacterRuntimeState
 from core.profile.profile_store import UserIdentityStore
+from core.storage.user_identity_repo import UserIdentityRepository
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
@@ -130,8 +131,12 @@ class Agent(AgentLifecycle, AgentServer):
         self._config_path = config_path
         self._user_name = config.agent.user_name
         # Task 7（B1）：用户身份存储——启动用 config.agent.user_name 建 bootstrap profile，
-        # 供 _prepare_turn 读 pronouns（全局唯一「她」）。Mongo profile 就绪后为权威。
-        self._user_identity_store = UserIdentityStore()
+        # 供 _prepare_turn 读 pronouns（全局唯一「她」）。
+        # BE-STAGEH-02：Mongo user_identity_profiles 为权威——repo 在 __init__ 装配，
+        # Agent.start() 经 _start_persistence 装载（重启不再回到 bootstrap）。
+        self._user_identity_repo = UserIdentityRepository(
+            base_url=config.database.mongodb_uri)
+        self._user_identity_store = UserIdentityStore(repo=self._user_identity_repo)
         self._user_identity = self._user_identity_store.bootstrap(user_name=self._user_name)
 
         # ---- L0: Infrastructure (from Module/) ----

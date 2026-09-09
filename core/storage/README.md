@@ -13,6 +13,7 @@
 | `session_repo.py` | SessionRepository — MongoDB sessions 集合 |
 | `message_repo.py` | MessageRepository — MongoDB message_archive 集合 |
 | `token_repo.py` | TokenRepository — MongoDB token_usage 集合 |
+| `user_identity_repo.py` | UserIdentityRepository — MongoDB user_identity_profiles 集合（BE-STAGEH-02 用户身份权威：唯一 user_id 索引 + `$setOnInsert` bootstrap + revision CAS，fail-closed） |
 | `memory_repo.py` | MemoryRepository — Milvus long_term_memory 集合 |
 | `generation_repo.py` | GenerationRepository — MongoDB generations 集合（BE-024 生命周期） |
 | `character_version_repo.py` | CharacterVersionRepository — MongoDB character_versions 集合（L2/C6 版本历史） |
