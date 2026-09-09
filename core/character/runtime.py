@@ -9,6 +9,7 @@ runtime.state，flush 经 persist_fn 引擎持久化）。
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import TYPE_CHECKING, Callable, Awaitable
 
 from core.character.definition import CharacterDefinition
@@ -52,6 +53,13 @@ class CharacterRuntime:
         self._engine: "CharacterEngine | None" = None
         self.lock = asyncio.Lock()
         self.dirty = False
+        # BE-STAGEH-01：generation 与破坏性变更（reset-evolution）的互斥 lease。
+        # 判定 + 登记必须落在同一原子步内，故用同步 _op_guard——asyncio.Lock 的
+        # acquire 是 await 点，会让「检查」与「登记」之间被其他任务插入。
+        self._op_guard = threading.Lock()
+        self._generation_ops = 0
+        self._destructive_ops = 0
+        self._busy = False
         self.stateVersion = instance.stateVersion
         self.state: CharacterRuntimeState = instance.state or CharacterRuntimeState(
             instance_id=instance.instanceId,
@@ -74,6 +82,63 @@ class CharacterRuntime:
 
     def bind_engine(self, engine: "CharacterEngine") -> None:
         self._engine = engine
+
+    # ---- BE-STAGEH-01：generation / 破坏性变更 lease ----
+
+    @property
+    def is_generation_busy(self) -> bool:
+        return self._generation_ops > 0
+
+    @property
+    def is_destructive_mutation_active(self) -> bool:
+        return self._destructive_ops > 0
+
+    def begin_generation(self) -> None:
+        """登记一次 generation 生命周期（回合 finally 释放）。"""
+        with self._op_guard:
+            self._generation_ops += 1
+            self._busy = True
+
+    def end_generation(self) -> None:
+        with self._op_guard:
+            if self._generation_ops > 0:
+                self._generation_ops -= 1
+            self._busy = self._generation_ops > 0 or self._destructive_ops > 0
+
+    def try_begin_destructive_mutation(self) -> bool:
+        """破坏性变更（reset-evolution）的原子 check-and-set。
+
+        generation 在途或反思/压缩持锁时返回 False——调用方抛
+        CharacterBusyError。检查与登记同处一把同步锁内，即 BE-STAGEH-01
+        不变量 #3 要求的原子边界。
+
+        并发 reset 之间不做互斥（两个都可通过）：它们由 runtime.lock +
+        storage CAS 串行化，后者负责把第二个判为 STATE_CONFLICT。
+        """
+        with self._op_guard:
+            if self._generation_ops > 0:
+                return False
+            if self.evolution_locks_busy():
+                return False
+            self._destructive_ops += 1
+            self._busy = True
+            return True
+
+    def end_destructive_mutation(self) -> None:
+        with self._op_guard:
+            if self._destructive_ops > 0:
+                self._destructive_ops -= 1
+            self._busy = self._generation_ops > 0 or self._destructive_ops > 0
+
+    def evolution_locks_busy(self) -> bool:
+        """反思/压缩锁是否被持有——reset 的第二个 busy 来源。"""
+        engine = self._engine
+        locks = [
+            getattr(getattr(engine, "_reflector", None), "_reflect_lock", None),
+            getattr(getattr(engine, "_compression", None), "_compression_lock", None),
+            getattr(getattr(self, "reflector", None), "_lock", None),
+        ]
+        return any(lock is not None and lock.locked() for lock in locks)
 
     def set_persist_fn(self, fn: Callable[[CharacterRuntimeState], Awaitable[None]] | None) -> None:
         self._persist_fn = fn

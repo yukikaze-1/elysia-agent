@@ -126,6 +126,7 @@ class _TurnSetup:
     rid: str
     clock: TimingClock
     log_text: str
+    runtime: "CharacterRuntime | None" = None
 
 
 class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
@@ -504,12 +505,18 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             except Exception:
                 logger.debug("generation register 失败（Mongo 离线）", exc_info=True)
 
+        # BE-STAGEH-01：登记本回合 generation lease——reset-evolution 据此在
+        # generation 在途时立即 409（与反思/压缩锁共同构成 busy 判定）。放在
+        # _TurnSetup 之前最后一步，确保前面任何失败都不会泄漏 lease。
+        runtime.begin_generation()
+
         return _TurnSetup(
             target=target,
             gen_conversation_id=gen_conversation_id,
             rid=rid,
             clock=clock,
             log_text=log_text,
+            runtime=runtime,
         )
 
     async def _handle_turn_exception(self, e: BaseException) -> None:
@@ -591,6 +598,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 await self._handle_turn_exception(e)
             finally:
                 self._clock = None
+                # BE-STAGEH-01：释放本回合 generation lease（异常/取消路径同样走到）。
+                if setup.runtime is not None:
+                    setup.runtime.end_generation()
 
     # ---- Core loop: prompt construction ----
 

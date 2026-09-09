@@ -76,7 +76,12 @@ class CharacterRuntimeRegistry:
         return self._runtimes.get(instance_id)
 
     def mark_busy(self, instance_id: str, busy: bool) -> None:
-        """M3：标记 runtime 为 busy（生成/反思/压缩中），防驱逐。"""
+        """手工标记 runtime busy（防驱逐）。
+
+        BE-STAGEH-01 起 `_busy` 由 CharacterRuntime 的 lease
+        （begin_generation/try_begin_destructive_mutation）维护，本方法只作为
+        绕过 lease 的显式覆盖口，生产代码不再调用。
+        """
         rt = self._runtimes.get(instance_id)
         if rt is not None:
             setattr(rt, "_busy", busy)
@@ -127,7 +132,7 @@ class CharacterRuntimeRegistry:
                 if rt.dirty:
                     continue            # 未 flush 不驱逐
                 if getattr(rt, "_busy", False):
-                    continue            # 生成/反思/压缩中不驱逐（_busy 为 M3 预留——本批 runtime 是 skeleton，无代码设置它，保护 inert 但无害）
+                    continue            # generation/破坏性变更在途不驱逐（BE-STAGEH-01 起由 runtime lease 维护）
                 if self._is_bound_by_live_session(instance_id):
                     continue            # M2：仍被缓存 session 绑定不驱逐
                 evicted = instance_id

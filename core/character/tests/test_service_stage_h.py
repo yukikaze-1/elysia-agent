@@ -4,6 +4,8 @@
 reset/preview 的安全边界；路由层只负责解析和错误信封，不在这里伪造数据库或推理器。
 """
 
+import asyncio
+
 import pytest
 
 from core.character.builtin_source import BuiltinCharacterSource
@@ -402,22 +404,104 @@ async def test_reset_evolution_uses_state_cas_and_clears_only_evolution() -> Non
         )
 
 
+async def _persist_true(state: CharacterRuntimeState, version: int) -> bool:
+    return True
+
+
+# ── BE-STAGEH-01：generation 在途时 reset 必须 fail-closed ──
+#
+# 说明：旧测试 test_reset_evolution_rejects_busy_runtime_before_mutation 用手工持有
+# runtime.lock 代理「busy」。lease 落地后 reset 改为在 runtime.lock 上串行化（并发
+# reset 由 CAS 判冲突，见下方 race 测试），手工持锁不再等于 busy——该代理前提已失效，
+# 故由下面基于真实 generation lease 的测试取代。
+
+
 @pytest.mark.asyncio
-async def test_reset_evolution_rejects_busy_runtime_before_mutation() -> None:
+async def test_reset_evolution_rejects_generation_busy_runtime() -> None:
+    """generation lease 在途 → 409，且未发生任何持久化或内存改写。"""
     service = _make_service()
     runtime = _runtime_for_reset()
-    await runtime.lock.acquire()
+    before_version = runtime.stateVersion
+    persisted: list[tuple[CharacterRuntimeState, int]] = []
+
+    async def persist(state: CharacterRuntimeState, version: int) -> bool:
+        persisted.append((state, version))
+        return True
+
+    runtime.begin_generation()
     try:
         with pytest.raises(CharacterBusyError):
             await service.reset_evolution(
                 runtime.instance.instanceId,
-                expected_state_version=7,
+                expected_state_version=before_version,
                 runtime=runtime,
-                persist=lambda state, version: _persist_true(state, version),
+                persist=persist,
             )
     finally:
-        runtime.lock.release()
+        runtime.end_generation()
+
+    assert persisted == []
+    assert runtime.stateVersion == before_version
+    assert runtime.state.self_l2 == "长期自我"
 
 
-async def _persist_true(state: CharacterRuntimeState, version: int) -> bool:
-    return True
+@pytest.mark.asyncio
+async def test_reset_evolution_releases_lease_on_conflict() -> None:
+    """失败路径必须释放 lease——否则 instance 永久卡死，后续合法 reset 无法执行。"""
+    service = _make_service()
+    runtime = _runtime_for_reset()
+
+    with pytest.raises(CharacterStateConflictError):
+        await service.reset_evolution(
+            runtime.instance.instanceId,
+            expected_state_version=runtime.stateVersion + 1,
+            runtime=runtime,
+            persist=lambda state, version: _persist_true(state, version),
+        )
+
+    reset = await service.reset_evolution(
+        runtime.instance.instanceId,
+        expected_state_version=runtime.stateVersion,
+        runtime=runtime,
+        persist=lambda state, version: _persist_true(state, version),
+    )
+    assert reset.self_l2 == ""
+
+
+@pytest.mark.asyncio
+async def test_concurrent_resets_same_version_only_one_wins() -> None:
+    """两个相同 expectedStateVersion 的 reset：一个成功，另一个 STATE_CONFLICT。
+
+    并发 reset 由 runtime.lock + storage CAS 串行化——不是靠 lease 互斥（lease 只挡
+    generation/反思/压缩），因此第二个必须看到已推进的 stateVersion 而冲突。
+    """
+    service = _make_service()
+    runtime = _runtime_for_reset()
+    expected = runtime.stateVersion
+
+    async def persist(state: CharacterRuntimeState, version: int) -> bool:
+        await asyncio.sleep(0)
+        return True
+
+    results = await asyncio.gather(
+        service.reset_evolution(
+            runtime.instance.instanceId,
+            expected_state_version=expected,
+            runtime=runtime,
+            persist=persist,
+        ),
+        service.reset_evolution(
+            runtime.instance.instanceId,
+            expected_state_version=expected,
+            runtime=runtime,
+            persist=persist,
+        ),
+        return_exceptions=True,
+    )
+
+    errors = [r for r in results if isinstance(r, BaseException)]
+    ok = [r for r in results if not isinstance(r, BaseException)]
+    assert len(ok) == 1
+    assert len(errors) == 1
+    assert isinstance(errors[0], CharacterStateConflictError)
+    assert runtime.stateVersion == expected + 1

@@ -113,6 +113,36 @@ async def test_character_mutation_guard_owns_turn_lock_and_rejects_busy() -> Non
         process_lock.release()
 
 
+# ── BE-STAGEH-01：reset 路由的快速拒绝 ──
+
+
+@pytest.mark.asyncio
+async def test_reset_evolution_route_rejects_busy_turn(aiohttp_client):
+    """turn 在途（_process_lock 被持有）时 reset 路由 409 CHARACTER_BUSY。"""
+    from core.input.server import create_app
+
+    agent = _make_agent()
+    await agent.start()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+    try:
+        process_lock = agent.cognitive._process_lock  # noqa: SLF001
+        await process_lock.acquire()
+        try:
+            resp = await client.post(
+                "/api/character-instances/chi_builtin_elysia/reset-evolution",
+                json={"expectedStateVersion": 1},
+            )
+        finally:
+            process_lock.release()
+        assert resp.status == 409
+        body = await resp.json()
+        assert body["code"] == "CHARACTER_BUSY"
+        assert body["retryable"] is True
+    finally:
+        await agent.stop()
+
+
 # ── 阶段 G REST GET /api/character-instances/{id}/state（只读 fail-closed）──
 
 

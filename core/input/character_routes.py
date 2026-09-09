@@ -471,34 +471,37 @@ async def _instance_reset_evolution(request: web.Request) -> web.Response:
     instance_id = request.match_info["id"]
     try:
         request_model = CharacterResetRequest.model_validate(await _json_body(request))
-        runtime = await _load_instance_runtime(agent, instance_id)
-        repo = getattr(agent, "_instance_repo", None)
-        if repo is None:
-            raise CharacterStorageUnavailableError("CharacterInstanceRepository 未装配")
+        # BE-STAGEH-01 第一道快速拒绝：turn 在途时立即 409（领域 service 的
+        # runtime lease 仍独立守住不变量——route 只是快速路径，不是唯一防线）。
+        async with _character_mutation_guard(request.app):
+            runtime = await _load_instance_runtime(agent, instance_id)
+            repo = getattr(agent, "_instance_repo", None)
+            if repo is None:
+                raise CharacterStorageUnavailableError("CharacterInstanceRepository 未装配")
 
-        async def persist(state: object, new_version: int) -> bool:
-            return await repo.cas_state_version(
+            async def persist(state: object, new_version: int) -> bool:
+                return await repo.cas_state_version(
+                    instance_id,
+                    expected=request_model.expectedStateVersion,
+                    new_state=state,
+                    new_version=new_version,
+                )
+
+            reset_state = await _service(request.app).reset_evolution(
                 instance_id,
-                expected=request_model.expectedStateVersion,
-                new_state=state,
-                new_version=new_version,
+                expected_state_version=request_model.expectedStateVersion,
+                runtime=runtime,
+                persist=persist,
             )
-
-        reset_state = await _service(request.app).reset_evolution(
-            instance_id,
-            expected_state_version=request_model.expectedStateVersion,
-            runtime=runtime,
-            persist=persist,
-        )
-        public = _public_state(runtime)
-        result = CharacterResetResult(
-            state=public,
-            resetFields=list(RESET_FIELDS),
-        )
-        # Touch result construction with the state returned by the domain method so
-        # tests cannot accidentally pass a stale runtime snapshot.
-        _ = reset_state
-        return web.json_response(result.wire_dict(), status=200)
+            public = _public_state(runtime)
+            result = CharacterResetResult(
+                state=public,
+                resetFields=list(RESET_FIELDS),
+            )
+            # Touch result construction with the state returned by the domain method so
+            # tests cannot accidentally pass a stale runtime snapshot.
+            _ = reset_state
+            return web.json_response(result.wire_dict(), status=200)
     except (web.HTTPBadRequest, ValidationError):
         return _protocol_error_response("CHARACTER_VALIDATION", "reset 请求无效", 400)
     except Exception as exc:

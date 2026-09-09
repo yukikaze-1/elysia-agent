@@ -798,37 +798,36 @@ class CharacterService:
         runtime: "CharacterRuntime | None",
         persist: Callable[["CharacterRuntimeState", int], Awaitable[bool]],
     ) -> CharacterRuntimeState:
-        """Reset only evolution fields under runtime lock + storage CAS."""
+        """Reset only evolution fields under an atomic mutation lease + storage CAS.
+
+        BE-STAGEH-01：busy 判定与取得写权限共用一个原子边界（runtime 的同步
+        lease）——generation 在途时立即 409，不排队后静默执行。
+        """
         if runtime is None:
             raise CharacterInstanceNotFoundError(instance_id)
-        if runtime.lock.locked():
+        if not runtime.try_begin_destructive_mutation():
             raise CharacterBusyError(instance_id)
-        engine = runtime.engine
-        locks = [
-            getattr(getattr(engine, "_reflector", None), "_reflect_lock", None),
-            getattr(getattr(engine, "_compression", None), "_compression_lock", None),
-            getattr(getattr(runtime, "reflector", None), "_lock", None),
-        ]
-        if any(lock is not None and lock.locked() for lock in locks):
-            raise CharacterBusyError(instance_id)
-        async with runtime.lock:
-            current = runtime.stateVersion
-            if current != expected_state_version:
-                raise CharacterStateConflictError(instance_id, current)
-            candidate = runtime.state.model_copy(deep=True)
-            _clear_evolution(candidate)
-            new_version = current + 1
-            if not await persist(candidate, new_version):
-                raise CharacterStateConflictError(instance_id, current)
-            # Keep object identity: CharacterEngine and its subcomponents hold this object.
-            for field in type(candidate).model_fields:
-                setattr(runtime.state, field, getattr(candidate, field))
-            runtime.stateVersion = new_version
-            runtime.instance.state = runtime.state
-            runtime.instance.stateVersion = new_version
-            runtime.instance.updatedAt = now_iso()
-            _clear_runtime_components(runtime)
-            return runtime.state
+        try:
+            async with runtime.lock:
+                current = runtime.stateVersion
+                if current != expected_state_version:
+                    raise CharacterStateConflictError(instance_id, current)
+                candidate = runtime.state.model_copy(deep=True)
+                _clear_evolution(candidate)
+                new_version = current + 1
+                if not await persist(candidate, new_version):
+                    raise CharacterStateConflictError(instance_id, current)
+                # Keep object identity: CharacterEngine and its subcomponents hold this object.
+                for field in type(candidate).model_fields:
+                    setattr(runtime.state, field, getattr(candidate, field))
+                runtime.stateVersion = new_version
+                runtime.instance.state = runtime.state
+                runtime.instance.stateVersion = new_version
+                runtime.instance.updatedAt = now_iso()
+                _clear_runtime_components(runtime)
+                return runtime.state
+        finally:
+            runtime.end_destructive_mutation()
 
     async def reconcile_instance_revision(
         self, instance: "CharacterInstance"
@@ -971,15 +970,18 @@ class CharacterService:
 
     @staticmethod
     def _runtime_is_busy(runtime: "CharacterRuntime") -> bool:
-        if runtime.lock.locked() or bool(getattr(runtime, "_busy", False)):
+        """busy = 破坏性变更在途 / 实例锁被持有 / 反思压缩持锁。
+
+        generation 在途也算 busy——但它不改写 runtime.lock，故单列（BE-STAGEH-01
+        的 lease 是判定来源，不再是 M3 那个无人写入的 _busy 占位）。
+        """
+        if (
+            runtime.is_destructive_mutation_active
+            or runtime.is_generation_busy
+            or runtime.lock.locked()
+        ):
             return True
-        engine = runtime.engine
-        locks = [
-            getattr(getattr(engine, "_reflector", None), "_reflect_lock", None),
-            getattr(getattr(engine, "_compression", None), "_compression_lock", None),
-            getattr(getattr(runtime, "reflector", None), "_lock", None),
-        ]
-        return any(lock is not None and lock.locked() for lock in locks)
+        return runtime.evolution_locks_busy()
 
     def _raise_if_loaded_runtimes_busy(
         self, instances: list["CharacterInstance"]
@@ -1070,15 +1072,9 @@ class CharacterService:
 
     @staticmethod
     def _runtime_is_busy_except_instance_lock(runtime: "CharacterRuntime") -> bool:
-        if bool(getattr(runtime, "_busy", False)):
+        if runtime.is_generation_busy or runtime.is_destructive_mutation_active:
             return True
-        engine = runtime.engine
-        locks = [
-            getattr(getattr(engine, "_reflector", None), "_reflect_lock", None),
-            getattr(getattr(engine, "_compression", None), "_compression_lock", None),
-            getattr(getattr(runtime, "reflector", None), "_lock", None),
-        ]
-        return any(lock is not None and lock.locked() for lock in locks)
+        return runtime.evolution_locks_busy()
 
     async def _stage_pending_revision(
         self,
