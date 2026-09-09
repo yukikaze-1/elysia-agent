@@ -78,13 +78,16 @@ session.character_binding → instance_id（缺省回退 DEFAULT_INSTANCE_ID=chi
 | `characterInstanceId` | binding 的 `instance_id` | 角色实例身份 |
 | `characterId` | `runtime.definition.characterId` | 角色 ID（权威） |
 | `characterRevision` | `runtime.revision.revision` | 角色修订号 |
-| `userPronoun` | `_resolve_pronouns()` | UserIdentity.pronouns（B1 全局唯一「她」） |
+| `userPronouns` | 权威 `UserIdentity.pronouns` | 用户代词（B1 全局唯一「她」） |
 | `memoryScope` | `instance_id` | 预埋 F（= instanceId） |
 | `voice` | `runtime.revision.runtimeDefaults["voice"]` | 供 TTS 消费 |
 | `displayName` | `runtime.revision.displayName` | 供角色显示 |
 | `stateSnapshot` | `runtime.snapshot_state()` | frozen `CharacterRuntimeState` |
+| `userId` / `userDisplayName` / `userPreferredAddress` / `userLocale` / `userTimezone` / `userIdentityRevision` | 权威 `UserIdentityStore.get()`（P0-2） | 本轮用户身份快照；`effectiveUserAddress` = preferredAddress 优先，否则 displayName，再否则「用户」 |
 
-`_prepare_turn` 同时 `set_personality_engine(engine)` + `set_character(characterId, displayName)` 到 PromptAssembler。
+`_prepare_turn` 同时 `set_personality_engine(engine)` + `set_character(characterId, displayName)` 到 PromptAssembler，并把有效称呼经 `runtime.apply_user_address()` 投影到 consolidator / MemoryReflector / CharacterReflector。Prompt 的称呼/代词/时区一律取自本轮快照（不再读 `config.agent.user_name`）；权威身份不可用时抛 `StorageUnavailableError` → `generation.failed{STORAGE_UNAVAILABLE}`（P0-3 fail-closed）。
+
+**generation lease（BE-STAGEH-01 + P0-1）**：`_prepare_turn` 末步 `runtime.try_begin_generation()`（破坏性变更在途则抛 `CharacterBusyError`，`process()` 收口为 `CHARACTER_BUSY`），`process()` 的 `finally` 释放主 lease；`_finalize_turn → _archive_final_turn` 在 `create_task` 前再取一份 **tail lease**，tail task 在 `finally` 释放并 await `engine.buffer_message` 的反思 task——busy 覆盖到记忆沉淀/性格反思/MemoryReflector/会话保存全部结束。
 
 ### 批次 2：v2 结构化事件（generation.*）
 

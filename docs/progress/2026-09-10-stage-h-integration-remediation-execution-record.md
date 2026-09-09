@@ -2,10 +2,10 @@
 
 > 文档导航：[项目文档](../../README.md) → [docs 文档索引](../README.md) → [多角色 Stage H 真实联调后端整改与复验清单](../review/2026-09-09-多角色Stage-H真实联调后端整改与复验清单.md)
 
-- **后端基线：** `main@65295a90` → **`main@d394f931`**（6 个实现/决策提交）
-- **实现范围：** 清单 §1.2 全部 6 项（BE-STAGEH-01 ~ 06）
-- **门禁：** ruff ✅ / `make check-types` ✅ 0 漂移 / `make pyright` ✅ 0 错误 / `make test-normal` ✅ **4099 passed, 2 skipped** / `make test-quick` ✅ 3906 passed
-- **契约：** `schemaHash` **未变化**（本批 0 个 `frontend_contract/` 或 `frontend/src/types/` 文件改动）
+- **后端基线：** `main@65295a90` → **`main@d394f931`**（第一轮 6 个实现/决策提交）→ **`main@ab3b80b4`**（第二轮 4 个遗留整改提交，见 §5）
+- **实现范围：** 清单 §1.2 全部 6 项（BE-STAGEH-01 ~ 06）+ 第二轮 §1.4 的 P0-1/P0-2/P0-3/P1
+- **门禁：** ruff ✅ / `make check-types` ✅ 0 漂移 / `make pyright` ✅ 0 错误 / `make test-normal` ✅ **4099 passed, 2 skipped**（第一轮）→ 第二轮见 §5.5 / `make test-quick` ✅
+- **契约：** `schemaHash` **未变化**（两轮合计 0 个 `frontend_contract/` 或 `frontend/src/types/` 文件改动）
 
 ## 1. 交付清单
 
@@ -100,3 +100,116 @@ STAGE_H_FIXTURES=1 conda run -n Elysia python scripts/dev/seed_stage_h_pinned.py
 - **真实 Windows Electron 复验**：§11 矩阵 8 个场景（01/02/04/03/05/06 的成功与失败支路）——需真机。
 - **pinned seed 的真实库执行**（§2.5 命令），随后按 §6.3 做 revision 2 对照。
 - **阶段 8 发布、任务中心、Neo4j、前端 UI 改版、多用户产品化**：均按原边界排除。
+
+---
+
+## 5. 第二轮遗留整改（P0-1 / P0-2 / P0-3 / P1）
+
+第一轮关闭了「reset 在 generation 主回合期间被接受」等缺口，但复验后仍有 4 项结构性遗留。本节是第二轮交付。
+
+### 5.1 交付清单
+
+| 任务 | 结论 | 提交 |
+|---|---|---|
+| P0-1 generation tail lease | ✅ 已实现 | `15a7c4ab` |
+| P0-2 身份进入普通聊天 Prompt | ✅ 已实现 | `2a581267` |
+| P0-3 身份 fail-closed + 恢复协调器 | ✅ 已实现 | `7128b85d` |
+| P1 默认角色归档一致性 | ✅ 已实现 | `ab3b80b4` |
+
+**仍未关闭：** §11 复验矩阵的真实 Windows Electron 复验（含新增第 9~12 行）与 pinned seed 的真实库执行。
+
+### 5.2 P0-1：generation tail lease 并发测试摘要
+
+**根因：** `process()` 返回即 `end_generation()`，而 `_finalize_turn` 用 `create_task` 启动的
+`_after_response`（consolidator → CharacterReflector → MemoryReflector → session.save）仍在后台；
+reset 可在后台 task 真正取得 `_reflect_lock` 之前插入。
+
+**实现：**
+- `CharacterRuntime.begin_generation()` → **`try_begin_generation()`**：破坏性变更在途时拒绝开始
+  generation（对称互斥，不再只靠 route 的 `_process_lock`）；
+- 新增 `begin_generation_tail()`：`_archive_final_turn` 在 `create_task` **之前**同步取一份 lease，
+  tail task 在 `finally` 中释放；`create_task` 抛错路径同样释放；
+- tail task 额外 `await` `engine.buffer_message` 返回的反思 task——闭合「task 已创建、尚未持锁」的窗口；
+- `_handle_turn_exception` 新增映射：`CharacterBusyError` → `CHARACTER_BUSY`(retryable)、
+  `StorageUnavailableError` → `STORAGE_UNAVAILABLE`(retryable)。
+
+**证据（`core/cognitive/tests/test_generation_tail_lease.py`，6 条）：**
+
+| 场景 | 断言 |
+|---|---|
+| consolidator 被 `asyncio.Event` 卡住 | 主回合 lease 已释放 + `generation.completed` 已发出，`try_begin_destructive_mutation()` 仍为 False（=409） |
+| 放开 gate | tail 结束 → lease 释放 → reset 可进入；`session.save` 已 await |
+| `_after_response` 抛异常 | lease 仍被 `finally` 释放 |
+| tail task 被 cancel（shutdown/flush 超时） | lease 释放 |
+| `mark_shutting_down()` 后收尾 | 立即释放，consolidator 未被调用 |
+| destructive mutation 在途调 `process()` | 不进入 generation，`_handle_turn_exception` 收到 `CharacterBusyError` |
+
+runtime 级语义见 `core/character/tests/test_runtime_lease.py`（tail lease 维持 busy、per-instance 隔离、双向互斥）。
+
+### 5.3 P0-2：身份进入 Prompt 的证据
+
+- `TurnCharacterContext` 新增 `userId / userDisplayName / userPreferredAddress / userPronouns /
+  userLocale / userTimezone / userIdentityRevision`（**后端内部字段，wire contract 未改**）；
+  `effectiveUserAddress` = `preferredAddress` 非空优先 → `displayName` → 中性「用户」。
+- `_prepare_turn` 每轮从权威 store 读一次快照并冻结；有效称呼经 `runtime.apply_user_address()`
+  投影到 consolidator / MemoryReflector / CharacterReflector（**不改 `runtime.user_identity` 对象**）。
+- `PromptAssembler`：快照存在时称呼/代词/时区一律取自快照（调用方传参无法绕过）；C5 感官时间
+  按快照时区渲染（`ZoneInfo`，未知时区/缺 tzdata 回退本地时间；`requirements.txt` 补 `tzdata`）。
+
+**重启后 Prompt 证据（`core/agent/tests/test_user_identity_persistence.py::
+test_restarted_agent_uses_persisted_identity_in_turn_prompt`）：**
+Agent A 写 `displayName=妖梦 / preferredAddress=主人 / pronouns=她 / timezone=Asia/Shanghai`
+（revision 2）→ 停止 → Agent B 用同一份假 Mongo 启动 → `_prepare_turn` 冻结快照
+（`userIdentityRevision == 2`）→ 真实 `PromptAssembler.build_system_prompt(user_name="启动默认名")`
+渲染出 **`关于 主人：`**，且 **不含** `启动默认名`。
+
+其余锁定：`core/prompt/tests/test_identity_projection.py`（称呼优先级/空白回退/代词/时区/无上下文 override）、
+`core/cognitive/tests/test_identity_snapshot.py`（完整快照、新一轮采用新 revision 而在途上下文不变、
+投影到三个记忆组件、身份自由文本不进日志、无 store 回退）。
+
+### 5.4 P0-3：Mongo 离线启动与恢复证据
+
+- `UserIdentityStore.connect()`：权威模式装载失败 **不再降级本地** → `get()` 为 None、
+  `is_available=False`；新增 `is_authoritative / placeholder() / health_check()`；
+  权威模式下 `bootstrap()` 不缓存不落盘。
+- `Agent`：构造期用 `placeholder()` 取固定单用户 `usr_local_default`（不伪造档案）；
+  `_db_health_loop` 新增 `identity` 探针，`_recover_dependency("identity")` 在恢复边界重载权威档案
+  并原子替换缓存（不覆盖 Mongo 中更高 revision）。
+- `/ready`：`identity` 纳入 `chatReady` 门禁与 `dependencies`。
+
+**证据（`core/agent/tests/test_user_identity_persistence.py`）：**
+
+| 场景 | 断言 |
+|---|---|
+| Mongo 离线启动 | `store.get() is None`、`is_available is False`；`update_if_revision` 抛 `StorageUnavailableError`；`_identity_snapshot` 抛 `StorageUnavailableError`（generation fail-closed） |
+| Mongo 恢复 | `_recover_dependency("identity") is True`；`get()` 返回 revision 2 / `preferredAddress=主人`；`agent._user_identity` 同步；下一轮快照用持久化值 |
+| 恢复不覆盖更高 revision | 恢复装载到的 revision 等于 Mongo 中的 revision（不回到 bootstrap） |
+
+其余锁定：`core/input/tests/test_me_identity_failclosed.py`（GET/PUT 503、本地模式仍 404、
+CAS 409 保持、health_check 探针语义、preview 与会话创建 fail-closed）、
+`core/input/tests/test_health.py::test_ready_identity_down_503`。
+
+### 5.5 P1：归档一致性
+
+`archive()` 顺序调整为**先**在有限 CAS 重试内把 `defaultCharacterId` 改到可用回退角色、**再**归档；
+profile 更新失败或重试耗尽 → 整体失败，角色保持 `active`、档案未变（可恢复）。归档的不是默认角色时
+不触碰 profile（`userProfile` 仍为 None）。
+
+证据见 `core/character/tests/test_archive_consistency.py`（6 条）：顺序证据
+`events == ["retarget:2", "archive"]`、存储不可用 fail-closed（角色仍 active）、
+CAS 冲突重试成功、重试耗尽 409 且未归档、Mongo 权威重启后仍指向可用角色、非默认角色不受影响。
+
+### 5.6 决策记录（第二轮）
+
+| # | 决策 | 理由 | 代价（若判断有误） |
+|---|---|---|---|
+| R6 | 用 tail lease（同一计数器再取一份）而非在 `process()` 内 await 收尾 | 收尾必须保持 fire-and-forget（否则 TTS/回合边界被记忆沉淀阻塞）；tail lease 让 busy 覆盖到收尾结束而不改延迟 | 收尾较长时 reset 持续 409——语义上正确（有真实状态写入在途） |
+| R7 | tail task await 反思 task | `evolution_locks_busy()` 只看锁，看不到「已创建未启动」的 task，仍留窗口 | 收尾时长增加一次 LLM 反思的时间 |
+| R8 | 用户身份按回合投影到记忆组件（`set_user_name`）而非每轮重建组件 | 组件持有跨轮缓冲/上下文；重建会丢状态。回合由 `_process_lock` 全局串行，无并发写 | 若未来放开并发回合，需改为按回合传参 |
+| R9 | 重试耗尽抛 `RevisionConflictError`（409 retryable） | 语义是「读到的档案 revision 已过期」；该端点无请求体，客户端直接重试即可 | 若前端把该码解释为「角色 revision 冲突」会显示不精确的提示 |
+| R10 | `/ready` 把 identity 纳入 chatReady | 身份不可用时 v2 send 不应用错误身份继续（P0-3 要求 readiness 为 false） | 身份存储抖动会让 `/ready` 短暂 503（与 mongo 门禁同性质） |
+
+### 5.7 schemaHash
+
+**未变化。** 两轮合计 `git diff --name-only 65295a90..HEAD -- frontend_contract/ frontend/src/types/`
+为 **0 文件**；`make check-types`（17 个 golden frames `--check` + 41 错误码单源）通过。

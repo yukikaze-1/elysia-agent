@@ -59,6 +59,8 @@ fail-closed 放行条件（任一满足即放行）：
 
 V1 保持单用户产品范围：「无权访问其他 owner 数据」记为 **N/A — 单用户**；保留未知 character/instance、archived 角色与安全 404/409 的既有真实联调结果；repository 中 `owner_user_id` 字段与查询能力**保留**（未来多用户隔离预留，见架构稿 §13.3）。多用户是独立架构工作（principal 映射、request context 传播、全资源 owner 校验、防枚举、双 principal 集成测试、token 轮换/审计），不属 Stage H 范围。
 
+**身份读取 fail-closed（P0-3）**：单用户身份同样**不做本地伪造**——装配 `UserIdentityRepository` 后 Mongo 不可用时 `UserIdentityStore.get()` 恒为 `None`（`is_available=false`），`/api/me` 读写 503、preview/会话创建 503、generation 以 `STORAGE_UNAVAILABLE` 失败，`/ready` 的 `chatReady` 为 false；Mongo 恢复由健康循环的 `identity` 探针触发重载，无需重启服务。`usr_local_default` 只是固定 userId 常量（scope/owner 字段用），不是可用的身份档案。
+
 ## 2. TLS / HTTPS-WSS 部署
 
 后端**不内建 TLS**——生产由反向代理终止 TLS。推荐部署形态：
@@ -173,11 +175,11 @@ server {
 
 - **`/health`（liveness）**：纯进程存活检查——FSM/uptime/build 运行信息，**零网络探针**（Mongo/Milvus/idempotency 一律不 `wait_for`），**恒 200**，任何依赖挂起都在小固定预算内返回；不携带依赖状态。
 - **`/ready`（readiness）**：HTTP 门禁 = **核心 chat**：
-  - `chatReady`（=HTTP 门禁）= mongo 三 repo（session+message+attachment）**并行真实 ping** 且（非 product 模式 或 idempotency 真实 ping）；
+  - `chatReady`（=HTTP 门禁）= mongo 三 repo（session+message+attachment）**并行真实 ping** 且 **用户身份权威存储可达**（`dependencies.identity`，P0-3：身份不可用时不得用占位身份继续生成/建会话）且（非 product 模式 或 idempotency 真实 ping）；
   - **product 模式 idempotency 门禁含补偿状态（BE-P1-07，2026-08-12）**：`idempotency_ok = ping AND not needs_recovery`——降级期内存幂等记录未 reconcile（`_needs_recovery=True`）时 chatReady 保持 false（用 needs_recovery 而非 durable，避免零降级瞬时窗口误伤）；
   - **Milvus 不门禁 HTTP**（文本可降级使用）——经 `fullReady`（=`chatReady` AND milvus）可观测；
   - **product 模式（非回环绑定）idempotency 失效或未 reconcile → `/ready` 503**（v2 send 不可用）；dev 模式（回环）允许 idempotency 降级不门禁；
-  - payload：`status`（全依赖 ok→"ok" 否则 "degraded"，可观测非门禁）、`chatReady`、`fullReady`、`dependencies`（mongo/milvus/idempotency 明细）。
+  - payload：`status`（全依赖 ok→"ok" 否则 "degraded"，可观测非门禁）、`chatReady`、`fullReady`、`dependencies`（mongo/milvus/idempotency/identity 明细）。
 - **语义**：`/ready=200` ⇒ v2 send 可用；`/ready=503` ⇒ 读 payload 的 `chatReady`/`fullReady`/`dependencies` 判断文本可用/不可用原因。Electron 探活口径：`/health` 只看进程存活，`/ready` 才是文本可用门禁。
 
 ## 4. 已知缺口（后置批次）
