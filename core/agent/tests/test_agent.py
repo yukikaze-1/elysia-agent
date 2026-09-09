@@ -27,9 +27,17 @@ def agent():
 
 class TestUserIdentityStoreInjection:
     def test_agent_injects_user_identity_store(self, agent):
-        """bootstrap 后 _user_identity 非 None，store.get().pronouns == '她'。"""
+        """P0-3：权威 repo 装配 → 构造期不伪造档案（get() 为 None），占位身份取固定 userId。
+
+        真实身份由 start() 的 connect() 从 Mongo 装载（见
+        core/agent/tests/test_user_identity_persistence.py）。
+        """
         assert agent._user_identity is not None
-        assert agent._user_identity_store.get().pronouns == "她"
+        assert agent._user_identity.userId == "usr_local_default"
+        store = agent.user_identity_store
+        assert store.is_authoritative is True
+        assert store.get() is None
+        assert store.is_available is False
 
 
 class TestCharacterEngineInstanceIdentity:

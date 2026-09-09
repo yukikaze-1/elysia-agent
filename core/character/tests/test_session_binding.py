@@ -140,3 +140,29 @@ async def test_resolution_rejects_missing_or_archived_character():
     )
     with pytest.raises(CharacterArchivedError):
         await service.resolve_for_create("chr_custom_archived")
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_create_fail_closed_when_identity_unavailable():
+    """P0-3：权威身份不可用时不静默回退内置默认角色——fail-closed（路由映射 503）。"""
+    from core.storage.base import StorageUnavailableError
+    from core.storage.user_identity_repo import UserIdentityRepository
+
+    class _DownRepo(UserIdentityRepository):
+        async def connect(self) -> bool:
+            return False
+
+    identity = UserIdentityStore(repo=_DownRepo())
+    await identity.connect(user_name="用户")
+    assert identity.get() is None
+
+    characters = AsyncMock()
+    characters.get.return_value = _detail(character_id="chr_builtin_cyrene")
+    service = CharacterSessionBindingService(
+        character_service=characters,
+        instance_repo=CharacterInstanceRepository(db=FakeDocumentDBBackend()),
+        user_identity_store=identity,
+    )
+    with pytest.raises(StorageUnavailableError):
+        await service.resolve_for_create(None)
+    characters.get.assert_not_awaited()

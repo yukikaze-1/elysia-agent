@@ -198,3 +198,24 @@ async def test_prompt_adapter_builds_stateless_prompt_without_tools() -> None:
     assert _BODY in system          # authored C1 已注入
     assert "预览角色" in system
     assert backend.kwargs == {}     # 不挂任何工具
+
+
+@pytest.mark.asyncio
+async def test_preview_fail_closed_when_identity_unavailable() -> None:
+    """P0-3：权威身份不可用时 503 语义（CharacterStorageUnavailableError），不调用推理口。"""
+    from core.character.service import CharacterStorageUnavailableError
+    from core.storage.user_identity_repo import UserIdentityRepository
+
+    class _DownRepo(UserIdentityRepository):
+        async def connect(self) -> bool:
+            return False
+
+    store = UserIdentityStore(repo=_DownRepo())
+    await store.connect(user_name="妖梦")
+    assert store.get() is None
+
+    port = _FakePort()
+    service = _service(port, store=store)
+    with pytest.raises(CharacterStorageUnavailableError):
+        await service.preview(_draft(), user_message="你好")
+    assert port.calls == []

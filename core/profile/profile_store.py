@@ -1,13 +1,15 @@
 """UserIdentityStore — 用户身份存取（Mongo 权威 + 进程内只读缓存）。
 
 BE-STAGEH-02：Mongo `user_identity_profiles` 是权威事实源（`UserIdentityRepository`）；
-本 store 只持有读缓存，供同步读路径（`get()`）使用。无 repo 装配（单测/纯本地）时
-降级为内存 + 可选 JSONL。
+本 store 只持有读缓存，供同步读路径（`get()`）使用。无 repo 装配（单测/显式本地
+模式）时降级为内存 + 可选 JSON 文件。
 
-- `get()` 同步返回缓存（重启后由 `connect()` 从 Mongo 装载）；
-- `connect()` 异步建连 + 装载/原子 bootstrap；
-- `update_if_revision()` 异步 CAS——repo 已装配但不可用时 fail-closed（503），
-  绝不悄悄写本地造成「档案已更新」的假象。
+P0-3（fail-closed）：
+- 装配了 repo 时**绝不**伪造本地 profile——`connect()` 装载失败即 `get()` 返回
+  None、`is_available` 为 False，依赖身份的业务（`/api/me` 写、preview、会话创建、
+  generation）一律 fail-closed 返回稳定公开错误；
+- `health_check()` 供数据库恢复协调器探测；Mongo 恢复后 `connect()` 重新装载权威
+  档案并原子替换缓存（不覆盖 Mongo 中更高 revision 的文档）。
 """
 
 from __future__ import annotations
@@ -38,32 +40,62 @@ class UserIdentityStore:
         self._cached: UserIdentity | None = None
         self._lock = threading.RLock()
 
+    # ---- 权威性判定 ----
+
+    @property
+    def is_authoritative(self) -> bool:
+        """是否装配了权威 repo（生产 Agent 装配路径）。"""
+        return self._repo is not None
+
+    @property
+    def is_available(self) -> bool:
+        """权威身份是否可用。非权威模式（本地/单测）恒 True。"""
+        if self._repo is None:
+            return True
+        return self._cached is not None and self._repo.is_connected
+
     # ---- 生命周期 ----
 
-    async def connect(self, *, user_name: str) -> UserIdentity:
+    async def connect(self, *, user_name: str) -> UserIdentity | None:
         """建连 repo 并装载权威 profile；首次空库原子 bootstrap。
 
-        repo 不可用时保留本地 bootstrap（开发降级）——写路径随后 fail-closed，
-        不会让「档案已更新」变成只存在于内存的假象。
+        权威模式装载失败**不**降级为本地 profile——返回 None 并清空缓存，业务侧
+        据此 fail-closed。无 repo 时走本地 bootstrap。
+
+        Returns:
+            装载到的权威身份；权威模式不可用时为 None。
         """
         repo = self._repo
-        if repo is not None:
-            try:
-                if await repo.connect():
-                    loaded = await repo.get(LOCAL_DEFAULT_USER_ID)
-                    if loaded is None:
-                        seed = UserIdentity(
-                            displayName=user_name, pronouns=LOCAL_DEFAULT_PRONOMS)
-                        loaded = await repo.bootstrap_if_absent(seed)
-                    with self._lock:
-                        self._cached = loaded
-                    return loaded
-                logger.warning("UserIdentityRepository 未连接，用户身份降级为本地缓存")
-            except Exception:
-                logger.warning(
-                    "UserIdentityRepository 装载失败，用户身份降级为本地缓存",
-                    exc_info=True)
-        return self.bootstrap(user_name=user_name)
+        if repo is None:
+            return self.bootstrap(user_name=user_name)
+        try:
+            if not await repo.connect():
+                raise StorageUnavailableError("UserIdentityRepository 未连接")
+            loaded = await repo.get(LOCAL_DEFAULT_USER_ID)
+            if loaded is None:
+                seed = UserIdentity(
+                    displayName=user_name, pronouns=LOCAL_DEFAULT_PRONOMS)
+                loaded = await repo.bootstrap_if_absent(seed)
+            with self._lock:
+                self._cached = loaded
+            return loaded
+        except Exception:
+            logger.warning(
+                "用户身份权威装载失败——身份不可用（fail-closed，不伪造本地档案）",
+                exc_info=True)
+            with self._lock:
+                self._cached = None
+            return None
+
+    async def health_check(self) -> bool:
+        """权威 repo 可达性（恢复协调器探针）。无 repo（本地模式）视为 ok。"""
+        repo = self._repo
+        if repo is None:
+            return True
+        try:
+            return bool(await repo.health_check())
+        except Exception:
+            return False
 
     async def close(self) -> None:
         if self._repo is not None:
@@ -73,17 +105,42 @@ class UserIdentityStore:
 
     def get(self) -> UserIdentity | None:
         with self._lock:
+            if self._repo is not None:
+                # 权威模式：只信 Mongo 装载结果——绝不回退 JSON 文件或内存伪造。
+                return self._cached
             if self._cached is not None:
                 return self._cached
             if self._storage_path and self._storage_path.exists():
                 self._cached = self._load_from_file()
             return self._cached
 
+    def placeholder(self, user_name: str) -> UserIdentity:
+        """构造期占位身份——固定单用户 userId，不缓存、不持久化。
+
+        仅供 Agent 构造期的 scope/owner 常量使用（`usr_local_default` 是 V1 单用户
+        常量）。权威档案必须由 `connect()` 从 Mongo 装载；`get()` 在装载成功前恒为
+        None。本地模式（无 repo）下等价于 `bootstrap()`。
+        """
+        with self._lock:
+            if self._cached is not None:
+                return self._cached
+        return self.bootstrap(user_name=user_name)
+
     # ---- 写 ----
 
     def bootstrap(self, user_name: str) -> UserIdentity:
-        """本地 bootstrap（同步、无 Mongo）——repo 未装配/不可用时的降级路径。"""
+        """本地 bootstrap——仅无 repo 的本地/单测模式（写入内存 + 可选 JSON 文件）。
+
+        权威模式（repo 已装配）下**不**缓存、不落盘，只返回占位身份：生产装配路径
+        的真实身份只能来自 `connect()` 的 Mongo 装载，装载失败即 fail-closed。
+        """
         with self._lock:
+            if self._repo is not None:
+                return UserIdentity(
+                    userId=LOCAL_DEFAULT_USER_ID,
+                    displayName=user_name,
+                    pronouns=LOCAL_DEFAULT_PRONOMS,
+                )
             if self._cached is not None:
                 return self._cached
             if self._storage_path and self._storage_path.exists():
@@ -95,7 +152,7 @@ class UserIdentityStore:
             return self._cached
 
     async def save(self, identity: UserIdentity) -> UserIdentity:
-        """写前 touch（updatedAt + revision++）。Mongo 未装配时写本地文件。"""
+        """写前 touch（updatedAt + revision++）。无 repo 时写本地文件。"""
         with self._lock:
             identity.touch()
             self._cached = identity
@@ -110,13 +167,14 @@ class UserIdentityStore:
         defaultCharacterId/initialized；不接收 userId/revision/createdAt/updatedAt。
         冲突返回 None（调用方抛 USER_PROFILE_REVISION_CONFLICT）。
 
-        repo 已装配时以 Mongo 为权威（CAS 原子）；repo 存在但不可用 → fail-closed。
+        repo 已装配时以 Mongo 为权威（CAS 原子）；权威身份不可用 → fail-closed
+        （StorageUnavailableError → 503），不写本地造成「档案已更新」的假象。
         """
         normalized = self._normalize_updates(updates)
         repo = self._repo
         if repo is not None:
-            if not repo.is_connected:
-                raise StorageUnavailableError("UserIdentityRepository 未连接")
+            if not self.is_available:
+                raise StorageUnavailableError("用户身份权威存储不可用")
             new = await repo.update_if_revision(
                 LOCAL_DEFAULT_USER_ID, expected_revision, normalized)
             if new is not None:

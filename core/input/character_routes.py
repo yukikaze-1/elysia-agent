@@ -227,8 +227,14 @@ def _query_params(request: web.Request, *, allowed: set[str]) -> _QueryParams:
 
 
 async def _me_get(request: web.Request) -> web.Response:
-    profile = request.app["user_identity_store"].get()
+    store = request.app["user_identity_store"]
+    profile = store.get()
     if profile is None:
+        # P0-3：权威存储不可用时不得报「未初始化」（会诱导客户端重新初始化并覆盖
+        # 用户认知）——按稳定公开错误 fail-closed。
+        if store.is_authoritative and not store.is_available:
+            return _protocol_error_response(
+                "STORAGE_UNAVAILABLE", "用户身份存储不可用", 503, retryable=True)
         return _protocol_error_response("USER_PROFILE_NOT_FOUND", "用户身份未初始化", 404)
     return web.json_response(UserIdentityProfile(**profile.model_dump()).wire_dict(), status=200)
 

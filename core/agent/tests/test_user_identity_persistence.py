@@ -134,3 +134,67 @@ async def test_restarted_agent_uses_persisted_identity_in_turn_prompt():
             setup.runtime.end_generation()
     finally:
         await agent_b.stop()
+
+
+@pytest.mark.asyncio
+async def test_offline_startup_keeps_identity_unavailable_and_fails_closed():
+    """P0-3：Mongo 离线启动不伪造身份——get() 为 None，写/generation 均 fail-closed。"""
+    from unittest.mock import AsyncMock
+
+    from core.storage.base import StorageUnavailableError
+
+    agent = Agent(config=AppConfig())
+    agent._user_identity_repo.connect = AsyncMock(return_value=False)  # noqa: SLF001
+    await agent.start()
+    try:
+        store = agent.user_identity_store
+        assert store.get() is None
+        assert store.is_available is False
+        with pytest.raises(StorageUnavailableError):
+            await store.update_if_revision(1, {"displayName": "新名"})
+        # generation 取本轮身份快照 → fail-closed（不拿占位身份继续聊天）
+        with pytest.raises(StorageUnavailableError):
+            agent.cognitive._identity_snapshot("启动默认名")  # noqa: SLF001
+    finally:
+        await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_identity_reloaded_after_mongo_recovery():
+    """P0-3：Mongo 恢复 → 协调器重载权威档案，下一轮 Prompt 使用持久化身份。"""
+    from unittest.mock import AsyncMock
+
+    db = _DurableFakeDB()
+
+    seed = _make_agent(db)
+    await seed.start()
+    try:
+        await seed._user_identity_store.update_if_revision(  # noqa: SLF001
+            1, {"displayName": "妖梦", "preferredAddress": "主人",
+                "pronouns": "她", "initialized": True})
+    finally:
+        await seed.stop()
+
+    agent = _make_agent(db)
+    agent._user_identity_repo.connect = AsyncMock(return_value=False)  # noqa: SLF001
+    await agent.start()
+    try:
+        assert agent.user_identity_store.get() is None
+        assert agent.user_identity_store.is_available is False
+
+        # Mongo 恢复：撤销 connect 打桩，协调器重载
+        del agent._user_identity_repo.connect  # noqa: SLF001
+        assert await agent._recover_dependency("identity") is True  # noqa: SLF001
+
+        loaded = agent.user_identity_store.get()
+        assert loaded is not None
+        assert loaded.revision == 2              # 不覆盖 Mongo 中更高 revision
+        assert loaded.preferredAddress == "主人"
+        assert agent._user_identity.preferredAddress == "主人"  # noqa: SLF001
+
+        snapshot = agent.cognitive._identity_snapshot("启动默认名")  # noqa: SLF001
+        assert snapshot.revision == 2
+        assert snapshot.displayName == "妖梦"
+        assert snapshot.preferredAddress == "主人"
+    finally:
+        await agent.stop()

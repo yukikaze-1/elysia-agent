@@ -138,7 +138,10 @@ class Agent(AgentLifecycle, AgentServer):
         self._user_identity_repo = UserIdentityRepository(
             base_url=config.database.mongodb_uri)
         self._user_identity_store = UserIdentityStore(repo=self._user_identity_repo)
-        self._user_identity = self._user_identity_store.bootstrap(user_name=self._user_name)
+        # P0-3：权威模式下构造期**不**伪造本地档案——这里只取固定单用户 userId 的
+        # 占位（scope/owner 常量用）。真实身份由 start() 经 connect() 从 Mongo 装载；
+        # 装载失败则身份不可用，业务侧 fail-closed。
+        self._user_identity = self._user_identity_store.placeholder(user_name=self._user_name)
 
         # ---- L0: Infrastructure (from Module/) ----
         self._output = OutputManager()
@@ -1237,6 +1240,11 @@ class Agent(AgentLifecycle, AgentServer):
     def user_name(self):
         """注入的用户名。"""
         return self._user_name
+
+    @property
+    def user_identity_store(self) -> UserIdentityStore:
+        """用户身份存储（Mongo 权威 + 进程内缓存）——探针/恢复与 REST 共用。"""
+        return self._user_identity_store
 
     @property
     def state(self):

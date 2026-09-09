@@ -94,7 +94,8 @@ async def _readiness_payload(
     """Readiness 负载：核心 chat 门禁 + 依赖明细（BE-P2-01 D9）。
 
     - ``chatReady``（HTTP 门禁）= ``mongo_ok``（session+message+attachment 真实 ping，
-      ``asyncio.gather`` 并行探测）且（非 product_mode 或 ``idempotency_ok`` 真实 ping
+      ``asyncio.gather`` 并行探测）且 ``identity_ok``（用户身份权威存储可达，
+      P0-3 fail-closed）且（非 product_mode 或 ``idempotency_ok`` 真实 ping
       且补偿状态满足）；product 模式幂等门禁 = ping AND not ``needs_recovery``
       （BE-P1-07 D4：降级期记录未 reconcile 时 chatReady 保持 false）；
     - ``fullReady`` = ``chatReady`` 且 ``milvus_ok``——Milvus 仅上报**不门禁 HTTP**
@@ -116,6 +117,11 @@ async def _readiness_payload(
 
     milvus_ok = await _probe(agent.long_term.health_check)
 
+    # P0-3：用户身份权威存储（Mongo user_identity_profiles）纳入门禁——身份不可用时
+    # 不得用占位身份继续生成/建会话（fail-closed）。无 repo 的本地模式 health_check
+    # 恒 True，不门禁。
+    identity_ok = await _probe(agent.user_identity_store.health_check)
+
     # idempotency：repo 为 None（纯内存 dev）→ 无持久依赖可探视为 ok；product 模式
     # 真实 ping 且补偿完成（ping AND not needs_recovery——D4：降级期记录未 reconcile
     # 时 chatReady 保持 false，用 needs_recovery 而非 durable 避免零降级瞬时窗口误伤）。
@@ -128,12 +134,13 @@ async def _readiness_payload(
             from core.storage.idempotency import get_store
             idempotency_ok = idempotency_ok and not get_store().needs_recovery
 
-    chat_ready = mongo_ok and (not product_mode or idempotency_ok)
+    chat_ready = mongo_ok and identity_ok and (not product_mode or idempotency_ok)
     full_ready = chat_ready and milvus_ok
     dependencies = {
         "mongo": mongo_ok,
         "milvus": milvus_ok,
         "idempotency": idempotency_ok,
+        "identity": identity_ok,
     }
     status = "ok" if all(dependencies.values()) else "degraded"
 

@@ -295,7 +295,11 @@ def create_app(
     # 不能用新的 UserIdentityStore()（会让 /api/me 更新与 cognitive loop 渲染用的 store 脱节，
     # 用户改别名/代词后实际聊天不生效）。server 装配层允许 # noqa: SLF001 访私有（同 loop.configure 的用法）。
     app["user_identity_store"] = getattr(agent, "_user_identity_store", None) or UserIdentityStore()
-    if app["user_identity_store"].get() is None:
+    # P0-3：权威模式下不伪造本地档案——身份由 Agent.start() 从 Mongo 装载，未装载
+    # 成功时 get() 恒 None，REST 层按 503 fail-closed。仅本地模式（无 repo）保留
+    # 兼容用的 app["user_identity"] 快照。
+    if (not app["user_identity_store"].is_authoritative
+            and app["user_identity_store"].get() is None):
         agent_config = getattr(agent, "config", None)
         app["user_identity"] = app["user_identity_store"].bootstrap(
             (agent_config.agent.user_name if agent_config and getattr(agent_config, "agent", None)

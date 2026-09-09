@@ -14,6 +14,7 @@ from core.character.service import (
     CharacterService,
 )
 from core.profile.profile_store import UserIdentityStore
+from core.storage.base import StorageUnavailableError
 from core.storage.character_instance_repo import CharacterInstanceRepository
 from frontend_contract.rest import CharacterBindingSnapshot, CharacterDetail, CharacterSource
 
@@ -56,6 +57,10 @@ class CharacterSessionBindingService:
         self, character_id: str | None,
     ) -> ResolvedSessionCharacter:
         profile = self._identity.get()
+        if profile is None and self._identity.is_authoritative:
+            # P0-3：身份不可用时不得静默回退内置默认角色（会让用户的新会话落到
+            # 错误角色/身份上下文）——fail-closed，由路由映射为 503。
+            raise StorageUnavailableError("用户身份权威存储不可用")
         selected_id = (
             character_id
             or (profile.defaultCharacterId if profile is not None else None)

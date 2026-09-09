@@ -132,12 +132,58 @@ async def test_update_fails_closed_when_repo_configured_but_unavailable():
 
 
 @pytest.mark.asyncio
-async def test_connect_degrades_to_local_when_repo_unavailable():
+async def test_connect_fails_closed_when_repo_unavailable():
+    """P0-3：权威模式装载失败**不**降级本地——返回 None、身份不可用、写路径 503。
+
+    旧行为（降级本地 bootstrap）与 Stage H 的「Mongo 权威 + 身份读取 fail-closed」
+    冲突：会让角色用伪造身份继续聊天。
+    """
     class _DownRepo(UserIdentityRepository):
         async def connect(self) -> bool:
             return False
 
     store = UserIdentityStore(repo=_DownRepo())
     loaded = await store.connect(user_name="妖梦")
-    assert loaded.displayName == "妖梦"   # 降级本地，不抛
+    assert loaded is None
+    assert store.get() is None
+    assert store.is_available is False
+    assert store.is_authoritative is True
+    with pytest.raises(StorageUnavailableError):
+        await store.update_if_revision(1, {"displayName": "妖梦2"})
+
+
+@pytest.mark.asyncio
+async def test_connect_reloads_authoritative_profile_after_recovery():
+    """P0-3：Mongo 恢复后重新 connect → 装载权威档案并原子替换缓存。"""
+    class _FlakyRepo(UserIdentityRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.up = False
+
+        async def connect(self) -> bool:
+            if not self.up:
+                return False
+            return await super().connect()
+
+    db = FakeDocumentDBBackend()
+    repo = _FlakyRepo()
+    repo._db = db                     # noqa: SLF001
+    repo._injected_db = True          # noqa: SLF001
+    store = UserIdentityStore(repo=repo)
+
+    assert await store.connect(user_name="妖梦") is None      # 离线：不可用
+    assert store.is_available is False
+
+    # 首轮 Mongo 已有一份更高 revision 的权威档案（如另一个进程写入）
+    healthy = _repo(db)
+    await healthy.connect()
+    await healthy.bootstrap_if_absent(UserIdentity(displayName="旧"))
+    await healthy.update_if_revision("usr_local_default", 1, {"displayName": "妖梦"})
+
+    repo.up = True
+    loaded = await store.connect(user_name="启动默认名")
+    assert loaded is not None
+    assert loaded.displayName == "妖梦"      # 用 Mongo 权威，不用启动默认名
+    assert loaded.revision == 2              # 不覆盖更高 revision
     assert store.get() is loaded
+    assert store.is_available is True

@@ -26,6 +26,8 @@ def _make_mock_agent() -> MagicMock:
     # P1-05：/ready 聚合 message/attachment repo 真实健康
     agent.message_repo.health_check = AsyncMock(return_value=True)
     agent.attachment_repo.health_check = AsyncMock(return_value=True)
+    # P0-3：用户身份权威存储纳入 chatReady 门禁
+    agent.user_identity_store.health_check = AsyncMock(return_value=True)
     agent.tool_adapter._manager.tool_names = ["t1", "t2"]
     agent.output = MagicMock()
     agent.bus = MagicMock()
@@ -94,6 +96,19 @@ class TestHealthEndpoints:
         assert data["dependencies"]["mongo"] is False
 
     @pytest.mark.asyncio
+    async def test_ready_identity_down_503(self, app, aiohttp_client):
+        """P0-3：用户身份权威存储 down → /ready 503（fail-closed），不提供聊天门禁。"""
+        agent = app["agent"]
+        agent.user_identity_store.health_check = AsyncMock(return_value=False)
+        client = await aiohttp_client(app)
+        resp = await client.get("/ready")
+        assert resp.status == 503
+        data = await resp.json()
+        assert data["chatReady"] is False
+        assert data["dependencies"]["identity"] is False
+        assert data["dependencies"]["mongo"] is True
+
+    @pytest.mark.asyncio
     async def test_ready_product_idempotency_down_503(self, aiohttp_client):
         """product 模式 + idempotency down → /ready 503（fail-closed），chatReady=false。"""
         from core.storage.idempotency import reset_store
@@ -143,7 +158,7 @@ class TestHealthEndpoints:
 
     @pytest.mark.asyncio
     async def test_ready_response_fields(self, app, aiohttp_client):
-        """/ready 响应含 chatReady / fullReady / dependencies（mongo/milvus/idempotency）。"""
+        """/ready 响应含 chatReady / fullReady / dependencies（mongo/milvus/idempotency/identity）。"""
         client = await aiohttp_client(app)
         resp = await client.get("/ready")
         assert resp.status == 200
@@ -152,7 +167,8 @@ class TestHealthEndpoints:
                     "tools", "version", "build_sha", "uptime", "request_id",
                     "dependencies"):
             assert key in data, f"缺少字段 {key}"
-        assert set(data["dependencies"]) == {"mongo", "milvus", "idempotency"}
+        assert set(data["dependencies"]) == {
+            "mongo", "milvus", "idempotency", "identity"}
         assert isinstance(data["version"], str) and data["version"]
         assert isinstance(data["request_id"], str) and data["request_id"]
         assert isinstance(data["uptime"], (int, float))

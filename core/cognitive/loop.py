@@ -340,13 +340,17 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
     def _identity_snapshot(self, fallback_user_name: str) -> UserIdentity:
         """本轮用户身份快照（P0-2）：Mongo 权威 store 优先，回合内冻结。
 
-        无 store / store 未装载（直接构造 loop 的单测路径或显式本地模式）时回退
-        传入的用户名 + 默认代词，保证既有测试路径可用。
+        权威 store 未装载成功时**不**回退占位身份——抛 StorageUnavailableError，
+        由 process 收口为 503 STORAGE_UNAVAILABLE（P0-3 fail-closed）。无 store /
+        非权威（直接构造 loop 的单测路径或显式本地模式）时回退传入用户名 + 默认代词。
         """
         store = getattr(self, "_user_identity_store", None)
         identity = store.get() if store is not None else None
         if identity is not None:
             return identity
+        if store is not None and getattr(store, "is_authoritative", False):
+            from core.storage.base import StorageUnavailableError
+            raise StorageUnavailableError("用户身份权威存储不可用")
         return UserIdentity(
             userId=LOCAL_DEFAULT_USER_ID,
             displayName=fallback_user_name or "用户",
@@ -605,16 +609,17 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 logger.warning("Agent not accepting input — skipping turn")
                 return
 
-            # BE-STAGEH-01：破坏性变更（reset-evolution）在途时 _prepare_turn 抛
-            # CharacterBusyError——本回合未取得 lease，按稳定公开错误收口（不静默
-            # 丢消息，也不排队后执行）。
+            # BE-STAGEH-01 / P0-3：破坏性变更在途（CharacterBusyError）或权威身份
+            # 不可用（StorageUnavailableError）时 _prepare_turn 抛出——本回合未取得
+            # lease，按稳定公开错误收口（不静默丢消息，也不排队后执行）。
             from core.character.service import CharacterBusyError
+            from core.storage.base import StorageUnavailableError
 
             try:
                 setup = await self._prepare_turn(
                     user_message, user_name, stt_emotion, content,
                     message_id, conversation_id, protocol_version)
-            except CharacterBusyError as exc:
+            except (CharacterBusyError, StorageUnavailableError) as exc:
                 await self._handle_turn_exception(exc)
                 return
             if setup is None:

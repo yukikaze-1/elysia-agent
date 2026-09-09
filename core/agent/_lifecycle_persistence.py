@@ -79,16 +79,22 @@ class _LifecyclePersistence:
         Returns:
             (mongo_ok, milvus_ok) 两个布尔值，分别表示 MongoDB 和 Milvus 是否连接成功。
         """
-        # BE-STAGEH-02：用户身份权威装载——Mongo user_identity_profiles 就绪后覆盖
-        # __init__ 的本地 bootstrap（否则重启回到 initialized=false/revision 1）。
-        # repo 不可用时 store 内部降级本地并记日志；MagicMock agent 无此挂点时跳过。
+        # BE-STAGEH-02 / P0-3：用户身份权威装载——Mongo user_identity_profiles 就绪后
+        # 覆盖 __init__ 的占位身份（否则重启回到 initialized=false/revision 1）。
+        # 装载失败**不**降级本地档案：身份保持不可用（fail-closed），由恢复协调器
+        # 的 identity 探针在 Mongo 恢复后重新装载。MagicMock agent 无此挂点时跳过。
         identity_store = getattr(self, "_user_identity_store", None)
         if identity_store is not None:
             try:
-                self._user_identity = await identity_store.connect(
-                    user_name=self._user_name)
+                loaded = await identity_store.connect(user_name=self._user_name)
             except Exception:
-                logger.warning("用户身份装载失败，降级为本地 bootstrap", exc_info=True)
+                loaded = None
+                logger.warning("用户身份装载异常", exc_info=True)
+            if loaded is not None:
+                self._user_identity = loaded
+            elif getattr(identity_store, "is_authoritative", False):
+                logger.warning(
+                    "用户身份权威存储不可用——身份相关业务 fail-closed，等待恢复协调器重载")
         mongo_ok, milvus_ok = await asyncio.gather(
             self._session_manager.connect_db(),
             self._long_term.connect(),
@@ -361,6 +367,10 @@ class _LifecyclePersistence:
                 desktop_bridge = getattr(self, "_desktop_bridge", None)
                 if desktop_bridge is not None:
                     probes["desktop"] = desktop_bridge.storage_health_check
+                identity_store = getattr(self, "_user_identity_store", None)
+                if identity_store is not None and getattr(
+                        identity_store, "is_authoritative", False):
+                    probes["identity"] = identity_store.health_check
 
                 results: dict[str, bool] = {}
                 for name, probe in probes.items():
@@ -424,6 +434,19 @@ class _LifecyclePersistence:
                     cutoff = (datetime.datetime.now(datetime.timezone.utc)
                               - datetime.timedelta(minutes=5)).isoformat()
                     await gen_registry.mark_stale_interrupted(cutoff)
+            elif name == "identity":
+                # P0-3：Mongo 恢复 → 重新装载权威档案并原子替换缓存（connect 内部
+                # 走 repo.get → bootstrap_if_absent，绝不覆盖 Mongo 中更高 revision
+                # 的文档）。装载仍失败 → 返回 False，协调器下轮重试。
+                identity_store = getattr(self, "_user_identity_store", None)
+                if identity_store is None:
+                    return True
+                loaded = await identity_store.connect(user_name=self._user_name)
+                if loaded is None:
+                    return False
+                self._user_identity = loaded
+                logger.info(
+                    "UserIdentity 恢复，权威档案已重新装载 revision=%d", loaded.revision)
             elif name == "idempotency":
                 # 幂等恢复（D6c）：重连 repo → store.recover() reconcile（内存→Mongo
                 # 对齐，durable 翻回）。connect 失败返回 False——协调器保留 prev=False

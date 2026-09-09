@@ -797,6 +797,10 @@ class CharacterService:
             raise CharacterPreviewUnavailableError("角色预览未启用无状态推理适配器")
         identity = self.user_identity_store.get()
         if identity is None:
+            # P0-3：权威身份不可用时不得用占位身份预览（fail-closed，稳定公开错误）。
+            if (self.user_identity_store.is_authoritative
+                    and not self.user_identity_store.is_available):
+                raise CharacterStorageUnavailableError("用户身份权威存储不可用")
             raise CharacterPreviewUnavailableError("用户身份未初始化，无法预览")
 
         profile = self._compile_preview_profile(draft, owner_user_id=identity.userId)
