@@ -559,7 +559,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             code = "CHARACTER_BUSY"
             retryable = True
         elif isinstance(e, StorageUnavailableError):
-            # BE-STAGEH-03：权威身份/角色存储不可用时 fail-closed——不伪造身份继续聊天。
+            # P0-3：权威身份/角色存储不可用时 fail-closed——不伪造身份继续聊天。
             logger.exception("<<< 存储依赖不可用，回合失败")
             label = "存储不可用"
             code = "STORAGE_UNAVAILABLE"
