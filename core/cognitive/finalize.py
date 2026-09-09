@@ -60,7 +60,7 @@ class CognitiveFinalize:
     _session_work_reserver: Callable[[SessionId], Awaitable["SessionMemory"]] | None
     _session_work_releaser: Callable[[SessionId], None] | None
     _pending_after_response: list[asyncio.Task]
-    _after_response: Callable[..., Awaitable[None]]
+    _after_response: Callable[..., Awaitable["asyncio.Task[None] | None"]]
     _transition_idle: Callable[..., Awaitable[None]]
 
     def _apply_final_mood_fallback(self, target: "SessionMemory",

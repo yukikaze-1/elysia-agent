@@ -46,7 +46,7 @@ class _LifecyclePersistence:
         _long_term: LongTermMemory
         _message_repo: MessageRepository
         _version_repo: CharacterVersionRepository
-        _user_identity_store: "UserIdentityStore | None"
+        _user_identity_store: "UserIdentityStore"
         _user_name: str
         _user_identity: "UserIdentity"
         _runtime_registry: CharacterRuntimeRegistry
