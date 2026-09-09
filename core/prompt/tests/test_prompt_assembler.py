@@ -215,3 +215,35 @@ def test_set_memory_view_rebinds_long_term(elysia_config, cold_engine_mock, mock
     view = MagicMock()
     a.set_memory_view(view)
     assert a._memory_section._long_term is view            # 重绑为本回合 scoped view
+
+
+# ── BE-STAGEH-03：无状态预览模式 ──
+
+
+@pytest.mark.asyncio
+async def test_preview_mode_skips_session_history():
+    """预览模式不读任何会话历史。"""
+    assembler = _make_assembler()
+    assembler._session.recent_messages = MagicMock(  # noqa: SLF001
+        return_value=[{"role": "user", "content": "历史消息"}])
+    assembler.enable_preview_mode()
+
+    messages = await assembler.build_messages(user_message="现在")
+
+    assembler._session.recent_messages.assert_not_called()  # noqa: SLF001
+    assert [m["role"] for m in messages] == ["system", "user"]
+    assert messages[-1]["content"] == "现在"
+
+
+@pytest.mark.asyncio
+async def test_none_session_and_long_term_render_without_io():
+    """session/long_term 为 None 时（预览装配）仍能渲染，且无历史。"""
+    assembler = PromptAssembler(CharacterConfig(name="Elysia"), None, None)
+
+    messages = await assembler.build_messages(
+        user_message="在吗？", user_name="妖梦", user_pronoun_override="他")
+
+    assert [m["role"] for m in messages] == ["system", "user"]
+    system = messages[0]["content"]
+    assert "{{" not in system          # 模板已渲染
+    assert "他" in system              # 用户代词按 override 注入

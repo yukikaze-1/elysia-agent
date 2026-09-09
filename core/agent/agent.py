@@ -90,6 +90,7 @@ from core.character.runtime_loader import CharacterRuntimeSourceLoader
 from core.character.runtime_profile import compile_runtime_profile
 from core.character.service import CharacterService, CharacterStateConflictError
 from core.character.catalog import CharacterCatalog
+from core.character.preview import PromptCharacterPreviewAdapter
 from core.storage.character_instance_repo import CharacterInstanceRepository
 from core.storage.character_repo import CharacterRepository
 from core.storage.character_revision_repo import CharacterRevisionRepository
@@ -253,6 +254,8 @@ class Agent(AgentLifecycle, AgentServer):
             user_identity_store=self._user_identity_store,
             instance_repo=self._instance_repo,
             runtime_registry=self._runtime_registry,
+            # BE-STAGEH-03：无状态预览口——一次性 prompt 组装 + 单次 LLM 推理
+            preview_port=PromptCharacterPreviewAdapter(self._llm),
         )
         self._runtime_source_loader = CharacterRuntimeSourceLoader(
             characters=self._character_service,

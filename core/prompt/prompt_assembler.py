@@ -46,16 +46,16 @@ class PromptAssembler:
     def __init__(
         self,
         character: CharacterConfig,
-        session: SessionMemory,
-        long_term: LongTermMemory,
+        session: SessionMemory | None,
+        long_term: LongTermMemory | None,
         personality_engine: "CharacterEngine | None" = None,
     ):
         """初始化 PromptAssembler，创建所有 system prompt section 和管理器。
 
         Args:
             character: 角色配置。
-            session: 会话记忆实例。
-            long_term: 长期记忆实例。
+            session: 会话记忆实例（无状态预览传 None——会话依赖 section 空渲染）。
+            long_term: 长期记忆实例（预览传 None 即禁用 C4 检索）。
             personality_engine: 人格引擎实例（可选），用于获取 mood、C1/C6/C9 数据。
         """
         self._character = character
@@ -64,6 +64,8 @@ class PromptAssembler:
         self._personality_engine = personality_engine
         # Task 7（B1）：_prepare_turn 冻结的回合上下文（含 userPronoun），由 loop 注入
         self._turn_context: TurnCharacterContext | None = None
+        # BE-STAGEH-03：无状态预览模式——不读会话历史
+        self._preview_mode = False
 
         self._personality_section = PersonalitySection(
             f"{_SECTION}/c1_personality.j2",
@@ -116,6 +118,14 @@ class PromptAssembler:
     def set_personality_engine(self, engine: "CharacterEngine") -> None:
         """更换人格引擎实例（会话切换后 C1/C6/C9 数据来源随角色更新）。"""
         self._personality_engine = engine
+
+    def enable_preview_mode(self) -> None:
+        """BE-STAGEH-03：切到无状态预览——`build_messages` 不再读会话历史。
+
+        会话依赖 section（C3/C4/C8）在 session/long_term 为 None 时自行空渲染，
+        因此预览不会读到任何真实会话或长期记忆。
+        """
+        self._preview_mode = True
 
     @staticmethod
     def _switch_template(section: Any, template_path: str) -> None:
@@ -220,7 +230,8 @@ class PromptAssembler:
 
     async def build_system_prompt(self, user_message: str = "", user_name: str = "",
                                    stt_emotion: str = "", stt_events: list | None = None,
-                                   tts_provider: str = "") -> str:
+                                   tts_provider: str = "",
+                                   user_pronoun_override: str | None = None) -> str:
         """构建渲染后的 system prompt 字符串。
 
         Args:
@@ -229,6 +240,7 @@ class PromptAssembler:
             stt_emotion: STT 识别的情感标签。
             stt_events: STT 识别的事件列表。
             tts_provider: TTS 提供商名称。
+            user_pronoun_override: 显式用户代词（预览用；优先于 _turn_context）。
 
         Returns:
             渲染后的完整 system prompt 字符串。
@@ -243,9 +255,11 @@ class PromptAssembler:
         # B1 正位：优先读 _turn_context.userPronoun（Task 6/7 冻结的全局唯一她），
         # 否则兜底常量「她」——不回退 _character.user_pronoun（spec §5.2 无 per-role 回退）。
         user_pronoun = (
-            self._turn_context.userPronoun
-            if self._turn_context is not None and self._turn_context.userPronoun
-            else "她"
+            user_pronoun_override
+            or (self._turn_context.userPronoun
+                if self._turn_context is not None and self._turn_context.userPronoun
+                else None)
+            or "她"
         )
         self._manager.set_context(
             user_message=user_message,
@@ -266,7 +280,8 @@ class PromptAssembler:
                               stt_events: list | None = None,
                               content: list[dict] | str | None = None,
                               supports_multimodal: bool = False,
-                              tts_provider: str = "") -> list[dict]:
+                              tts_provider: str = "",
+                              user_pronoun_override: str | None = None) -> list[dict]:
         """构建发送给 LLM 的完整消息列表。
 
         Args:
@@ -277,6 +292,7 @@ class PromptAssembler:
             content: 多模态内容（如图片），为 None 时使用 user_message。
             supports_multimodal: 当前模型是否支持多模态。
             tts_provider: TTS 提供商名称。
+            user_pronoun_override: 显式用户代词（预览用）。
 
         Returns:
             LLM API 的 messages 列表，包含 system prompt + 历史 + 用户消息。
@@ -286,8 +302,14 @@ class PromptAssembler:
             user_message=text, user_name=user_name,
             stt_emotion=stt_emotion, stt_events=stt_events,
             tts_provider=tts_provider,
+            user_pronoun_override=user_pronoun_override,
         )
-        history = self._session.recent_messages(8)
+        # BE-STAGEH-03：预览模式不读任何会话历史；无 session 时同样空历史
+        history = (
+            []
+            if self._preview_mode or self._session is None
+            else self._session.recent_messages(8)
+        )
         user_content = content if content else user_message
         return self._builder.build_messages(
             system, history, user_content,

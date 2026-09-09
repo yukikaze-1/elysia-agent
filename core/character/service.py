@@ -52,8 +52,10 @@ from frontend_contract.rest import (
 
 if TYPE_CHECKING:
     from core.character.instance import CharacterInstance
+    from core.character.preview import CharacterPreviewPort
     from core.character.registry import CharacterRuntimeRegistry
     from core.character.runtime import CharacterRuntime
+    from core.character.runtime_profile import RuntimeCharacterProfile
     from core.schema.character import CharacterRuntimeState
     from core.storage.character_instance_repo import CharacterInstanceRepository
 
@@ -323,6 +325,7 @@ class CharacterService:
         user_identity_store: UserIdentityStore,
         instance_repo: "CharacterInstanceRepository | None" = None,
         runtime_registry: "CharacterRuntimeRegistry | None" = None,
+        preview_port: "CharacterPreviewPort | None" = None,
     ):
         self.repo = repo
         self.rev_repo = rev_repo
@@ -330,6 +333,7 @@ class CharacterService:
         self.user_identity_store = user_identity_store
         self.instance_repo = instance_repo
         self.runtime_registry = runtime_registry
+        self.preview_port = preview_port
         self._connected = False
         self._instances_connected = False
         self._builtin_entries: list[
@@ -779,16 +783,63 @@ class CharacterService:
     async def preview(
         self, draft: CharacterDraft, *, user_message: str
     ) -> CharacterPreviewResult:
-        """Validate, then fail closed until a stateless adapter exists.
+        """无状态预览：校验 draft → 一次性组装 prompt → 单次推理，零副作用。
 
-        Fabricating an answer would violate §13's no-session/no-memory guarantee. The
-        route and stable error code are intentionally present so the frontend can gate
-        the feature without treating an echo as AI output.
+        BE-STAGEH-03：不建 session/instance、不写 archive、不读会话/LTM/演化 state、
+        不推进 revision/stateVersion、不触发 reflector/压缩/mood/TTS/工具。用量不并入
+        任何会话 token 统计（结果不带 usage）。
         """
         err = await self._raise_on_validation(draft)
         if err:
             raise err
-        raise CharacterPreviewUnavailableError("角色预览暂未启用无状态推理适配器")
+        port = self.preview_port
+        if port is None:
+            raise CharacterPreviewUnavailableError("角色预览未启用无状态推理适配器")
+        identity = self.user_identity_store.get()
+        if identity is None:
+            raise CharacterPreviewUnavailableError("用户身份未初始化，无法预览")
+
+        profile = self._compile_preview_profile(draft, owner_user_id=identity.userId)
+        try:
+            reply = await port.generate(
+                profile=profile,
+                user_identity=identity,
+                user_message=user_message,
+            )
+        except CharacterPreviewUnavailableError:
+            raise
+        except Exception as exc:
+            logger.warning("角色预览推理失败: %s", type(exc).__name__)
+            raise CharacterPreviewUnavailableError("角色预览上游失败") from exc
+
+        text = reply.text.strip()
+        if not text:
+            raise CharacterPreviewUnavailableError("角色预览返回空回复")
+        return CharacterPreviewResult(
+            ephemeral=True,
+            reply=text,
+            model=reply.model,
+            usage=None,
+        )
+
+    def _compile_preview_profile(
+        self, draft: CharacterDraft, *, owner_user_id: str
+    ) -> "RuntimeCharacterProfile":
+        """把 draft 编译成仅存在于内存的 profile（不落库、不建 instance）。"""
+        from core.character.runtime_profile import compile_runtime_profile
+
+        character_id = f"chr_preview_{uuid.uuid4().hex[:12]}"
+        definition = CharacterDefinition(
+            characterId=character_id,
+            slug=draft.displayName,
+            source="custom",
+            mutable=True,
+            status="active",
+            currentRevision=1,
+            ownerUserId=owner_user_id,
+        )
+        revision = self._revision_from_draft(character_id, draft, revision=1)
+        return compile_runtime_profile(definition, revision)
 
     async def reset_evolution(
         self,
