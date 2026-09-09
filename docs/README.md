@@ -39,7 +39,7 @@
 | 文档 | 内容 |
 |------|------|
 | [多角色、角色 Prompt 与自定义角色后端架构设计](2026-08-30-character-prompt-customization-backend-architecture-design.md) | 现有十二段 Prompt/四层人格事实基线，Definition/Revision/Instance/UserIdentity 分层，角色状态与记忆隔离，`character-contract-v1` 前后端冻结契约，REST/WS、存储、迁移、测试及分阶段实施门禁 |
-| [Stage H 真实联调后端整改与复验清单](review/2026-09-09-多角色Stage-H真实联调后端整改与复验清单.md) | Windows Electron 真实联调后剩余的 reset 并发、UserIdentity 持久化、preview、校验错误、pinned 夹具及单用户范围决策 |
+| [Stage H 真实联调后端整改与复验清单](review/2026-09-09-多角色Stage-H真实联调后端整改与复验清单.md) | Windows Electron 真实联调后剩余的 reset 并发、UserIdentity 持久化、preview、校验错误、pinned 夹具及单用户范围决策；第二轮 P0-1 tail lease / P0-2 身份进入 Prompt / P0-3 身份 fail-closed / P1 归档一致性 |
 
 ### 架构与模块化评估
 
@@ -64,7 +64,7 @@
 | [superpowers/specs/archive/](superpowers/specs/archive/) | 已归档设计规格（按月分目录 `archive/<YYYY-MM>/`） |
 | [superpowers/plans/archive/](superpowers/plans/archive/) | 已归档实施计划（按月分目录 `archive/<YYYY-MM>/`） |
 | [review/](review/) | 代码/文档审查报告（code-review、doc-review、frontend_completed） |
-| [progress/](progress/) | 执行记录/进度快照（2026-08-13 ~ 2026-08-15 共 6 个，均历史参考——当前事实源见 runbook + review） |
+| [progress/](progress/) | 执行记录/进度快照（2026-08-13 ~ 2026-09-10 共 11 个；阶段 H 两份为当前事实源，其余历史参考） |
 | [legacy/](legacy/) | 已废弃文档（companion-*，保留作历史参考） |
 | [archive/](archive/) | 归档历史记录：electron 基线/迁移/进度/审计、经验与同步笔记、数据结构普查、前端交接包（frontend-handoff-v2）、WorkflowEngine 历史设计（architecture/PROGRESS/migration）、frontend_todo、Cyrene 后端改造任务清单/执行上下文（v0.1 历史）、2026-08-10 后端+前端适配进度快照 |
 | [completed/](completed/) | 已完成月度归档（2026-05 ~ 2026-08） |
