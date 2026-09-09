@@ -2,9 +2,9 @@
 
 > 文档导航：[项目文档](../../README.md) → [docs 文档索引](../README.md) → [多角色 Stage H 真实联调后端整改与复验清单](../review/2026-09-09-多角色Stage-H真实联调后端整改与复验清单.md)
 
-- **后端基线：** `main@65295a90` → **`main@d394f931`**（第一轮 6 个实现/决策提交）→ **`main@ab3b80b4`**（第二轮 4 个遗留整改提交，见 §5）
+- **后端基线：** `main@65295a90` → **`main@d394f931`**（第一轮 6 个实现/决策提交）→ **`main@9bca4246`**（第二轮 4 项遗留整改 + 类型/文档/测试修正，见 §5）
 - **实现范围：** 清单 §1.2 全部 6 项（BE-STAGEH-01 ~ 06）+ 第二轮 §1.4 的 P0-1/P0-2/P0-3/P1
-- **门禁：** ruff ✅ / `make check-types` ✅ 0 漂移 / `make pyright` ✅ 0 错误 / `make test-normal` ✅ **4099 passed, 2 skipped**（第一轮）→ 第二轮见 §5.5 / `make test-quick` ✅
+- **门禁：** ruff ✅ / `make check-types` ✅ 0 漂移 / `make pyright` ✅ 0 错误 / `make test-normal` ✅ **4099 passed, 2 skipped**（第一轮）→ 第二轮见 §5.8 / `make test-quick` ✅
 - **契约：** `schemaHash` **未变化**（两轮合计 0 个 `frontend_contract/` 或 `frontend/src/types/` 文件改动）
 
 ## 1. 交付清单
@@ -213,3 +213,48 @@ CAS 冲突重试成功、重试耗尽 409 且未归档、Mongo 权威重启后�
 
 **未变化。** 两轮合计 `git diff --name-only 65295a90..HEAD -- frontend_contract/ frontend/src/types/`
 为 **0 文件**；`make check-types`（17 个 golden frames `--check` + 41 错误码单源）通过。
+
+### 5.8 第二轮门禁与运行版本（2026-09-10）
+
+**提交（`08f21a8a` → `9bca4246`）：**
+
+| 提交 | 内容 |
+|---|---|
+| `15a7c4ab` | P0-1 generation tail lease |
+| `2a581267` | P0-2 身份进入 Prompt |
+| `7128b85d` | P0-3 身份 fail-closed + 恢复协调器 |
+| `ab3b80b4` | P1 归档一致性 |
+| `31f657ac` | 归档在权威身份不可用时 fail-closed |
+| `dce79156` / `9a671b29` | 类型注解 / 注释修正（pyright 0 错误） |
+| `2552f5be` / `8a8a9b9c` / `9df0c794` / `9bca4246` | 文档（清单、执行记录、模块 README、安全文档、索引）+ 新测试不触真实 Mongo |
+
+**门禁（最终树 `9bca4246`，工作树干净）：**
+
+| 门禁 | 结果 |
+|---|---|
+| `make lint` | ✅ All checks passed |
+| `make check-types` | ✅ 0 漂移 + 41 错误码单源一致（17 golden frames `--check`） |
+| `make pyright` | ✅ 0 errors, 0 warnings |
+| `make test-quick` | ✅ **3948 passed, 2 skipped**（269 deselected） |
+| `make test-normal` | ✅ **4141 passed, 2 skipped**（76 deselected） |
+| `app.py --check` | ✅ 13/13 passed |
+
+**运行版本（新版本已启动，旧 `65295a90` 进程此前已停止——启动前确认 8765 无监听）：**
+
+```json
+/health: {"version": "0.1.0+9bca424", "build_sha": "9bca424667b128f595735eedd08dcaa9d71fade1", "fsm": "idle"}
+/ready:  {"status": "ok", "chatReady": true, "fullReady": true,
+          "dependencies": {"mongo": true, "milvus": true, "idempotency": true, "identity": true}}
+```
+
+- 绑定 `SERVER_HOST=0.0.0.0:8765`；`192.168.1.18:8765/health` → 200（前端可达）；
+- `/api/me`（Bearer）返回 Mongo 权威档案 `displayName=妖梦 / revision=1`；无 token → 401；
+- `build_sha` 与最终 HEAD 一致。
+
+**待真机复验（未做，不得宣称通过）：** §11 矩阵 8 个第一轮场景 + 第 9~12 行第二轮场景；
+pinned seed 的真实库执行（`STAGE_H_FIXTURES=1 … seed_stage_h_pinned.py`）。
+
+**已知观察（本轮未修，不属四项范围）：** `log/app.log` 在 01:18 的一次 shutdown 里出现过
+`close_all → rt.flush → CharacterStateConflictError: chi_builtin_elysia`（DB `state_version` 与
+runtime 内存 CAS token 不一致；全日志仅 1 次）。影响面是关机时最后一次 runtime flush 被跳过
+（`close_all` 逐实例 flush，首个失败即抛出）。建议后续单独排查（并发写入方或重复 runtime 实例）。
