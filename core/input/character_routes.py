@@ -71,13 +71,14 @@ def _character_error_response(exc: Exception) -> web.Response | None:
     if isinstance(exc, CharacterTooLargeError):
         return _protocol_error_response("CHARACTER_TOO_LARGE", "角色内容过大", 413)
     if isinstance(exc, CharacterValidationError):
-        code = "CHARACTER_VALIDATION"
+        # BE-STAGEH-04：顶层 code 恒为 CHARACTER_VALIDATION，具体原因只走
+        # details.issues[]（issue.code 可为 CHARACTER_RESERVED_CONTENT 等）。
+        # 不再按 issue code 改写顶层——保存信封与 /validate 的 issue shape 一致。
         details: dict[str, object] = {}
         if exc.issues:
             details["issues"] = [issue.wire_dict() for issue in exc.issues]
-            if any(issue.code == "CHARACTER_RESERVED_CONTENT" for issue in exc.issues):
-                code = "CHARACTER_RESERVED_CONTENT"
-        return _protocol_error_response(code, "角色内容校验失败", 400, details=details)
+        return _protocol_error_response(
+            "CHARACTER_VALIDATION", "角色内容校验失败", 400, details=details)
     if isinstance(exc, CharacterQueryError):
         return _protocol_error_response("CHARACTER_VALIDATION", "请求参数无效", 400)
     if isinstance(exc, RevisionConflictError):

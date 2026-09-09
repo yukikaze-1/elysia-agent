@@ -113,6 +113,64 @@ async def test_character_mutation_guard_owns_turn_lock_and_rejects_busy() -> Non
         process_lock.release()
 
 
+# ── BE-STAGEH-04：保存校验错误信封（顶层恒 CHARACTER_VALIDATION）──
+
+
+def _reserved_issue(**over: object):
+    from frontend_contract.rest import CharacterValidationIssue
+
+    base = dict(
+        severity="error",
+        code="CHARACTER_RESERVED_CONTENT",
+        path="/promptProfile/corePersonality",
+        message="包含保留模板结构或标签",
+    )
+    base.update(over)
+    return CharacterValidationIssue(**base)
+
+
+def test_validation_error_keeps_top_level_code_with_reserved_issue():
+    """保留内容 issue 不得改写顶层 code——具体原因留在 details.issues[]。"""
+    exc = CharacterValidationError(issues=[_reserved_issue()])
+    r = _character_error_response(exc)
+    assert r is not None and r.status == 400
+    body = json.loads(r.text)
+    assert body["code"] == "CHARACTER_VALIDATION"
+    assert body["retryable"] is False
+    issues = body["details"]["issues"]
+    assert issues[0]["code"] == "CHARACTER_RESERVED_CONTENT"
+    assert issues[0]["path"] == "/promptProfile/corePersonality"
+    assert issues[0]["severity"] == "error"
+
+
+def test_validation_error_multiple_issues_do_not_change_top_level_code():
+    exc = CharacterValidationError(issues=[
+        _reserved_issue(),
+        _reserved_issue(severity="warning", code="CHARACTER_TOO_LARGE",
+                        path="/promptProfile", message="接近上限"),
+    ])
+    body = json.loads(_character_error_response(exc).text)  # type: ignore[union-attr]
+    assert body["code"] == "CHARACTER_VALIDATION"
+    assert [i["code"] for i in body["details"]["issues"]] == [
+        "CHARACTER_RESERVED_CONTENT", "CHARACTER_TOO_LARGE"]
+
+
+def test_validation_error_response_leaks_no_draft_or_traceback():
+    """错误响应只含公开 issue——不含 draft 文本、Prompt、绝对路径或 traceback。"""
+    exc = CharacterValidationError(issues=[_reserved_issue()])
+    text = _character_error_response(exc).text  # type: ignore[union-attr]
+    assert "/home/" not in text
+    assert "Traceback" not in text
+    assert set(json.loads(text)) <= {
+        "code", "message", "retryable", "details", "requestId", "error"}
+
+
+def test_validation_error_without_issues_has_empty_details():
+    body = json.loads(_character_error_response(CharacterValidationError()).text)  # type: ignore[union-attr]
+    assert body["code"] == "CHARACTER_VALIDATION"
+    assert body["details"] == {}
+
+
 # ── BE-STAGEH-01：reset 路由的快速拒绝 ──
 
 

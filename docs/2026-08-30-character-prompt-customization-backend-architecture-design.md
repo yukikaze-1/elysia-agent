@@ -1588,14 +1588,16 @@ character.catalog.changed
 
 `retryAfterMs` 仅在后端能给出可靠退避值时出现；409 并不自动等于可安全重放，前端仍须根据 `code` 处理。校验错误可以在 `details.issues` 携带 §11.0 的公开 issue；任何详情都不得包含 Prompt 正文、用户自由文本、路径、traceback 或上游响应体。
 
+**校验信封（BE-STAGEH-04 明确）**：保存类请求（create/update/rollback）的内容校验失败，顶层 `code` **恒为** `CHARACTER_VALIDATION`（400，`retryable=false`），具体原因只出现在 `details.issues[].code`/`path`；`/api/characters/validate` 的无效草稿仍是 200 + `valid=false`，issue shape 与保存信封完全一致。`CHARACTER_RESERVED_CONTENT` 等是 **validation issue code**，不作为保存信封的顶层 code。
+
 | 错误码 | retryable | 典型 HTTP | 含义 |
 |--------|-----------|-----------|------|
 | `CHARACTER_NOT_FOUND` | false | 404 | 角色不存在或不可见 |
 | `CHARACTER_INSTANCE_NOT_FOUND` | false | 404 | 角色实例不存在 |
 | `CHARACTER_IMMUTABLE` | false | 409 | 尝试编辑/归档内置角色 |
 | `CHARACTER_ARCHIVED` | false | 409 | archived 角色不可新建会话 |
-| `CHARACTER_VALIDATION` | false | 400 | 角色内容校验失败 |
-| `CHARACTER_RESERVED_CONTENT` | false | 400 | 包含保留模板结构/标签 |
+| `CHARACTER_VALIDATION` | false | 400 | 角色内容校验失败（保存信封唯一顶层码） |
+| `CHARACTER_RESERVED_CONTENT` | false | — | **validation issue code**（出现在 `details.issues[].code`，不是顶层 code） |
 | `CHARACTER_REVISION_CONFLICT` | true | 409 | expectedRevision 已过期 |
 | `CHARACTER_STATE_CONFLICT` | true | 409 | stateVersion CAS 冲突超重试 |
 | `CHARACTER_BUSY` | true | 409 | instance 正在生成/反思，当前操作不可安全执行 |
