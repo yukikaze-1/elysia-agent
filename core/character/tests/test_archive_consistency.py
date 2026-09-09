@@ -202,6 +202,25 @@ async def test_archive_default_retarget_survives_restart():
 
 
 @pytest.mark.asyncio
+async def test_archive_fails_closed_when_authoritative_identity_unavailable():
+    """权威身份不可用 → 无法保证「归档后默认角色指向可用角色」，整体失败且角色保持 active。"""
+    store = UserIdentityStore(repo=UserIdentityRepository(db=None))
+    assert await store.connect(user_name="妖梦") is None
+    assert store.get() is None
+
+    svc = _service(store)
+    await svc.repo.connect()
+    await svc.rev_repo.connect()
+    detail = await svc.create(_draft(), owner_user_id="usr_local_default")
+
+    with pytest.raises(StorageUnavailableError):
+        await svc.archive(detail.summary.characterId)
+
+    definition = await svc.repo.get_definition(detail.summary.characterId)
+    assert definition is not None and definition.status == "active"
+
+
+@pytest.mark.asyncio
 async def test_archive_non_default_character_leaves_profile_untouched():
     """归档的不是默认角色 → 不动 profile，响应 userProfile 为 None。"""
     store = _RecordingStore()

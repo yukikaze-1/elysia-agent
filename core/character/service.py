@@ -731,6 +731,10 @@ class CharacterService:
         for _ in range(self.DEFAULT_RETARGET_ATTEMPTS):
             profile = self.user_identity_store.get()
             if profile is None:
+                if self.user_identity_store.is_authoritative:
+                    # 权威身份不可用 → 无法保证「归档后默认角色指向可用角色」，
+                    # 整个归档 fail-closed（角色保持 active，可恢复）。
+                    raise StorageUnavailableError("用户身份权威存储不可用")
                 return None
             if profile.defaultCharacterId != character_id:
                 # 默认角色不是被归档角色——无需改动，响应沿用既有 None 语义。
