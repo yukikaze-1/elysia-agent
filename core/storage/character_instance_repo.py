@@ -138,6 +138,16 @@ class CharacterInstanceRepository(Repository):
             and persisted.state == instance.state
         )
 
+    async def delete(self, instance_id: str) -> bool:
+        """物理删除 instance（BE-STAGEH-05 fixture cleanup 用；生产路径不调用）。"""
+        if self._db is None:
+            raise StorageUnavailableError("CharacterInstanceRepository 未连接")
+        db = self._db
+        deleted = await self._call(lambda: db.delete_many(
+            COLLECTION, {"instance_id": instance_id}),
+            reason="CharacterInstanceRepository.delete 失败")
+        return deleted > 0
+
     async def cas_state_version(self, instance_id: str, *, expected: int,
                                 new_state: "CharacterRuntimeState", new_version: int) -> bool:
         """CAS state_version：filter 恒含 state_version==expected + updated_at 必变。"""

@@ -169,5 +169,17 @@ class CharacterRepository(Repository):
         )
         self._cache_invalidate(character_id)
 
+    async def delete_definition(self, character_id: str) -> bool:
+        """物理删除 Definition（BE-STAGEH-05 fixture cleanup 用；生产路径不调用）。"""
+        if self._db is None:
+            raise StorageUnavailableError("CharacterRepository 未连接")
+        deleted = await self._call(
+            lambda: self._db.delete_many(  # type: ignore[union-attr]
+                COLLECTION, {"character_id": character_id}),
+            reason="CharacterRepository.delete_definition 写失败",
+        )
+        self._cache_invalidate(character_id)
+        return deleted > 0
+
     async def _health_check(self) -> bool:
         return await super()._health_check()

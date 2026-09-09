@@ -1221,8 +1221,8 @@ class CharacterService:
             return CharacterTooLargeError("角色内容超过 64KiB")
         return None
 
+    @staticmethod
     def _revision_from_draft(
-        self,
         character_id: str,
         draft: CharacterDraft,
         *,

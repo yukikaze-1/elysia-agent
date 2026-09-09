@@ -5,6 +5,7 @@ from core.storage.character_instance_repo import CharacterInstanceRepository
 from core.character.instance import CharacterInstance
 from core.schema.character import CharacterRuntimeState
 from core.schema.types import SessionId
+from core.storage.base import StorageUnavailableError
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
 
@@ -181,3 +182,24 @@ async def test_revision_transition_cas_updates_state_and_clears_pending():
         new_state=candidate,
         new_version=5,
     )
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_only_target_instance():
+    """BE-STAGEH-05：fixture cleanup 用的物理删除——只删目标 instance。"""
+    repo = CharacterInstanceRepository(db=FakeDocumentDBBackend())
+    await repo.connect()
+    await repo.save(_inst(instanceId="chi_a"))
+    await repo.save(_inst(instanceId="chi_b"))
+
+    assert await repo.delete("chi_a") is True
+    assert await repo.get("chi_a") is None
+    assert await repo.get("chi_b") is not None
+    assert await repo.delete("chi_missing") is False
+
+
+@pytest.mark.asyncio
+async def test_delete_fails_closed_without_connection():
+    repo = CharacterInstanceRepository(db=None)
+    with pytest.raises(StorageUnavailableError):
+        await repo.delete("chi_a")

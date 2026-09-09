@@ -16,6 +16,7 @@
 | `check_compose_security.py` | Compose 安全策略门禁（P1-19）：数据服务端口仅 loopback、无默认凭据/空 token、生产不发布管理端口 | `conda run -n Elysia python scripts/check_compose_security.py` |
 | `gen_contract_frames.py` | 契约层 golden frames 生成/漂移检测（9B-1 + 阶段4）：17 个 `ws-v2-*.jsonl`/`rest-*.jsonl`（WS 含阶段4 普通录音/听写/音频/服务切换，REST 含 Profile/TTS 正反例）；`--check` 漂移返回 1（`make check-types` 强制） | `conda run -n Elysia python scripts/gen_contract_frames.py` |
 | `stage4_smoke.py` | 阶段 4 确定性契约 smoke（P1-01）：进程内 `create_app` + 真 agent(fake LLM) + STT/TTS 桩，覆盖 Profile/三语音模式/TTS 播放 5 场景；默认 stub 确定性、失败非零退出；`STAGE4_SMOKE_LIVE=1` 才接真实 provider（不进 CI） | `conda run -n Elysia python scripts/stage4_smoke.py` |
+| `dev/seed_stage_h_pinned.py` | Stage H pinned 联调夹具（BE-STAGEH-05）：幂等建 fixture definition/revision + pinned & follow_latest instance + 两条 session binding；`--cleanup` 只删固定 ID 的 fixture 数据。须 `STAGE_H_FIXTURES=1` 且 Mongo 非公网 | `STAGE_H_FIXTURES=1 conda run -n Elysia python scripts/dev/seed_stage_h_pinned.py [--cleanup]` |
 
 ## clean_db.py
 

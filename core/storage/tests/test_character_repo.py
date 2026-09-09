@@ -72,3 +72,24 @@ class TestCharacterRepository:
         r = CharacterRepository(db=None)
         with pytest.raises(StorageUnavailableError):
             await r.insert_definition(_def())
+
+
+@pytest.mark.asyncio
+async def test_delete_definition_removes_only_target():
+    """BE-STAGEH-05：fixture cleanup 用的物理删除——只删目标 Definition。"""
+    repo = CharacterRepository(db=FakeDocumentDBBackend())
+    await repo.connect()
+    await repo.insert_definition(_def(characterId="chr_a"))
+    await repo.insert_definition(_def(characterId="chr_b"))
+
+    assert await repo.delete_definition("chr_a") is True
+    assert await repo.get_definition("chr_a") is None
+    assert await repo.get_definition("chr_b") is not None
+    assert await repo.delete_definition("chr_missing") is False
+
+
+@pytest.mark.asyncio
+async def test_delete_definition_fails_closed_without_connection():
+    r = CharacterRepository(db=None)
+    with pytest.raises(StorageUnavailableError):
+        await r.delete_definition("chr_a")
