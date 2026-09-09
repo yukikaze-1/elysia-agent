@@ -508,7 +508,12 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # BE-STAGEH-01：登记本回合 generation lease——reset-evolution 据此在
         # generation 在途时立即 409（与反思/压缩锁共同构成 busy 判定）。放在
         # _TurnSetup 之前最后一步，确保前面任何失败都不会泄漏 lease。
-        runtime.begin_generation()
+        # 对称互斥：破坏性变更（reset）在途时拒绝开始 generation——不能只依赖
+        # route 的 _process_lock（领域层须独立守住不变量）。此处未取得 lease，
+        # 抛出不泄漏任何计数。
+        if not runtime.try_begin_generation():
+            from core.character.service import CharacterBusyError
+            raise CharacterBusyError(instance_id)
 
         return _TurnSetup(
             target=target,
@@ -520,8 +525,24 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         )
 
     async def _handle_turn_exception(self, e: BaseException) -> None:
-        """process 异常收口：区分 LLM 层错误 / 内部错误并发射 generation.failed。"""
-        if _is_llm_layer_error(e):
+        """process 异常收口：区分 LLM 层错误 / 依赖不可用 / 内部错误并发射 generation.failed。"""
+        from core.character.service import CharacterBusyError
+        from core.storage.base import StorageUnavailableError
+
+        if isinstance(e, CharacterBusyError):
+            # BE-STAGEH-01：破坏性变更（reset）在途，本回合不得开始——稳定公开错误，
+            # 客户端可重试（不泄漏实例内部状态）。
+            logger.warning("<<< 角色实例正在执行破坏性变更，拒绝开始 generation")
+            label = "角色实例正忙"
+            code = "CHARACTER_BUSY"
+            retryable = True
+        elif isinstance(e, StorageUnavailableError):
+            # BE-STAGEH-03：权威身份/角色存储不可用时 fail-closed——不伪造身份继续聊天。
+            logger.exception("<<< 存储依赖不可用，回合失败")
+            label = "存储不可用"
+            code = "STORAGE_UNAVAILABLE"
+            retryable = True
+        elif _is_llm_layer_error(e):
             logger.exception("<<< LLM 调用异常，回退到 IDLE")
             label = "LLM 调用失败"
             code = "GENERATION_TIMEOUT" if isinstance(e, asyncio.TimeoutError) \
@@ -566,9 +587,18 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 logger.warning("Agent not accepting input — skipping turn")
                 return
 
-            setup = await self._prepare_turn(
-                user_message, user_name, stt_emotion, content,
-                message_id, conversation_id, protocol_version)
+            # BE-STAGEH-01：破坏性变更（reset-evolution）在途时 _prepare_turn 抛
+            # CharacterBusyError——本回合未取得 lease，按稳定公开错误收口（不静默
+            # 丢消息，也不排队后执行）。
+            from core.character.service import CharacterBusyError
+
+            try:
+                setup = await self._prepare_turn(
+                    user_message, user_name, stt_emotion, content,
+                    message_id, conversation_id, protocol_version)
+            except CharacterBusyError as exc:
+                await self._handle_turn_exception(exc)
+                return
             if setup is None:
                 return
 
@@ -823,7 +853,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                               session: SessionMemory | None = None,
                               engine: "CharacterEngine | None" = None,
                               consolidator: MemoryConsolidator | None = None,
-                              memory_reflector: MemoryReflector | None = None) -> None:
+                              memory_reflector: MemoryReflector | None = None,
+                              ) -> "asyncio.Task[None] | None":
         """Post-response 钩子：沉淀记忆、性格反思、保存会话。
 
         以 fire-and-forget 方式由 _finalize_turn 调用。
@@ -841,13 +872,17 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 self._consolidator，仍保持 None，仅作兼容 fallback）
             memory_reflector: Task 7（记忆 v2 隔离）本轮 runtime 的 per-runtime reflector
                 （局部捕获同 above；None 时回退 self._memory_reflector，仍保持 None）
+
+        Returns:
+            CharacterReflector 的反思 task（可能为 None）。调用方（tail lease 持有者）
+            需 await 它——反思真正完成前 generation busy 不得释放（BE-STAGEH-01）。
         """
         # shutdown 门禁——stop() 开始后（cognitive task 已 cancel、LLM/session repo 将关闭），
         # 本轮 turn 收尾新创建的 after_response task 立即退出，避免与已关闭资源并发。
         # 否则最后轮记忆沉淀丢失、session 降级写 JSONL。
         if self._shutting_down:
             logger.debug("after_response 跳过——agent 正在关闭")
-            return
+            return None
 
         # 局部捕获：不读 self._session / self._engine——resolver 切走后
         # 本轮 in-flight 异步延续仍写发起会话 / 发起引擎。
@@ -864,6 +899,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                                    else self._memory_reflector)
 
         items = []  # 初始化，避免 NameError
+        reflect_task: "asyncio.Task[None] | None" = None
         if target_consolidator:
             try:
                 t0 = time.perf_counter()
@@ -882,6 +918,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 task = target_engine.buffer_message(
                     user_message, assistant_response, reflector=target_reflector)
                 if task is not None:
+                    reflect_task = task
                     self._pending_after_response.append(task)
             except Exception:
                 logger.warning("性格反思缓冲失败", exc_info=True)
@@ -902,6 +939,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             raise
         except Exception:
             logger.error("会话保存失败", exc_info=True)
+        return reflect_task
 
     async def flush_after_response(self, timeout: float = 5.0) -> None:
         """等待所有 pending _after_response task 完成。

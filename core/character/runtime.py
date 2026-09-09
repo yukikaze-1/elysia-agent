@@ -93,8 +93,31 @@ class CharacterRuntime:
     def is_destructive_mutation_active(self) -> bool:
         return self._destructive_ops > 0
 
-    def begin_generation(self) -> None:
-        """登记一次 generation 生命周期（回合 finally 释放）。"""
+    def try_begin_generation(self) -> bool:
+        """登记一次 generation 生命周期；破坏性变更在途时拒绝（对称于 reset）。
+
+        与 ``try_begin_destructive_mutation`` 共用同一把同步锁与同一对计数器，
+        构成两个方向互斥的原子边界——generation 不能只依赖 HTTP route 的
+        ``_process_lock`` 与 reset 互斥（领域层须独立守住不变量）。
+
+        Returns:
+            True 表示已登记（调用方负责在 finally 中 ``end_generation()``）；
+            False 表示破坏性变更正在执行，调用方不得开始 generation。
+        """
+        with self._op_guard:
+            if self._destructive_ops > 0:
+                return False
+            self._generation_ops += 1
+            self._busy = True
+            return True
+
+    def begin_generation_tail(self) -> None:
+        """为回合的后台收尾（``_after_response``）追加一份 lease。
+
+        主回合的 lease 在 ``process()`` 返回时释放，但记忆沉淀/性格反思/
+        MemoryReflector/会话保存仍在后台 task 中运行。tail lease 由该 task 在
+        finally 中释放，使 busy 覆盖到「最后一次相关状态持久化」完成。
+        """
         with self._op_guard:
             self._generation_ops += 1
             self._busy = True

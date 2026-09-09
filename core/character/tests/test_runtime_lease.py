@@ -48,8 +48,8 @@ def _engine_with_locks() -> SimpleNamespace:
 def test_generation_lease_counts_nested_turns():
     rt = _rt()
     assert rt.is_generation_busy is False
-    rt.begin_generation()
-    rt.begin_generation()
+    assert rt.try_begin_generation() is True
+    assert rt.try_begin_generation() is True
     assert rt.is_generation_busy is True
     rt.end_generation()
     assert rt.is_generation_busy is True
@@ -63,14 +63,14 @@ def test_end_generation_without_begin_is_noop():
     rt.end_generation()
     rt.end_generation()
     assert rt.is_generation_busy is False
-    rt.begin_generation()
+    assert rt.try_begin_generation() is True
     assert rt.is_generation_busy is True
     rt.end_generation()
 
 
 def test_destructive_mutation_rejected_while_generation_busy():
     rt = _rt()
-    rt.begin_generation()
+    assert rt.try_begin_generation() is True
     try:
         assert rt.try_begin_destructive_mutation() is False
     finally:
@@ -83,7 +83,7 @@ def test_lease_maintains_busy_flag_for_eviction_guard():
     """_busy 由 lease 维护——registry._evict_if_needed 读它做驱逐保护。"""
     rt = _rt()
     assert rt._busy is False
-    rt.begin_generation()
+    assert rt.try_begin_generation() is True
     assert rt._busy is True
     rt.end_generation()
     assert rt._busy is False
@@ -115,3 +115,41 @@ def test_destructive_mutation_releases_when_cancelled():
     assert rt.is_destructive_mutation_active is False
     assert rt.try_begin_destructive_mutation() is True
     rt.end_destructive_mutation()
+
+
+def test_generation_rejected_while_destructive_mutation_active():
+    """对称互斥：reset 在途时 generation 不得开始（不能只靠 route 的 _process_lock）。"""
+    rt = _rt()
+    assert rt.try_begin_destructive_mutation() is True
+    try:
+        assert rt.try_begin_generation() is False
+        assert rt.is_generation_busy is False
+    finally:
+        rt.end_destructive_mutation()
+    assert rt.try_begin_generation() is True
+    rt.end_generation()
+
+
+def test_tail_lease_keeps_busy_after_main_turn_released():
+    """P0-1：主回合 lease 释放后，tail lease 仍须令 reset 被拒。"""
+    rt = _rt()
+    assert rt.try_begin_generation() is True
+    rt.begin_generation_tail()
+    rt.end_generation()                      # 主回合结束
+    assert rt.is_generation_busy is True     # tail 仍在
+    assert rt.try_begin_destructive_mutation() is False
+    rt.end_generation()                      # tail task 结束
+    assert rt.is_generation_busy is False
+    assert rt.try_begin_destructive_mutation() is True
+    rt.end_destructive_mutation()
+
+
+def test_lease_is_per_instance():
+    """不同 instance 各自演化——lease 不引入全局领域锁。"""
+    a, b = _rt(), _rt()
+    assert a.try_begin_generation() is True
+    assert b.is_generation_busy is False
+    assert b.try_begin_destructive_mutation() is True
+    assert a.is_destructive_mutation_active is False
+    b.end_destructive_mutation()
+    a.end_generation()

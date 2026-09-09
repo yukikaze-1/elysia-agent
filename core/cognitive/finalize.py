@@ -181,21 +181,41 @@ class CognitiveFinalize:
         # target/self._engine 同构。per-turn 不重绑 self._consolidator（会跨 instance 写错）。
         runtime = self._current_runtime
 
+        # BE-STAGEH-01：tail lease——主回合 lease 由 process() 在返回时释放，但
+        # 记忆沉淀/性格反思/MemoryReflector/会话保存仍在后台 task 中运行。tail
+        # task 在 finally 中释放这一份，使 busy 覆盖到「最后一次相关状态持久化」。
+        if runtime is not None:
+            runtime.begin_generation_tail()
+
         async def _run_after_response() -> None:
             try:
-                await self._after_response(
+                reflect_task = await self._after_response(
                     user_message, public_text,
                     session=target, engine=self._engine,
                     consolidator=runtime.consolidator if runtime else None,
                     memory_reflector=runtime.reflector if runtime else None,
                 )
+                # 反思 task 由 engine.buffer_message 创建并登记在 tail registry。
+                # 在此 await 它：否则「task 已创建、尚未持 _reflect_lock」的窗口里
+                # reset 仍可插入（evolution_locks_busy 只看锁，看不到未启动的 task）。
+                if reflect_task is not None:
+                    try:
+                        await reflect_task
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.warning("性格反思任务异常", exc_info=True)
             finally:
+                if runtime is not None:
+                    runtime.end_generation()
                 if background_reserved and self._session_work_releaser is not None:
                     self._session_work_releaser(target.session_id)
 
         try:
             task = asyncio.create_task(_run_after_response(), name="after-response")
         except Exception:
+            if runtime is not None:
+                runtime.end_generation()
             if background_reserved and self._session_work_releaser is not None:
                 self._session_work_releaser(target.session_id)
             raise

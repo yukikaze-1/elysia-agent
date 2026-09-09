@@ -428,7 +428,7 @@ async def test_reset_evolution_rejects_generation_busy_runtime() -> None:
         persisted.append((state, version))
         return True
 
-    runtime.begin_generation()
+    assert runtime.try_begin_generation() is True
     try:
         with pytest.raises(CharacterBusyError):
             await service.reset_evolution(

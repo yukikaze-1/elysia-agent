@@ -79,8 +79,8 @@ class CharacterRuntimeRegistry:
         """手工标记 runtime busy（防驱逐）。
 
         BE-STAGEH-01 起 `_busy` 由 CharacterRuntime 的 lease
-        （begin_generation/try_begin_destructive_mutation）维护，本方法只作为
-        绕过 lease 的显式覆盖口，生产代码不再调用。
+        （try_begin_generation/begin_generation_tail/try_begin_destructive_mutation）
+        维护，本方法只作为绕过 lease 的显式覆盖口，生产代码不再调用。
         """
         rt = self._runtimes.get(instance_id)
         if rt is not None:
