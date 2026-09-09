@@ -1,7 +1,23 @@
 """C5: 感官输入。"""
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
+
 from Module.system_prompt.protocol import Jinja2Section
+
+_DEFAULT_TIMEZONE = "Asia/Shanghai"
+
+
+def _now_in(timezone_name: str) -> datetime:
+    """按用户时区取当前时间（P0-2）。
+
+    未知时区名 / 运行环境缺 tzdata（Windows 无系统时区库）时回退进程本地时间——
+    感官时间退化优于整个 prompt 渲染失败。
+    """
+    try:
+        return datetime.now(ZoneInfo(timezone_name))
+    except Exception:
+        return datetime.now()
 
 # STT 情绪 → emoji 映射（内联自 core.schema.mood，消除跨层依赖）
 _STT_EMOTION_EMOJI: dict[str, str] = {
@@ -43,13 +59,15 @@ class SensorySection(Jinja2Section):
         super().__init__(template_path)
         self._stt_emotion = ""
         self._stt_events: list[str] = []
+        self._user_timezone = _DEFAULT_TIMEZONE
 
     def set_context(self, **kwargs: Any) -> None:
         self._stt_emotion = kwargs.get("stt_emotion", "")
         self._stt_events = kwargs.get("stt_events", [])
+        self._user_timezone = kwargs.get("user_timezone") or _DEFAULT_TIMEZONE
 
     async def render(self) -> str:
-        now = datetime.now()
+        now = _now_in(self._user_timezone)
         # 推导输入来源：STT emotion 非空 → 语音，空 → 文字
         input_source = "语音" if self._stt_emotion else "文字"
         sensory_ctx = {

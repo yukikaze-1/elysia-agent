@@ -95,6 +95,11 @@ class MemoryReflector:
         self._new_memory_count = 0
         self._last_summary: dict = {}
 
+    def set_user_name(self, user_name: str) -> None:
+        """投影本轮身份的有效称呼（P0-2）——去重 prompt 的 {user_name} 占位符。"""
+        if user_name:
+            self._user_name = user_name
+
     # ---- 计数器 ----
 
     def increment_round(self) -> None:

@@ -195,6 +195,16 @@ class MemoryConsolidator:
         self._threshold = buffer_threshold if buffer_threshold is not None else self.BUFFER_THRESHOLD
         self._consolidate_lock = asyncio.Lock()
 
+    def set_user_name(self, user_name: str) -> None:
+        """投影本轮身份的有效称呼（P0-2：preferredAddress 优先，否则 displayName）。
+
+        记忆提取/比对的 {user_name} 占位符与对话标签据此使用用户当前的自我称呼，
+        不再固定为启动时的 config.agent.user_name。回合由 _process_lock 串行，
+        无并发写。
+        """
+        if user_name:
+            self._user_name = user_name
+
     async def consolidate(self, user_message: str, assistant_response: str) -> list[ExtractedMemory]:
         """缓冲对话，攒够阈值后调 LLM 提取。
 

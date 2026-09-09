@@ -42,6 +42,7 @@ from core.prompt.prompt_assembler import PromptAssembler
 from core.memory.session import SessionMemory
 from core.adapter.llm_adapter import LLMAdapter
 from core.memory.consolidator import MemoryConsolidator
+from core.profile.user_identity import LOCAL_DEFAULT_PRONOMS, LOCAL_DEFAULT_USER_ID, UserIdentity
 from Module.llm.registry import LLMFactory
 
 if TYPE_CHECKING:
@@ -336,14 +337,20 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             if name == "tts":
                 self._tts_mgr.set_backend(value)
 
-    def _resolve_pronouns(self) -> str:
-        """读 UserIdentity.pronouns（B1 全局唯一「她」）。无 store 时兜底「她」。"""
+    def _identity_snapshot(self, fallback_user_name: str) -> UserIdentity:
+        """本轮用户身份快照（P0-2）：Mongo 权威 store 优先，回合内冻结。
+
+        无 store / store 未装载（直接构造 loop 的单测路径或显式本地模式）时回退
+        传入的用户名 + 默认代词，保证既有测试路径可用。
+        """
         store = getattr(self, "_user_identity_store", None)
-        if store is not None:
-            identity = store.get()
-            if identity is not None and identity.pronouns:
-                return identity.pronouns
-        return "她"
+        identity = store.get() if store is not None else None
+        if identity is not None:
+            return identity
+        return UserIdentity(
+            userId=LOCAL_DEFAULT_USER_ID,
+            displayName=fallback_user_name or "用户",
+        )
 
     # ---- Task 8（B1 闭环）：registry/runtime/engine factory 延迟 guard ----
     # factory 是「延迟触发」依赖：registry.get 命中/engine 已建时不调用；仅
@@ -417,17 +424,28 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._current_runtime = runtime
         # Task 7（B1 闭环）：冻结本回合角色/用户上下文，并传给 prompt。
         # characterInstanceId 来自 binding 的 instance_id，characterId 来自 runtime.definition。
+        # P0-2：用户身份同样按回合冻结——Prompt/记忆组件的用户名与称呼取自本轮
+        # 权威 UserIdentity 快照，不再读 config.agent.user_name。
+        identity = self._identity_snapshot(user_name)
         self._turn_context = TurnCharacterContext(
             conversationId=gen_conversation_id,
             characterInstanceId=instance_id,
             characterId=runtime.definition.characterId,
             characterRevision=runtime.revision.revision,
-            userPronoun=self._resolve_pronouns(),
+            userPronouns=identity.pronouns or LOCAL_DEFAULT_PRONOMS,
             memoryScope=instance_id,
             voice=cast(dict, runtime.revision.runtimeDefaults.get("voice", {})),
             displayName=runtime.revision.displayName,
             stateSnapshot=runtime.snapshot_state(),
+            userId=identity.userId,
+            userDisplayName=identity.displayName,
+            userPreferredAddress=identity.preferredAddress,
+            userLocale=identity.locale,
+            userTimezone=identity.timezone,
+            userIdentityRevision=identity.revision,
         )
+        # 有效称呼投影到 per-runtime 记忆组件（consolidator/reflector/性格反思）。
+        runtime.apply_user_address(self._turn_context.effectiveUserAddress)
         self._prompt._turn_context = self._turn_context
         self._prompt.set_personality_engine(engine)
         self._prompt.set_character(

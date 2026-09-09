@@ -163,6 +163,25 @@ class CharacterRuntime:
         ]
         return any(lock is not None and lock.locked() for lock in locks)
 
+    def apply_user_address(self, address: str) -> None:
+        """把本轮身份的有效称呼投影到记忆组件（P0-2）。
+
+        consolidator / MemoryReflector / CharacterReflector 在各自 prompt 中用
+        {user_name} 标识用户；用户改「我的档案」后，下一轮起应使用新的称呼。
+        回合由 CognitiveLoop._process_lock 全局串行，投影无并发写风险。
+        """
+        if not address:
+            return
+        components = (
+            self.consolidator,
+            self.reflector,
+            getattr(self._engine, "_reflector", None),
+        )
+        for component in components:
+            setter = getattr(component, "set_user_name", None)
+            if callable(setter):
+                setter(address)
+
     def set_persist_fn(self, fn: Callable[[CharacterRuntimeState], Awaitable[None]] | None) -> None:
         self._persist_fn = fn
 

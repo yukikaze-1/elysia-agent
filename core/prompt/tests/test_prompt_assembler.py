@@ -69,15 +69,15 @@ def test_resolve_template_falls_back_to_shared(cold_config, mock_long_term, mock
 async def test_user_pronoun_from_turn_context_overrides(
     cold_config, cold_engine_mock, mock_long_term, mock_session
 ):
-    """_turn_context.userPronoun=她 时，即使 _character.user_pronoun=你 也渲染她。
+    """_turn_context.userPronouns=她 时，即使 _character.user_pronoun=你 也渲染她。
 
     CORRECTNESS #10：断言敏感 section（C2 第 18 行句式），非泛泛"她"。
-    cold_config.user_pronoun="你"；context.userPronoun="她" → 渲染"此刻她只注视着我"。
+    cold_config.user_pronoun="你"；context.userPronouns="她" → 渲染"此刻她只注视着我"。
     """
     assembler = make_assembler(cold_config, cold_engine_mock, mock_long_term, mock_session)
     assembler._turn_context = TurnCharacterContext(
         conversationId="c", characterInstanceId="chi", characterId="chr",
-        characterRevision=1, userPronoun="她",
+        characterRevision=1, userPronouns="她",
     )
     rendered = await assembler.build_system_prompt(user_message="hi", user_name="xx")
     assert "此刻她只注视着我" in rendered

@@ -4,7 +4,7 @@
 覆盖 plan Task 7 Step 5 + Task 8：
 - _prepare_turn 后 self._turn_context 非 None；
 - self._prompt._turn_context is self._turn_context（B1 闭环关键）；
-- userPronoun 取自 UserIdentityStore（configure 注入）——缺 store 时兜底「她」；
+- userPronouns 取自 UserIdentityStore（configure 注入）——缺 store 时兜底「她」；
 - Task 8：_prepare_turn 从 session.character_binding 解析 instance_id，经
   registry.get → runtime.ensure_engine → self._engine；context 字段取自 runtime。
 """
@@ -128,14 +128,14 @@ async def test_prepare_turn_freezes_turn_context():
     assert ctx.characterInstanceId == rt.instance.instanceId
     assert ctx.characterId == rt.definition.characterId
     assert ctx.characterRevision == 1
-    assert ctx.userPronoun == "她"       # store 注入 identity.pronouns="她"
+    assert ctx.userPronouns == "她"       # store 注入 identity.pronouns="她"
     assert loop._prompt._turn_context is ctx   # B1 闭环关键：同一对象传给 prompt
     await loop._output.close()
 
 
 @pytest.mark.asyncio
 async def test_prepare_turn_reads_user_pronoun_from_store():
-    """userPronoun 取自 UserIdentityStore.get().pronouns（B1 全局唯一「她」）。"""
+    """userPronouns 取自 UserIdentityStore.get().pronouns（B1 全局唯一「她」）。"""
     identity = MagicMock()
     identity.pronouns = "她"
     store = MagicMock()
@@ -153,7 +153,7 @@ async def test_prepare_turn_reads_user_pronoun_from_store():
         protocol_version=2,
     )
     assert setup is not None
-    assert loop._turn_context.userPronoun == "她"
+    assert loop._turn_context.userPronouns == "她"
     assert loop._turn_context.conversationId == SessionId("conv_1")
     await loop._output.close()
 
@@ -179,7 +179,7 @@ async def test_prepare_turn_without_binding_falls_back_to_default_instance():
     assert ctx.characterInstanceId == DEFAULT_INSTANCE_ID
     assert ctx.characterId == rt.definition.characterId
     assert ctx.characterRevision == 1
-    assert ctx.userPronoun == "她"
+    assert ctx.userPronouns == "她"
     assert loop._engine is rt.engine
     await loop._output.close()
 
@@ -198,7 +198,7 @@ async def test_prepare_turn_without_store_falls_back_to_default_pronoun():
         message_id=None, conversation_id=None, protocol_version=1,
     )
     assert setup is not None
-    assert loop._turn_context.userPronoun == "她"
+    assert loop._turn_context.userPronouns == "她"
     await loop._output.close()
 
 

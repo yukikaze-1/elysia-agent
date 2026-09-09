@@ -86,3 +86,51 @@ async def test_second_agent_does_not_reseed_bootstrap_over_existing_profile():
         assert loaded.revision == 2
     finally:
         await agent_b.stop()
+
+
+@pytest.mark.asyncio
+async def test_restarted_agent_uses_persisted_identity_in_turn_prompt():
+    """P0-2：重启后新一轮 Prompt 使用 Mongo 中持久化的身份（称呼/代词/revision）。
+
+    证据链：Agent A 更新档案 → 停止 → Agent B 用同一份数据启动 → _prepare_turn
+    冻结本轮快照 → 真实 PromptAssembler 渲染出的 system prompt 含持久化称呼。
+    """
+    db = _DurableFakeDB()
+
+    agent_a = _make_agent(db)
+    await agent_a.start()
+    try:
+        updated = await agent_a._user_identity_store.update_if_revision(  # noqa: SLF001
+            1, {"displayName": "妖梦", "preferredAddress": "主人",
+                "pronouns": "她", "timezone": "Asia/Shanghai", "initialized": True})
+        assert updated is not None and updated.revision == 2
+    finally:
+        await agent_a.stop()
+
+    agent_b = _make_agent(db)
+    await agent_b.start()
+    try:
+        loop = agent_b.cognitive
+        setup = await loop._prepare_turn(  # noqa: SLF001
+            user_message="你好", user_name="启动默认名", stt_emotion="",
+            content=None, message_id=None, conversation_id=None,
+            protocol_version=1)
+        assert setup is not None
+        try:
+            ctx = loop._turn_context  # noqa: SLF001
+            assert ctx is not None
+            assert ctx.userDisplayName == "妖梦"
+            assert ctx.userPreferredAddress == "主人"
+            assert ctx.userPronouns == "她"
+            assert ctx.userTimezone == "Asia/Shanghai"
+            assert ctx.userIdentityRevision == 2
+            assert ctx.effectiveUserAddress == "主人"
+
+            rendered = await loop._prompt.build_system_prompt(  # noqa: SLF001
+                user_message="你好", user_name="启动默认名")
+            assert "关于 主人：" in rendered
+            assert "启动默认名" not in rendered
+        finally:
+            setup.runtime.end_generation()
+    finally:
+        await agent_b.stop()

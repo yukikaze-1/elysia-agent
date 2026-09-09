@@ -416,7 +416,7 @@ class Agent(AgentLifecycle, AgentServer):
             engine_factory=self._make_engine,
         )
         self._cognitive.configure(
-            # Task 7（B1）：把用户身份存储传给 loop——_prepare_turn 读 store.pronouns 得 userPronoun
+            # Task 7（B1）：把用户身份存储传给 loop——_prepare_turn 冻结本轮 UserIdentity 快照（pronouns/称呼/时区）
             user_identity_store=self._user_identity_store,
             # _after_response 是独立 task，主 process 返回后仍会保存 SessionMemory；
             # 给它单独一份引用，避免删除后晚到 save upsert 复活幽灵会话。

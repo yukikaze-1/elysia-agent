@@ -69,10 +69,14 @@ class PromptCharacterPreviewAdapter:
         )
         assembler.enable_preview_mode()
         assembler.set_character(profile.config.name, profile.config.name, profile)
+        # P0-2：有效称呼与生产回合同规则——preferredAddress 优先，否则 displayName。
+        address = (user_identity.preferredAddress or "").strip() or (
+            user_identity.displayName or "用户")
         messages = await assembler.build_messages(
             user_message=user_message,
-            user_name=user_identity.displayName or "用户",
+            user_name=address,
             user_pronoun_override=user_identity.pronouns,
+            user_timezone_override=user_identity.timezone,
         )
         result = await self._llm.think(messages)   # tools=None → 不挂任何工具
         return PreviewReply(text=result.text or "", model=self._llm.model)

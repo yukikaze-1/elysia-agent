@@ -81,6 +81,11 @@ class CharacterReflector:
         self._last_prompt_system: str = ""
         self._last_prompt_user: str = ""
 
+    def set_user_name(self, user_name: str) -> None:
+        """投影本轮身份的有效称呼（P0-2）——对话上下文角色标签 + 反思 prompt。"""
+        if user_name:
+            self._user_name = user_name
+
     # ---- 状态恢复 ----
 
     def _restore_from_state(self) -> None:

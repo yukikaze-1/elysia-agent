@@ -32,6 +32,10 @@ from Module.system_prompt.sections.self_perception import SelfPerceptionSection
 from core.config.character_config import CharacterConfig
 from core.memory.session import SessionMemory
 from core.memory.long_term import LongTermMemory
+from core.profile.user_identity import (
+    LOCAL_DEFAULT_PRONOMS,
+    LOCAL_DEFAULT_TIMEZONE,
+)
 from core.utils.text_utils import content_text_from_content as content_text_from_raw
 
 logger = logging.getLogger(__name__)
@@ -62,7 +66,7 @@ class PromptAssembler:
         self._session = session
         self._long_term = long_term
         self._personality_engine = personality_engine
-        # Task 7（B1）：_prepare_turn 冻结的回合上下文（含 userPronoun），由 loop 注入
+        # Task 7（B1）：_prepare_turn 冻结的回合上下文（含用户身份快照），由 loop 注入
         self._turn_context: TurnCharacterContext | None = None
         # BE-STAGEH-03：无状态预览模式——不读会话历史
         self._preview_mode = False
@@ -231,16 +235,18 @@ class PromptAssembler:
     async def build_system_prompt(self, user_message: str = "", user_name: str = "",
                                    stt_emotion: str = "", stt_events: list | None = None,
                                    tts_provider: str = "",
-                                   user_pronoun_override: str | None = None) -> str:
+                                   user_pronoun_override: str | None = None,
+                                   user_timezone_override: str | None = None) -> str:
         """构建渲染后的 system prompt 字符串。
 
         Args:
             user_message: 当前用户消息文本。
-            user_name: 用户名。
+            user_name: 用户名（无回合上下文时的回退值）。
             stt_emotion: STT 识别的情感标签。
             stt_events: STT 识别的事件列表。
             tts_provider: TTS 提供商名称。
             user_pronoun_override: 显式用户代词（预览用；优先于 _turn_context）。
+            user_timezone_override: 显式用户时区（预览用；优先于默认，弱于 _turn_context）。
 
         Returns:
             渲染后的完整 system prompt 字符串。
@@ -252,19 +258,28 @@ class PromptAssembler:
             mood = self._personality_engine.state.mood
             c6 = self._personality_engine.render_c6()
             speaking_style_c6 = c6.speaking_style_c6
-        # B1 正位：优先读 _turn_context.userPronoun（Task 6/7 冻结的全局唯一她），
+        ctx = self._turn_context
+        # P0-2：本轮身份快照优先——称呼（preferredAddress 优先，否则 displayName）、
+        # 代词、时区一律取自回合冻结的 UserIdentity，不再读 config.agent.user_name。
+        if ctx is not None:
+            user_name = ctx.effectiveUserAddress
+        # B1 正位：优先读 _turn_context.userPronouns（Task 6/7 冻结的全局唯一她），
         # 否则兜底常量「她」——不回退 _character.user_pronoun（spec §5.2 无 per-role 回退）。
         user_pronoun = (
             user_pronoun_override
-            or (self._turn_context.userPronoun
-                if self._turn_context is not None and self._turn_context.userPronoun
-                else None)
-            or "她"
+            or (ctx.userPronouns if ctx is not None and ctx.userPronouns else None)
+            or LOCAL_DEFAULT_PRONOMS
+        )
+        user_timezone = (
+            (ctx.userTimezone if ctx is not None and ctx.userTimezone else None)
+            or user_timezone_override
+            or LOCAL_DEFAULT_TIMEZONE
         )
         self._manager.set_context(
             user_message=user_message,
             user_name=user_name,
             user_pronoun=user_pronoun,
+            user_timezone=user_timezone,
             stt_emotion=stt_emotion,
             stt_events=stt_events or [],
             tts_provider=tts_provider,
@@ -281,18 +296,20 @@ class PromptAssembler:
                               content: list[dict] | str | None = None,
                               supports_multimodal: bool = False,
                               tts_provider: str = "",
-                              user_pronoun_override: str | None = None) -> list[dict]:
+                              user_pronoun_override: str | None = None,
+                              user_timezone_override: str | None = None) -> list[dict]:
         """构建发送给 LLM 的完整消息列表。
 
         Args:
             user_message: 当前用户消息文本。
-            user_name: 用户名。
+            user_name: 用户名（无回合上下文时的回退值）。
             stt_emotion: STT 识别的情感标签。
             stt_events: STT 识别的事件列表。
             content: 多模态内容（如图片），为 None 时使用 user_message。
             supports_multimodal: 当前模型是否支持多模态。
             tts_provider: TTS 提供商名称。
             user_pronoun_override: 显式用户代词（预览用）。
+            user_timezone_override: 显式用户时区（预览用）。
 
         Returns:
             LLM API 的 messages 列表，包含 system prompt + 历史 + 用户消息。
@@ -303,6 +320,7 @@ class PromptAssembler:
             stt_emotion=stt_emotion, stt_events=stt_events,
             tts_provider=tts_provider,
             user_pronoun_override=user_pronoun_override,
+            user_timezone_override=user_timezone_override,
         )
         # BE-STAGEH-03：预览模式不读任何会话历史；无 session 时同样空历史
         history = (
