@@ -47,6 +47,38 @@ class TestCharacterRepository:
         assert ok is False  # current_revision==2 != expected==1 → 未命中
 
     @pytest.mark.asyncio
+    async def test_cas_updated_at_alone_counts_as_modified(self, repo):
+        """CAS 命中判据 = 真 modified_count；`$set` 恒定含 updated_at（必变字段）。
+
+        cas_revision_pointer 的契约（character_repo.py 注释）是：filter 带
+        current_revision（CAS gate）且 `$set` **恒定**含 updated_at（必变），
+        使 `modified_count>0` 恒等价于「filter 命中」。
+
+        本测试只断言 CAS 返回值（modified_count>0 判据本身）：即使 new_revision
+        与现值相同（current_revision 无变化），updated_at 的变化也必须让
+        modified_count>0 → CAS 返回 True。若有人把 updated_at 从 `$set` 移除
+        （本仓库明确防御的回归），`$set` 写入与现值相同的 current_revision
+        → 真 Mongo no-op → modified_count=0 → 本测试变红（旧替身「命中即 1」会
+        说谎放过——见反向验证记录）。
+        """
+        await repo.insert_definition(_def(currentRevision=2))
+        ok = await repo.cas_revision_pointer(
+            "chr_custom_x", expected_revision=2, new_revision=2,
+            updated_at="2026-09-10T12:00:00Z")
+        assert ok is True  # updated_at 变化 → modified_count>0
+
+    @pytest.mark.asyncio
+    async def test_cas_pointer_persists_updated_at(self, repo):
+        """CAS 命中的写入经 cache 失效后可见（updated_at 真实落库）。"""
+        await repo.insert_definition(_def(currentRevision=1))
+        await repo.cas_revision_pointer(
+            "chr_custom_x", expected_revision=1, new_revision=2,
+            updated_at="2026-09-10T12:00:00Z")
+        got = await repo.get_definition("chr_custom_x")
+        assert got.currentRevision == 2
+        assert got.updatedAt == "2026-09-10T12:00:00Z"
+
+    @pytest.mark.asyncio
     async def test_archive(self, repo):
         await repo.insert_definition(_def())
         await repo.archive("chr_custom_x")
@@ -74,6 +106,7 @@ class TestCharacterRepository:
             await r.insert_definition(_def())
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_delete_definition_removes_only_target():
     """BE-STAGEH-05：fixture cleanup 用的物理删除——只删目标 Definition。"""
@@ -88,6 +121,7 @@ async def test_delete_definition_removes_only_target():
     assert await repo.delete_definition("chr_missing") is False
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_delete_definition_fails_closed_without_connection():
     r = CharacterRepository(db=None)

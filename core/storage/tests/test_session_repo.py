@@ -159,6 +159,19 @@ class TestSessionRepository:
         ok = asyncio.run(repo.rename(SessionId("nope"), "标题"))
         assert ok is False
 
+    def test_rename_same_title_returns_false(self):
+        """改名成与现值相同的标题 = 真 Mongo no-op（modified_count=0）→ False。
+
+        rename 用 `return result > 0` 判定（session_repo.py）。真 Mongo 在
+        filter 命中但 `$set` 值与现值相同时返回 modified_count=0——旧替身
+        「命中即 1」会错误返回 True。"""
+        import asyncio
+        fake = FakeDocumentDBBackend()
+        repo = SessionRepository(db=fake)
+        asyncio.run(repo.create(SessionId("s1"), title="同名"))
+        ok = asyncio.run(repo.rename(SessionId("s1"), "同名"))
+        assert ok is False  # 无字段实际变化 → modified_count=0
+
     def test_rename_returns_false_when_db_none(self):
         import asyncio
         repo = SessionRepository(db=None)
