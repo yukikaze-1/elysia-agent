@@ -293,7 +293,7 @@ async def _characters_list(request: web.Request) -> web.Response:
         return web.json_response(response.wire_dict(), status=200)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -308,7 +308,7 @@ async def _characters_create(request: web.Request) -> web.Response:
         return _protocol_error_response("CHARACTER_VALIDATION", "角色内容校验失败", 400)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -338,7 +338,7 @@ async def _characters_preview(request: web.Request) -> web.Response:
         return _protocol_error_response("CHARACTER_VALIDATION", "角色预览请求无效", 400)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -350,7 +350,7 @@ async def _characters_get(request: web.Request) -> web.Response:
         return web.json_response(detail.wire_dict(), status=200)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -368,7 +368,7 @@ async def _characters_update(request: web.Request) -> web.Response:
         return _protocol_error_response("CHARACTER_VALIDATION", "角色内容校验失败", 400)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -378,7 +378,7 @@ async def _characters_delete(request: web.Request) -> web.Response:
         return web.json_response(result.wire_dict(), status=200)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -400,7 +400,7 @@ async def _characters_clone(request: web.Request) -> web.Response:
         return _protocol_error_response("CHARACTER_VALIDATION", "克隆请求无效", 400)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -415,7 +415,7 @@ async def _characters_revisions(request: web.Request) -> web.Response:
         return web.json_response(response.wire_dict(), status=200)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -446,7 +446,7 @@ async def _characters_rollback(request: web.Request) -> web.Response:
         return _protocol_error_response("CHARACTER_VALIDATION", "回滚请求无效", 400)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -473,7 +473,7 @@ async def _instance_state_get(request: web.Request) -> web.Response:
         )
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
@@ -517,7 +517,7 @@ async def _instance_reset_evolution(request: web.Request) -> web.Response:
         return _protocol_error_response("CHARACTER_VALIDATION", "reset 请求无效", 400)
     except Exception as exc:
         return _character_error_response(exc) or _protocol_error_response(
-            "INTERNAL_ERROR", "内部错误", 500
+            "INTERNAL", "内部错误", 500
         )
 
 
