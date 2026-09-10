@@ -393,11 +393,17 @@ class TestStreamingIntegration:
 
 
 # ============================================================================
-# 6. Interrupt integration tests
+# 6. Interrupt wiring tests（service：门控 fake LLM + 内存 fake 存储，离线秒级）
 # ============================================================================
+#
+# 分层说明（2026-09-10）：本类原标 `slow` 并打真实 DeepSeek API。改用 `_GatedLLM`
+# 门控 fake + `_make_agent_with` 注入的内存 fake 存储后，用例不再连真实 LLM/DB，
+# 故归 `service` 进 PR 门禁。同 `core/cognitive/tests/test_v2_generation.py`
+# （同一 `_make_agent_with` 基建，`pytestmark = service`，同样在进程内
+# `agent.start()`）的先例——「不启动 Agent」约束的是**连真实依赖**的启动。
 
-@pytest.mark.slow
-class TestInterruptIntegration:
+@pytest.mark.service
+class TestInterruptWiring:
     @pytest.mark.asyncio
     async def test_interrupt_during_processing(self):
         """中断在途生成：LLM 流被真正打断（未跑完），agent 回 idle，generation 落 cancelled。
@@ -434,37 +440,43 @@ class TestInterruptIntegration:
 
     @pytest.mark.asyncio
     async def test_new_message_after_interrupt(self):
-        """中断之后，新消息应可被处理。"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.agent import Agent
-        from core.status.agent_fsm import AgentState
+        """中断后 agent 仍可继续工作：新消息能被受理并**完整跑完**。
 
-        from core.config import AppConfig
-        agent = Agent(config=AppConfig())
+        实质是「中断没有把 agent 弄坏」——故断言第二轮生成真的完成（而非只看
+        有消息落库：旧版断言 `len(messages) > 0` 恒真，任何一次用户消息入 session
+        都满足，伪造 key 下也照样绿）。
+        """
+        from core.cognitive.tests.test_v2_generation import _make_agent_with
+        from core.input.ws_handler import do_interrupt
+
+        llm = _GatedLLM()
+        agent = _make_agent_with(llm)
         await agent.start()
+        try:
+            # 第一轮：在途打断
+            await agent.process_message("写一首很长的诗，越长越好")
+            await _wait_until(lambda: llm.started >= 1)
+            await do_interrupt(agent)
+            await _wait_until(lambda: agent.status.is_completely_idle)
+            assert llm.completed == 0, "第一轮应被中断，不得跑完"
 
-        # 中断第一个请求
-        await agent.process_message("写一首很长的诗，越长越好")
-        await asyncio.sleep(0.5)  # Wait for LLM stream to start
-        agent._bus.post(InterruptData(source="test"), priority=0)
-        await asyncio.sleep(0.5)  # Give time for cancellation to propagate
+            # 第二轮：放行门控，应能正常受理并跑完
+            llm.release.set()
+            await agent.process_message("你好呀")
+            await _wait_until(lambda: llm.started >= 2, timeout=20)
+            await _wait_until(lambda: llm.completed >= 1, timeout=20)
 
-        # agent 最终应回到 IDLE
-        # (real LLM streams can't be instantly cancelled due to HTTP buffering)
-        for _ in range(20):  # Wait up to 10 seconds
-            if agent._fsm.state == AgentState.IDLE:
-                break
-            await asyncio.sleep(0.5)
-
-        # 第二个请求无论如何都应正常工作
-        await agent.process_message("你好呀")
-        await asyncio.sleep(3.0)
-
-        messages = agent.session.recent_messages()
-        # 至少应有一些对话历史
-        assert len(messages) > 0, "Expected at least some session messages"
-        await agent.stop()
+            assert llm.completed == 1, "第二轮的生成应完整跑完一次"
+            # 助手消息落 session 在 LLM 流结束**之后**（两者之间有窗口），故须
+            # 轮询等它出现，不能紧跟 completed 就断言。
+            await _wait_until(
+                lambda: any(m.role == "assistant"
+                            for m in agent.session.recent_messages()),
+                timeout=20,
+            )
+        finally:
+            llm.release.set()
+            await agent.stop()
 
     @pytest.mark.asyncio
     async def test_multiple_interrupts(self):
@@ -493,11 +505,11 @@ class TestInterruptIntegration:
 
 
 # ============================================================================
-# 7. Multi-turn conversation tests
+# 7. Conversation context（service）与角色 prompt 注入（slow）测试
 # ============================================================================
 
-@pytest.mark.slow
-class TestMultiTurnConversation:
+@pytest.mark.service
+class TestConversationContext:
     @pytest.mark.asyncio
     async def test_session_context_preserved(self):
         """前几轮对话应作为**上下文传给 LLM**，而不只是留在本地 session 里。
@@ -540,11 +552,11 @@ class TestMultiTurnConversation:
         finally:
             await agent.stop()
 
-    # 归类随类（@pytest.mark.slow）：本用例 load_dotenv + 真实 LongTermMemory
-    # （构造即读 journal）+ 读模板文件，与类内其余真 I/O 用例同类；仅由
-    # `make test-full` 覆盖（该目标手工触发）。此前额外挂 @pytest.mark.service
-    # 会因 marker 累积被 make test-quick（-m "unit or service"）选中，把真 I/O
-    # 用例塞进快门禁，故去掉。
+
+@pytest.mark.slow
+class TestCharacterPromptInjection:
+    # 保留 slow：本用例 load_dotenv + 真实 LongTermMemory（构造即读 journal）+
+    # 读模板文件，属真 I/O；仅由手工触发的 `make test-full` 覆盖。
     @pytest.mark.asyncio
     async def test_character_personality_injected(self):
         """验证角色配置（base_personality）出现在 LLM 请求中。"""

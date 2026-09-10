@@ -7,9 +7,9 @@
 | 层 | marker | 标准 | 测试数 |
 |---|--------|------|--------|
 | 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 2313 |
-| 服务 | `service` | 单模块 + mock，不启动 Agent | 1911 |
+| 服务 | `service` | 单模块 + mock/fake 替身，不连真实依赖 | 1915 |
 | 集成 | `integration` | 需真实数据库或外部 API | 39 |
-| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 53 |
+| 慢速 | `slow` | 起 Agent 且连真实依赖 / 端到端 / >1s | 49 |
 | 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 36 |
 
 > **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 4251。2026-09-10 实测 `make test-quick`（`-m "unit or service"`）4210 passed / 2 skipped；`make test-normal`（`-m "not slow and not external"`）4213 passed / 2 skipped。各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
@@ -155,7 +155,10 @@ class TestMyFunction:
 ### service
 
 - 单模块测试，mock 外部依赖（用 `unittest.mock`、`FakeLLMBackend` 等）
-- 可能使用 `asyncio`，但不启动完整 Agent
+- 可能使用 `asyncio`；**可以**在进程内 `agent.start()`，前提是外部依赖全部换成
+  测试替身（fake LLM + 内存 fake 存储，如
+  `core/cognitive/tests/test_v2_generation.py` 的 `_make_agent_with`）——判据是
+  **不连真实外部依赖**，而非「不得出现 `agent.start()`」
 - 可以访问临时文件、mock 的数据库连接
 - 创建 `Agent` 但不调用 `agent.start()` → service
 
@@ -175,10 +178,15 @@ pytestmark = pytest.mark.integration
 
 ### slow
 
-- 创建 `Agent(config=AppConfig())` 并调用 `agent.start()`
+- 创建 `Agent(config=AppConfig())` 并**连真实依赖**（真实 LLM/Mongo/Milvus）
 - 完整管线端到端测试
 - 单测耗时 >1s
 - 大量 `asyncio.sleep()` 累积
+
+> 与 `service` 的分界是**是否连真实外部依赖**：同样 `agent.start()`，依赖全是测试
+> 替身则归 `service`（进合并门禁），连真实 LLM/DB 则归 `slow`（只由 `make test-full`
+> 手工触发）。**禁止两者叠加**（`slow and service` 会把真 I/O 用例塞进快门禁，
+> 见上文标记纪律的自查命令）。
 
 ```python
 @pytest.mark.slow
