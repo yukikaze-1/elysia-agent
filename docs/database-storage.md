@@ -1,10 +1,11 @@
 # 数据库存储表格
 
-项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **13 个集合**（Milvus 1 + MongoDB 12），外加若干内存/文件存储结构。没有使用 SQL 数据库。
+项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **14 个集合**（Milvus 2 + MongoDB 12），外加若干内存/文件存储结构。没有使用 SQL 数据库。
 
 | 集合 | 位置 | 用途 | 保留策略 |
 |------|------|------|----------|
-| `long_term_memory` | Milvus | 记忆摘要（向量搜索）| 1万条数量上限（超限驱逐，同步删除 Milvus）；max_age_days=90 预留未使用 |
+| `long_term_memory` | Milvus | 记忆摘要 v1（向量搜索；现仅作未注入 repo 时的回退路径） | 1万条数量上限（超限驱逐，同步删除 Milvus）；max_age_days=90 预留未使用 |
+| `long_term_memory_v2` | Milvus | 记忆摘要 v2（**产品记忆实际落库集合**，scope 隔离） | 1万条数量上限（超限驱逐，同步删除 Milvus）；max_age_days=90 预留未使用 |
 | `sessions` | MongoDB | LLM 上下文窗口 | 无自动 TTL——`max_messages` 截断，删除走 REST/debug 显式级联删除 |
 | `message_archive` | MongoDB | 对话消息永久归档 | 永久, 只增不删 |
 | `token_usage` | MongoDB | LLM token 统计 | 永久, 只增不删 |
@@ -25,7 +26,9 @@
 **连接**: 优先级 环境变量 → `config.yaml` → 默认值。YAML 路径 `database.milvus_uri` / `database.milvus_token`，环境变量 `MILVUS_URI`（默认 `http://localhost:19530`）/ `MILVUS_TOKEN`。
 **认证（P1-19）**: docker-compose 的 Milvus 默认开启授权（`common.security.authorizationEnabled=true`），root 密码由 `.env` 的 `MILVUS_ROOT_PASSWORD` 提供；应用侧 `MILVUS_TOKEN=root:<同一密码>` 必须设置，否则连接被拒。`setup.sh` 首次安装会自动生成并写入 `.env`。
 
-### 集合: `long_term_memory`
+### 集合: `long_term_memory`（v1，回退路径）
+
+> **v2 起产品记忆实际写 `long_term_memory_v2`**（见下节）。本集合仅在未注入 repo 时使用——`LongTermMemory.connect()` 在 `repo=None` 时自建 `MemoryRepository`（`core/memory/long_term.py:239-241`），以及 `clear_all()` 的临时 repo 兜底（`core/memory/long_term.py:791-793`）。生产路径由 `MemoryRepositoryV2` 覆盖。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -43,6 +46,27 @@
 - **淘汰策略**: max_entries=10000 数量上限驱逐（保留最新 N 条，驱逐时同步删除 Milvus）；max_age_days=90 当前未使用（预留供后续实现）
 - **降级**: Milvus 不可用时回退到内存列表 + 文本重叠搜索
 
+### 集合: `long_term_memory_v2`（v2，产品记忆实际落库）
+
+`MemoryRepositoryV2`（`core/storage/memory_repo_v2.py:13`，`COLLECTION = "long_term_memory_v2"`）——`MemoryRepository` 的子类，仅遮蔽 `COLLECTION` 名，复用父类全部 Milvus 操作。由 `Agent.__init__` 实例化（`core/agent/agent.py:167-170`）并以 `repo=` 注入 `LongTermMemory`（`core/agent/agent.py:198-204`），故运行时产品记忆（含 `ScopedLongTermMemory` 视图）全部读写本集合。引入于 2026-09-05（阶段 F）。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | INT64（主键，自增） | 自动生成（Milvus PK） |
+| `embedding` | FLOAT_VECTOR[1024] | 文本嵌入向量（openai 主后端，BGE 离线 fallback） |
+| `entry_id` | VARCHAR（动态字段） | 记忆 ID（`mem_` 前缀），`_load_from_milvus` 据此幂等去重（连续 connect 不倍增） |
+| `text` | VARCHAR（动态字段） | 记忆文本内容 |
+| `memory_type` | VARCHAR（动态字段） | 同 v1：`Fact` / `Preference` / `Event` / `Plan` / `Note`，写经 `MemoryType.coerce` 归一 |
+| `poignancy` | INT（动态字段） | 重要性 1-10 |
+| `timestamp` | FLOAT（动态字段） | Unix 时间戳 |
+| `user_id` | VARCHAR（动态字段，scope） | 记忆归属用户（`core/memory/scope.py` `MemoryScope.user_id`） |
+| `character_instance_id` | VARCHAR（动态字段，scope） | 记忆归属角色实例（`MemoryScope.character_instance_id`） |
+| `visibility` | VARCHAR（动态字段，scope） | `character_private`（产品记忆一律此值）/ `user_shared`（预留，无自动升级路径）。写入点为 `LongTermMemory.insert()`（`core/memory/long_term.py:491-501`）与 `sync_dirty_entries()`（`core/memory/long_term.py:640-650`） |
+
+- **索引**: 与 v1 同——IVF_FLAT，metric_type=L2，nlist=1024（`create_collection` 经 `MemoryRepository.connect()` 继承复用，index_preset=`default`，维度 1024）。scope 字段（`user_id` / `character_instance_id` / `visibility`）为 Milvus 动态字段，检索时经 `filter_expr` 做 ANN 阶段过滤（`core/memory/long_term.py:90-96`），非 ANN 召回后再 Python 过滤——避免其他 scope 条目挤占 top-k 导致本 scope 召回丢失（架构稿 §8.3）。
+- **scope 隔离**: 写/读均经 `MemoryScope` 派生（`ScopedLongTermMemory`，`core/memory/scoped_long_term.py`），`scope=None` 为宽容路径（测试/内部），生产路径恒带 scope；不存在「漏传即全局」默认值。
+- **降级/持久化补齐**: 与 v1 共用 `_dirty_ids` 内存同步 + 离线 journal（`pending_syncs`）与删除 tombstone（`pending_deletes`）——Milvus 离线时记忆落 `data/` journal，重连后补写/清理。
+
 ---
 
 ## 二、MongoDB 文档数据库
@@ -58,7 +82,7 @@
 | `session_id` | String | 会话唯一标识 |
 | `messages` | Array\<Object\> | 消息数组 |
 | `character_state` | Object | CharacterState 序列化（mood + personality L2/L3 + reflector buffer/context + awareness 冷却 + state_history） |
-| `reflector_state` | Object | MemoryReflectorState 序列化（round_count / new_memory_count）。save() 时经 `set_memory_reflector()` 同步派生（session.py:258） |
+| `reflector_state` | Object | MemoryReflectorState 序列化（round_count / new_memory_count）。save() 时经 `set_memory_reflector()` 同步派生（session.py:261） |
 | `service_state` | Object | 服务运行时状态（批次 3）：当前模型 + STT/TTS 启用模式（enabled 三态 `bool \| None`，None 回退 config；`agent.set_service` / `switch_*` 写、启动经 `_apply_service_state` 应用） |
 | `params` | Object | 运行时参数（legacy，向后兼容读取 mood/mood_intensity） |
 | `updated_at` | String（ISO 格式） | 最后更新时间 |
@@ -129,6 +153,12 @@
 | `reasoning_tokens` | Int \| null | 思考 token（可选） |
 | `round_num` | Int | 轮次编号 |
 | `timestamp` | String | ISO 8601（IsoTimestamp；读取时自动兼容旧 float Unix 输入） |
+
+**索引**:
+
+| 索引 | 方向 | 说明 |
+|------|------|------|
+| `session_id` | ASC | 按会话查询 / 聚合统计（`TokenRepository.connect()` 建，`core/storage/token_repo.py:53`） |
 
 **操作**: `insert_one`（每次 LLM 调用后），`find`（按 session 聚合统计）。无 TTL，无上限。
 
@@ -281,7 +311,7 @@
                 ↓
          记忆提取（MemoryConsolidator，LLM 驱动，6 条消息触发）
                 ↓
-         LongTermMemory（Milvus long_term_memory）←→ 向量检索
+         LongTermMemory / ScopedLongTermMemory（Milvus long_term_memory_v2，scope 隔离）←→ 向量检索
                 ↓
          工具调用时可查 MemorySearch / MemorySave
 ```

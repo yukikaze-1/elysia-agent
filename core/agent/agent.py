@@ -954,7 +954,7 @@ class Agent(AgentLifecycle, AgentServer):
     # 工具注册在 start() 中经 ToolAdapter.start() 完成
 
     # ---- 公开只读接口（薄 getter 直通）----
-    # 39 个 @property：通往 Agent 组合根持有的子系统，可写性由子系统 API 自管。
+    # 43 个 @property：通往 Agent 组合根持有的子系统，可写性由子系统 API 自管。
     # 批次 3 新增 session_manager / active_session_id / pending_messages。
 
     @property

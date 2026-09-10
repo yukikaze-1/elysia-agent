@@ -1,6 +1,6 @@
 # Electron 后端安全部署指南
 
-**文档版本：** v0.8（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新；批次 8a 补 §1.1 管理面认证 fallback + §1.4 启动守卫双 token 检查 + §3.5 下载校验序前置；2026-08-10 接入复审同步会话与 Desktop 精确投递现状；2026-08-11 加固批次同步 §1.4 启动守卫 fail-closed + 默认 host 127.0.0.1 + §3.7 探针分层）
+**文档版本：** v0.9（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新；批次 8a 补 §1.1 管理面认证 fallback + §1.4 启动守卫双 token 检查 + §3.5 下载校验序前置；2026-08-10 接入复审同步会话与 Desktop 精确投递现状；2026-08-11 加固批次同步 §1.4 启动守卫 fail-closed + 默认 host 127.0.0.1 + §3.7 探针分层；2026-09-11 补 §1.2 角色/身份路径枚举 + 前缀放行口径 + §3.5 匿名静态挂载口径（/static/、/live2d/）+ §3.8 角色/身份新增安全面（Stage A–H））
 **关联：** `docs/archive/electron-backend-baseline.md`、`docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`、`docs/superpowers/specs/archive/2026-08/2026-08-06-electron-backend-batch7-media-and-observability.md`、`docs/superpowers/specs/archive/2026-08/2026-08-06-electron-backend-batch8a-security-attachment-search.md`
 
 本文件说明 Elysia Agent 后端的**远程安全部署**方式：产品认证、TLS 终止、防护范围与已知缺口。远程部署必须遵循本指南；本地开发（回环 + 无 token）维持匿名。
@@ -25,8 +25,9 @@
 - `access_token` 为空 → **全匿名**（本地开发，v1 前端兼容）；
 - 非空 → 以下全部要求 `Authorization: Bearer <access_token>`：
   - `/ws` 握手（拒绝升级返回 401，非 101）；
-  - 全部业务 `/api/*`（`/api/chat` `/api/messages` `/api/providers` `/api/images` **`/api/tools` `/api/tools/calls/{callId}`**（批次 4，BE-042）**`/api/uploads` `/api/stickers` `/api/attachments/{id}/sign`**（批次 7，BE-070/071））；
-  - `/uploads/*` GET 资源读取（**含 `/uploads/desktop/*`**，批次 4 附件落盘目录）。
+  - 全部业务 `/api/*`（`/api/chat` `/api/messages` `/api/providers` `/api/images` **`/api/tools` `/api/tools/calls/{callId}`**（批次 4，BE-042）**`/api/uploads` `/api/stickers` `/api/attachments/{id}/sign`**（批次 7，BE-070/071）**`/api/me` `/api/characters*` `/api/character-instances*`**（Stage A–H 角色/身份，`core/input/character_routes.py:526-539`））；
+  - `/uploads/*` GET 资源读取（**含 `/uploads/desktop/*`**，批次 4 附件落盘目录）；
+  - **受保护判定按前缀而非白名单**：中间件放行条件是 `path.startswith("/api/") or path.startswith("/uploads") or path == "/ws"`（`core/input/middleware.py:33`）——**任何** `/api/*` 路径（含上列未逐一列举的 `/api/sessions*` `/api/search/*` `/api/generations/*` 及上述角色/身份路径）都默认受保护。上列清单仅为示例，**不是豁免白名单**——勿据其反推「未列出即免 Bearer」。
 - **唯一免 Bearer 的业务路径**：`/api/attachments/{attachment_id}`（**非 /sign**）——附件**签名下载**。短时 HMAC 签名（`?sig=&exp=`）即授权，属**短期下载授权、非账号凭据**（签名 URL 24h 过期、仅能下载该附件，见 §3.5）；`/api/attachments/{attachment_id}/sign`（签发端点）**保持 Bearer**。
 - 未带凭据 → 401 `AUTH_REQUIRED`；凭据错误 → 401 `AUTH_INVALID`；均返回统一错误信封。**批次 8c（F2）**：admin/debug 端点（/shutdown、/restart、/tools、/tools/reload、/debug/api/*）认证失败与业务错误同样走统一信封（`error` = message 兼容别名），不再裸 `{"error":...}`。
 
@@ -161,7 +162,7 @@ server {
 | 已配置 | 已配置 | 下载走签名校验序（sig 合法 hex → exp 窗口 → HMAC 验签 → 通过后才查记录 active），签发端点走 Bearer |
 
 - **签名下载校验序**：① `sig` 存在且 64 位小写 hex（上界 128 防超长串拖慢 `compare_digest`，DoS 防护）→ 否则 403 `INVALID_SIGNATURE`；② `exp` 整数且在 `[now, now+86400]` → 否则 403 `SIGNATURE_EXPIRED`；③ HMAC 验签（`hmac.compare_digest` 防时序侧信道）→ 不匹配 403 `INVALID_SIGNATURE`；④ **前三步全部通过后才查询记录**——`status=active` 放行，否则 404 `ATTACHMENT_NOT_FOUND`（软删即拒绝，删除语义 = 不可再取；Mongo 离线 → 503 `STORAGE_UNAVAILABLE`）。**校验序前置（批次 8a，`7b0e0ba`）**：repo.get 移到验签之后——无效 sig 恒 403、不再经 404/403 差异枚举附件存在性（修复批次 7 记录在案不修的「下载存在性 oracle」）。**`_SIG_TTL` 恒 86400**（与签发 `_sign_url` 一致），exp 夹紧上限。
-- **`/uploads/` 静态挂载收敛**：只公开 legacy `images/` 与 `desktop/` 两个子目录（既有 `/api/images` 与批次 4 桌面截图链路兼容）；**新 kind 单数目录 `data/uploads/{image,video,audio,file}` 不静态暴露**——只能经 `/api/attachments/{id}` 签名下载（新附件不产生永久匿名 URL）。`/api/attachments/` 免 Bearer 豁免在认证中间件中**先于 `/api/` 前缀判断**，且 `path.endswith("/sign")` 排除签发端点。
+- **`/uploads/` 静态挂载收敛**：只公开 legacy `images/` 与 `desktop/` 两个子目录（既有 `/api/images` 与批次 4 桌面截图链路兼容）；**新 kind 单数目录 `data/uploads/{image,video,audio,file}` 不静态暴露**——只能经 `/api/attachments/{id}` 签名下载（新附件不产生永久匿名 URL）。`/api/attachments/` 免 Bearer 豁免在认证中间件中**先于 `/api/` 前缀判断**，且 `path.endswith("/sign")` 排除签发端点。**同层另有两条匿名静态挂载不在 `/uploads/` 收敛口径内**：`/static/`（`core/input/server.py:120`，仅 `serve_static=True` 且产物目录存在时挂载）与 `/live2d/`（`server.py:123`，映射 `data/live2d-assets`，**不受 `serve_static` 门控**——只要目录存在即挂载）——两者均**不在**认证中间件覆盖内（§1.2 中间件只护 `/api/`、`/uploads`、`/ws`），任何匿名请求可直接读取其下文件；故 live2d 模型等资产应视为**公开静态资源**，不得放入密钥/私有素材。
 - **签名 URL 不记录 query string**：日志只记 `attachment_id`（不记 `sig`/`exp` 全文）；错误信封 `details` 默认空 dict——附件路径/密钥/正文不入错误体。旧 `/api/images` 链路安全由全局 Bearer 维持（不在签名/GC 保护内，见 §4）。
 - **附件持有者语义**：签名 URL 授权对象为「该 attachment_id」而非「上传者」——单用户 Demo 可接受；多用户需按 owner 过滤（非本批次，见 §4）。
 
@@ -181,6 +182,15 @@ server {
   - **product 模式（非回环绑定）idempotency 失效或未 reconcile → `/ready` 503**（v2 send 不可用）；dev 模式（回环）允许 idempotency 降级不门禁；
   - payload：`status`（全依赖 ok→"ok" 否则 "degraded"，可观测非门禁）、`chatReady`、`fullReady`、`dependencies`（mongo/milvus/idempotency/identity 明细）。
 - **语义**：`/ready=200` ⇒ v2 send 可用；`/ready=503` ⇒ 读 payload 的 `chatReady`/`fullReady`/`dependencies` 判断文本可用/不可用原因。Electron 探活口径：`/health` 只看进程存活，`/ready` 才是文本可用门禁。
+
+### 3.8 角色/身份新增安全面（Stage A–H，2026-09-11 补）
+
+多角色（Stage A–H）在既有认证/SSRF/静态挂载之外引入以下安全面变化：
+
+- **展示资源引用边界（防任意 URL 注入）**：角色展示引用经契约层校验——`CharacterPresentation.avatarAssetId` / `live2dModelId` 走 `_registry_ref`（`frontend_contract/rest.py:690-699`），拒绝 URL scheme（`scheme:` / `//`）、绝对路径 / 反斜杠 / Windows 盘符（`/` `\` `C:\`）、`..` 父目录穿越，且限 200 字符、无控制字符，只收**短不透明托管 ID**；`themeColor` 走 `_theme_color` 白名单（`rest.py:702-716`），仅接受 `#rgb/#rrggbb(aa)`、`rgb()/rgba()/hsl()/hsla()` 数字式与 `_SAFE_CSS_NAMES` 具名色，显式拒绝 `inherit/currentcolor/initial/unset/revert` 等可继承关键字。作用于 `CharacterPresentation`（`rest.py:770-779`）与 provider/voice 引用同名校验（`rest.py:836`）。这是**阻止客户端经展示字段注入任意 URL/路径**的边界。
+- **角色预览出站入口（补 §3.3 口径）**：`POST /api/characters/preview`（`core/input/character_routes.py:532` → `core/character/service.py:814`）触发**单次出站 LLM 推理**（`preview_port.generate`，装配为 `PromptCharacterPreviewAdapter(agent._llm)`，`core/agent/agent.py:261`）——§3.3 SSRF 段列举的出站入口（保存/切换/测试/`/api/providers/test`）之外新增的一处出站面。**与 SSRF 的区别**：预览走**后端运行时 LLM 配置**而非客户端提交的 endpoint，无「客户端任意拨号内网」面，故不纳入 `validate_endpoint` 约束；仍属**出站流量面**须登记。预览**零副作用**（不建 session/instance、不写 archive、不读会话/LTM、不推进 revision/stateVersion、用量不入任何会话统计，`service.py:817-821`）；**权威身份不可用时 fail-closed**（503 `CHARACTER_STORAGE_UNAVAILABLE`，`service.py:829-835`）。
+- **角色/身份路径错误码**：角色与身份路径新增 13 个稳定错误码，全部经统一错误信封（§1.2）——`CHARACTER_ARCHIVED` / `CHARACTER_BUSY` / `CHARACTER_IMMUTABLE` / `CHARACTER_INSTANCE_NOT_FOUND` / `CHARACTER_NOT_FOUND` / `CHARACTER_PREVIEW_FAILED` / `CHARACTER_REVISION_CONFLICT` / `CHARACTER_STATE_CONFLICT` / `CHARACTER_STORAGE_UNAVAILABLE` / `CHARACTER_TOO_LARGE` / `CHARACTER_VALIDATION` + `USER_PROFILE_NOT_FOUND` / `USER_PROFILE_REVISION_CONFLICT`（`core/input/character_routes.py`）。错误体 `details` 沿用空 dict 纪律（§5），不泄漏内部路径/密钥；完整码表以协议文档为准，此处仅登记其存在。
+- **建连角色状态快照（新增数据外发面）**：v2 建连握手即向客户端推送角色状态快照——`agent.character_state_stream` **恒 true**（`core/agent/agent.py:1201-1207`），`_emit_state_snapshot` 在 `server_info` 之后**强制发射、不看 `last`**（`core/input/ws_handler.py:261-263`；重连/`activate_session` 切会话路径同发，`ws_handler.py:1116-1118`）。即**任何已认证 v2 连接**在握手（或切会话）后立即收到该会话绑定角色的运行时状态载荷——属新增外发面；载荷为角色运行时状态，非密钥/凭据。
 
 ## 4. 已知缺口（后置批次）
 
