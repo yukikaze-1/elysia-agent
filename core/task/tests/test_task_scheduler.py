@@ -20,8 +20,6 @@ from Module.tool.protocol import ToolPlugin, ToolResult, ErrorType
 from Module.tool.safety import SafetyProfile
 from core.adapter import ToolAdapter
 
-pytestmark = pytest.mark.service
-
 
 async def _fixed_session_resolver(session, conversation_id, protocol_version):
     """固定返回给定 session 的 resolver（批次 3：session= → session_resolver=）。"""
@@ -135,6 +133,7 @@ def _tc(id_="c1", name="echo", args="{}"):
 # 一、Submit / Dispatch
 # ═══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_submit_and_dispatch():
     """单任务: submit → Worker 执行 → Future 返回结果。"""
@@ -154,6 +153,7 @@ async def test_submit_and_dispatch():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_dispatch_tool_calls_parallel():
     """3 个工具并行 dispatch → 全部成功。"""
@@ -179,6 +179,7 @@ async def test_dispatch_tool_calls_parallel():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_priority_ordering():
     """高优先级 (数值小) 的任务先于低优先级执行。"""
@@ -218,6 +219,7 @@ async def test_priority_ordering():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_worker_pool_saturation():
     """提交 10 个任务 > 5 个 worker，全部完成。"""
@@ -242,6 +244,7 @@ async def test_worker_pool_saturation():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_dispatch_tool_calls_mixed_results():
     """dispatch 混合: 成功 + 失败 + 异常。"""
@@ -268,6 +271,7 @@ async def test_dispatch_tool_calls_mixed_results():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_dispatch_tool_calls_unknown_tool():
     """dispatch 未注册工具 → ToolResult.fail。"""
@@ -285,6 +289,7 @@ async def test_dispatch_tool_calls_unknown_tool():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_dispatch_tool_calls_empty():
     """空 calls 列表 → 空结果。"""
@@ -335,6 +340,7 @@ async def test_call_id_threaded_to_worker_ctx():
 # 二、取消
 # ═══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_cancel_removes_future():
     """cancel → Future 传播 CancelledError。"""
@@ -355,6 +361,7 @@ async def test_cancel_removes_future():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_cancel_cascades_to_children():
     """cancel 父任务 → 级联取消所有子任务。"""
@@ -379,6 +386,7 @@ async def test_cancel_cascades_to_children():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_cancel_during_execution():
     """执行中 cancel → Worker task 被取消，Future 传播 CancelledError。"""
@@ -409,6 +417,7 @@ async def test_cancel_during_execution():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_dispatch_tool_calls_cancelled():
     """dispatch 期间取消 → 所有子任务被 cancel。"""
@@ -442,6 +451,7 @@ async def test_dispatch_tool_calls_cancelled():
 # 三、重试
 # ═══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_tool_retries_on_failure():
     """工具首次异常→重试→成功。"""
@@ -481,6 +491,7 @@ async def test_tool_retries_on_failure():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_tool_gives_up_after_max_retries():
     """工具持续失败 → retry_count 达到 max_retries → 返回 failed。"""
@@ -524,6 +535,7 @@ async def test_tool_gives_up_after_max_retries():
 # 四、Task Tree
 # ═══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_get_tree():
     """get_tree 返回嵌套结构。"""
@@ -545,6 +557,7 @@ async def test_get_tree():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_get_tree_nested():
     """get_tree 三层嵌套结构。"""
@@ -566,6 +579,7 @@ async def test_get_tree_nested():
     await sched.stop()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_get_tree_nonexistent():
     """get_tree 查不存在的 id → 空 dict。"""
@@ -580,6 +594,7 @@ async def test_get_tree_nonexistent():
 # 五、Checkpoint
 # ═══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_checkpoint_save_and_restore():
     """单 BACKGROUND 任务持久化 → 恢复。"""
@@ -607,6 +622,7 @@ async def test_checkpoint_save_and_restore():
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_checkpoint_multiple_tasks():
     """多个 BACKGROUND 任务同时保存/恢复。"""
@@ -634,6 +650,7 @@ async def test_checkpoint_multiple_tasks():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_checkpoint_ignores_non_background():
     """TOOL_CALL 任务不持久化。"""
@@ -656,6 +673,7 @@ async def test_checkpoint_ignores_non_background():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_checkpoint_no_path():
     """无 checkpoint_path 时不崩溃。"""
@@ -691,6 +709,7 @@ def _make_active_task(tid: str, children: list[str] | None = None) -> Task:
                 run_in_background=True)  # type: ignore[reportCallIssue]
 
 
+@pytest.mark.service
 def test_prune_removes_terminal_without_active_children():
     """终态任务无活跃子任务 → 被删除。"""
     tm = _make_sync_manager()
@@ -701,6 +720,7 @@ def test_prune_removes_terminal_without_active_children():
     assert "t1" not in sched._tasks
 
 
+@pytest.mark.service
 def test_prune_keeps_active_task():
     """活跃任务 → 保留。"""
     tm = _make_sync_manager()
@@ -711,6 +731,7 @@ def test_prune_keeps_active_task():
     assert "t1" in sched._tasks
 
 
+@pytest.mark.service
 def test_prune_keeps_terminal_with_active_child():
     """终态父任务有活跃子任务 → 保留（子任务还在跑）。"""
     tm = _make_sync_manager()
@@ -724,6 +745,7 @@ def test_prune_keeps_terminal_with_active_child():
     assert "child" in sched._tasks
 
 
+@pytest.mark.service
 def test_prune_removes_all_when_all_terminal():
     """全部终端且无活跃子 → 全部删除。"""
     tm = _make_sync_manager()
@@ -734,6 +756,7 @@ def test_prune_removes_all_when_all_terminal():
     assert len(sched._tasks) == 0
 
 
+@pytest.mark.service
 def test_prune_removes_terminal_parent_when_child_also_terminal():
     """父终态 + 子终态 → 父子都删除。"""
     tm = _make_sync_manager()
@@ -764,6 +787,7 @@ def _ensure_api_key(monkeypatch):
         monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-integration")
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_cognitive_loop_callback_wired():
     """_on_tool_calls 回调被正确传递到 _execute_tool_round。"""
@@ -826,6 +850,7 @@ async def test_cognitive_loop_callback_wired():
     await output.close()
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_cognitive_loop_no_callback_backward_compat():
     """不传 _on_tool_calls → 正常完成（向后兼容）。"""

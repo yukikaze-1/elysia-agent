@@ -568,6 +568,7 @@ class TestAwarenessJudge:
         assert result.awareness_text == ""
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_buffer_message_fixed_reflector_not_rebound():
     """C3/P1-10：显式 reflector 固化——session switch 后 engine._reflector 变了，
@@ -589,6 +590,7 @@ async def test_buffer_message_fixed_reflector_not_rebound():
     refl_b.buffer.assert_not_awaited()   # B 的 reflector 不被污染
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_buffer_message_returns_trackable_task():
     """C3/P1-10：buffer_message 返回 task（不再内部创建不可见 task）。"""
@@ -624,14 +626,17 @@ def _make_runtime_engine(state: CharacterRuntimeState | None = None) -> Characte
     )
 
 
+@pytest.mark.unit
 def test_engine_no_attach_session():
     assert not hasattr(_make_runtime_engine(), "attach_session")
 
 
+@pytest.mark.unit
 def test_engine_state_is_runtime_state():
     assert isinstance(_make_runtime_engine().state, CharacterRuntimeState)
 
 
+@pytest.mark.unit
 def test_sync_reflector_to_runtime_state():
     eng = _make_runtime_engine()
     eng._reflector._buffer = [("u", "a")]

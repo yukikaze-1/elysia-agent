@@ -8,6 +8,9 @@ from core.schema.types import SessionId
 from core.storage.base import StorageUnavailableError
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
+# 文件整体性质一致：单模块 repo 测试 + 内存假后端（无真实 DB）。
+pytestmark = pytest.mark.service
+
 
 def _inst(**over) -> CharacterInstance:
     base = dict(instanceId="chi_x", characterId="chr_x", revision=1, stateVersion=1)

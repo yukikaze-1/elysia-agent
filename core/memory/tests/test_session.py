@@ -186,6 +186,7 @@ class TestSessionMemorySaveLoad:
         os.remove(pending)
 
 
+@pytest.mark.service
 class TestSessionDurablePersistence:
     """B2/P1-01：离线不假成功、Mongo durable 后删 pending、空未加载不覆盖。"""
 
@@ -270,6 +271,7 @@ class TestSessionDurablePersistence:
         assert sm._storage_unavailable is True  # noqa: SLF001
 
 
+@pytest.mark.service
 class TestArchiveOwnership:
     """B3/P1-02：归档任务按会话登记、可 drain、关闭后不再新增。"""
 

@@ -3,6 +3,9 @@
 import pytest
 from core.character.draft import CharacterDraft, ConversationExample, validate_semantic
 
+pytestmark = pytest.mark.unit   # 纯 Pydantic 模型 + 校验函数，无 I/O、无 mock
+
+
 BODY = "你是测试角色。"  # corePersonality 等必填字段最小合法值
 
 

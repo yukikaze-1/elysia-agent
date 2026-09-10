@@ -248,6 +248,7 @@ class TestPromptPlaceholder:
         assert "Elysia" not in p and "妖梦" not in p
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_reflector_accepts_scoped_view_and_none_session():
     """reflector 应接受 ScopedLongTermMemory + session=None（类型放宽为 union / Optional）。"""

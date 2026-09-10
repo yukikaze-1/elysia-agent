@@ -445,7 +445,10 @@ class TestMultiTurnConversation:
         assert agent._fsm.state == AgentState.IDLE
         await agent.stop()
 
-    @pytest.mark.service
+    # 归类随类（@pytest.mark.slow）：本用例 load_dotenv + 真实 LongTermMemory +
+    # 读模板文件，实测 ~1.5s（>1s 阈值），与类内其余真 I/O 用例同类。此前额外挂
+    # @pytest.mark.service 会因 marker 累积被 make test-quick（-m "unit or service"）
+    # 选中，把真 I/O 用例塞进快门禁；去掉后仅由 nightly 的 make test-full 覆盖。
     @pytest.mark.asyncio
     async def test_character_personality_injected(self):
         """验证角色配置（base_personality）出现在 LLM 请求中。"""

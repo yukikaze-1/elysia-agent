@@ -5,7 +5,7 @@ from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage
 from core.schema.part import TextPart, ImagePart
 from core.schema.tool import ToolCall, ToolCallFunction
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.unit   # 纯 Pydantic 模型 + MessageBuilder 组装，无 DB/网络、无 mock
 
 
 def _make_user_msg(content: str = "Hi", msg_id: str = "u1") -> UserMessage:

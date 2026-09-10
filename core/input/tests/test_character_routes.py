@@ -1,7 +1,9 @@
-"""character_routes 错误映射单测（marker=service，纯函数，无 aiohttp client/Agent）。
+"""character_routes 错误映射与路由单测（marker=service）。
 
-阶段 D 路由的可靠测试点是 `_character_error_response`（Service 异常 → ProtocolError
-映射），它是纯函数、确定性、无 I/O。完整 aiohttp 路由冒烟在阶段 G/联调做（需装 Agent）。
+主体是 `_character_error_response`（Service 异常 → ProtocolError 映射）与
+`_character_mutation_guard` 的纯函数/轻量断言；另有 3 条经 aiohttp_client 的路由冒烟
+（reset-evolution busy 拒绝 / state 只读读取），它们起一个最小 mock agent（`_make_agent`
++ FakeLLMBackend）并用 aiohttp test client，故本文件整体标 service。
 """
 import asyncio
 import json
@@ -20,6 +22,9 @@ from core.storage.base import StorageUnavailableError
 
 import pytest
 from core.input.tests.test_server import _make_agent
+
+# 文件整体性质一致：起最小 mock agent + aiohttp test client（service）。
+pytestmark = pytest.mark.service
 
 
 def test_not_found_maps_to_404():

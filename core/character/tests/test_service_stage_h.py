@@ -35,6 +35,8 @@ from core.storage.character_instance_repo import CharacterInstanceRepository
 from core.storage.character_revision_repo import CharacterRevisionRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
+pytestmark = pytest.mark.service   # 全文件走 CharacterService + 内存假后端，不启动 Agent/不连真实 DB
+
 
 _BODY = "你是一个用于分页和 CAS 回归的测试角色。"
 

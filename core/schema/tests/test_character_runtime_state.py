@@ -1,7 +1,13 @@
 """CharacterRuntimeState 扁平模型（与 CharacterState 同构，instance-scoped）。"""
+import pytest
+
 from core.schema.character import CharacterRuntimeState
 from core.character.instance import CharacterInstance
 from core.schema.types import SessionId
+
+# Pydantic 模型构造/字段校验——无 I/O、无 mock，对齐同目录其他 schema 测试。
+pytestmark = pytest.mark.unit
+
 
 class TestCharacterRuntimeState:
     def test_instance_session_ids_present(self):

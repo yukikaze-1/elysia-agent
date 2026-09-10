@@ -49,6 +49,7 @@ class TestPromptAssemblerSetSession:
             assert section._session is new_session
 
 
+@pytest.mark.service
 def test_resolve_template_uses_role_dir(elysia_config, mock_long_term, mock_session):
     """角色名有角色目录时用 per-role 路径。"""
     from core.prompt.prompt_assembler import PromptAssembler
@@ -57,6 +58,7 @@ def test_resolve_template_uses_role_dir(elysia_config, mock_long_term, mock_sess
     assert "elysia" in path and path.endswith("c2_relationship.j2")
 
 
+@pytest.mark.service
 def test_resolve_template_falls_back_to_shared(cold_config, mock_long_term, mock_session):
     """无角色目录时回退共享路径。"""
     from core.prompt.prompt_assembler import PromptAssembler
@@ -65,6 +67,7 @@ def test_resolve_template_falls_back_to_shared(cold_config, mock_long_term, mock
     assert "/templates/c2_relationship.j2" in path
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_user_pronoun_from_turn_context_overrides(
     cold_config, cold_engine_mock, mock_long_term, mock_session
@@ -84,6 +87,7 @@ async def test_user_pronoun_from_turn_context_overrides(
     assert "此刻你只注视着我" not in rendered
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_user_pronoun_no_context_fallback_she(
     cold_config, cold_engine_mock, mock_long_term, mock_session
@@ -98,6 +102,7 @@ async def test_user_pronoun_no_context_fallback_she(
     assert "此刻你只注视着我" not in rendered
 
 
+@pytest.mark.service
 def test_set_personality_engine(elysia_config, cold_engine_mock, mock_long_term, mock_session):
     """set_personality_engine 设 self._personality_engine。"""
     a = make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session)
@@ -105,6 +110,7 @@ def test_set_personality_engine(elysia_config, cold_engine_mock, mock_long_term,
     assert a._personality_engine is cold_engine_mock
 
 
+@pytest.mark.service
 def test_set_character_updates_name(elysia_config, cold_engine_mock, mock_long_term, mock_session):
     """set_character 更新 _personality_section._name(修正 review: 用真实 fixture + "Cyrene" 有区分度)。"""
     a = make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session)
@@ -113,6 +119,7 @@ def test_set_character_updates_name(elysia_config, cold_engine_mock, mock_long_t
     assert a._personality_section._name == "Cyrene"   # 有区分度——set_character 真改 name
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_custom_revision_drives_all_authored_prompt_sections(
     cold_engine_mock, mock_long_term, mock_session,
@@ -161,6 +168,7 @@ async def test_custom_revision_drives_all_authored_prompt_sections(
     assert "每 2-3 句一个" not in rendered
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_switching_custom_profiles_does_not_leak_previous_authored_text(
     cold_config, cold_engine_mock, mock_long_term, mock_session,
@@ -208,6 +216,7 @@ async def test_switching_custom_profiles_does_not_leak_previous_authored_text(
     assert "ONLY-A" not in rendered
 
 
+@pytest.mark.service
 def test_set_memory_view_rebinds_long_term(elysia_config, cold_engine_mock, mock_long_term, mock_session):
     """set_memory_view 重绑 _memory_section._long_term 为 scoped view（Task 8）。"""
     a = make_assembler(elysia_config, cold_engine_mock, mock_long_term, mock_session)
@@ -220,6 +229,7 @@ def test_set_memory_view_rebinds_long_term(elysia_config, cold_engine_mock, mock
 # ── BE-STAGEH-03：无状态预览模式 ──
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_preview_mode_skips_session_history():
     """预览模式不读任何会话历史。"""
@@ -235,6 +245,7 @@ async def test_preview_mode_skips_session_history():
     assert messages[-1]["content"] == "现在"
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_none_session_and_long_term_render_without_io():
     """session/long_term 为 None 时（预览装配）仍能渲染，且无历史。"""

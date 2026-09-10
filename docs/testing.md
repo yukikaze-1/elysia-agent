@@ -2,17 +2,26 @@
 
 ## 分层体系
 
-测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-08-16）全量收集 3804：
+测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-10）全量收集 4291：
 
 | 层 | marker | 标准 | 测试数 |
 |---|--------|------|--------|
-| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 2070 |
-| 服务 | `service` | 单模块 + mock，不启动 Agent | 1580 |
-| 集成 | `integration` | 需真实数据库或外部 API | 52 |
+| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 2313 |
+| 服务 | `service` | 单模块 + mock，不启动 Agent | 1911 |
+| 集成 | `integration` | 需真实数据库或外部 API | 39 |
 | 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 57 |
 | 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 36 |
 
-> **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 3768。2026-08-16 实测 `make test-quick`（`-m "unit or service"`）3618 passed / 2 skipped；`make test-normal`（`-m "not slow and not external"`）3726 passed / 2 skipped。各层相加与全量的差异（多 marker 重复计入 / 未标记四层）以脚本输出为准。
+> **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 4255。2026-09-10 实测 `make test-quick`（`-m "unit or service"`）4210 passed / 2 skipped；`make test-normal`（`-m "not slow and not external"`）4213 passed / 2 skipped。各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
+>
+> **标记纪律（2026-09-10 复审）**：全仓**不得有无 marker 的测试**——无 marker 会被 `make test-quick` 静默跳过，PR 门禁对它不设防（曾积累 188 条）。同时**不得出现 `(slow|integration|external) and (unit|service)`** 的叠加——pytest 的 marker 只增不减，模块级 `pytestmark` 会覆盖类级 `slow`，把真 I/O 用例塞进快门禁（曾 10 条）。两条不变量可自查：
+>
+> ```bash
+> pytest -q --collect-only -m "not (unit or service or integration or slow or external)" | grep -c "::"   # 期望 0
+> pytest -q --collect-only -m "(slow or integration or external) and (unit or service)" | grep -c "::"   # 期望 0
+> ```
+>
+> 另：`pytest.ini` 设 `timeout = 300`（`pytest-timeout`，`thread` 方式）——无界 `await` 回归成挂死时不再无限期挂住 CI。
 
 ### 外部测试门禁（E4，`RUN_EXTERNAL_TESTS=1`）
 
@@ -97,71 +106,32 @@ pytest Module/config/tests/ -v
 pytest core/tests/test_phase3.py -v
 ```
 
-## 测试文件索引
+## 测试目录索引
 
-### Module/ 层（59 文件 / 1190 测试）
+各目录的**测试数量不在此手写**——手写数字必然漂移（本节此前即因之全面过期）。取权威数字用：
 
-按目录聚合，括号内为该文件收集数。层级以各文件 `pytestmark` 为准（unit/service/integration/slow/external），此处不再逐文件标注。
+```bash
+# 全仓分层统计（各 marker 分布 + 合并门禁范围）
+conda run -n Elysia python scripts/print_test_stats.py
 
-| 目录 | 文件（收集数） |
-|------|----------------|
-| `Module/_common/tests/`（5 文件 / 56 测试） | `test_config_test_helpers.py`(8)、`test_main_runner.py`(2)、`test_registry_helpers.py`(11)、`test_ssrf.py`(32)、`test_test_helpers.py`(3) |
-| `Module/config/tests/`（3 文件 / 88 测试） | `test_config.py`(66)、`test_preflight.py`(19)、`test_providers.py`(3) |
-| `Module/database/documentdb/tests/`（2 文件 / 32 测试） | `test_config.py`(3)、`test_documentdb.py`(29) |
-| `Module/database/vectordb/tests/`（2 文件 / 54 测试） | `test_config.py`(3)、`test_vectordb.py`(51) |
-| `Module/embedding/tests/`（2 文件 / 34 测试） | `test_config.py`(3)、`test_embedding.py`(31) |
-| `Module/llm/tests/`（3 文件 / 49 测试） | `test_config.py`(3)、`test_llm.py`(44)、`test_registry.py`(2) |
-| `Module/logger/tests/`（1 文件 / 33 测试） | `test_logger.py`(33) |
-| `Module/output/tests/`（5 文件 / 94 测试） | `test_audio_control.py`(3)、`test_generation_conversation_id.py`(17)、`test_generation_model.py`(4)、`test_manager_v2.py`(7)、`test_output.py`(63) |
-| `Module/stt/tests/`（3 文件 / 51 测试） | `test_config.py`(4)、`test_sensevoice_base_url.py`(6)、`test_stt.py`(41) |
-| `Module/system_prompt/tests/`（5 文件 / 62 测试） | `test_full_render.py`(3)、`test_prompt.py`(19)、`test_protocol.py`(9)、`test_boundary.py`(25)、`test_system_prompt_manager.py`(6) |
-| `Module/tool/tests/`（6 文件 / 191 测试） | `test_framework.py`(116)、`test_metadata.py`(18)、`test_per_call_context.py`(5)、`test_plugin_metadata.py`(9)、`test_protocol.py`(4)、`test_tool_safety.py`(39) |
-| `Module/tts/tests/`（3 文件 / 102 测试） | `test_config.py`(5)、`test_tts.py`(86)、`test_voices.py`(11) |
-| `Module/workflow_contract/tests/`（1 文件 / 9 测试） | `test_schema.py`(9) |
-| `Module/workflow_engine/tests/integration/`（5 文件 / 36 测试） | `test_delegation_preparer.py`(11)、`test_e2e_mvp.py`(7)、`test_executor.py`(4)、`test_planner.py`(4)、`test_workflow_engine_lifecycle.py`(10) |
-| `Module/workflow_engine/tests/unit/`（13 文件 / 299 测试） | `test_checkpoint.py`(9)、`test_evaluator.py`(30)、`test_executor.py`(17)、`test_fake_llm.py`(6)、`test_graph.py`(46)、`test_mailbox.py`(11)、`test_orchestrator.py`(26)、`test_planner.py`(41)、`test_schema.py`(4)、`test_sub_agent.py`(29)、`test_token_ledger.py`(8)、`test_workflow_cancel_deterministic.py`(8)、`test_workflow_engine.py`(64) | |
+# 单个目录的收集数
+conda run -n Elysia python -m pytest <目录> -q --collect-only | tail -1
 
-### core/ 层（129 文件 / 2397 测试）
+# 单个文件里每个测试实际带的 marker
+conda run -n Elysia python -m pytest <文件> --collect-only -q -m "unit or service"
+```
 
-| 目录 | 文件（收集数） |
-|------|----------------|
-| `core/tests/`（6 文件 / 236 测试） | `test_build_info.py`(3)、`test_clean_db.py`(31)、`test_phase1.py`(32)、`test_phase2.py`(57)、`test_phase3.py`(110)、`test_request_id.py`(3) |
-| `core/status/tests/`（1 文件 / 20 测试） | `test_agent_fsm.py`(20) |
-| `core/agent/tests/`（13 文件 / 172 测试） | `test_agent_methods.py`(7)、`test_desktop_bridge_integration.py`(16)、`test_lifecycle_flush.py`(7)、`test_lifecycle_idempotency.py`(9)、`test_lifecycle_steps.py`(18)、`test_mailbox_polling.py`(2)、`test_multi_session.py`(25)、`test_public_interface.py`(33)、`test_server_banner.py`(7)、`test_status.py`(27)、`test_switch_guard.py`(9)、`test_types.py`(7)、`test_v2_message_id.py`(5) |
-| `core/config/tests/`（3 文件 / 26 测试） | `test_app_config.py`(11)、`test_character_config.py`(9)、`test_database_config.py`(6) |
-| `core/monitoring/tests/`（1 文件 / 25 测试） | `test_token_tracker.py`(25) |
-| `core/task/tests/`（2 文件 / 50 测试） | `test_task_model.py`(14)、`test_task_scheduler.py`(36) |
-| `core/text/tests/`（6 文件 / 251 测试） | `test_fuzz_sequences.py`(4)、`test_parts.py`(21)、`test_splitter.py`(61)、`test_stream_processor.py`(59)、`test_tags.py`(30)、`test_tokenizer.py`(76) |
-| `core/debug/tests/`（1 文件 / 7 测试） | `test_prompt_recorder.py`(7) |
-| `core/cognitive/tests/`（17 文件 / 181 测试） | `test_delegation_preparer.py`(51)、`test_empty_response_guard.py`(7)、`test_flush.py`(5)、`test_generation.py`(6)、`test_generation_model.py`(2)、`test_generation_registry.py`(14)、`test_generation_wiring.py`(5)、`test_interrupt_source.py`(3)、`test_mood_engine.py`(16)、`test_session_resolver.py`(11)、`test_timing.py`(16)、`test_tool_gate.py`(11)、`test_tool_image_parts.py`(14)、`test_tool_session_rebind.py`(6)、`test_tts_voice_injection.py`(3)、`test_v2_empty_response.py`(3)、`test_v2_generation.py`(8) |
-| `core/desktop/tests/`（2 文件 / 29 测试） | `test_bridge.py`(26)、`test_bridge_sender.py`(3) |
-| `core/input/tests/`（29 文件 / 673 测试） | `test_attachment_download.py`(22)、`test_attachment_message.py`(18)、`test_audio_buffer.py`(32)、`test_auth.py`(30)、`test_custom_providers.py`(12)、`test_debug_ltm.py`(2)、`test_desktop_roundtrip.py`(9)、`test_desktop_ws.py`(10)、`test_health.py`(12)、`test_idempotency_durable.py`(52)、`test_limits.py`(6)、`test_log_sensitivity.py`(3)、`test_messages_api_compat.py`(3)、`test_provider_registry.py`(8)、`test_providers_api.py`(22)、`test_rate_limit.py`(32)、`test_request_id.py`(8)、`test_server.py`(70)、`test_session_routes.py`(102)、`test_session_ws.py`(11)、`test_stickers.py`(3)、`test_tools_api.py`(11)、`test_tts_voices.py`(12)、`test_upload.py`(45)、`test_v2_ws.py`(51)、`test_version.py`(8)、`test_voice_sessions.py`(45)、`test_voice_ws.py`(26)、`test_wakeword.py`(8) |
-| `core/memory/tests/`（5 文件 / 131 测试） | `test_consolidator.py`(24)、`test_long_term.py`(21)、`test_memory_reflector.py`(15)、`test_session.py`(21)、`test_session_manager.py`(50) |
-| `core/personality/tests/`（2 文件 / 58 测试） | `test_engine.py`(46)、`test_reflector.py`(12) |
-| `core/prompt/tests/`（2 文件 / 12 测试） | `test_message_builder.py`(10)、`test_prompt_assembler.py`(2) |
-| `core/schema/adapters/tests/`（1 文件 / 5 测试） | `test_attachment_resolver.py`(5) |
-| `core/schema/tests/`（13 文件 / 132 测试） | `test_adapters.py`(22)、`test_character.py`(2)、`test_compression.py`(5)、`test_event.py`(16)、`test_memory.py`(18)、`test_memory_reflector.py`(12)、`test_message.py`(19)、`test_message_degradation.py`(5)、`test_message_id.py`(4)、`test_part.py`(10)、`test_token.py`(5)、`test_tool.py`(4)、`test_types.py`(10) |
-| `core/storage/tests/`（12 文件 / 268 测试） | `test_attachment_gc.py`(22)、`test_attachment_repo.py`(34)、`test_character_version_repo.py`(14)、`test_desktop_call_repo.py`(62)、`test_generation_repo.py`(15)、`test_health_semantics.py`(22)、`test_idempotency_repo.py`(17)、`test_memory_repo.py`(3)、`test_message_repo.py`(37)、`test_secret_store.py`(12)、`test_session_repo.py`(19)、`test_token_repo.py`(11) |
-| `core/tools/tests/`（9 文件 / 108 测试） | `test_desktop.py`(14)、`test_filesystem.py`(18)、`test_memory.py`(15)、`test_reminder.py`(2)、`test_runtime_config.py`(13)、`test_self_state.py`(3)、`test_time.py`(8)、`test_web.py`(22)、`test_write_file.py`(13) |
-| `core/adapter/tests/`（4 文件 / 28 测试） | `test_llm_adapter.py`(3)、`test_tool_adapter.py`(11)、`test_tts_adapter.py`(7)、`test_tts_adapter_control.py`(7) | |
-
-### frontend_contract/ 层（12 文件 / 138 测试）
-
-| 目录 | 文件（收集数） |
-|------|----------------|
-| `frontend_contract/tests/` | `test___main___check.py`(4)、`test_batch5_contract.py`(11)、`test_batch6_contract.py`(5)、`test_batch7_contract.py`(8)、`test_debug.py`(2)、`test_desktop_tools.py`(12)、`test_gen_schema.py`(3)、`test_gen_ts.py`(10)、`test_rest.py`(32)、`test_rest_enums.py`(5)、`test_task6_ack_union.py`(14)、`test_ws_message.py`(32) |
+| 层 | 测试目录 |
+|----|----------|
+| `Module/` | `_common/tests/`、`config/tests/`、`database/documentdb/tests/`、`database/vectordb/tests/`、`embedding/tests/`、`llm/tests/`、`logger/tests/`、`output/tests/`、`stt/tests/`、`system_prompt/tests/`（含 `unit/`、`integration/`）、`tool/tests/`、`tts/tests/`、`workflow_contract/tests/`、`workflow_engine/tests/unit/`、`workflow_engine/tests/integration/` |
+| `core/` | `tests/`、`status/tests/`、`agent/tests/`、`config/tests/`、`monitoring/tests/`、`task/tests/`、`text/tests/`、`debug/tests/`、`cognitive/tests/`、`desktop/tests/`、`input/tests/`、`memory/tests/`、`personality/tests/`、`prompt/tests/`、`schema/tests/`、`schema/adapters/tests/`、`storage/tests/`、`tools/tests/`、`adapter/tests/` |
+| `frontend_contract/` | `tests/` |
+| 仓库根 | `scripts/tests/`、`tests/` |
 
 `frontend_contract/` 为前后端契约单源包（Pydantic 模型 + TS 生成器，详见
 [frontend_contract/README.md](../frontend_contract/README.md)），测试为纯函数级（无 I/O、无 Agent）→
 marker=unit。`make gen-types` 重新生成 `frontend/src/types/contract.generated.ts`，
 `make check-types` 漂移门禁。
-
-### 仓库根/脚本层（8 文件 / 79 测试）
-
-| 目录 | 文件（收集数） |
-|------|----------------|
-| `scripts/tests/`（7 文件 / 65 测试） | `test_backfill_message_ids.py`(5)、`test_capture_ws_trace.py`(3)、`test_check_ci_isolation.py`(4)、`test_check_compose_security.py`(11)、`test_download_model_manifest.py`(26)、`test_gen_contract_frames.py`(15)、`test_stage4_smoke.py`(1) |
-| `tests/`（1 文件 / 14 测试） | `test_paths.py`(14) |
 
 ## Marker 标准
 

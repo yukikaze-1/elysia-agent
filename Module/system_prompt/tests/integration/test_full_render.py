@@ -20,10 +20,13 @@ from core.memory.session import SessionMemory
 from core.personality import CharacterEngine
 from core.schema.character import CharacterState
 from core.schema.types import SessionId
+from paths import ProjectPath
 
-pytestmark = pytest.mark.integration
+# integration 档标错：本文件全是 mock 渲染，不连任何 DB/网络，应为 service。
+pytestmark = pytest.mark.service
 
-_TEMPLATES = "Module/system_prompt/templates"
+# 模板目录绝对路径（基于 ProjectPath 项目根，不依赖 cwd）
+_TEMPLATES = str(ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve())
 
 
 def _mock_session(**params):

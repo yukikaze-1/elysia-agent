@@ -13,6 +13,9 @@ from core.storage.user_identity_repo import (
     UserIdentityRepository,
 )
 
+# 文件整体性质一致：单模块 repo 测试 + 内存假后端（无真实 DB）。
+pytestmark = pytest.mark.service
+
 
 def _seed(user_name: str = "妖梦") -> UserIdentity:
     return UserIdentity(userId="usr_local_default", displayName=user_name)

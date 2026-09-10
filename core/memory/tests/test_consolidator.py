@@ -22,15 +22,6 @@ from core.memory.consolidator import (
 from core.schema.memory import MemoryType
 from core.memory.long_term import LongTermMemory
 from core.memory.scope import MemoryScope
-
-
-@pytest.fixture(autouse=True)
-def _isolate_pending_syncs(tmp_path, monkeypatch):
-    """review 复核 #6：pending-syncs journal 隔离到 tmp（跨测试串扰防护，同 test_long_term）。"""
-    monkeypatch.setattr(
-        LongTermMemory, "_pending_syncs_file",
-        lambda self: str(tmp_path / "memory_pending_syncs.json"),
-    )
 from core.adapter.llm_adapter import LLMAdapter
 
 
@@ -403,6 +394,7 @@ class _FakeLLM:
         pass
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_consolidator_accepts_scoped_view():
     """consolidator 应接受 ScopedLongTermMemory（类型放宽为 union）。"""

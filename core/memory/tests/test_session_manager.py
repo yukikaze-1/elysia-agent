@@ -23,6 +23,11 @@ from core.schema.service_state import ServiceState
 from core.schema.types import MessageId, SessionId
 from core.storage.session_repo import SessionSummary
 
+# 全文件为 FakeSessionRepo/FakeMsgRepo 内存替身驱动的 SessionManager 单模块测试，
+# 无真实 I/O、无外部服务 mock；依文件内已有 @pytest.mark.unit 锚点统一标 unit
+# （缺 marker 会被 make test-quick 的 -m "unit or service" 静默跳过）。
+pytestmark = pytest.mark.unit
+
 
 class FakeSessionRepo:
     """Task 4 专用 fake repo — 覆盖 brief 方法集。

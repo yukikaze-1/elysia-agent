@@ -4,6 +4,9 @@ from core.memory.scope import MemoryScope
 from core.memory.long_term import LongTermMemory
 from core.memory.scoped_long_term import ScopedLongTermMemory
 
+# LongTermMemory 单模块测试（离线内存兜底，不连真实 Milvus）——对齐 test_long_term.py 的 service。
+pytestmark = pytest.mark.service
+
 
 @pytest.mark.asyncio
 async def test_for_scope_returns_scoped_view():

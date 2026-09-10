@@ -4,6 +4,9 @@ import dataclasses
 import pytest
 from core.memory.scope import MemoryScope, MemoryVisibility
 
+# MemoryScope 纯 dataclass/枚举测试——无 I/O、无 mock。
+pytestmark = pytest.mark.unit
+
 
 def test_scope_immutable():
     scope = MemoryScope(

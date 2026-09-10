@@ -114,7 +114,6 @@ class TestSessionPersistence:
 # 2. LongTermMemory tests
 # ============================================================================
 
-@pytest.mark.service
 class TestLongTermMemory:
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -129,6 +128,7 @@ class TestLongTermMemory:
         assert len(results) >= 1
         assert any("天气" in r.text for r in results)
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_search_no_results(self):
         from core.memory.long_term import LongTermMemory
@@ -136,6 +136,7 @@ class TestLongTermMemory:
         results = await mem.search(query_text="不存在的内容xyz")
         assert results == []
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_search_returns_top_k(self):
         from core.memory.long_term import LongTermMemory
@@ -146,6 +147,7 @@ class TestLongTermMemory:
         results = await mem.search(query_text="memory", top_k=3)
         assert len(results) <= 3
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_count(self):
         from core.memory.long_term import LongTermMemory
@@ -154,6 +156,7 @@ class TestLongTermMemory:
         await mem.insert("item2", type="note")
         assert mem.count == 2
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_delete_entry(self):
         """删除单条记忆应从内存列表移除并减少 count。"""
@@ -166,6 +169,7 @@ class TestLongTermMemory:
         assert mem.count == 0
         assert len(mem._entries) == 0
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_delete_nonexistent(self):
         """删除不存在的 ID 返回 False。"""
@@ -174,6 +178,7 @@ class TestLongTermMemory:
         ok = await mem.delete("nonexistent-id")
         assert ok is False
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_clear_all(self):
         """清空所有记忆，count 归零。"""
@@ -186,6 +191,7 @@ class TestLongTermMemory:
         assert deleted == 2
         assert mem.count == 0
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_insert_assigns_id(self):
         """insert 时应为 entry 分配内存 id（_milvus_pk 仅在 Milvus 在线时设置）。"""
@@ -212,6 +218,7 @@ class TestLongTermMemory:
         assert result is True
         mock_repo.connect.assert_awaited_once()
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_insert_without_connect(self):
         """即使未 connect() 也应能插入 —— 使用内存存储。"""
@@ -222,6 +229,7 @@ class TestLongTermMemory:
         results = await mem.search(query_text="test")
         assert len(results) == 1
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_insert_awaits_embedding_on_first_call(self):
         """首次 insert() 应等待嵌入加载，使条目在任一后端可用时
@@ -237,6 +245,7 @@ class TestLongTermMemory:
         if backend is not None:
             assert len(entry.embedding) > 0, "Entry should have embedding after await"
 
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_insert_allows_duplicates_with_different_metadata(self):
         """相同文本不同元数据应生成不同条目。
@@ -859,8 +868,8 @@ class TestCompareAndResolve:
 # 9. Memory integration stress tests
 # ============================================================================
 
-@pytest.mark.service
 class TestMemoryStress:
+    @pytest.mark.service
     @pytest.mark.asyncio
     async def test_rapid_inserts_and_searches(self):
         """快速交替的插入与搜索不应破坏状态。"""
@@ -996,9 +1005,8 @@ if __name__ == "__main__":
 
 import time as _time_module
 
-pytestmark = pytest.mark.service
 
-
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_long_term_memory_in_memory_fallback_search():
     """Milvus 不可用时回退到字符重叠搜索。"""
@@ -1016,6 +1024,7 @@ async def test_long_term_memory_in_memory_fallback_search():
     assert any("爬山" in r.text for r in results)
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_long_term_memory_empty_search():
     """空记忆库搜索应返回空列表不崩溃。"""
@@ -1056,6 +1065,7 @@ async def test_long_term_memory_evicts_overflow(entry_count, max_entries, expect
         assert idx >= min_retained
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_long_term_memory_tracks_dirty_entries():
     """Milvus 不可用时插入的条目应标记为 dirty。"""
@@ -1074,6 +1084,7 @@ async def test_long_term_memory_tracks_dirty_entries():
     assert len(entry.id) == 30
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_long_term_memory_sync_handles_milvus_down():
     """Milvus 仍然不可用时 sync 应安全返回 0。"""
@@ -1087,6 +1098,7 @@ async def test_long_term_memory_sync_handles_milvus_down():
     assert synced == 0
 
 
+@pytest.mark.service
 @pytest.mark.asyncio
 async def test_long_term_memory_sync_on_recovery():
     """Milvus 恢复后 sync 应把脏条目补写并建立 _milvus_pk。"""

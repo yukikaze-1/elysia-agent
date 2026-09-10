@@ -487,6 +487,7 @@ class TestMessageRepositoryBatch3:
         assert next_cursor is None
 
 
+@pytest.mark.unit
 class TestQuerySearchLiteral:
     """D3/P1-16：搜索字面化——raw regex 注入不再造成 500/ReDoS/广泛误匹配。"""
 

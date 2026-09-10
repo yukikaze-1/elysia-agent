@@ -81,6 +81,8 @@ def fresh_store():
 class TestMemoryDefault:
     """未配置（无 repo）→ 纯内存，语义不变。"""
 
+    pytestmark = pytest.mark.service
+
     @pytest.mark.asyncio
     async def test_lookup_miss_then_store_replay(self, fresh_store):
         store = get_store()
@@ -110,6 +112,8 @@ class TestMemoryDefault:
 class TestProductFailClosed:
     """产品模式 + Mongo 离线 → lookup/store fail-closed。"""
 
+    pytestmark = pytest.mark.service
+
     @pytest.mark.asyncio
     async def test_lookup_raises_in_product_mode(self, fresh_store):
         configure_store(_down_repo(), product_mode=True)
@@ -125,6 +129,8 @@ class TestProductFailClosed:
 
 class TestDevDegradation:
     """dev 模式 + Mongo 离线 → 内存降级，durable=False（capabilities 暴露）。"""
+
+    pytestmark = pytest.mark.service
 
     @pytest.mark.asyncio
     async def test_falls_back_to_memory(self, fresh_store):
@@ -142,6 +148,8 @@ class TestDevDegradation:
 
 class TestDurable:
     """Mongo 可用 → claim 落库，durable=True。"""
+
+    pytestmark = pytest.mark.service
 
     @pytest.mark.asyncio
     async def test_store_persists_to_repo(self, fresh_store):
@@ -169,6 +177,8 @@ class TestDurable:
 class TestWsHandlerProductMode:
     """ws_handler：产品模式 + Mongo 离线 → ACK rejected STORAGE_UNAVAILABLE retryable。"""
 
+    pytestmark = pytest.mark.service
+
     @pytest.mark.asyncio
     async def test_text_ack_storage_unavailable(self, fresh_store):
         from core.input.ws_handler import handle_json_message
@@ -193,6 +203,8 @@ class TestWsHandlerProductMode:
 
 class TestServerInfoExposure:
     """build_server_info.features.idempotency_durable 反映实际持久化能力。"""
+
+    pytestmark = pytest.mark.service
 
     @pytest.mark.asyncio
     async def test_features_reflect_durability(self, fresh_store):

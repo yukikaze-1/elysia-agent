@@ -10,6 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from paths import ProjectPath, get_project_root, _detect_project_root
 
+# 纯路径解析函数测试——无 mock、无外部服务；monkeypatch 仅改环境变量。
+pytestmark = pytest.mark.unit
+
 
 class TestDetectProjectRoot:
     """项目根目录检测。"""

@@ -10,14 +10,21 @@ character_config.speaking_style 而非 speaking_style 模块的 _C6_L1_DEFAULT �
 compression.SpeakingStyleSection 无效。本测试用模块级替换 + 捕获构造参数。
 """
 import asyncio
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 import Module.system_prompt.sections.speaking_style as ss_mod
 from core.config.character_config import CharacterConfig
 from core.personality.compression import CompressionManager
 from Module.system_prompt import PromptManager
 from paths import ProjectPath
+
+# Cyrene 角色配置绝对路径（基于 ProjectPath 项目根，不依赖 cwd）
+_CYRENE_CONFIG = ProjectPath.CHARACTERS.resolve() / "cyrene" / "config.yaml"
+
+# CompressionManager 单模块测试——用 AsyncMock 替身驱动 LLM，不启动 Agent、不连真实 DB。
+pytestmark = pytest.mark.service
 
 
 def _make_cm(character_config):
@@ -49,7 +56,7 @@ def _make_cm(character_config):
 
 def test_refresh_c6_uses_character_speaking_style():
     """_refresh_c6 首刷读 character.speaking_style（非 _C6_L1_DEFAULT）。"""
-    cfg = CharacterConfig.from_yaml(Path("character/cyrene/config.yaml"))
+    cfg = CharacterConfig.from_yaml(_CYRENE_CONFIG)
     assert cfg.speaking_style.strip(), "前置：Cyrene speaking_style 非空"
     assert cfg.speaking_style != ss_mod._C6_L1_DEFAULT, "前置：Cyrene speaking_style 不同于 Elysia 常量"
 
@@ -77,7 +84,7 @@ def test_refresh_c6_uses_character_speaking_style():
 
 def test_refresh_c6_uses_default_when_character_style_empty():
     """character.speaking_style 为空时回退 _C6_L1_DEFAULT（行为兼容）。"""
-    cfg = CharacterConfig.from_yaml(Path("character/cyrene/config.yaml"))
+    cfg = CharacterConfig.from_yaml(_CYRENE_CONFIG)
     cfg.personality["speaking_style"] = ""  # 模拟空 speaking_style
     assert cfg.speaking_style == "", "前置：speaking_style 为空"
 

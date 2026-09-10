@@ -1,6 +1,9 @@
 import pytest
 from core.storage.memory_repo_v2 import MemoryRepositoryV2
 
+# 与同目录 test_memory_repo.py（v1）同模式：单模块 + MagicMock stub（marker=unit）。
+pytestmark = pytest.mark.unit
+
 
 def test_collection_name():
     assert MemoryRepositoryV2.COLLECTION == "long_term_memory_v2"

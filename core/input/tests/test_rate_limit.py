@@ -22,6 +22,7 @@ from core.network.rate_limiter import RateLimiter, TokenBucket, rate_key_for_req
 
 # ── 单元：TokenBucket ─────────────────────────────────────────────────────
 
+@pytest.mark.service
 class TestTokenBucket:
     def test_burst_within_capacity_allowed(self):
         b = TokenBucket(capacity=3, refill_per_sec=1.0)
@@ -63,6 +64,7 @@ class TestTokenBucket:
 
 # ── 单元：RateLimiter ─────────────────────────────────────────────────────
 
+@pytest.mark.service
 class TestRateLimiter:
     def test_rpm_zero_disables(self):
         limiter = RateLimiter({"messages": 0})
@@ -119,6 +121,7 @@ class TestRateLimiter:
 
 # ── 单元：key 解析 ────────────────────────────────────────────────────────
 
+@pytest.mark.service
 class TestRateKey:
     def test_authenticated_key_stable_across_ips(self):
         """认证主体优先：同一合法 token（∈ valid_tokens）不同 IP → 同一 key。"""
