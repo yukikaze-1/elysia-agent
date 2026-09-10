@@ -2,15 +2,15 @@
 
 ## 分层体系
 
-测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-10）全量收集 4287：
+测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-10）全量收集 4277：
 
 | 层 | marker | 标准 | 测试数 |
 |---|--------|------|--------|
 | 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 2313 |
 | 服务 | `service` | 单模块 + mock/fake 替身，不连真实依赖 | 1915 |
-| 集成 | `integration` | 需真实数据库或外部 API | 39 |
-| 慢速 | `slow` | 起 Agent 且连真实依赖 / 端到端 / >1s | 49 |
-| 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 36 |
+| 集成 | `integration` | 需真实数据库或外部 API | 29 |
+| 慢速 | `slow` | 起 Agent 且连真实依赖 / 端到端 / >1s | 39 |
+| 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 26 |
 
 > **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 4251。2026-09-10 实测 `make test-quick`（`-m "unit or service"`）4210 passed / 2 skipped；`make test-normal`（`-m "not slow and not external"`）4213 passed / 2 skipped。各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
 >
@@ -197,7 +197,7 @@ class TestAgentLifecycle:
 ## 已知问题
 
 - **`test_touch_resets_timer`** — ✅ 已修复：`IdleMonitor` 计时已改用 `time.monotonic()`（测试内保留 `time.sleep(0.001)` 仅作时间推进）。
-- **`test_resume_idempotent_on_running`** — WorkflowEngine 历史 race（task 过快完成导致 `resume()` 返回不符合预期）。该用例在 `Module/workflow_engine/tests/integration/` 且带 `external` 标记，**默认与 `make test-full` 均跳过**，只有 `make test-external`（`RUN_EXTERNAL_TESTS=1`）才会执行——即它实际并不构成持续观测，需要时手工跑。
+- **`test_resume_idempotent_on_running`** — 已随 `integration/test_workflow_engine_lifecycle.py` 一并删除（2026-09-10）。该用例带 `external` 标记，默认与 `make test-full` 均跳过（只有 `make test-external` 会跑），从不构成持续观测；其语义（RUNNING 上调 `resume` 幂等）由 unit 层 `test_workflow_engine.py::test_resume_running_is_idempotent` 确定性覆盖。原记录的 WorkflowEngine 历史 race 若复现，在 unit 层定位即可。
 - **`test_ok_returns_latency`** — ✅ 已修复：`ok_check(self)` 多余参数已移除（`Module/_common/tests/test_test_helpers.py`）。
 
 ## 添加新测试

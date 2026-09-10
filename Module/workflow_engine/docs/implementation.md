@@ -82,7 +82,6 @@ Module/workflow_engine/
 │   ├── integration/
 │   │   ├── __init__.py
 │   │   ├── conftest.py
-│   │   ├── test_workflow_engine_lifecycle.py
 │   │   ├── test_e2e_mvp.py
 │   │   ├── test_delegation_preparer.py   # DelegationPreparer 单测已迁 core/cognitive/tests/
 │   │   ├── test_executor.py
