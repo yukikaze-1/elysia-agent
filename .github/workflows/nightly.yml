@@ -1,22 +1,21 @@
-name: Full Suite (Nightly + Manual)
+name: Full Suite (Manual)
 
 on:
-  # 定时全量（P0）：`make test-full` 是唯一跑 integration/slow 的地方，此前只有
-  # workflow_dispatch，因此从不自动执行。加 schedule 后每天自动跑一次。
-  #   - cron 用非整点分钟（23）避开 GitHub Actions 整点排队高峰。
-  #   - 安全性：schedule 触发的是仓库**受信 ref**（默认分支，非不受信 PR），
-  #     因此本 job 用 `runs-on: self-hosted` + 宿主 .env 可接受——与 push 到 main
-  #     的受信 job 同级信任边界（见 ci.yml 头注释 + scripts/check_ci_isolation.py）。
-  schedule:
-    - cron: "23 3 * * *"
+  # 手工触发的全量套件——`make test-full` 是跑 slow 层的入口。
+  #   - 不设定时：slow 层（完整 Agent 启停 + 真实 API 调用）耗时长、且依赖
+  #     宿主 self-hosted runner 与真实凭据，按需手动跑即可（2026-09-10 决策）。
+  #   - 安全性：workflow_dispatch 触发的是仓库**受信 ref**（默认分支，非不受信
+  #     PR），因此本 job 用 `runs-on: self-hosted` + 宿主 .env 可接受——与 push
+  #     到 main 的受信 job 同级信任边界（见 ci.yml 头注释 +
+  #     scripts/check_ci_isolation.py）。
   workflow_dispatch:
 
 jobs:
   full:
     name: Full Suite
-    # 只由受信触发（schedule / 管理员 workflow_dispatch）运行——显式 guard 让
+    # 只由受信触发（管理员 workflow_dispatch）运行——显式 guard 让
     # scripts/check_ci_isolation.py 能静态识别为「非 PR 可达」受信 job。
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     timeout-minutes: 40
     steps:
