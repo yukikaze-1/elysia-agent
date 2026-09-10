@@ -197,7 +197,7 @@ class TestAgentLifecycle:
 ## 已知问题
 
 - **`test_touch_resets_timer`** — ✅ 已修复：`IdleMonitor` 计时已改用 `time.monotonic()`（测试内保留 `time.sleep(0.001)` 仅作时间推进）。
-- **`test_resume_idempotent_on_running`** — WorkflowEngine 历史 race（task 过快完成导致 `resume()` 返回不符合预期），保留为集成测试观测项。
+- **`test_resume_idempotent_on_running`** — WorkflowEngine 历史 race（task 过快完成导致 `resume()` 返回不符合预期）。该用例在 `Module/workflow_engine/tests/integration/` 且带 `external` 标记，**默认与 `make test-full` 均跳过**，只有 `make test-external`（`RUN_EXTERNAL_TESTS=1`）才会执行——即它实际并不构成持续观测，需要时手工跑。
 - **`test_ok_returns_latency`** — ✅ 已修复：`ok_check(self)` 多余参数已移除（`Module/_common/tests/test_test_helpers.py`）。
 
 ## 添加新测试
