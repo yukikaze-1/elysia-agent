@@ -6,6 +6,7 @@
 - **实现范围：** 清单 §1.2 全部 6 项（BE-STAGEH-01 ~ 06）+ 第二轮 §1.4 的 P0-1/P0-2/P0-3/P1 + 复核 §1.5 的 P0-R1/P0-R2
 - **门禁：** ruff ✅ / `make check-types` ✅ 0 漂移 / `make pyright` ✅ 0 错误 / `make test-normal` ✅ **4099 passed, 2 skipped**（第一轮）→ 第二轮见 §5.8 / `make test-quick` ✅
 - **契约：** `schemaHash` **未变化**（两轮合计 0 个 `frontend_contract/` 或 `frontend/src/types/` 文件改动）
+- **最终状态（2026-09-10）：** 后端 `7d2e2b31` + 前端 `d02ce15` 已完成真实 Windows Electron 最终复验，Stage H 闭账；见[最终验收记录](../review/2026-09-10-多角色Stage-H最终真实联调验收.md)
 
 ## 1. 交付清单
 
@@ -514,3 +515,13 @@ LRU 缓存；夹具脚本按真实形态用**自己的** repository 实例（真
 
 **运行版本：** 仍未启动/停止用户的后端服务；8765 当前无监听，因此 `/health.build_sha` 与
 `/ready` 尚未核对——需用户手动启动后再对齐。
+
+---
+
+## 9. 最终 Windows Electron 验收闭环（2026-09-10）
+
+用户手动启动后端后，运行版本锁定为 `7d2e2b3188a79ffb97591b28af6d2fa84e4af135` / `0.1.0+7d2e2b3`，前端功能基线为 `d02ce15`。真实 Electron 预检 12/12、preview-validation 12/12、正式 pinned/follow_latest、公共 API tail 强串行和 A/B Prompt 隔离均通过。
+
+夹具 Definition 全程经公开 API 从 revision 1 推进到 2，未手工改 Mongo。加载过 fixture 的服务停止后执行正式 cleanup，首次实际删除 `{sessions:2, instances:2, revisions:2, characters:1, archive:6, tokens:3, generations:3}`；第二次七项全零。后端冷启动后角色/会话目录无 fixture，角色详情与两个 instance state 均为 404，且 `/ready` 继续 `chatReady=true`、`fullReady=true`。
+
+至此本文先前所有“待真机复验”项均已关闭。详见[Stage H 最终真实联调验收](../review/2026-09-10-多角色Stage-H最终真实联调验收.md)。本轮未重跑后端全量门禁，§8.4 的 `4166 passed` 保持为整改实现批次的历史证据，不冒充本轮新结果。
