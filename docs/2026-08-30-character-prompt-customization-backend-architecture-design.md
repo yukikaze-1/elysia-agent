@@ -4,7 +4,7 @@
 >
 > **文档状态：** 权威目标架构；后端主体、阶段 H 契约对齐与真实 Windows Electron 联调均已完成
 > **初版日期：** 2026-08-30
-> **最近核对：** 2026-09-10
+> **最近核对：** 2026-09-11（§11.0.1 逐项核实交付状态；character golden frame 与 handoff manifest 两项确认未交付）
 > **事实基线：** `192.168.1.18:~/elysia-agent@a410a9dd2167d47fcc4678e6b4d3d68eafe419ad`
 > **当前验收基线：** backend `7d2e2b31`（`0.1.0+7d2e2b3`）+ frontend `d02ce15`（后续文档提交不计入功能基线）
 > **前后端契约冻结：** `character-contract-v1`（2026-08-30；与前端《Cyrene 多角色、用户身份与自定义角色前端架构设计》对齐）
@@ -1246,6 +1246,19 @@ interface CharacterPreviewResult {
 3. 扩展后的 `scripts/gen_contract_frames.py` golden：至少有 `rest-character.jsonl` 与 `ws-v2-character.jsonl`，覆盖 §11～§12 的成功、冲突和 identity 帧；
 4. 一份 handoff manifest，记录 `character-contract-v1`、backend commit、transport/protocol version、schemaHash、生成命令和 `verified` 状态。
 
+> **⚠️ 交付状态（2026-09-11 核实）：第 1、2 项已交付；第 3、4 项未交付。**
+>
+> | # | 交付物 | 状态 | 证据 |
+> |---|--------|------|------|
+> | 1 | `frontend_contract` Pydantic 源 | ✅ 已交付 | `frontend_contract/rest.py` 含 36 个 `Character*`/`UserIdentity*` 模型；`ws_message.py::CharacterStateChangedMessage` |
+> | 2 | `contract.schema.json` + `contract.raw.ts` | ✅ 已交付 | 生成产物含 Character/UserIdentity 类型（schema 527 处、raw.ts 78 处提及）；`make check-types` 漂移门禁覆盖 |
+> | 3 | `rest-character.jsonl` + `ws-v2-character.jsonl` golden | ❌ **未交付** | 两个文件在 `docs/archive/frontend-handoff-v2/traces/` 下**不存在**；`gen_contract_frames.py` 不生成任何 character 专属帧（仅既有帧内出现 `characterId` 字段） |
+> | 4 | handoff manifest（`character-contract-v1` + schemaHash） | ❌ **未交付** | 全仓无该 manifest 文件；`character-contract-v1` 仅作为**文档级标签**出现于散文，`frontend_contract/` 内无同名文件/符号/常量 |
+>
+> **口径澄清**：`character-contract-v1` 是**冻结文档的契约名**，不是代码工件——契约实体即 `frontend_contract/rest.py` + `ws_message.py` 的 Pydantic 模型（第 1 项）。因此第 3、4 项的性质是「**声称交付的产物未落地**」，而非契约本身缺失：前后端契约已被 `make check-types` 门禁实际守护，仅 golden frame 与 handoff manifest 两项旁证未按本设计要求产出。
+>
+> **若需补第 3 项**：扩展 `scripts/gen_contract_frames.py` 增生成 character 帧，并同步 `check-types` 的 golden frames 漂移门禁范围；该项属**未决范围变更**，不在已实施的 Stage A–H 内。
+
 先运行 `make gen-types && make check-types`，再把以上产物交给 Electron。`contract.raw.ts` 是前端镜像/审查依据，不直接代替 Electron Main 的 strict Zod runtime schema。前端 fixture manifest 必须记录同一 backend commit/schemaHash；真实联调前保持 `verified=false`，不能把生成样例伪装成实抓 trace。
 
 ### 11.1 用户身份
@@ -1950,7 +1963,7 @@ Module/system_prompt/
 - character list/revision list 锁定 `{items,has_more,cursor?}`，Main mapper fixture 锁定 `{items,hasMore,nextCursor?}`；
 - create/clone、update/rollback、archive、validate/preview、reset 的响应分别锁定为 §11.0 的不同 DTO，禁止通用任意 dict；
 - `ServerMessage` 判别联合包含新事件；
-- generation 三终态、state、expression/directive、audio_start 的 identity golden frame 齐全；
+- generation 三终态、state、expression/directive、audio_start 的 identity golden frame 齐全（⚠️ 本项**未达成**——character 专属 golden frame 未交付，见 §11.0.1 交付状态表第 3 项）；
 - strict 旧客户端在能力协商下不接收未知字段；新前端能接收 feature=false 时的 optional additive 字段；
 - 错误码、HTTP 和 WS error envelope 一致；
 - 不在 schema 中暴露 Prompt 全文、内部路径或 L2/L3 debug 数据。
