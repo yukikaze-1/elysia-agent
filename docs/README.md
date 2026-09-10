@@ -42,6 +42,7 @@
 | [Stage H 最终真实联调验收](review/2026-09-10-多角色Stage-H最终真实联调验收.md) | 后端 `7d2e2b31` + 前端 `d02ce15` 的最终 Windows Electron 验收：preview、pinned/follow_latest、tail 强串行、A/B Prompt 隔离、完整 cleanup 与冷启动无残留；Stage H 闭账事实入口 |
 | [Stage H 真实联调后端整改与复验清单](review/2026-09-09-多角色Stage-H真实联调后端整改与复验清单.md) | Windows Electron 真实联调后剩余的 reset 并发、UserIdentity 持久化、preview、校验错误、pinned 夹具及单用户范围决策；第二轮 P0-1 tail lease / P0-2 身份进入 Prompt / P0-3 身份 fail-closed / P1 归档一致性 |
 | [Stage H 第二轮联调后续整改清单（后端）](review/2026-09-10-多角色Stage-H第二轮联调后续整改清单-后端.md) | 第二轮真实联调结论；修复 pinned fixture 非法 createdBy、cleanup 遗留 revisions，交付真实库 smoke（`scripts/dev/stage_h_pinned_smoke.py`，BE-R1~R5），冻结 A/B tail 强串行验收口径；§9 记录实施/验证与两个验收顺序问题 |
+| [多角色数据完整性缺口导致前端整页拒绝（后端）](review/2026-09-10-多角色数据完整性缺口导致前端整页拒绝-后端.md) | 真实联调发现：`character_profiles=true` 下前端对会话列表/消息历史整页 fail-closed，而 50 条会话 `character_binding={}` + 14 条 assistant 消息 `character=null` 的历史/测试残留各自触发了该拒绝，致功能整体不可用；含根因（缺多角色数据完整性自检）、测试写生产库证据、现场处置与回滚路径 |
 
 ### 架构与模块化评估
 
