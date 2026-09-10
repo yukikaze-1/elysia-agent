@@ -4,7 +4,6 @@
     from Module.workflow_engine.tests.helpers import (
         build_test_workflow_engine,
         get_tools_from_manager,
-        mock_replan_response,
         MOCK_PLUGIN_MAP,
     )
 
@@ -15,10 +14,6 @@
 
     # 从 WorkflowEngine 提取 Tool 列表给 DelegationPreparer（core/cognitive/delegation.py）
     tools = get_tools_from_manager(ts.infra.tool_registry)
-
-    # Mock Replanner 返回固定 DAGPatch（跳过 LLM 调用）
-    with mock_replan_response(my_patch):
-        ...
 """
 
 from __future__ import annotations
@@ -142,33 +137,6 @@ def get_tools_from_manager(tm: ToolManager) -> list[Tool]:
             capabilities=list(caps) if caps else [],
         ))
     return tools
-
-
-# ── Replanner mock ───────────────────────────────────────────────────────────────
-
-def mock_replan_response(response: DAGPatch | Plan):
-    """返回一个 patch 上下文管理器，mock Replanner.replan() 返回固定结果。
-
-    用法（在测试函数体内，无需 pytest monkeypatch fixture）:
-
-        patch_obj = DAGPatch(reason="test", trigger_nodes=["node_1"])
-        with mock_replan_response(patch_obj):
-            # 提交任务，Replanner.replan() 会被 mock 返回 patch_obj
-            ...
-
-    Args:
-        response: 预设的 DAGPatch 或 Plan，Replanner.replan() 将直接返回此对象。
-
-    Returns:
-        unittest.mock.patch 上下文管理器。
-    """
-    async def _mock_replan(self, *args: Any, **kwargs: Any) -> DAGPatch | Plan:
-        return response
-
-    return patch(
-        "Module.workflow_engine.core.planner.replanner.Replanner.replan",
-        side_effect=_mock_replan,
-    )
 
 
 # ── 内部 helper ──────────────────────────────────────────────────────────────────

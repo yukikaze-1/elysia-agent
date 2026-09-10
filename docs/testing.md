@@ -2,15 +2,15 @@
 
 ## 分层体系
 
-测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-10）全量收集 4277：
+测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-10）全量收集 4258：
 
 | 层 | marker | 标准 | 测试数 |
 |---|--------|------|--------|
 | 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 2313 |
 | 服务 | `service` | 单模块 + mock/fake 替身，不连真实依赖 | 1915 |
-| 集成 | `integration` | 需真实数据库或外部 API | 29 |
+| 集成 | `integration` | 需真实数据库或外部 API | 10 |
 | 慢速 | `slow` | 起 Agent 且连真实依赖 / 端到端 / >1s | 39 |
-| 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 26 |
+| 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 7 |
 
 > **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 4251。2026-09-10 实测 `make test-quick`（`-m "unit or service"`）4210 passed / 2 skipped；`make test-normal`（`-m "not slow and not external"`）4213 passed / 2 skipped。各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
 >

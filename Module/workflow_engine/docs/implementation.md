@@ -82,10 +82,7 @@ Module/workflow_engine/
 │   ├── integration/
 │   │   ├── __init__.py
 │   │   ├── conftest.py
-│   │   ├── test_e2e_mvp.py
-│   │   ├── test_delegation_preparer.py   # DelegationPreparer 单测已迁 core/cognitive/tests/
-│   │   ├── test_executor.py
-│   │   └── test_planner.py
+│   │   └── test_e2e_mvp.py               # 唯一保留的集成 smoke（真 LLM + 真联网搜索，手工跑）
 │   ├── safety/
 │   │   └── __init__.py
 │   └── learning/
