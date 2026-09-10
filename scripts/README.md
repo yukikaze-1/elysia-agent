@@ -12,7 +12,7 @@
 | `start.sh` | 一键启动（conda 激活 → 数据库检查 → 预检 → 启动服务） | `bash scripts/start.sh` |
 | `check.sh` | 环境预检（conda/python 版本 + 依赖 + 配置文件） | `bash scripts/check.sh` |
 | `download_model.py` | 嵌入模型下载（默认 `BAAI/bge-large-zh-v1.5`，固定 revision + sha256 校验，默认官方源） | `conda run -n Elysia python scripts/download_model.py` |
-| `clean_db.py` | 数据库清理（清空 MongoDB + Milvus + 本地持久化文件） | `conda run -n Elysia python scripts/clean_db.py` |
+| `clean_db.py` | 数据库清理（清空 MongoDB + Milvus + 本地持久化文件；`--conversation-only` 只清对话数据、保留角色与用户身份） | `conda run -n Elysia python scripts/clean_db.py` |
 | `check_compose_security.py` | Compose 安全策略门禁（P1-19）：数据服务端口仅 loopback、无默认凭据/空 token、生产不发布管理端口 | `conda run -n Elysia python scripts/check_compose_security.py` |
 | `gen_contract_frames.py` | 契约层 golden frames 生成/漂移检测（9B-1 + 阶段4）：17 个 `ws-v2-*.jsonl`/`rest-*.jsonl`（WS 含阶段4 普通录音/听写/音频/服务切换，REST 含 Profile/TTS 正反例）；`--check` 漂移返回 1（`make check-types` 强制） | `conda run -n Elysia python scripts/gen_contract_frames.py` |
 | `stage4_smoke.py` | 阶段 4 确定性契约 smoke（P1-01）：进程内 `create_app` + 真 agent(fake LLM) + STT/TTS 桩，覆盖 Profile/三语音模式/TTS 播放 5 场景；默认 stub 确定性、失败非零退出；`STAGE4_SMOKE_LIVE=1` 才接真实 provider（不进 CI） | `conda run -n Elysia python scripts/stage4_smoke.py` |
@@ -21,29 +21,44 @@
 
 ## clean_db.py
 
-一键清理 Elysia Agent 所有数据库内容，用于测试环境重置。
+一键清理 Elysia Agent 数据库内容，用于测试环境重置。提供两个 MongoDB 清理范围：
+**全量**（默认）与 **`--conversation-only` 只清对话数据**（保留角色、版本、附件、用户身份）。
+
+> **必须先停止后端服务**：`idempotency` / `desktop_calls` / `attachments` 均 fail-closed，
+> 且 `desktop_calls` 有进程内缓存作为读权威——服务在跑时删库，内存态仍在、已删记录继续可读；
+> 下次关机回写还会把行重新创建。
 
 ### 清理范围
 
-| 存储 | 目标 | 方法 |
-|------|------|------|
-| MongoDB (`default`) | `sessions`、`message_archive`、`token_usage`、`character_versions`、`character_l2_versions`（旧） | `delete_many({})` 清空文档，保留 indexes |
-| Milvus | `long_term_memory` | drop 后自动重建（dimension=1024, IVF_FLAT） |
-| 本地文件 | `data/session_default.json`、`data/token_usage_pending.jsonl`、`data/scheduler_checkpoint.json`、`data/cache/vision/*.json` | 逐个删除 |
+| 存储 | 全量模式 | `--conversation-only` | 方法 |
+|------|----------|----------------------|------|
+| MongoDB (`default`) | `sessions`、`message_archive`、`token_usage`、`generations`、`idempotency`、`desktop_calls`、`characters`、`character_revisions`、`character_instances`、`character_versions`、`character_l2_versions`（旧）、`attachments` | `sessions`、`message_archive`、`token_usage`、`generations`、`idempotency`、`desktop_calls` | `delete_many({})` 清空文档，保留 indexes |
+| Milvus | `long_term_memory` | 同左（由 `--milvus-only` 组合控制） | drop 后自动重建（dimension=1024, IVF_FLAT） |
+| 本地文件 | `data/` 下 `token_usage_pending.jsonl`、`scheduler_checkpoint.json`、`memory_pending_deletes.json`、`memory_pending_syncs.json`、`session_*.json`（每会话一个，含 `session_default.json` 与 `session_pending_cleanup.json`）、`data/cache/vision/*.json` | 同左（由 `--files-only` 组合控制） | 逐个删除 |
+
+- **永不删除**：`user_identity_profiles`——用户身份是 Stage H 的 Mongo 权威（BE-STAGEH-02），删了会退回 bootstrap 默认身份。
+- `attachments` 只在全量模式清（且仅清 MongoDB 记录）；对话模式保留附件记录，删掉 `message_archive` 后的孤儿记录由 `AttachmentGC` 的「未关联超 7 天软删」规则回收，`data/uploads/` 磁盘文件不在本脚本范围。
+- 会话文件按 `session_*.json` glob 删（多会话每会话一个）——只删写死的 `session_default.json` 会漏掉其余会话，`SessionMemory.load()` 在 Mongo 读失败时 fallback 读它们，清库后会被复活。
+- 集合清单单源在 `clean_db.py` 的 `CONVERSATION_COLLECTIONS` / `FULL_ONLY_COLLECTIONS`，由 `core/tests/test_clean_db.py` 用字面量钉死——增删集合必须让测试红。
 
 ### CLI 参数
 
 ```
-usage: clean_db.py [-h] [-f] [--mongo-only] [--milvus-only] [--files-only] [--dry-run]
+usage: clean_db.py [-h] [-f] [--mongo-only | --conversation-only]
+                   [--milvus-only] [--files-only] [--dry-run]
 
 options:
-  -h             显示帮助
-  -f, --force    跳过确认提示，直接执行
-  --mongo-only   只清理 MongoDB
-  --milvus-only  只清理 Milvus
-  --files-only   只清理本地 data/ 文件
-  --dry-run      仅检查数据库连接，不实际清理
+  -h                    显示帮助
+  -f, --force           跳过确认提示，直接执行
+  --mongo-only          只清理 MongoDB（全量范围，含角色/附件）
+  --conversation-only   只清理对话数据（保留角色、版本、附件、用户身份）
+  --milvus-only         只清理 Milvus
+  --files-only          只清理本地 data/ 文件
+  --dry-run             仅检查数据库连接，不实际清理
 ```
+
+`--mongo-only` 与 `--conversation-only` 互斥（对 mongo 的范围诉求冲突，报错而非静默取其一）；
+`--conversation-only` 可与 `--milvus-only` / `--files-only` 组合。
 
 ### 使用示例
 
@@ -53,6 +68,9 @@ conda run -n Elysia python scripts/clean_db.py
 
 # 跳过确认，直接执行
 conda run -n Elysia python scripts/clean_db.py -f
+
+# 只清对话数据（保留角色、版本、附件、用户身份）
+conda run -n Elysia python scripts/clean_db.py --conversation-only
 
 # 只清理 MongoDB
 conda run -n Elysia python scripts/clean_db.py --mongo-only

@@ -1258,7 +1258,7 @@ Agent/
     ├── start.sh            #   一键启动
     ├── check.sh            #   环境预检
     ├── download_model.py   #   嵌入模型下载
-    ├── clean_db.py         #   数据库清理（MongoDB + Milvus + 本地文件）
+    ├── clean_db.py         #   数据库清理（MongoDB + Milvus + 本地文件；--conversation-only 只清对话数据）
     └── README.md           #   脚本说明
 ```
 

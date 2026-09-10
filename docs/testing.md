@@ -125,7 +125,7 @@ pytest core/tests/test_phase3.py -v
 
 | 目录 | 文件（收集数） |
 |------|----------------|
-| `core/tests/`（6 文件 / 221 测试） | `test_build_info.py`(3)、`test_clean_db.py`(16)、`test_phase1.py`(32)、`test_phase2.py`(57)、`test_phase3.py`(110)、`test_request_id.py`(3) |
+| `core/tests/`（6 文件 / 236 测试） | `test_build_info.py`(3)、`test_clean_db.py`(31)、`test_phase1.py`(32)、`test_phase2.py`(57)、`test_phase3.py`(110)、`test_request_id.py`(3) |
 | `core/status/tests/`（1 文件 / 20 测试） | `test_agent_fsm.py`(20) |
 | `core/agent/tests/`（13 文件 / 172 测试） | `test_agent_methods.py`(7)、`test_desktop_bridge_integration.py`(16)、`test_lifecycle_flush.py`(7)、`test_lifecycle_idempotency.py`(9)、`test_lifecycle_steps.py`(18)、`test_mailbox_polling.py`(2)、`test_multi_session.py`(25)、`test_public_interface.py`(33)、`test_server_banner.py`(7)、`test_status.py`(27)、`test_switch_guard.py`(9)、`test_types.py`(7)、`test_v2_message_id.py`(5) |
 | `core/config/tests/`（3 文件 / 26 测试） | `test_app_config.py`(11)、`test_character_config.py`(9)、`test_database_config.py`(6) |
