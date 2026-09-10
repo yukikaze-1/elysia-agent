@@ -24,7 +24,7 @@ from core.memory.session_manager import SessionBusyError
 from core.schema.event import UserInputData, InterruptData, StateChangeData
 from core.schema.types import RequestId
 
-pytestmark = pytest.mark.service
+pytestmark = [pytest.mark.service, pytest.mark.usefixtures("fake_storage")]
 
 
 @pytest.fixture

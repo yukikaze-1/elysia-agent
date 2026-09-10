@@ -1,13 +1,17 @@
-"""CharacterVersionRepository 服务测试（需要 MongoDB）。"""
+"""CharacterVersionRepository 服务测试（内存 fake 存储，不连真实 MongoDB）。
+
+仓储 `connect()` 走 `DocumentDBFactory.create("mongodb/default")`——默认配置下那是
+**开发者本机生产库**。故请求根 conftest 的 `fake_storage` fixture 把该连接重定向到内存
+`FakeDocumentDBBackend`（见 core/tests/_real_db_guard.py）。
+"""
 import pytest
 import pytest_asyncio
-from dotenv import load_dotenv
 from core.schema.types import SessionId
 from core.schema.compression import CompressionTrigger
 
-load_dotenv()
-
 COLLECTION = "character_versions"
+
+pytestmark = [pytest.mark.service, pytest.mark.usefixtures("fake_storage")]
 
 
 @pytest.mark.service

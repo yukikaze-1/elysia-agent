@@ -18,7 +18,7 @@ os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 from core.agent.agent import Agent          # noqa: E402
 from core.config import AppConfig           # noqa: E402
 
-pytestmark = pytest.mark.service
+pytestmark = [pytest.mark.service, pytest.mark.usefixtures("no_storage_guard")]
 
 
 class _DurableFakeDB(FakeDocumentDBBackend):

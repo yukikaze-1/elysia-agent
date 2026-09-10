@@ -28,7 +28,7 @@ from core.storage.idempotency_repo import (
 )
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
-pytestmark = pytest.mark.service
+pytestmark = [pytest.mark.service, pytest.mark.usefixtures("no_storage_guard")]
 
 
 def _run(coro):

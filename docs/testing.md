@@ -23,6 +23,40 @@
 >
 > 另：`pytest.ini` 设 `timeout = 300`（`pytest-timeout`，`thread` 方式）——无界 `await` 回归成挂死时不再无限期挂住 CI。
 
+### 真实数据库防线（unit/service 不碰生产库）
+
+`service` 的定义里写着「**不连真实 DB**」，但这条约定直到 2026-09-11 才被强制执行。默认配置
+恰好指向开发者本机生产库：
+
+```python
+AppConfig().database.mongodb_uri = "mongodb://localhost:27017"   # core/config/app_config.py:119
+AppConfig().database.db_name     = "default"                      # core/config/app_config.py:134
+```
+
+于是任何 `Agent(config=AppConfig())` + `await agent.start()` 的 unit/service 测试，只要本机
+Mongo 在跑就会连上并写入（`agent.stop()` 的 `save_all()` 回写 `sessions` / `message_archive`）。
+更麻烦的是 **`agent.start()` 对连不上库是静默降级**——「写生产库」与「没写」两种情况下测试都绿，
+问题从不自我暴露。实测残留（`default` 库）：`sessions` 标题 `active`/`lease`/`burst`、
+`character_versions.session_id="test_default_type"`；2026-09-10 清过一次，测试跑完后再次出现。
+
+**根 `conftest.py` 的 autouse 防线**：未标 `integration`/`slow`/`external` 的测试，把**指向生产库**
+的 Mongo 连接导流到内存 `FakeDocumentDBBackend`、Milvus 客户端拦截为抛错桩。判据是**实际连接串**
+而非只看 provider_id——测试若显式把 `MONGODB_URI` 改到别处（如指向不可达端口验证失败分支），不受影响。
+防线**导流而不判失败**，运行结束时在终端汇总被导流的测试数（保持可见，避免为上百个既有测试批量加标记）。
+
+需要防线让位的测试：
+
+```python
+# 自管存储（注入自有 fake 并驱动真实 connect() 路径）
+pytestmark = [pytest.mark.service, pytest.mark.usefixtures("no_storage_guard")]
+
+# 显式声明「本测试不碰真实库」（需要 agent.start() 跑管线时）
+@pytest.mark.usefixtures("fake_storage")
+```
+
+实现与背景见 `core/tests/_real_db_guard.py`。已核实的存量残留清理脚本：
+`scripts/dev/purge_test_residue.py --dry-run|--apply`。
+
 ### 外部测试门禁（E4，`RUN_EXTERNAL_TESTS=1`）
 
 `external` 测试（真实 LLM/DB E2E）**双保险门禁**：
