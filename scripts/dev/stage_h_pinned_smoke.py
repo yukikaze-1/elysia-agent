@@ -48,6 +48,7 @@ from scripts.dev.seed_stage_h_pinned import (  # noqa: E402
     FIXTURE_FOLLOW_INSTANCE_ID,
     FIXTURE_PINNED_CONVERSATION_ID,
     FIXTURE_PINNED_INSTANCE_ID,
+    FixtureRepos,
     _assert_non_production,
     _repos,
     _require_opt_in,
@@ -187,36 +188,6 @@ async def _be_r2(smoke: _Smoke, agent: Any, client: Any) -> None:
                 f"resolved={_instance_revision(agent, FIXTURE_FOLLOW_INSTANCE_ID)}")
 
 
-async def _purge_fixture_side_effects() -> dict[str, dict[str, int]]:
-    """真实回合会写 message_archive 与 token_usage——夹具 cleanup 不管这两层。
-
-    用独立 repository 实例（等价于真实验收里另起一个进程收尾），并且必须在服务停止
-    后执行：关机 flush 会把内存缓冲再写回 Mongo，先删会被复活。
-    """
-    from core.config import AppConfig
-    from core.schema.types import SessionId
-    from core.storage.message_repo import MessageRepository
-    from core.storage.token_repo import TokenRepository
-
-    cfg = AppConfig()
-    uri = cfg.database.mongodb_uri
-    msg = MessageRepository(database_name=cfg.database.db_name, base_url=uri)
-    tok = TokenRepository(database_name=cfg.database.db_name, base_url=uri)
-    purged: dict[str, dict[str, int]] = {"archive": {}, "token": {}}
-    try:
-        for repo, key in ((msg, "archive"), (tok, "token")):
-            if not await repo.connect():
-                raise SystemExit("拒绝宣告 smoke 成功：归档/token 存储不可用，无法收尾")
-            for conversation_id in (
-                FIXTURE_PINNED_CONVERSATION_ID, FIXTURE_FOLLOW_CONVERSATION_ID):
-                purged[key][conversation_id] = await repo.delete_by_session(
-                    SessionId(conversation_id))
-    finally:
-        await msg.close()
-        await tok.close()
-    return purged
-
-
 async def _be_r3(smoke: _Smoke, client: Any) -> None:
     """BE-R3：清理后公开读取（冷启动服务，缓存里没有已删角色）。"""
     resp = await client.get("/api/characters?status=active")
@@ -231,63 +202,78 @@ async def _be_r3(smoke: _Smoke, client: Any) -> None:
                 f"HTTP {detail_resp.status} {(await detail_resp.text())[:160]}")
 
 
-async def _be_r4(smoke: _Smoke, repos: tuple[Any, ...], *, prefix: str) -> None:
-    """BE-R4：repository 复查——夹具四类记录一个都不剩。"""
+async def _be_r4(smoke: _Smoke, repos: Any, *, prefix: str) -> None:
+    """BE-R4：repository 复查——夹具本体 + 真实回合的三类派生记录一个都不剩。"""
     from core.schema.types import SessionId
 
-    characters, revisions, instances, sessions = repos
     smoke.check(f"{prefix}.definition_gone",
-                await characters.get_definition(FIXTURE_CHARACTER_ID) is None)
+                await repos.characters.get_definition(FIXTURE_CHARACTER_ID) is None)
     smoke.check(f"{prefix}.revisions_gone",
-                await revisions.list_revisions(FIXTURE_CHARACTER_ID) == [])
+                await repos.revisions.list_revisions(FIXTURE_CHARACTER_ID) == [])
     for instance_id in (FIXTURE_PINNED_INSTANCE_ID, FIXTURE_FOLLOW_INSTANCE_ID):
         smoke.check(f"{prefix}.instance_gone:{instance_id}",
-                    await instances.get(instance_id) is None)
+                    await repos.instances.get(instance_id) is None)
     for conversation_id in (
         FIXTURE_PINNED_CONVERSATION_ID, FIXTURE_FOLLOW_CONVERSATION_ID):
+        sid = SessionId(conversation_id)
         smoke.check(f"{prefix}.session_gone:{conversation_id}",
-                    await sessions.load(SessionId(conversation_id)) is None)
+                    await repos.sessions.load(sid) is None)
+        _, archive_total = await repos.archive.query_by_session(sid, limit=1)
+        smoke.check(f"{prefix}.archive_gone:{conversation_id}", archive_total == 0)
+        smoke.check(f"{prefix}.tokens_gone:{conversation_id}",
+                    await repos.tokens.query_by_session(conversation_id, limit=1) == [])
+        gens, _, _ = await repos.generations.find_by_session(sid, limit=1)
+        smoke.check(f"{prefix}.generations_gone:{conversation_id}", gens == [])
 
 
-async def _run(smoke: _Smoke, repos: tuple[Any, ...]) -> None:
+async def _run(smoke: _Smoke, repos: FixtureRepos) -> None:
+    """按固定顺序跑完整套：先停机再收尾——异常路径也必须走完收尾。
+
+    顺序（见模块 docstring）：
+        停止 agent → 清理 archive/tokens/generations → 清理 session/instance/revision/
+        definition → 回读复查
+    因此两段 agent 都各自套 `try/finally`，收尾不依赖正常路径。
+    """
     from aiohttp.test_utils import TestClient, TestServer
 
     from core.input.server import create_app
 
     # 干净基线：上次中断留下的 fixture 先清掉（幂等）
-    await cleanup_fixture(*repos)
+    await cleanup_fixture(repos)
 
+    # ---- 第一段：带 agent 跑 seed 与两轮真实回合 ----
     agent = _make_agent()
-    await agent.start()
+    removed: dict[str, int] = {}
     try:
+        await agent.start()
         app = create_app(agent, serve_static=False)
         async with TestClient(TestServer(app)) as client:
-            await seed_fixture(*repos)
+            await seed_fixture(repos)
             await _be_r1(smoke, client)
             await _bump_to_revision_2(smoke, client)
             await _be_r2(smoke, agent, client)
     finally:
-        # 必须先关机再 cleanup——否则关机 flush 会把 fixture 行复活（见模块 docstring）。
+        # 顺序不可换：关机 flush 会把内存里的 session/runtime 状态写回 Mongo，
+        # 先 cleanup 会被复活。REST/WS/断言任一步抛异常，这里同样执行。
         await agent.stop()
+        removed = (await cleanup_fixture(repos))["removed"]
 
-    purged = await _purge_fixture_side_effects()
-    # 必须 >0：为 0 说明那两轮根本没产生归档/token——不是「干净」，是回合没真跑。
-    smoke.check("BE-R5.fixture_side_effects_purged",
-                all(c > 0 for c in purged["archive"].values())
-                and all(c > 0 for c in purged["token"].values()), str(purged))
-
-    removed = await cleanup_fixture(*repos)
+    # 三类派生记录必须真被删掉（>0）：为 0 说明两轮根本没产生记录，不是「干净」。
     smoke.check("BE-R5.cleanup_counts",
-                removed["removed"]["sessions"] == 2
-                and removed["removed"]["instances"] == 2
-                and removed["removed"]["characters"] == 1
-                and removed["removed"]["revisions"] >= 1,
-                str(removed["removed"]))
+                removed.get("sessions") == 2
+                and removed.get("instances") == 2
+                and removed.get("characters") == 1
+                and removed.get("revisions", 0) >= 1
+                and removed.get("archive", 0) > 0
+                and removed.get("tokens", 0) > 0
+                and removed.get("generations", 0) > 0,
+                str(removed))
     await _be_r4(smoke, repos, prefix="BE-R4")
 
+    # ---- 第二段：冷启动服务做清理后的公开读取 ----
     cold_agent = _make_agent()
-    await cold_agent.start()
     try:
+        await cold_agent.start()
         cold_app = create_app(cold_agent, serve_static=False)
         async with TestClient(TestServer(cold_app)) as client:
             await _be_r3(smoke, client)
@@ -297,11 +283,12 @@ async def _run(smoke: _Smoke, repos: tuple[Any, ...]) -> None:
     # 关机回写复查：冷服务从未装载过 fixture 会话，关机也不得把它造回来。
     await _be_r4(smoke, repos, prefix="BE-R4.no_resurrection")
 
-    second = await cleanup_fixture(*repos)
+    second = await cleanup_fixture(repos)
     smoke.check("BE-R5.second_cleanup_all_zero",
                 second["removed"] == {
-                    "sessions": 0, "instances": 0, "revisions": 0, "characters": 0},
-                    str(second["removed"]))
+                    "sessions": 0, "instances": 0, "revisions": 0, "characters": 0,
+                    "archive": 0, "tokens": 0, "generations": 0},
+                str(second["removed"]))
 
 
 async def main() -> int:
@@ -319,8 +306,13 @@ async def main() -> int:
     repos = await _repos()
     try:
         await _run(smoke, repos)
+    except SystemExit as exc:
+        # 收尾/复查的硬拒绝（例如残留）——记成失败项，报告照常输出。
+        smoke.check("smoke.aborted", False, f"SystemExit: {exc}")
+    except Exception as exc:  # noqa: BLE001  中断也要输出已跑完的断言
+        smoke.check("smoke.aborted", False, f"{type(exc).__name__}: {exc}")
     finally:
-        for repo in repos:
+        for repo in vars(repos).values():
             try:
                 await repo.close()
             except Exception:  # noqa: BLE001  收尾失败不掩盖主结果
