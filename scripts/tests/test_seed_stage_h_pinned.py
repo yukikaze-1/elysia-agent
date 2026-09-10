@@ -169,3 +169,86 @@ async def test_seeded_fixture_passes_public_catalog_list():
     detail = await service.get(FIXTURE_CHARACTER_ID)
     assert detail is not None
     assert detail.current.createdBy == "migration"
+
+
+# ─────────────── BE-H2-02：cleanup 必须删净该 fixture 的全部 revision ───────────────
+
+
+async def _append_revision(revisions: CharacterRevisionRepository, number: int) -> None:
+    revision = _fixture_revision().model_copy(
+        update={"revision": number, "displayName": f"夹具 r{number}"})
+    await revisions.append_revision(revision)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_every_revision_of_the_fixture():
+    """H-44 会把 Definition 推到 revision 2；只删 revision 1 会留孤儿。"""
+    characters, revisions, instances, sessions = _repos()
+    await seed_fixture(characters, revisions, instances, sessions)
+    await _append_revision(revisions, 2)
+    await _append_revision(revisions, 3)
+
+    removed = await cleanup_fixture(characters, revisions, instances, sessions)
+
+    assert removed["removed"]["revisions"] == 3
+    assert await revisions.list_revisions(FIXTURE_CHARACTER_ID) == []
+
+
+@pytest.mark.asyncio
+async def test_cleanup_second_run_reports_zeros():
+    """幂等：第二次执行成功且全零。"""
+    characters, revisions, instances, sessions = _repos()
+    await seed_fixture(characters, revisions, instances, sessions)
+    await _append_revision(revisions, 2)
+
+    await cleanup_fixture(characters, revisions, instances, sessions)
+    second = await cleanup_fixture(characters, revisions, instances, sessions)
+
+    assert second["removed"] == {
+        "sessions": 0, "instances": 0, "revisions": 0, "characters": 0}
+
+
+@pytest.mark.asyncio
+async def test_cleanup_leaves_other_character_revisions_intact():
+    """只删固定 characterId 的 revision——绝不扫描/误删其他角色。"""
+    characters, revisions, instances, sessions = _repos()
+    other = _fixture_revision().model_copy(
+        update={"characterId": "chr_unrelated_rev"})
+    await revisions.append_revision(other)
+    await seed_fixture(characters, revisions, instances, sessions)
+    await _append_revision(revisions, 2)
+
+    await cleanup_fixture(characters, revisions, instances, sessions)
+
+    survivors = await revisions.list_revisions("chr_unrelated_rev")
+    assert [rev.characterId for rev in survivors] == ["chr_unrelated_rev"]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_raises_when_revision_storage_fails():
+    """存储失败必须冒出非零退出——不得打印看似成功的汇总。"""
+    from core.storage.base import StorageUnavailableError
+
+    characters, revisions, instances, sessions = _repos()
+    await seed_fixture(characters, revisions, instances, sessions)
+
+    async def _boom(*args: object, **kwargs: object) -> None:
+        raise StorageUnavailableError("模拟 Mongo 抖动")
+
+    revisions.delete_revision = _boom  # type: ignore[method-assign]
+    with pytest.raises(StorageUnavailableError):
+        await cleanup_fixture(characters, revisions, instances, sessions)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_raises_when_residue_survives():
+    """删完回读复查：仍有残留 → 非零退出，不谎报干净。"""
+    characters, revisions, instances, sessions = _repos()
+    await seed_fixture(characters, revisions, instances, sessions)
+
+    async def _noop(*args: object, **kwargs: object) -> None:
+        return None
+
+    revisions.delete_revision = _noop  # type: ignore[method-assign]
+    with pytest.raises(SystemExit):
+        await cleanup_fixture(characters, revisions, instances, sessions)

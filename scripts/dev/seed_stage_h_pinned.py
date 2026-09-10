@@ -194,6 +194,46 @@ async def seed_fixture(
     }
 
 
+async def _all_revision_numbers(
+    revisions: "CharacterRevisionRepository", character_id: str,
+) -> list[int]:
+    """分页取该 characterId 的全部 revision 号——不假设只有 1/2，也不扫描其他角色。"""
+    numbers: list[int] = []
+    cursor: int | None = None
+    while True:
+        page, has_more = await revisions.list_revisions_page(
+            character_id, cursor=cursor, limit=100)
+        numbers.extend(rev.revision for rev in page)
+        if not has_more:
+            return numbers
+        cursor = numbers[-1]
+
+
+async def _verify_no_residue(
+    characters: "CharacterRepository",
+    revisions: "CharacterRevisionRepository",
+    instances: "CharacterInstanceRepository",
+    sessions: "SessionRepository",
+) -> None:
+    """删完回读复查——仍有残留就非零退出，不谎报干净。"""
+    from core.schema.types import SessionId
+
+    residue: list[str] = []
+    if await characters.get_definition(FIXTURE_CHARACTER_ID) is not None:
+        residue.append("definition")
+    for instance_id in (FIXTURE_PINNED_INSTANCE_ID, FIXTURE_FOLLOW_INSTANCE_ID):
+        if await instances.get(instance_id) is not None:
+            residue.append(f"instance:{instance_id}")
+    if await _all_revision_numbers(revisions, FIXTURE_CHARACTER_ID):
+        residue.append("revisions")
+    for conversation_id in (
+        FIXTURE_PINNED_CONVERSATION_ID, FIXTURE_FOLLOW_CONVERSATION_ID):
+        if await sessions.load(SessionId(conversation_id)) is not None:
+            residue.append(f"session:{conversation_id}")
+    if residue:
+        raise SystemExit("拒绝宣告清理成功：fixture 仍有残留 " + ", ".join(residue))
+
+
 async def cleanup_fixture(
     characters: "CharacterRepository",
     revisions: "CharacterRevisionRepository",
@@ -209,10 +249,15 @@ async def cleanup_fixture(
         removed["sessions"] += await sessions.delete(SessionId(conversation_id))
     for instance_id in (FIXTURE_PINNED_INSTANCE_ID, FIXTURE_FOLLOW_INSTANCE_ID):
         removed["instances"] += int(await instances.delete(instance_id))
-    await revisions.delete_revision(FIXTURE_CHARACTER_ID, FIXTURE_REVISION)
-    removed["revisions"] = 1
+    # BE-H2-02：H-44 会把同一 Definition 从 revision 1 推到 2，清理必须删净全部
+    # revision（只删固定 R1 会留孤儿，且计数是假的）。
+    for number in await _all_revision_numbers(revisions, FIXTURE_CHARACTER_ID):
+        await revisions.delete_revision(FIXTURE_CHARACTER_ID, number)
+        removed["revisions"] += 1
     removed["characters"] = int(
         await characters.delete_definition(FIXTURE_CHARACTER_ID))
+
+    await _verify_no_residue(characters, revisions, instances, sessions)
     return {"fixture": "stage-h-pinned", "removed": removed}
 
 
@@ -252,7 +297,20 @@ def main() -> int:
         repos = await _repos()
         return await (cleanup_fixture(*repos) if args.cleanup else seed_fixture(*repos))
 
-    print(json.dumps(asyncio.run(_run()), ensure_ascii=False, indent=2))
+    try:
+        payload = asyncio.run(_run())
+    except SystemExit:
+        raise
+    except Exception as exc:
+        # 存储/连接失败：脱敏 + 非零退出——绝不打印看似成功的汇总（不含 URI/路径）。
+        print(json.dumps({
+            "fixture": "stage-h-pinned",
+            "ok": False,
+            "error": type(exc).__name__,
+        }, ensure_ascii=False), file=sys.stderr)
+        return 1
+
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
 
