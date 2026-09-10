@@ -1,6 +1,6 @@
 """tags 标签注册表测试 — 纯数据定义 + emoji 收口。
 
-对齐设计文档 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`
+对齐设计文档 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`
 行为对照表。每个用例钉死一项标签定义。
 """
 

@@ -2,7 +2,7 @@
 
 消费 StreamTokenizer 的 SPEECH/PAUSE/STAGE_CN token 流，输出完整句子。
 
-设计（对齐 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`）：
+设计（对齐 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`）：
 
 - **边界扫描只在 SPEECH 文本上进行**。连续 SPEECH token 先按原序拼接
   （tokenizer 的确定性边界粒度，如 `价格<100元` → [S("价格"), S("<1"), S("00元")]），

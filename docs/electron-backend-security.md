@@ -1,7 +1,7 @@
 # Electron 后端安全部署指南
 
 **文档版本：** v0.8（批次 1 产出 v0.1，BE-010；批次 4 补 Desktop 工具桥安全语义 §3.2 + 附件鉴权缺口；批次 5 补 §3.3 模型 Profile 密钥与 SSRF + 已知缺口更新；批次 6 补 §3.4 语音临时音频不落盘 + 已知缺口更新；批次 7 补 §1.2 附件免 Bearer 豁免 + §3.5 附件下载/签名安全 + 已知缺口更新；批次 8a 补 §1.1 管理面认证 fallback + §1.4 启动守卫双 token 检查 + §3.5 下载校验序前置；2026-08-10 接入复审同步会话与 Desktop 精确投递现状；2026-08-11 加固批次同步 §1.4 启动守卫 fail-closed + 默认 host 127.0.0.1 + §3.7 探针分层）
-**关联：** `docs/archive/electron-backend-baseline.md`、`docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`、`docs/superpowers/specs/2026-08-06-electron-backend-batch8a-security-attachment-search.md`
+**关联：** `docs/archive/electron-backend-baseline.md`、`docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch1-auth-version-error.md`、`docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch4-desktop-tools.md`、`docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`、`docs/superpowers/specs/archive/2026-08/2026-08-06-electron-backend-batch7-media-and-observability.md`、`docs/superpowers/specs/archive/2026-08/2026-08-06-electron-backend-batch8a-security-attachment-search.md`
 
 本文件说明 Elysia Agent 后端的**远程安全部署**方式：产品认证、TLS 终止、防护范围与已知缺口。远程部署必须遵循本指南；本地开发（回环 + 无 token）维持匿名。
 

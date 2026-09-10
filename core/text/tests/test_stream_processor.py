@@ -1,6 +1,6 @@
 """新协调器 StreamProcessor 测试。
 
-对齐设计文档 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`
+对齐设计文档 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`
 「事件面」「数据流」「行为对照表」+ 测试策略。
 
 迁移来源：`core/cognitive/tests/test_stream_processor.py`（事件面兼容，import 路径

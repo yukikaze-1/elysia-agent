@@ -2,7 +2,7 @@
 
 **文档版本：** v0.7（批次 2 产出 v0.1，批次 3 补充多会话 §2.3/§9，批次 4 补充 Desktop 工具契约 §10/错误码目录，批次 5 补充模型 Profile 与 TTS 声音契约 §11 + 错误码 21→25，批次 6 补充三种语音与 TTS 播放契约 §12 + 错误码 25→32，批次 7 补充通用附件与媒体契约 §13 + 错误码 32→40，2026-08-10 接入复审补当前 cancel/fail golden、Desktop 精确连接投递、错误码 40→41 与媒体/签名文档同步）
 **关联：** `docs/archive/electron-backend-baseline.md`（v1 现状）、`docs/electron-backend-security.md`（认证/版本协商）
-**Spec：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）+ `docs/superpowers/specs/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md` + `docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`
+**Spec：** `docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch2-chat-v2.md`（v0.2）+ `docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch3-multi-session.md`（v0.2）+ `docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch4-desktop-tools.md`（v0.2）+ `docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md` + `docs/superpowers/specs/archive/2026-08/2026-08-06-electron-backend-batch7-media-and-observability.md`
 
 本文档是 Electron 前端联调 v2 协议的**事件契约参考**。v2 由 WS 握手头 `X-Protocol-Version: 2` 判定；未带版本头走 v1 路径（现状不变）。
 

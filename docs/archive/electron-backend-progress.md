@@ -13,7 +13,7 @@
 ## 批次 0：基线确认 ✅ 完成
 
 **提交：** `fea1b8b`
-**Spec/Plan：** `docs/superpowers/specs/2026-08-04-electron-backend-batch0-baseline.md` / `...plans/...batch0-baseline.md`
+**Spec/Plan：** `docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch0-baseline.md` / `...plans/...batch0-baseline.md`
 
 ### 结果
 
@@ -35,7 +35,7 @@ subagent 验收 ACCEPTED（初 REJECTED：cancel 未真正打断 + 轨迹混入�
 ## 批次 1：认证 / 版本协商 / 统一错误 ✅ 完成
 
 **提交：** `3a7211a`（契约）`1fcafd9`（配置）`9852d65`（认证）`b4afe17`（版本）`e386626`（启动守卫）`3ff1a88`（限制）`812fa88`（错误信封）`1acd431`（安全文档）`ff18233`（验收修复）
-**Spec/Plan：** `docs/superpowers/specs/2026-08-04-electron-backend-batch1-auth-version-error.md`（v0.2） / `...plans/...batch1-auth-version-error.md`（v0.2）
+**Spec/Plan：** `docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch1-auth-version-error.md`（v0.2） / `...plans/...batch1-auth-version-error.md`（v0.2）
 
 ### 结果
 
@@ -61,8 +61,8 @@ subagent 验收 ACCEPTED（1 个中等问题 F1 CONNECTION_LIMITED retryable + 2
 ## 批次 2：结构化聊天 v2 ✅ 完成
 
 **提交：** `6fab1de`（契约）`531c95b`（ID）`901f792`（messageId 贯通）`5b47afe`（channel v2）`445f100`（版本扇出）`e3c7a49`（loop 重构）`d3fcb75`（ACK/幂等）`361b4ae`（取消）`7eb8630`（重连/轨迹/文档）`4f27702`（验收修复）
-**Spec（v0.2，APPROVED）：** `docs/superpowers/specs/2026-08-04-electron-backend-batch2-chat-v2.md`
-**Plan（v0.2，reviewed+fixed）：** `docs/superpowers/plans/2026-08-04-electron-backend-batch2-chat-v2.md`
+**Spec（v0.2，APPROVED）：** `docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch2-chat-v2.md`
+**Plan（v0.2，reviewed+fixed）：** `docs/superpowers/plans/archive/2026-08/2026-08-04-electron-backend-batch2-chat-v2.md`
 
 ### 结果
 
@@ -92,8 +92,8 @@ subagent 验收 **ACCEPTED**（1 中：features.structured_generation 应为 tru
 ## 批次 3：产品级多会话、历史、搜索与资源索引（BE-030/031/032 + BE-024） ✅ 完成
 
 **提交：** `4acab56`（plan）`b8a9bd1a`（spec）`a892a21b`（契约）`9fd91ddd`（schema）`72277a59`（storage）`17dfa654`（personality/adapter 换绑）`89a7f41c`（SessionManager）`fcbe0f7b`（TokenTracker 会话感知）`ea1216ae`（agent 集成）`3c3ac744`（loop session_resolver）`540a1bc6`（test_session_resolver 收敛）`d5dd826c`（GenerationRegistry）`0f7101e2`（output conversationId）`6d7de4fc`（ws activate_session 路由）`ad281de0`（session_routes REST）+ **Task 13**（`docs+batch3: 回归收敛 + v2 轨迹 + 文档更新`）+ **验收修复批次 A/B/C**（`f290249a` default 守卫+registry 建连+排队贯通+错误码；`380308b5` engine 会话隔离+token 回退+资源/tool/TTS+F5-F7；`8d52eca6` busy 门禁+错误码+finished_at+N+1 并发/per_model）
-**Spec（v0.2，APPROVED）：** `docs/superpowers/specs/2026-08-04-electron-backend-batch3-multi-session.md`
-**Plan（v0.1）：** `docs/superpowers/plans/2026-08-04-electron-backend-batch3-multi-session.md`
+**Spec（v0.2，APPROVED）：** `docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch3-multi-session.md`
+**Plan（v0.1）：** `docs/superpowers/plans/archive/2026-08/2026-08-04-electron-backend-batch3-multi-session.md`
 
 ### 结果
 
@@ -123,7 +123,7 @@ subagent 验收 **ACCEPTED**（1 中：features.structured_generation 应为 tru
 ## 批次 4：统一 Tool Runtime 与 Desktop 工具桥（BE-040~043） ✅ 完成
 
 **提交：** `8cf9da11`（契约 tool.request/tool.status + ToolMetadata/ToolRegistryResponse/DesktopCallStatus）`8d996951`（ToolPlugin runtime/version/risk_level/output_schema + desktop 四插件）`bebd3817`（DesktopCallRepository）`9731a794`（DesktopToolBridge）`07d365dc`（ToolMetadata 导出 + definitions 运行时过滤 + tool_approval 版本门控）`56296cf1`（agent 集成：desktop_bridge 构造/注入/生命周期 + ToolAdapter 过滤）`1df8db34`（X-Client-Platform 握手 + tool.status 路由 + 负面隔离 + desktop_runtime=true）`1eacb550`（GET /api/tools + calls/{callId} + 附件上传持有者校验）`7f3d0347`（server_info 下发 connectionId）+ **Task 10**（`docs+batch4: 回归收敛 + 测试矩阵 + 协议/进度/安全文档`，本批次收尾）
-**Spec（v0.2，吸收四角度 review 全部 findings）：** `docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md`
+**Spec（v0.2，吸收四角度 review 全部 findings）：** `docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch4-desktop-tools.md`
 **Plan：** `.superpowers/plans/2026-08-05-electron-backend-batch4-desktop-tools/`（Task 1-10 严格顺序）
 
 ### 结果
@@ -152,8 +152,8 @@ docs/14 场景 4（BE-040~043 门槛：四个 Desktop P0 工具完成安全往�
 ## 批次 5：模型 Profile 与密钥所有权 / TTS 声音（BE-050/051） ✅ 完成
 
 **提交：** `b0c22e6`（Secret Store）`50ea95a`（SSRFGuard）`7f77d4b`（契约层）`9b4c174`（custom_providers 解析统一）`8980d07`（后端 http_client 注入）`c8eb1f8`（generation.model 捕获）`4b6749e`（providers REST 三 handler）`a2adc09`（switch 路径守卫）`3af4201`（TTS 协议 list_voices + synthesize voice_id）`6099c2a`（POST /api/tts/preview）`f647357`（声音覆盖 service_state.tts_voice + WS set_tts_voice）`a0f8dfe`（fix：每 turn 声音注入防御性 getattr）
-**Spec（v0.3）：** `docs/superpowers/specs/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`
-**Plan：** `docs/superpowers/plans/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`（12 Task）
+**Spec（v0.3）：** `docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`
+**Plan：** `docs/superpowers/plans/archive/2026-08/2026-08-05-electron-backend-batch5-model-profile-keys-voices.md`（12 Task）
 
 ### 决策（10 项拍板，2026-08-05）
 
@@ -228,8 +228,8 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 ## 批次 6：三种语音模式 + TTS 播放控制（BE-060~063） ✅ 完成
 
 **提交：** `09bca10`（契约，Task 1）`9b10adb`（VoiceSessionManager，Task 2）`32db89c`（ws_handler 路由，Task 3）`2955010`（voice.commit v2 提交，Task 4）`c53e42d`（实时会话 service 层，Task 5）`854aa9c`（dictation stt_emotion 隔离，Task 6）`46d6201`（输出层 audio 控制，Task 7）`0e4212e`（adapter 层 audio 控制，Task 8）`00f71d2`（features + audio.cancel 路由 + 批次 6 文档，Task 9）`de36c37`（全量回归收口：test_paths 枚举 23 成员——批次 5 DATA_SECRETS 遗留断言漂移）+ 最终 review 修复 `27c4546`（会话 JSON 入口 stt_enabled 门控 + 后台循环异常捕获 + cancel_all 剪除）+ `61e2727`（spec 微修：RECORDING deafen 消歧 + 断连边界记录）+ `1836d6b`（idle 超时 ended 事件丢失——teardown 不自取消当前任务）
-**Spec：** `docs/superpowers/specs/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`（v0.7）
-**Plan：** `docs/superpowers/plans/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`（10 Task）
+**Spec：** `docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`（v0.7）
+**Plan：** `docs/superpowers/plans/archive/2026-08/2026-08-05-electron-backend-batch6-voice-modes-tts-control.md`（10 Task）
 
 ### 结果
 
@@ -261,8 +261,8 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 ## 批次 7：通用附件与媒体 / 版本与可观测性（BE-070/071/081） ✅ 完成
 
 **提交：** `6e0cadf`（契约层——媒体 Part/附件模型/签名响应/stickerId/build_sha/media_upload/requestId）`96dcb4e`（存储层——AttachmentRepository fail-closed + AttachmentFileResolver + agent.attachment_repo 归属）`b688412`（通用上传 /api/uploads + filetype 真值校验 + 签名 URL + 64MB/静态收敛）`35b182d`（附件签名下载 + Range + 签发端点 /sign + fail-closed/fail-open）`366cadb`（内置表情包——sticker_registry + /api/stickers）`19391f6`（附件/sticker 消息关联——v2 wire + process bool + refs + 删除联动含归档 + 视觉适配）`8fc909b`（启动 GC 兜底扫描——deleted/孤儿/未引用清理，限四 kind 目录）`5497e49`（版本——git build_sha + media_upload 如实声明）`158c633`（/health//ready 拆分 + 真依赖检查 + 版本/uptime/request_id）`38dde3a`（日志正文打印收敛 + 敏感扫描测试）`59d0927`（关联 ID——WS 错误带 requestId + GenerationRegistry 记 request_id）
-**Spec：** `docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`（9 轮 review 收口）
-**Plan：** `docs/superpowers/plans/2026-08-06-electron-backend-batch7-media-and-observability.md`（4 轮 review 收口）
+**Spec：** `docs/superpowers/specs/archive/2026-08/2026-08-06-electron-backend-batch7-media-and-observability.md`（9 轮 review 收口）
+**Plan：** `docs/superpowers/plans/archive/2026-08/2026-08-06-electron-backend-batch7-media-and-observability.md`（4 轮 review 收口）
 
 ### 结果
 
@@ -297,7 +297,7 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 ## 批次 8a：审计修复——安全 / 附件 / 搜索（2026-08-06） ✅ 完成
 
 **提交范围：** `66be44f..565fc10`（16 commits，2026-08-06）
-**Spec/Plan：** `docs/superpowers/specs/2026-08-06-electron-backend-batch8a-security-attachment-search.md` / `docs/superpowers/plans/2026-08-06-electron-backend-batch8a-security-attachment-search.md`
+**Spec/Plan：** `docs/superpowers/specs/archive/2026-08/2026-08-06-electron-backend-batch8a-security-attachment-search.md` / `docs/superpowers/plans/archive/2026-08/2026-08-06-electron-backend-batch8a-security-attachment-search.md`
 **依据：** `docs/electron-backend-audit-batches0-7.md`（A 安全 / B 附件 / C 搜索 三簇 + 探活 20 条发现 + BE-030/BE-031/BE-070 三项合规缺口）
 
 ### 结果
@@ -322,7 +322,7 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 ## 批次 8b：WS/语音行为修复（2026-08-07） ✅ 完成
 
 **提交范围：** `50fe313..da050d2`（12 commits，2026-08-07）
-**Spec/Plan：** `docs/superpowers/specs/2026-08-07-electron-backend-batch8b-ws-voice-behavior.md` / `docs/superpowers/plans/2026-08-07-electron-backend-batch8b-ws-voice-behavior.md`
+**Spec/Plan：** `docs/superpowers/specs/archive/2026-08/2026-08-07-electron-backend-batch8b-ws-voice-behavior.md` / `docs/superpowers/plans/archive/2026-08/2026-08-07-electron-backend-batch8b-ws-voice-behavior.md`
 **依据：** `docs/electron-backend-audit-batches0-7.md`（D 簇 WS/语音行为 13 条发现）
 
 ### 结果
@@ -368,7 +368,7 @@ Secret Store 密钥（spec §10 推荐路径）+ 0600 明文不落 DB + api_key_
 ## 批次 8c：契约/信封/ID/杂项修复（2026-08-07） ✅ 完成
 
 **提交范围：** `dcd88f8..4c84200`（16 commits，2026-08-07）
-**Spec/Plan：** `docs/superpowers/specs/2026-08-07-electron-backend-batch8c-contract-envelope-id-misc.md` / `docs/superpowers/plans/2026-08-07-electron-backend-batch8c-contract-envelope-id-misc.md`
+**Spec/Plan：** `docs/superpowers/specs/archive/2026-08/2026-08-07-electron-backend-batch8c-contract-envelope-id-misc.md` / `docs/superpowers/plans/archive/2026-08/2026-08-07-electron-backend-batch8c-contract-envelope-id-misc.md`
 **依据：** `docs/electron-backend-audit-batches0-7.md`（E/F 簇契约/信封/ID/杂项 19 条发现）
 
 ### 结果

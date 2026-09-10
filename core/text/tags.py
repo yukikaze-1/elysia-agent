@@ -4,7 +4,7 @@
 （Task 2-7）消费。每类标签 = 起始模式 + 结束模式 + kind + 路由，
 未来加标签 = 加一行注册。
 
-对齐设计文档 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`
+对齐设计文档 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`
 行为对照表：
 
     PAUSE        <#0.5#>                    TTS 停顿（原子 token，整体保护）

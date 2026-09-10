@@ -3,8 +3,8 @@
 > F5 交接：本次发版（D6b/D6c 产品化门禁 + **2026-08-11 加固批次**：P0×2 + P1×5 + P2×3）对 Electron
 > 前端的 wire 契约影响，逐条可回放。前置批次 9A/9B/9C 的变更见 `docs/electron-backend-protocol-v2.md`
 > + golden frames（`docs/archive/frontend-handoff-v2/traces/`）；加固批次设计与决策见
-> `docs/superpowers/specs/2026-08-11-electron-v2-backend-hardening-design.md`，原始问题清单见
-> `docs/review/electron-v2-first-integration-backend-review-2026-08-11.md`。本清单只列 **2026-08-11 新增**。
+> `docs/superpowers/specs/archive/2026-08/2026-08-11-electron-v2-backend-hardening-design.md`，原始问题清单见
+> `docs/review/archive/2026-08/electron-v2-first-integration-backend-review-2026-08-11.md`。本清单只列 **2026-08-11 新增**。
 
 ## 1. 新增：`server_info.features.idempotency_durable`
 
@@ -96,4 +96,4 @@
 - 协议文档：`docs/electron-backend-protocol-v2.md`
 - golden frames：`docs/archive/frontend-handoff-v2/traces/ws-v2-{handshake,session,chat,tool,voice,cancel,fail}.jsonl`
 - 机器契约：`frontend_contract/contract.schema.json` + `contract.raw.ts`
-- 发版记录：`docs/contract-release-2026-08-11.md`
+- 发版记录：`docs/archive/contract-release-2026-08-11.md`

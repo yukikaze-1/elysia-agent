@@ -141,6 +141,6 @@ def coerce(cls, value: object) -> "MemoryType":               # 存储/构造边
 | [docs/architecture.md](architecture.md) | 完整架构详解 |
 | [docs/archive/data-structure-survey.md](archive/data-structure-survey.md) | 全项目数据结构普查（枚举/dataclass 清单，已归档） |
 | [frontend_contract/README.md](../frontend_contract/README.md) | 前后端契约单源机制 |
-| [docs/superpowers/specs/2026-08-08-core-id-newtype-design.md](superpowers/specs/2026-08-08-core-id-newtype-design.md) | core ID NewType 化设计 |
-| [docs/superpowers/specs/2026-08-08-channel-kind-strenum-design.md](superpowers/specs/2026-08-08-channel-kind-strenum-design.md) | channel/kind 对齐契约枚举设计 |
-| [docs/superpowers/specs/2026-08-08-memory-entry-memory-type-design.md](superpowers/specs/2026-08-08-memory-entry-memory-type-design.md) | MemoryEntry.memory_type 对齐设计 |
+| [docs/superpowers/specs/archive/2026-08/2026-08-08-core-id-newtype-design.md](superpowers/specs/archive/2026-08/2026-08-08-core-id-newtype-design.md) | core ID NewType 化设计 |
+| [docs/superpowers/specs/archive/2026-08/2026-08-08-channel-kind-strenum-design.md](superpowers/specs/archive/2026-08/2026-08-08-channel-kind-strenum-design.md) | channel/kind 对齐契约枚举设计 |
+| [docs/superpowers/specs/archive/2026-08/2026-08-08-memory-entry-memory-type-design.md](superpowers/specs/archive/2026-08/2026-08-08-memory-entry-memory-type-design.md) | MemoryEntry.memory_type 对齐设计 |

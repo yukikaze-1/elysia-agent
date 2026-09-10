@@ -2,15 +2,15 @@
 
 > **⚠️ 历史快照（2026-08-11 起）**：本文档记录 2026-08-10~11 的状态，**不再作为当前联调事实源**，仅作历史参考。
 > 当前事实源：
-> - **联调 runbook**：`docs/electron-v2-first-integration-runbook.md`（runtime SHA / Token / 探针口径 / WS 三头 / clean-start / ACK 成功标准与负面用例；2026-08-12 修正 `server_info` 不再声称携带 schemaHash）
-> - **后端复核与整改**：`docs/review/electron-v2-first-integration-backend-review-2026-08-11.md`（P0×2 + P1×5 + P2×3，已闭环）+ `docs/review/electron-v2-backend-change-list-2026-08-11.md` + **`docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md`（P1×2 已修复 + BE-RISK-01 接受风险）**
-> - **2026-08-12 加固后复核整改**：BE-P1-06（完整记录恢复 API `restore` 条件 upsert + recover 四分支）与 BE-P1-07（`_needs_recovery`/durable 强化 + 协调器首轮补触发 + product `/ready` 补偿门禁）**本批修复**；BE-P2-04（runbook schemaHash）修正；**BE-RISK-01 保持开放**（accepted 后、generation register 前 kill 窗口）。设计见 `docs/superpowers/specs/2026-08-12-electron-v2-backend-post-hardening-recovery-design.md`，计划见 `docs/superpowers/plans/2026-08-12-electron-v2-backend-post-hardening-recovery-plan.md`。
+> - **联调 runbook**：`docs/archive/electron-v2-first-integration-runbook.md`（runtime SHA / Token / 探针口径 / WS 三头 / clean-start / ACK 成功标准与负面用例；2026-08-12 修正 `server_info` 不再声称携带 schemaHash）
+> - **后端复核与整改**：`docs/review/archive/2026-08/electron-v2-first-integration-backend-review-2026-08-11.md`（P0×2 + P1×5 + P2×3，已闭环）+ `docs/review/electron-v2-backend-change-list-2026-08-11.md` + **`docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md`（P1×2 已修复 + BE-RISK-01 接受风险）**
+> - **2026-08-12 加固后复核整改**：BE-P1-06（完整记录恢复 API `restore` 条件 upsert + recover 四分支）与 BE-P1-07（`_needs_recovery`/durable 强化 + 协调器首轮补触发 + product `/ready` 补偿门禁）**本批修复**；BE-P2-04（runbook schemaHash）修正；**BE-RISK-01 保持开放**（accepted 后、generation register 前 kill 窗口）。设计见 `docs/superpowers/specs/archive/2026-08/2026-08-12-electron-v2-backend-post-hardening-recovery-design.md`，计划见 `docs/superpowers/plans/archive/2026-08/2026-08-12-electron-v2-backend-post-hardening-recovery-plan.md`。
 > - 本文档中「浏览器 WS query-token 阻塞」「E2/E3/F 未完成」等显著过时项已针对性修订（一句话总览、§4.2、§5.2、§3.6 发布判断）；§2.1 的「发布判断原文」为 2026-08-10 评审引文，**保留原文**仅作历史记录。
 
 > **快照时间**：2026-08-10（文档持续更新，每次重大里程碑修订本文件）。
 > **后端基线**：`d1cb3ae`（2026-08-10 全项目评审基线）；当前 `HEAD = 4a6e198`，`d1cb3ae..HEAD` 共 **38 个提交**。
 > **前端仓库**：`/home/yomu/elysia-frontend`（Cyrene Electron，独立仓库）；当前 `HEAD = f6f7ef1`。
-> **数据来源**：git 提交历史、`docs/review/full-project-review-2026-08-10.md`、`docs/review/remediation-execution-report-2026-08-10.md`、`docs/superpowers/plans/2026-08-10-full-project-remediation-plan.md`、`todo.md`、前端 `docs/16-Cyrene-前端实施任务清单与进度跟踪.md`。
+> **数据来源**：git 提交历史、`docs/review/archive/2026-08/full-project-review-2026-08-10.md`、`docs/review/archive/2026-08/remediation-execution-report-2026-08-10.md`、`docs/superpowers/plans/archive/2026-08/2026-08-10-full-project-remediation-plan.md`、`todo.md`、前端 `docs/16-Cyrene-前端实施任务清单与进度跟踪.md`。
 
 ---
 
@@ -28,7 +28,7 @@
 
 ### 2.1 评审基线
 
-2026-08-10 全项目综合审查（`docs/review/full-project-review-2026-08-10.md`）基线 `d1cb3ae`，发现：
+2026-08-10 全项目综合审查（`docs/review/archive/2026-08/full-project-review-2026-08-10.md`）基线 `d1cb3ae`，发现：
 
 | 严重度 | 数量 | 性质 |
 |---|---|---|
@@ -42,7 +42,7 @@
 
 ### 2.2 已执行修复：23/41 Task（P0 + P1 全清）
 
-按 `docs/superpowers/plans/2026-08-10-full-project-remediation-plan.md` 执行，每个 Task 均为「失败测试 → 修复 → 回归 → 独立提交」。
+按 `docs/superpowers/plans/archive/2026-08/2026-08-10-full-project-remediation-plan.md` 执行，每个 Task 均为「失败测试 → 修复 → 回归 → 独立提交」。
 
 | 批次 | 内容 | Review 项 | 状态 |
 |---|---|---|---|
@@ -210,7 +210,7 @@
 ### 4.2 已知联调阻塞
 
 - **浏览器 WS Bearer token 缺口（已解决，2026-08-11 决策：不做 query token）**：业务中间件只认 `Authorization` 头，浏览器 WS 握手不能设自定义 Header。**2026-08-11 拍板**：v1 浏览器聊天已停用（`SERVE_CHAT` 默认关），Electron 用 Node `ws` 带 `Authorization` header（real-backend.ts:254-260，已核实）不受影响；Debug 页走 REST/SSE 无 WS——**无浏览器 WS 客户端 → `/ws?token=...` 无消费方，不做**。Electron 联调走「WS 三请求头」（`Authorization: Bearer` / `X-Protocol-Version: 2` / `X-Client-Platform: electron`），见 runbook。
-- **后端产品化门禁**：D6a fail-closed 鉴权、D6b 限流、D6c 跨重启幂等、E1-E4 Workflow、F1-F5 工程化 **已于 2026-08-11 全部完成**（拍板：单进程限流 + 产品 fail-closed/dev 降级）；2026-08-11 加固批次（P0×2 + P1×5 + P2×3，`docs/review/electron-v2-first-integration-backend-review-2026-08-11.md`）已闭环，见 `docs/electron-v2-first-integration-runbook.md`。
+- **后端产品化门禁**：D6a fail-closed 鉴权、D6b 限流、D6c 跨重启幂等、E1-E4 Workflow、F1-F5 工程化 **已于 2026-08-11 全部完成**（拍板：单进程限流 + 产品 fail-closed/dev 降级）；2026-08-11 加固批次（P0×2 + P1×5 + P2×3，`docs/review/archive/2026-08/electron-v2-first-integration-backend-review-2026-08-11.md`）已闭环，见 `docs/archive/electron-v2-first-integration-runbook.md`。
 - **前端 Mock→真实切换**：阶段 2 前 Adapter 主要靠 Mock 推进，标注「已开发、未联调」。
 
 ### 4.3 远程开发（开发期）说明
@@ -237,7 +237,7 @@
 **并行轨**：
 - 后端：D6b/D6c + F1-F5 + **E1-E4 全部完成（2026-08-11）**——后端产品化门禁 + Workflow 子系统 + 工具热重载 + 测试确定性已落地。
 - 前端：阶段 2 块 A 收尾（review + 进度文档 doc16 同步）→ 进入阶段 2「核心聊天纵向闭环」，用真实后端做首次联调。
-- 联调衔接：Electron 走 WS 三请求头（Authorization / X-Protocol-Version / X-Client-Platform）真实联调，按 `docs/electron-v2-first-integration-runbook.md` 执行；浏览器 WS query-param token **不做**（无消费方，2026-08-11 决策）。
+- 联调衔接：Electron 走 WS 三请求头（Authorization / X-Protocol-Version / X-Client-Platform）真实联调，按 `docs/archive/electron-v2-first-integration-runbook.md` 执行；浏览器 WS query-param token **不做**（无消费方，2026-08-11 决策）。
 
 **里程碑**：两端「真实后端联调打通阶段 2 主链路」→ 前端阶段 3/4 → 两端同时收敛到发布候选。
 
@@ -246,13 +246,13 @@
 ## 6. 参考文档
 
 ### 后端（本仓库）
-- 评审报告：`docs/review/full-project-review-2026-08-10.md`
-- 修复映射：`docs/review/remediation-execution-report-2026-08-10.md`
-- 执行计划：`docs/superpowers/plans/2026-08-10-full-project-remediation-plan.md`
+- 评审报告：`docs/review/archive/2026-08/full-project-review-2026-08-10.md`
+- 修复映射：`docs/review/archive/2026-08/remediation-execution-report-2026-08-10.md`
+- 执行计划：`docs/superpowers/plans/archive/2026-08/2026-08-10-full-project-remediation-plan.md`
 - 待办清单：`todo.md`（已知 Bug / Electron 联调 / 全项目修复剩余项）
 - 月度归档：`docs/completed/2026-08.md`
-- Electron 契约封口审计：`docs/review/electron-v2-backend-followup-fix-report-2026-08-10.md`
-- 接入充分性复审：`docs/review/electron-v2-backend-integration-readiness-review-2026-08-10.md`
+- Electron 契约封口审计：`docs/review/archive/2026-08/electron-v2-backend-followup-fix-report-2026-08-10.md`
+- 接入充分性复审：`docs/review/archive/2026-08/electron-v2-backend-integration-readiness-review-2026-08-10.md`
 
 ### 前端（elysia-frontend 仓库）
 - 进度跟踪：`docs/16-Cyrene-前端实施任务清单与进度跟踪.md`

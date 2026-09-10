@@ -134,7 +134,7 @@ THINKING → LLM 返回 tool_calls → EXECUTING → 工具结果注入 → THIN
 
 **TTS 停顿标签保护** — `<#0.5#>` 由 tokenizer 识别为 PAUSE 原子 token（持有上界由尾串正则驱动，跨 chunk 不变式保证不切碎），以受保护 span 整体嵌入句子；分句边界只在 SPEECH 文本上扫描，停顿标签内的 `.` 永不参与边界判定。停顿标签不显示在 UI 中。
 
-详细设计见 `core/text/README.md` 与 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`。
+详细设计见 `core/text/README.md` 与 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`。
 
 ## 文件布局
 
@@ -196,4 +196,4 @@ Module/
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 + 并发模型 |
 | [core/text/README.md](../text/README.md) | 文本流处理管线（tags + tokenizer + splitter + parts + 协调器） |
 | [core/memory/README.md](../memory/README.md) | 记忆子系统（_after_response 触发沉淀） |
-| [阶段 E Spec](../../docs/superpowers/specs/2026-09-04-character-stage-e-runtime-binding-design.md) | CharacterRuntime 与会话绑定设计（M3：_prepare_turn 回合解析 + engine per-instance） |
+| [阶段 E Spec](../../docs/superpowers/specs/archive/2026-09/2026-09-04-character-stage-e-runtime-binding-design.md) | CharacterRuntime 与会话绑定设计（M3：_prepare_turn 回合解析 + engine per-instance） |

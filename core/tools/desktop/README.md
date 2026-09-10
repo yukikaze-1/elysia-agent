@@ -25,4 +25,4 @@
 |------|------|
 | [项目 README](../../../README.md) | 快速开始 + 完整文档导航 |
 | [Module/tool/README.md](../../../Module/tool/README.md) | 工具执行框架（ToolPlugin 元数据 + SafetyPipeline） |
-| [批次 4 spec](../../../docs/superpowers/specs/2026-08-05-electron-backend-batch4-desktop-tools.md) | 桥/注册表/WS 协议/审批模型 |
+| [批次 4 spec](../../../docs/superpowers/specs/archive/2026-08/2026-08-05-electron-backend-batch4-desktop-tools.md) | 桥/注册表/WS 协议/审批模型 |

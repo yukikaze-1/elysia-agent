@@ -88,5 +88,5 @@
 | 文档 | 内容 |
 |---|---|
 | [问题清单](2026-08-13-Windows-Electron-首次真实联调后端问题清单.md) | BE-INT-P0-01/02 + P1-01 原始证据与验收门禁 |
-| [设计 spec](../superpowers/specs/2026-08-13-electron-v2-first-integration-message-id-fix-design.md) | D1-D6 决策记录 + review 两轮修复 |
-| [实现 plan](../superpowers/plans/2026-08-13-electron-v2-first-integration-message-id-fix-plan.md) | 9 任务 TDD 计划 + plan review 修复 |
+| [设计 spec](../superpowers/specs/archive/2026-08/2026-08-13-electron-v2-first-integration-message-id-fix-design.md) | D1-D6 决策记录 + review 两轮修复 |
+| [实现 plan](../superpowers/plans/archive/2026-08/2026-08-13-electron-v2-first-integration-message-id-fix-plan.md) | 9 任务 TDD 计划 + plan review 修复 |

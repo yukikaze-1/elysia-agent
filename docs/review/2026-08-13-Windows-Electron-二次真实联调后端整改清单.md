@@ -233,4 +233,4 @@ timestamp: Optional[str] = None
 |---|---|
 | [首次真实联调后端问题清单](2026-08-13-Windows-Electron-首次真实联调后端问题清单.md) | 首轮空 ID 写入、历史迁移和门禁问题 |
 | [消息 ID 修复报告](electron-v2-message-id-fix-report-2026-08-13.md) | 此前已完成的写入、回填、REST 与存储边界修复 |
-| [首次联调 runbook](../electron-v2-first-integration-runbook.md) | 真实环境探针、认证与 WS v2 联调口径 |
+| [首次联调 runbook](../archive/electron-v2-first-integration-runbook.md) | 真实环境探针、认证与 WS v2 联调口径 |

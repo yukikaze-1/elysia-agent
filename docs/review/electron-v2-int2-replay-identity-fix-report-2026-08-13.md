@@ -75,5 +75,5 @@ in-memory 消息 message_id 相同（inmem_same=True）→ WS messages_for_clien
 | 文档 | 内容 |
 |---|---|
 | [整改清单](2026-08-13-Windows-Electron-二次真实联调后端整改清单.md) | BE-INT2-P0-01/P1-01 原始证据与验收门禁 |
-| [设计 spec](../superpowers/specs/2026-08-13-electron-v2-int2-replay-identity-fix-design.md) | D1-D4 决策 + review 修复 |
-| [实现 plan](../superpowers/plans/2026-08-13-electron-v2-int2-replay-identity-fix-plan.md) | 3 任务 TDD 计划 + plan review 修复 |
+| [设计 spec](../superpowers/specs/archive/2026-08/2026-08-13-electron-v2-int2-replay-identity-fix-design.md) | D1-D4 决策 + review 修复 |
+| [实现 plan](../superpowers/plans/archive/2026-08/2026-08-13-electron-v2-int2-replay-identity-fix-plan.md) | 3 任务 TDD 计划 + plan review 修复 |

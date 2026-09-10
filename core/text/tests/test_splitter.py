@@ -1,6 +1,6 @@
 """SpeechSplitter 结构感知分句测试。
 
-对齐设计文档 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`
+对齐设计文档 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`
 「Token 模型」「路由规则」、测试策略 #3（span 保护）与分句相关章节。
 
 要点：

@@ -5,7 +5,7 @@
 **文档版本：** v0.1（批次 0 产出，BE-001）
 **基线 Commit：** `1e62b58`（含 `docs/14`/`docs/15` PRD 文档）
 **验证环境：** Elysia conda
-**关联：** `docs/superpowers/specs/2026-08-04-electron-backend-batch0-baseline.md`
+**关联：** `docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch0-baseline.md`
 
 本文件是 Electron 前端改造后端的**事实基线**——所有结论来自真实代码与命令输出，作为批次 1-7 的设计依据。与 PRD（`docs/14`）的差异已在末尾列出。
 

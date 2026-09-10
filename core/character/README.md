@@ -112,8 +112,8 @@ core/character/
 | [项目 README](../README.md) | 快速开始 + 完整文档导航 |
 | [Core 层](../README.md) | Core 层总览 |
 | [Profile 包](../profile/README.md) | UserIdentity 用户最小身份 |
-| [阶段 E Spec](../../docs/superpowers/specs/2026-09-04-character-stage-e-runtime-binding-design.md) | CharacterRuntime 与会话绑定设计（M3：engine per-instance + RuntimeRegistry + CharacterRuntimeState） |
-| [阶段 E Plan](../../docs/superpowers/plans/2026-09-04-character-stage-e-runtime-binding-plan.md) | 阶段 E 实施计划（14 Task） |
-| [阶段 F Spec](../../docs/superpowers/specs/2026-09-05-character-stage-f-memory-v2-isolation-design.md) | 记忆 v2 隔离设计（CharacterRuntime 持 memory_view/consolidator/reflector） |
-| [阶段 F Plan](../../docs/superpowers/plans/2026-09-05-character-stage-f-memory-v2-isolation-plan.md) | 阶段 F 实施计划 |
+| [阶段 E Spec](../../docs/superpowers/specs/archive/2026-09/2026-09-04-character-stage-e-runtime-binding-design.md) | CharacterRuntime 与会话绑定设计（M3：engine per-instance + RuntimeRegistry + CharacterRuntimeState） |
+| [阶段 E Plan](../../docs/superpowers/plans/archive/2026-09/2026-09-04-character-stage-e-runtime-binding-plan.md) | 阶段 E 实施计划（14 Task） |
+| [阶段 F Spec](../../docs/superpowers/specs/archive/2026-09/2026-09-05-character-stage-f-memory-v2-isolation-design.md) | 记忆 v2 隔离设计（CharacterRuntime 持 memory_view/consolidator/reflector） |
+| [阶段 F Plan](../../docs/superpowers/plans/archive/2026-09/2026-09-05-character-stage-f-memory-v2-isolation-plan.md) | 阶段 F 实施计划 |
 | [架构稿](../../docs/2026-08-30-character-prompt-customization-backend-architecture-design.md) | 角色域完整设计（§5 领域模型 / §7 运行时 / §15 迁移——**§15 因「不迁移旧数据」决策不执行**） |

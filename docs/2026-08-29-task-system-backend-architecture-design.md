@@ -1,6 +1,8 @@
 # Cyrene 任务系统后端架构设计
 
-> **文档状态：** 架构讨论稿（目标设计，未实现）  
+> **文档状态：** ⚠️ **未实施规划稿**（截至 2026-09-11）——目标设计，未实现  
+> **未实施证据：** `TaskService` / `ToolExecutionCoordinator` / `ExecutionGateway` / `TaskStep` / `ToolExecution` 在 `core/`、`Module/` 全量命中 0；无 `/api/tasks`、`/api/executions` 正式路由（仅既有 debug 的 `/debug/api/tasks`）；`ModelProfile`/`ProviderConnection` 等同批规划亦未落地  
+> **跨仓镜像：** 本文与 `elysia-frontend/docs/2026-08-29-task-system-*-architecture-design.md` 为**跨仓镜像双份**，单仓不得移动或归档，须两侧同批处理  
 > **日期：** 2026-08-29  
 > **事实基线：** `192.168.1.18:~/elysia-agent@9548d100`  
 > **权威范围：** 后端任务服务、WorkflowEngine 接入、工具执行协调、持久化、正式 REST/WS API 与 Desktop Runtime 协作  

@@ -17,7 +17,7 @@
 
 **收口 HEAD：** `5da726f`（`fix(batch7): 最终 review`）
 
-**Spec/Plan：** `docs/superpowers/specs/2026-08-06-electron-backend-batch7-media-and-observability.md`（9 轮 review 收口）+ 同目录 plan（4 轮 review 收口）。
+**Spec/Plan：** `docs/superpowers/specs/archive/2026-08/2026-08-06-electron-backend-batch7-media-and-observability.md`（9 轮 review 收口）+ 同目录 plan（4 轮 review 收口）。
 
 批次 7 实施提交（`git log 9782af2..HEAD`）：
 

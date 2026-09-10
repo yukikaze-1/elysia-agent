@@ -366,7 +366,7 @@ INTERRUPTED → IDLE
 
 ### 4.2.1 Agent 公开接口（组合根访问路径）
 
-`Agent` 是组合根（composition root），持有 30+ 子系统/仓库。除 `agent.status` / `agent.phases` 外，通过 **39 个同名 `@property`** 公开访问路径——`@property` 只是薄 getter（`return self._xxx`，少数为懒初始化），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+`Agent` 是组合根（composition root），持有 30+ 子系统/仓库。除 `agent.status` / `agent.phases` 外，通过 **39 个同名 `@property`** 公开访问路径——`@property` 只是薄 getter（`return self._xxx`，少数为懒初始化），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
 
 **会话/记忆/存储（11 个）**：`agent.session` / `agent.session_manager` / `agent.active_session_id` / `agent.pending_messages` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.attachment_repo` / `agent.idempotency_repo`
 
@@ -489,7 +489,7 @@ MOOD_KEYWORDS = {
 
 数据流：`LLM delta → StreamProcessor.feed(delta)` → token 流 → splitter → SENTENCE（含内嵌标签）+ TEXT_DELTA（剥离 PAUSE）事件 → `_dispatch_stream_event()` 分发。
 
-详细组件职责见 [core/text/README.md](../core/text/README.md)；设计基准（行为对照表 + 持有上界 + 围栏细则）见 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`。
+详细组件职责见 [core/text/README.md](../core/text/README.md)；设计基准（行为对照表 + 持有上界 + 围栏细则）见 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`。
 
 ### 4.7 提示词组装 (PromptAssembler + SystemPromptManager)
 

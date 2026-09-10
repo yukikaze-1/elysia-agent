@@ -1,6 +1,6 @@
 """tokenizer 结构感知切分测试 — 跨 chunk 不变式（核心）+ 每类标签行为。
 
-对齐设计文档 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`
+对齐设计文档 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`
 「Tokenizer 受保护扫描的持有上界」「围栏检测细则」及测试策略 1/2/5/7/10/11。
 
 核心不变式（property test）：对任意输入串 S，在任意字符边界切分为 delta 序列，

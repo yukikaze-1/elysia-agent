@@ -4,7 +4,7 @@
     对任意输入串 S，在任意字符边界切分为 delta 序列，
     feed 拆分的 token 序列 == 一次 feed 的序列（由 property test 强制）。
 
-设计（对齐 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`）：
+设计（对齐 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`）：
 
 - 单状态机逐字符处理。NORMAL 态扫描起始模式；进入标签态后按内容规则扫描。
 - **持有上界**：

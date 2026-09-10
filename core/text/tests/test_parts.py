@@ -1,6 +1,6 @@
 """parts 构建测试 — after_sentence_idx 交错 + public_text 重建。
 
-对齐设计文档 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`
+对齐设计文档 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`
 测试策略 #9（四条交错语料钉死语义）与 #12（public_text 无 META 泄漏）。
 
 输出形状与旧正则重解析路径等价：

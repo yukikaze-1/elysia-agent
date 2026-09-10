@@ -173,5 +173,5 @@ Module/database/
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 |
 | [core/storage/README.md](../storage/README.md) | 统一存储层（MongoDB + Milvus 的 Repository） |
 | [core/cognitive/README.md](../cognitive/README.md) | 认知循环 — 记忆沉淀的触发者 |
-| [阶段 F Spec](../../docs/superpowers/specs/2026-09-05-character-stage-f-memory-v2-isolation-design.md) | 记忆 v2 隔离设计（MemoryScope + ScopedLongTermMemory + per-runtime） |
-| [阶段 F Plan](../../docs/superpowers/plans/2026-09-05-character-stage-f-memory-v2-isolation-plan.md) | 阶段 F 实施计划 |
+| [阶段 F Spec](../../docs/superpowers/specs/archive/2026-09/2026-09-05-character-stage-f-memory-v2-isolation-design.md) | 记忆 v2 隔离设计（MemoryScope + ScopedLongTermMemory + per-runtime） |
+| [阶段 F Plan](../../docs/superpowers/plans/archive/2026-09/2026-09-05-character-stage-f-memory-v2-isolation-plan.md) | 阶段 F 实施计划 |

@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-12
 
-> **后续整改状态（2026-08-13）：** 本文件是问题发现时的历史审查快照。BE-P1-06、BE-P1-07、BE-P2-04 及完整记录恢复的后续两个竞态边界均已整改；最新代码、测试证据与仍开放的 BE-RISK-01 见 `docs/review/electron-v2-integration-gap-fix-report-2026-08-13.md`。下文原始证据保留用于追溯，不再代表当前放行结论。
+> **后续整改状态（2026-08-13）：** 本文件是问题发现时的历史审查快照。BE-P1-06、BE-P1-07、BE-P2-04 及完整记录恢复的后续两个竞态边界均已整改；最新代码、测试证据与仍开放的 BE-RISK-01 见 `docs/review/archive/2026-08/electron-v2-integration-gap-fix-report-2026-08-13.md`。下文原始证据保留用于追溯，不再代表当前放行结论。
 
 **审查对象：** `/home/yomu/elysia-agent` `main@96623b599e63599b501f24dae385aebd361f550c`
 
@@ -14,9 +14,9 @@
 
 **关联文档：**
 
-- `docs/review/electron-v2-first-integration-backend-review-2026-08-11.md`
-- `docs/superpowers/specs/2026-08-11-electron-v2-backend-hardening-design.md`
-- `docs/electron-v2-first-integration-runbook.md`
+- `docs/review/archive/2026-08/electron-v2-first-integration-backend-review-2026-08-11.md`
+- `docs/superpowers/specs/archive/2026-08/2026-08-11-electron-v2-backend-hardening-design.md`
+- `docs/archive/electron-v2-first-integration-runbook.md`
 - `todo.md`
 
 ## 1. 结论
@@ -269,7 +269,7 @@ recover/connect hook calls = 0
 
 ### 6.2 本轮要求
 
-该窗口已在 `docs/superpowers/specs/2026-08-11-electron-v2-backend-hardening-design.md:71` 明确记录为接受风险，本轮不把它升级成首次 happy-path 联调阻断项，也不要求在两个 P1 修复中顺手做大规模 outbox 重构。
+该窗口已在 `docs/superpowers/specs/archive/2026-08/2026-08-11-electron-v2-backend-hardening-design.md:71` 明确记录为接受风险，本轮不把它升级成首次 happy-path 联调阻断项，也不要求在两个 P1 修复中顺手做大规模 outbox 重构。
 
 但必须遵守：
 
@@ -282,7 +282,7 @@ recover/connect hook calls = 0
 
 ### 7.1 证据
 
-`docs/electron-v2-first-integration-runbook.md:60` 和 `:125` 把握手帧写成包含 `schemaHash`：
+`docs/archive/electron-v2-first-integration-runbook.md:60` 和 `:125` 把握手帧写成包含 `schemaHash`：
 
 ```text
 server_info（features/version/schemaHash）

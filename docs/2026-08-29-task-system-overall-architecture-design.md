@@ -1,6 +1,8 @@
 # Cyrene 任务系统与任务中心总体架构设计
 
-> **文档状态：** 架构讨论稿（用于继续拍板与拆分实施计划，不代表代码已经落地）  
+> **文档状态：** ⚠️ **未实施规划稿**（截至 2026-09-11）——架构讨论稿，用于继续拍板与拆分实施计划，不代表代码已经落地  
+> **未实施证据：** 目标组件 `TaskService` / `ToolExecutionCoordinator` / `ExecutionGateway` / `TaskCenter` 在 `core/`、`Module/` 全量命中 0；无 `/api/tasks` 正式路由；`frontend/src/components/` 无任务 UI（仅 debug 页 `TasksTab.vue`）  
+> **跨仓镜像：** 本文与 `elysia-frontend/docs/2026-08-29-task-system-overall-architecture-design.md` 为**跨仓镜像双份**，单仓不得移动或归档，须两侧同批处理  
 > **日期：** 2026-08-29  
 > **前端事实基线：** `elysia-frontend@7712d3e`  
 > **后端事实基线：** `192.168.1.18:~/elysia-agent@9548d100`  

@@ -1,10 +1,10 @@
-> ⚠️ 已归档（2026-08-09）：剩余活项已并入 [todo.md](../../todo.md) 功能改进区。完成项见 [docs/review/frontend_completed.md](../review/frontend_completed.md)。
+> ⚠️ 已归档（2026-08-09）：剩余活项已并入 [todo.md](../../todo.md) 功能改进区。完成项见 [docs/review/archive/misc/frontend_completed.md](../review/archive/misc/frontend_completed.md)。
 
 # 前端代码审查 — TODO（剩余）
 
 审查日期：2026-07-30
 修复日期：2026-07-30 · 提交 `60ac3e5` + `99e821c`（第一轮）+ `c912a8f`（第二轮）
-**已修复 42/47 项 → 归档至 [docs/review/frontend_completed.md](docs/review/frontend_completed.md)**
+**已修复 42/47 项 → 归档至 [docs/review/archive/misc/frontend_completed.md](../review/archive/misc/frontend_completed.md)**
 
 ---
 

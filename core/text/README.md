@@ -87,7 +87,7 @@ LLM delta → StreamProcessor.feed(delta)              (core/text/stream_process
   → parts.rebuild_public_text(token 流)     → 去标记纯文本（public_text 重建，无 META/尖括号语气词泄漏）
 ```
 
-设计基准：`docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`
+设计基准：`docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`
 （行为对照表 12 项 + 核心不变式 + 持有上界 + 围栏细则）。
 
 ## 关键机制
@@ -156,5 +156,5 @@ core/adapter/tts_adapter.py — 从 tags.py 导入共享正则（逐句提取逻
 |------|------|
 | [项目 README](../../README.md) | 快速开始 + 完整文档导航 |
 | [core/README.md](../README.md) | Core 层总览 |
-| [StreamParser 重构设计](../../docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md) | 行为对照表 + 核心不变式 + 持有上界 + 围栏细则（本模块的设计基准） |
+| [StreamParser 重构设计](../../docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md) | 行为对照表 + 核心不变式 + 持有上界 + 围栏细则（本模块的设计基准） |
 | [core/cognitive/README.md](../cognitive/README.md) | 认知循环 — StreamProcessor 的唯一消费方 |

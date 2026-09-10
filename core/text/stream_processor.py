@@ -1,6 +1,6 @@
 """StreamProcessor — 新协调器：tokenizer + splitter + 事件发射 + get_blocks + public_text。
 
-对齐设计文档 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`
+对齐设计文档 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`
 「事件面」「数据流」「路由规则」「错误处理」。替代旧
 `core/cognitive/stream_processor.py`（Task 7 删除），事件面与旧完全一致：
 MOOD / INNER_VOICE / SENTENCE / TEXT_DELTA / TTFT（无新增事件类型）。

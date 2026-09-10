@@ -5,7 +5,7 @@
 块列表。输出形状不变——TextPart 列表 + content_type 索引，session 存储/归档
 不受影响（spec 迁移计划 step 4）。
 
-对齐设计文档 `docs/superpowers/specs/2026-08-01-stream-parser-refactor-design.md`
+对齐设计文档 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`
 「事件面」一节 after_sentence_idx 交错语义与测试策略 #9/#12。
 """
 

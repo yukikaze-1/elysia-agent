@@ -292,7 +292,7 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
 - **Project paths**: `from paths import ProjectPath, get_project_root` — 所有项目文件系统路径的唯一定义点。`ProjectPath.X.resolve()` 返回基于 `ELYSIA_ROOT` 环境变量（fallback 为项目根目录）的绝对 `Path`。
 - **AgentStatus**: `agent.status`（`AgentStatus`）提供语义状态查询（`is_accepting_input` / `is_speaking` / `should_suppress_vad_interrupt` 等）；`agent.phases`（`CognitivePhaseController`）驱动阶段转换。底层 `AgentFSM` 不对外暴露。设计文档：[spec](docs/superpowers/specs/archive/2026-07/2026-07-30-agent-status-interface-design.md)。
-- **Agent 公开接口**: `Agent` 作为组合根，通过 39 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/2026-08-01-agent-public-readonly-interface-design.md)。
+- **Agent 公开接口**: `Agent` 作为组合根，通过 39 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
 
 ## Prompt files (`core/prompts/`)
 
@@ -447,7 +447,7 @@ C1 renders L1 + L2. C9 conditionally renders L3 via `AwarenessTrigger` (cooldown
 
 Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plugins are imported in `__init__.py` and added to `ALL_PLUGINS`.
 
-**阶段 6 工具双轨（2026-08-19，方案 B 已定案，后端代码批已完成）：** Desktop 工具走 `tool.request/tool.status`；Backend 工具 v2 发 `tool.started/tool.completed` 展示帧，v2 停发 `action{tool_executing/tool_done}`（v1 逐字节不变）；`tool.request` 必填 `sourceCallId`（LLM `tool_call_id`，经 scheduler 线程化到 `ctx.call_id`）并由桥填充 `requestId`。后端 B-6-01~09 落地（commit `c16e27d9..6a54fc25`），执行记录见 `docs/progress/2026-08-19-stage6-工具双轨-execution-record.md`；golden `ws-v2-tool.jsonl` 预期增 `sourceCallId`（D-GL-01）。前端 F-6 批已在 elysia-frontend 落地并完成真实 Windows Electron 联调（2026-08-21，阶段 6 已真实联调；D-§7-4/5 前端定，可选项 DEFERRED）。
+**阶段 6 工具双轨（2026-08-19，方案 B 已定案，后端代码批已完成）：** Desktop 工具走 `tool.request/tool.status`；Backend 工具 v2 发 `tool.started/tool.completed` 展示帧，v2 停发 `action{tool_executing/tool_done}`（v1 逐字节不变）；`tool.request` 必填 `sourceCallId`（LLM `tool_call_id`，经 scheduler 线程化到 `ctx.call_id`）并由桥填充 `requestId`。后端 B-6-01~09 落地（commit `c16e27d9..6a54fc25`），执行记录见 `docs/progress/archive/2026-08/2026-08-19-stage6-工具双轨-execution-record.md`；golden `ws-v2-tool.jsonl` 预期增 `sourceCallId`（D-GL-01）。前端 F-6 批已在 elysia-frontend 落地并完成真实 Windows Electron 联调（2026-08-21，阶段 6 已真实联调；D-§7-4/5 前端定，可选项 DEFERRED）。
 
 ## Vision（看图）备忘 — WebUI `describe_image` 优先
 

@@ -197,6 +197,6 @@ Mongo `message_archive` 中的旧文档不会因为 Python 默认值变化而自
 
 | 文档 | 内容 |
 |---|---|
-| [首次联调封口问题修复报告](electron-v2-integration-gap-fix-report-2026-08-13.md) | 本次运行联调前最后一轮后端修复和门禁结果 |
-| [首次联调 runbook](../electron-v2-first-integration-runbook.md) | 双方 SHA、认证、探针、WS v2 和负面用例执行口径 |
+| [首次联调封口问题修复报告](archive/2026-08/electron-v2-integration-gap-fix-report-2026-08-13.md) | 本次运行联调前最后一轮后端修复和门禁结果 |
+| [首次联调 runbook](../archive/electron-v2-first-integration-runbook.md) | 双方 SHA、认证、探针、WS v2 和负面用例执行口径 |
 | [Electron 后端协议 v2](../electron-backend-protocol-v2.md) | REST、WS、会话与工具契约事实源 |
