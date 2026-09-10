@@ -327,63 +327,20 @@ class TestMemoryIntegration:
 
         await agent.stop()
 
-    @pytest.mark.asyncio
-    async def test_end_to_end_with_memory(self):
-        """完整管线：存储并检索记忆的对话。"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.agent import Agent
-        from core.status.agent_fsm import AgentState
-
-        from core.config import AppConfig
-        agent = Agent(config=AppConfig())
-        await agent.start()
-        # 模拟 HITL 在测试环境中自动审批
-        async def _auto_approve(plugin, name, params):
-            return True, "confirmed"
-        agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
-
-        # 第一轮：告诉 agent 某件值得记住的事
-        await agent.process_message("记住，我下周要去东京出差")
-        await asyncio.sleep(5)
-
-        # 第二轮：询问这件事
-        await agent.process_message("我之前跟你说过我要去哪里出差的？")
-        await asyncio.sleep(8)
-
-        assert agent._fsm.state == AgentState.IDLE
-        # 会话应有多条消息
-        messages = agent.session.recent_messages()
-        assert len(messages) >= 2
-
-        await agent.stop()
-
-    @pytest.mark.asyncio
-    async def test_session_state_persists_in_memory(self):
-        """会话应在多轮对话间保持状态。"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.agent import Agent
-
-        from core.config import AppConfig
-        agent = Agent(config=AppConfig())
-        await agent.start()
-        # 模拟 HITL 在测试环境中自动审批
-        async def _auto_approve(plugin, name, params):
-            return True, "confirmed"
-        agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
-
-        # 多轮对话
-        await agent.process_message("我叫妖梦")
-        await asyncio.sleep(3)
-        await agent.process_message("我喜欢蓝色")
-        await asyncio.sleep(3)
-
-        messages = agent.session.recent_messages()
-        # 两轮都应至少包含 user+assistant
-        assert len(messages) >= 4
-
-        await agent.stop()
+    # 原 `test_end_to_end_with_memory` / `test_session_state_persists_in_memory`
+    # 已删（2026-09-10 复审）——两者都在真烧 API（load_dotenv + 真 Agent + 真 LLM），
+    # 却无一验证各自 docstring 承诺的东西，且**伪造的 API key 下照样通过**：
+    #   * 前者 docstring 称「完整管线：存储并检索记忆」，实际只断言
+    #     `fsm == IDLE` + `len(messages) >= 2`，全程没有断言记忆被存取
+    #     （第二轮问「我之前跟你说过我要去哪里出差的？」但从不检查回答）；
+    #   * 后者 docstring 称「会话应在多轮对话间保持状态」，实际只断言
+    #     `len(messages) >= 4`，没有任何状态断言。
+    # 同类行为已有**更快且断言真实**的覆盖：
+    #   * 记忆存取 → 本类 `test_save_memory_tool` / `test_search_memory_tool`
+    #     （0.6s / 0.5s，断言各自的 scoped 视图写入与召回）；
+    #   * 状态持久化 → `core/storage/tests/test_session_state_roundtrip.py`
+    #     （service 层，真实 save→load 往返，断言 character_state /
+    #     reflector_state / service_state 原样回读）。
 
 
 # ============================================================================

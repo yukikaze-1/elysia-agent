@@ -14,6 +14,95 @@ from core.schema import RequestId
 from core.schema.event import InterruptData, StateChangeData, UserInputData
 
 # ============================================================================
+# 0. 测试基建：门控 fake LLM + 有界轮询
+# ============================================================================
+#
+# 中断测试的两条纪律（2026-09-10 复审）：
+#   1. 「生成在途」必须是**可控**状态，不能靠 sleep 猜时序；
+#   2. 判据必须是「本轮生成**没有跑完**」，不能只看 FSM==IDLE——真实 LLM
+#      调用失败时 agent 同样回 IDLE，故只断言 IDLE 的版本在无 key/断网时也绿。
+# 存储经 `_make_agent_with` 注入内存 fake，测试不写真实 Mongo 的 default 会话。
+
+
+async def _wait_until(pred, *, timeout: float = 15.0, interval: float = 0.02) -> None:
+    """有界轮询直到 pred() 成立；超时抛 AssertionError。
+
+    替代固定 sleep：中断若回归成不生效，测试在此以断言失败结束，而不是挂死
+    或靠运气等够时间。
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if pred():
+            return
+        await asyncio.sleep(interval)
+    raise AssertionError(f"等待超时（{timeout}s）：条件始终未成立")
+
+
+class _GatedLLM:
+    """门控 fake LLM：生成进入即计数并**阻塞**，直到被放行或被取消。
+
+    `started` / `completed` 是中断测试的核心判据——断言「本轮进入了 LLM 但
+    从未跑完」，即生成确实被打断。镜像 `_UsageLLM` 接口（`_model`/`chat`/
+    `test`/`close`/`stream_think`），loop 经 LLMAdapter 调用。
+    """
+
+    def __init__(self, response: str = "这是一段足够长的回复，用于在途中断测试"):
+        self.response = response
+        self.started = 0
+        self.completed = 0
+        self.release = asyncio.Event()  # 默认不放行：生成停在在途状态
+        self._model = "fake/test"
+
+    async def chat(self, messages, **kwargs):
+        # 返回合法空 JSON 数组：chat() 也被后台记忆整合（MemoryConsolidator 经
+        # LLMAdapter.think）调用，它要求 JSON 数组。返回叙述文本会让整合在后台抛
+        # _JsonArrayParseError，污染本测试的判定。
+        return "[]"
+
+    async def test(self) -> dict:
+        return {"ok": True, "latency_ms": 0}
+
+    async def close(self) -> None:
+        pass
+
+    async def stream_think(self, messages, **kwargs):
+        self.started += 1
+        await self.release.wait()  # 在途；被取消则 CancelledError 自此抛出
+        for tok in self.response:
+            yield {"content": tok, "tool_calls": None}
+        yield {"content": None, "tool_calls": None}
+        self.completed += 1
+
+
+class _RecordingLLM:
+    """记录每次 stream_think 收到的 messages——供断言「上下文确实传到了 LLM」。"""
+
+    def __init__(self, response: str = "我记得。"):
+        self.response = response
+        self.calls: list[list[dict]] = []
+        self._model = "fake/test"
+
+    async def chat(self, messages, **kwargs):
+        # 返回合法空 JSON 数组——chat() 同时被后台记忆整合（LLMAdapter.think →
+        # MemoryConsolidator）调用并要求 JSON 数组；返回叙述文本会让整合在后台抛
+        # _JsonArrayParseError，把本测试的失败原因搅成无关异常。
+        return "[]"
+
+    async def test(self) -> dict:
+        return {"ok": True, "latency_ms": 0}
+
+    async def close(self) -> None:
+        pass
+
+    async def stream_think(self, messages, **kwargs):
+        self.calls.append(list(messages))
+        for tok in self.response:
+            yield {"content": tok, "tool_calls": None}
+        yield {"content": None, "tool_calls": None}
+
+
+# ============================================================================
 # 1. EventBus + FSM tests
 # ============================================================================
 
@@ -311,27 +400,37 @@ class TestStreamingIntegration:
 class TestInterruptIntegration:
     @pytest.mark.asyncio
     async def test_interrupt_during_processing(self):
-        """LLM 处理过程中中断应使 agent 回到 IDLE。"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.agent import Agent
-        from core.status.agent_fsm import AgentState
+        """中断在途生成：LLM 流被真正打断（未跑完），agent 回 idle，generation 落 cancelled。
 
-        from core.config import AppConfig
-        agent = Agent(config=AppConfig())
+        经 `do_interrupt()`——即 WS `{"type":"interrupt"}` 与 VAD 按钮的**真实入口**
+        （内部 post `InterruptData(source="websocket")` 到总线）。`test_generation_wiring.py`
+        有一套 0.05s 的同类用例，但它是**直接调** `loop.cancel_current()`、绕过了总线；
+        本用例补的正是「总线 → 认知循环」这段接线。
+        """
+        from core.cognitive.tests.test_v2_generation import _make_agent_with
+        from core.input.ws_handler import do_interrupt
+
+        llm = _GatedLLM()
+        agent = _make_agent_with(llm)
         await agent.start()
+        try:
+            await agent.process_message("写一首长诗，越多越好")
+            # 精确等到生成已进入 LLM（而非 sleep 猜时序）——中断此时才打在在途生成上
+            await _wait_until(lambda: llm.started >= 1)
+            await _wait_until(lambda: not agent.status.is_completely_idle, timeout=5)
 
-        # 发起一个请求
-        await agent.process_message("写一首长诗，越多越好，我要看长篇")
-        await asyncio.sleep(0.3)  # Let cognitive task start
+            await do_interrupt(agent)
+            await _wait_until(lambda: agent.status.is_completely_idle)
 
-        # 中断之后
-        agent._bus.post(InterruptData(source="test"), priority=0)
-        await asyncio.sleep(2.0)
-
-        assert agent._fsm.state == AgentState.IDLE, \
-            f"Expected IDLE after interrupt, got {agent._fsm.state}"
-        await agent.stop()
+            assert llm.completed == 0, "生成应在途被打断，不得跑完"
+            reg = agent.cognitive._generation_registry  # noqa: SLF001 — 断言终态需读注册表
+            docs, _, _ = await reg.query_by_session("default")
+            assert docs, "应留有 generation 记录"
+            assert docs[-1]["status"] == "cancelled", \
+                f"总线中断应落 cancelled，实际 {docs[-1]['status']}"
+        finally:
+            llm.release.set()  # 防御：若断言前未被取消，放行以免 stop() 挂住
+            await agent.stop()
 
     @pytest.mark.asyncio
     async def test_new_message_after_interrupt(self):
@@ -369,25 +468,28 @@ class TestInterruptIntegration:
 
     @pytest.mark.asyncio
     async def test_multiple_interrupts(self):
-        """多次快速中断不应使 agent 崩溃。"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.agent import Agent
-        from core.status.agent_fsm import AgentState
+        """连续三轮中断：每轮生成都在途被打断，agent 每次都回到 idle。
 
-        from core.config import AppConfig
-        agent = Agent(config=AppConfig())
+        「多次不崩」的实质是「每一轮都确实被中断」——故逐轮断言 LLM 未跑完，
+        而非只看最后是否 idle（后者在「第三轮才生效」时也会绿）。
+        """
+        from core.cognitive.tests.test_v2_generation import _make_agent_with
+        from core.input.ws_handler import do_interrupt
+
+        llm = _GatedLLM()
+        agent = _make_agent_with(llm)
         await agent.start()
-
-        for i in range(3):
-            await agent.process_message(f"写一首诗")
-            await asyncio.sleep(0.2)
-            agent._bus.post(InterruptData(source="test"), priority=0)
-            await asyncio.sleep(1.0)
-            assert agent._fsm.state == AgentState.IDLE, \
-                f"Iteration {i}: expected IDLE, got {agent._fsm.state}"
-
-        await agent.stop()
+        try:
+            for round_no in (1, 2, 3):
+                await agent.process_message(f"第 {round_no} 轮：写一首诗")
+                await _wait_until(lambda n=round_no: llm.started >= n)
+                await do_interrupt(agent)
+                await _wait_until(lambda: agent.status.is_completely_idle)
+                assert llm.completed == 0, f"第 {round_no} 轮生成未被中断（跑完了）"
+            assert llm.started == 3, f"三轮应各进入一次 LLM，实际 {llm.started}"
+        finally:
+            llm.release.set()
+            await agent.stop()
 
 
 # ============================================================================
@@ -398,57 +500,51 @@ class TestInterruptIntegration:
 class TestMultiTurnConversation:
     @pytest.mark.asyncio
     async def test_session_context_preserved(self):
-        """前几轮的消息应出现在系统提示上下文中。"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.agent import Agent
+        """前几轮对话应作为**上下文传给 LLM**，而不只是留在本地 session 里。
 
-        from core.config import AppConfig
-        agent = Agent(config=AppConfig())
+        断言第二轮请求的 messages 同时含第一轮的用户消息与助手回复——这正是
+        「上下文保留」的实质。旧版只断言 `session.recent_messages()` 含第一轮的
+        用户消息，而该消息在调 LLM **之前**就已入 session，故上下文组装即使完全
+        坏掉（第二轮不带历史）也照样绿。
+        """
+        import json as _json
+
+        from core.cognitive.tests.test_v2_generation import _make_agent_with
+
+        llm = _RecordingLLM()
+        agent = _make_agent_with(llm)
         await agent.start()
+        try:
+            await agent.process_message("我叫妖梦")
+            await _wait_until(lambda: agent.status.is_completely_idle,
+                              timeout=20)
 
-        # 第一轮（可能因嵌入懒加载而较慢）
-        await agent.process_message("我叫妖梦")
-        await asyncio.sleep(15)  # Generous timeout for embedding lazy load + LLM
-        msgs_1 = agent.session.recent_messages()
-        assert any(
-            isinstance(m.content, list) and
-            any("我叫妖梦" in getattr(p, "content", "") for p in m.content)
-            for m in msgs_1
-        )
+            await agent.process_message("你还记得我叫什么吗")
+            # 等到「含第二轮问题的那个请求」真正发出——它就是待检的上下文载体
+            def _second_turn_request() -> bool:
+                return any(
+                    "你还记得我叫什么吗" in _json.dumps(c, ensure_ascii=False)
+                    for c in llm.calls
+                )
 
-        # 第二轮（嵌入已加载，应较快）
-        await agent.process_message("你还记得我叫什么吗")
-        await asyncio.sleep(5)
-        msgs_2 = agent.session.recent_messages()
+            await _wait_until(_second_turn_request, timeout=20)
+            second = next(
+                c for c in llm.calls
+                if "你还记得我叫什么吗" in _json.dumps(c, ensure_ascii=False)
+            )
 
-        # 会话应有全部消息（两轮的 user + assistant）
-        assert len(msgs_2) >= 3
+            joined = _json.dumps(second, ensure_ascii=False)
+            assert "我叫妖梦" in joined, "第二轮请求应带上第一轮的用户消息"
+            assert any(m.get("role") == "assistant" for m in second), \
+                "第二轮请求应带上第一轮的助手回复"
+        finally:
+            await agent.stop()
 
-        await agent.stop()
-
-    @pytest.mark.asyncio
-    async def test_tool_calling_with_real_llm(self):
-        """真实 LLM 可能调用工具也可能不调用 —— 验证两条路径都可用。"""
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.agent import Agent
-        from core.status.agent_fsm import AgentState
-
-        from core.config import AppConfig
-        agent = Agent(config=AppConfig())
-        await agent.start()
-
-        await agent.process_message("帮我查一下记忆里有什么")
-        await asyncio.sleep(6)
-
-        assert agent._fsm.state == AgentState.IDLE
-        await agent.stop()
-
-    # 归类随类（@pytest.mark.slow）：本用例 load_dotenv + 真实 LongTermMemory +
-    # 读模板文件，实测 ~1.5s（>1s 阈值），与类内其余真 I/O 用例同类。此前额外挂
-    # @pytest.mark.service 会因 marker 累积被 make test-quick（-m "unit or service"）
-    # 选中，把真 I/O 用例塞进快门禁；去掉后仅由 nightly 的 make test-full 覆盖。
+    # 归类随类（@pytest.mark.slow）：本用例 load_dotenv + 真实 LongTermMemory
+    # （构造即读 journal）+ 读模板文件，与类内其余真 I/O 用例同类；仅由
+    # `make test-full` 覆盖（该目标手工触发）。此前额外挂 @pytest.mark.service
+    # 会因 marker 累积被 make test-quick（-m "unit or service"）选中，把真 I/O
+    # 用例塞进快门禁，故去掉。
     @pytest.mark.asyncio
     async def test_character_personality_injected(self):
         """验证角色配置（base_personality）出现在 LLM 请求中。"""
@@ -477,24 +573,13 @@ class TestMultiTurnConversation:
 # ============================================================================
 # 8. Edge case tests
 # ============================================================================
+#
+# 原 `TestEdgeCases::test_empty_message` 已删（2026-09-10 复审）：它起完整 Agent
+# 后断言 `state in ("idle", "thinking")` —— AgentState 共 6 个值、该断言接受 2 个，
+# 且原文注释自述 "Could be idle or still in prev state"，实为恒真。空消息处理在
+# 快层已有实质覆盖（`core/input/tests/test_server.py` 的
+# `TestHandleJsonEdges::test_empty_text_not_processed` 等，marker=unit）。
 
-@pytest.mark.slow
-class TestEdgeCases:
-    @pytest.mark.asyncio
-    async def test_empty_message(self):
-        from dotenv import load_dotenv
-        load_dotenv()
-        from core.agent import Agent
-
-        from core.config import AppConfig
-        agent = Agent(config=AppConfig())
-        await agent.start()
-
-        await agent.process_message("")
-        await asyncio.sleep(0.5)
-        # 不应崩溃，状态应保持 IDLE
-        assert agent._fsm.state in ("idle", "thinking")  # Could be idle or still in prev state
-        await agent.stop()
 
 
 

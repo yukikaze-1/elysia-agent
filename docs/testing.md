@@ -2,17 +2,17 @@
 
 ## 分层体系
 
-测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-10）全量收集 4291：
+测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-10）全量收集 4287：
 
 | 层 | marker | 标准 | 测试数 |
 |---|--------|------|--------|
 | 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 2313 |
 | 服务 | `service` | 单模块 + mock，不启动 Agent | 1911 |
 | 集成 | `integration` | 需真实数据库或外部 API | 39 |
-| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 57 |
+| 慢速 | `slow` | 完整 Agent 启动/端到端/单测 >1s | 53 |
 | 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 36 |
 
-> **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 4255。2026-09-10 实测 `make test-quick`（`-m "unit or service"`）4210 passed / 2 skipped；`make test-normal`（`-m "not slow and not external"`）4213 passed / 2 skipped。各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
+> **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 4251。2026-09-10 实测 `make test-quick`（`-m "unit or service"`）4210 passed / 2 skipped；`make test-normal`（`-m "not slow and not external"`）4213 passed / 2 skipped。各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
 >
 > **标记纪律（2026-09-10 复审）**：全仓**不得有无 marker 的测试**——无 marker 会被 `make test-quick` 静默跳过，PR 门禁对它不设防（曾积累 188 条）。同时**不得出现 `(slow|integration|external) and (unit|service)`** 的叠加——pytest 的 marker 只增不减，模块级 `pytestmark` 会覆盖类级 `slow`，把真 I/O 用例塞进快门禁（曾 10 条）。两条不变量可自查：
 >
