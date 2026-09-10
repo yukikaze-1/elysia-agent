@@ -439,12 +439,78 @@ LRU 缓存；夹具脚本按真实形态用**自己的** repository 实例（真
 | `make lint` | ✅ All checks passed |
 | `make check-types` | ✅ 0 漂移 + 41 错误码单源一致 |
 | `make pyright` | ✅ 0 errors, 0 warnings |
-| `scripts/tests/` + `core/storage/tests/` + `core/character/tests/` | ✅ 485 passed |
-| `make test-normal`（完整集 `not slow and not external`） | ✅ **4159 passed, 2 skipped**（76 deselected） |
-| 真实开发库 smoke | ✅ 27/27，退出码 0 |
+| `scripts/tests/` + `core/storage/tests/` + `core/character/tests/` | ✅ **495 passed** |
+| `make test-normal`（完整集 `not slow and not external`） | ✅ **4166 passed, 2 skipped**（76 deselected） |
+| 真实开发库 smoke | ✅ **38/38**，退出码 0，库内残留总数 0 |
 
 **契约：无前端契约变更**——`frontend_contract/` 与 `frontend/src/types/` 本轮 0 文件改动，
 `schemaHash` 未变化（`dece6f372e22f4f5`）。
 
 **运行版本：** 本轮**未**启动/停止用户的后端服务；三个修复提交在用户手动启动前尚未在
 `8765` 生效，`/health.build_sha` 与 `/ready.fullReady=true` 需启动后核对。
+
+
+---
+
+## 8. 复核轮整改（2026-09-10，§7 之后的两个缺口）
+
+> 提交：`8464b496`（副作用纳入 cleanup）、`9b3b3b9e`（smoke 异常收尾）、本轮 docs。
+
+复核指出 §7 有两个缺口，均已修复。本节同时**更正 §7.4 的一处错误结论**。
+
+### 8.1 更正：§7.4 的「generations 零残留」是错的
+
+§7.4 写「smoke 结束对开发库逐集合复查……对固定 fixture ID 均 0 条残留」，其中 generations 的
+复查查询用了 `{"conversation_id": ...}`——而 generations 集合的会话字段是 **`session_id`**
+（`core/storage/generation_repo.py` 的文档 schema）。该查询恒不命中，把 **17 条真实残留**报成了 0。
+**这是复核方法的缺陷，不是数据恰好干净。** 本次已用正确字段名复查并复现了那 17 条。
+
+### 8.2 缺口一：cleanup 未覆盖全部副作用（已修）
+
+真实回合还会写 `message_archive` / `token_usage` / `generations`，这三类此前不在 cleanup 范围
+（smoke 只额外清了前两类，且靠的是 smoke 私有逻辑）。
+
+**实现：**
+- 新增 `GenerationRepository.delete_by_session()`（对称 Message/Token 同名方法；`db=None` 抛
+  `StorageUnavailableError`，不静默返回 0）。
+- 三类副作用**并入正式 `cleanup_fixture`**：`seed_stage_h_pinned.py` 引入 `FixtureRepos`
+  数据类（7 个正式 repository），`seed_fixture(repos)` / `cleanup_fixture(repos)` 统一签名
+  （7 个同型参数位置传参太容易错位）；清理顺序为 **archive → tokens → generations →
+  session → instance → 全部 revision → definition**，最后回读复查；`removed` 计数与
+  `_verify_no_residue` 均覆盖三类。
+- smoke 里那份私有清理逻辑删除，改由 `cleanup_fixture` 统一承担。
+
+**测试：** `test_cleanup_removes_side_effects_of_both_fixture_conversations`、
+`test_cleanup_raises_when_generation_residue_survives`（seed 侧）；
+`TestDeleteBySession` 3 条（generation repo 侧）。
+**反向验证：** 去掉三类删除 → 2 条失败；去掉复查的 generations 分支 → 1 条失败。
+
+### 8.3 缺口二：smoke 异常时不执行完整清理（已修）
+
+原 `_run` 只有 `agent.stop()` 在 `finally`，副作用清理与 `cleanup_fixture()` 是正常路径的后续
+语句——REST / WS / 断言任一步抛异常，fixture 与其派生记录全部留在库里。
+
+**实现：** 两段 agent 各自套 `try/finally`，收尾不依赖正常路径，顺序恒为
+**停止 agent → 清理 archive/tokens/generations → 清理 session/instance/revision/definition → 回读复查**；
+`main()` 捕获中途异常记成 `smoke.aborted` 失败项并照常输出已跑完的断言，退出码 1。
+
+**测试：** `test_run_cleans_up_in_order_even_when_a_phase_raises`（断言事件序列恰为
+`cleanup → start → stop → cleanup`）、`test_main_reports_partial_checks_when_a_phase_raises`。
+**反向验证：** 把收尾移出 `finally` → 前者立即失败。
+
+### 8.4 复核轮验证结果
+
+| 项 | 结果 |
+|---|---|
+| 真实库 smoke | ✅ **38/38**，退出码 0；逐集合、**逐正确字段名**复查残留总数 **0**（含 `generations.session_id`，运行前为 17） |
+| `scripts/tests/` + `core/storage/tests/` + `core/character/tests/` | ✅ **495 passed** |
+| `make lint` | ✅ All checks passed |
+| `make check-types` | ✅ 0 漂移 + 41 错误码单源一致 |
+| `make pyright` | ✅ 0 errors, 0 warnings |
+| `make test-normal`（完整集 `not slow and not external`） | ✅ **4166 passed, 2 skipped**（76 deselected） |
+
+**契约：无前端契约变更**——`frontend_contract/` 与 `frontend/src/types/` 本轮 0 文件改动，
+`schemaHash` 未变化（`dece6f372e22f4f5`）。
+
+**运行版本：** 仍未启动/停止用户的后端服务；8765 当前无监听，因此 `/health.build_sha` 与
+`/ready` 尚未核对——需用户手动启动后再对齐。
