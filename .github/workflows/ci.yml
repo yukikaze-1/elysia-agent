@@ -67,7 +67,12 @@ jobs:
           python -m pip-audit --ignore-vuln PYSEC-2026-3447
           python -m bandit -r core/ Module/ frontend_contract/ scripts/ -q -c bandit.yaml
       - name: CI trust boundary check
-        run: python scripts/check_ci_isolation.py
+        # 覆盖全部 workflow（此前只查 ci.yml——nightly/contract-frames 的
+        # PR 可达 job 若引 self-hosted 或宿主 .env 会漏检）
+        run: |
+          python scripts/check_ci_isolation.py
+          python scripts/check_ci_isolation.py .github/workflows/nightly.yml
+          python scripts/check_ci_isolation.py .github/workflows/contract-frames.yml
       - name: Run quick tests (unit + service, 无外部 key; F1 含 WorkflowEngine unit/service)
         # F1：不再 --ignore workflow——external marker 排除真实 LLM/DB E2E，
         # WorkflowEngine 确定性 unit/service 入合并门禁（破坏 cancel/submit 的提交会阻止合并）

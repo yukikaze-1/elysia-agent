@@ -1,0 +1,52 @@
+name: Contract Frames
+
+# ── 独立契约漂移门禁（P0，2026-09-10）────────────────────────────────────────
+# 缺陷：主 CI（ci.yml）的 push/pull_request 都带 `paths-ignore: docs/**`。GitHub 语义
+# 是「diff 触及的路径全部命中 ignore 时整个 workflow 不启动」——因此只改
+# docs/archive/frontend-handoff-v2/traces/ 下 17 个 golden frames（.jsonl）的提交
+# 不会触发 ci.yml，守着它们的 `gen_contract_frames.py --check` 永不执行，漂移无声放行。
+#
+# 为何不把帧迁出 docs/：帧的路径被**跨仓**消费者硬编码——frontend 仓库
+# elysia-frontend/apps/desktop/scripts/check-backend-contract.mjs 里
+# `BACKEND_TRACES = '/home/yomu/elysia-agent/docs/archive/frontend-handoff-v2/traces'`
+# 在 `check:contract` 时逐行读取这些帧做字段级比对。迁移会静默削弱该跨仓门禁，
+# 且本仓库无法同步修改对端。故保留路径，改由本 workflow 补上缺失的触发。
+#
+# 也不整体去掉 ci.yml 的 `docs/**` ignore（那会让每次纯文档提交都跑约 30 分钟）——
+# 本 workflow 只在帧或契约源变更时触发，成本极小。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/archive/frontend-handoff-v2/traces/**"
+      - "frontend_contract/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/archive/frontend-handoff-v2/traces/**"
+      - "frontend_contract/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# 信任边界（P0-02）：pull_request 可达 → 一律 GitHub-hosted，无宿主 secret、无持久
+# 工作区、不引用宿主绝对路径凭据。由 scripts/check_ci_isolation.py 静态强制。
+jobs:
+  frames:
+    name: Contract frames drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install contract deps (frontend_contract 零依赖，仅需 pydantic)
+        run: python -m pip install "pydantic>=2.0"
+      - name: Contract ts/schema/raw drift check
+        run: python -m frontend_contract --check
+      - name: Golden frames drift check
+        run: python scripts/gen_contract_frames.py --check
