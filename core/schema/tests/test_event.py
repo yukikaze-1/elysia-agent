@@ -119,12 +119,11 @@ class TestEventTypeEnumBinding:
         assert get_args(ann) == (EventType.INTERRUPT,)
 
     def test_discriminator_still_rejects_bad_value(self):
-        # 判别值引用枚举后，非法值仍被拒（part.py 已证此模式）
-        try:
+        # 判别值引用枚举后，非法值仍被拒（part.py 已证此模式）。
+        # 必须用 pytest.raises 精确断言拒绝：旧写法 try/except Exception 会把兜底的
+        # AssertionError 一起吞掉，"拒绝"与"放行"都通过，测试恒绿无效。
+        with pytest.raises(ValidationError):
             TypeAdapter(EventData).validate_python({"event_type": "nope"})
-            raise AssertionError("should reject")
-        except Exception:
-            pass
 
     def test_system_tick_reason_is_enum(self):
         from core.schema.event import VoiceReason

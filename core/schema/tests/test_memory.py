@@ -96,12 +96,12 @@ class TestCompareActionType:
         assert get_args(ann) == (CompareActionType.SKIP,)
 
     def test_discriminator_rejects_bad(self):
+        # 必须用 pytest.raises 精确断言「抛 ValidationError」：旧写法 try/except Exception
+        # 会把兜底的 AssertionError 一起吞掉，导致「拒绝」与「放行」两种情况都通过，
+        # 测试永远不可能红（判别值放宽成裸 str 也照样绿）。
         ta = TypeAdapter(CompareAction)
-        try:
+        with pytest.raises(ValidationError):
             ta.validate_python({"action": "nope"})
-            raise AssertionError("should reject")
-        except Exception:
-            pass
 
 
 @pytest.mark.unit
