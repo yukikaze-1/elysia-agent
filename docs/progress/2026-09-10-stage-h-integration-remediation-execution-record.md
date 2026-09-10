@@ -332,3 +332,119 @@ revision 的档案。`/ready` 的 identity 门禁不变。
 
 **运行版本：** 本次修复**未**重启后端服务（按交接要求，由用户手动启动）；线上进程仍是
 上一版 `96a60f1f`，本轮两个提交需在下次启动后生效。
+
+---
+
+## 7. 第二轮真实联调后续整改（BE-H2-01~05，2026-09-10）
+
+第二轮真机联调后，用户提交了[后续整改清单](../review/2026-09-10-多角色Stage-H第二轮联调后续整改清单-后端.md)。
+本节是该项的交付记录。
+
+### 7.1 交付清单
+
+| 任务 | 结论 | 提交 |
+|---|---|---|
+| BE-H2-01 pinned fixture `createdBy` 契约合法 | ✅ 已修复 | `4698f534` |
+| BE-H2-02 cleanup 删净该 fixture 全部 revision | ✅ 已修复 | `a72ea7da` |
+| BE-H2-03 公开序列化测试 + 真实库 smoke | ✅ 已交付 | `209eac28` |
+| BE-H2-04 A/B tail 验收语义冻结 | ✅ 已冻结（文档） | `docs(stage-h): freeze tail serialization acceptance` |
+| BE-H2-05 整改记录与运行基线 | ✅ 已实现（文档） | 同上 |
+
+额外：`TokenRepository.delete_by_session`（对称 `MessageRepository.delete_by_session`），
+供 smoke 收尾清掉真实回合产生的 token 统计——决策与代价见清单 §9.4 D3。
+
+### 7.2 BE-H2-01：fixture revision 的公开序列化
+
+**根因：** 领域 `CharacterRevision.createdBy` 是宽松 `str`（注释写着 system/user/migration），
+写库不校验；公开 `CharacterRevisionContent.createdBy` 是 `CharacterCreatedBy` 枚举。seed 写
+`"fixture"` → `_revision_wire` → `CharacterService.list` 对每条 definition 调 `_summary` →
+整页 `GET /api/characters` 抛 `ValidationError` → `INTERNAL_ERROR`（**目录里所有角色一起挂掉**，
+不是单条坏数据）。
+
+**实现：** fixture 改用 `CharacterCreatedBy.MIGRATION`；`_revision_from_draft` / `create` 的
+`created_by` 参数收窄为 `CharacterCreatedBy`（契约层单源——`service.py` 本就依赖
+`frontend_contract`，非双源）；`seed_fixture` 写完后**回读并过一遍公开 `_summary` 路径**，
+失败即 `SystemExit`。
+
+**测试（`scripts/tests/test_seed_stage_h_pinned.py`）：**
+`test_fixture_revision_created_by_is_contract_valid`、
+`test_fixture_revision_passes_public_serialization_guard`、
+`test_public_serialization_guard_rejects_unknown_created_by`（守卫本身真的会拦）、
+`test_seeded_fixture_passes_public_catalog_list`（seed → `CharacterService.list`/`get` 全链）。
+
+**反向验证：** 把 `created_by` 改回 `"fixture"`、去掉 seed 回读校验 → 上述 4 条中 2 条立即失败
+（`createdBy` 不符 + 整页 list 抛 ValidationError）。
+
+### 7.3 BE-H2-02：cleanup 删净全部 revision
+
+**根因：** H-44 的必要步骤就是把同一 Definition 从 revision 1 推到 2，而 cleanup 只
+`delete_revision(FIXTURE_CHARACTER_ID, FIXTURE_REVISION)` 且 `removed["revisions"] = 1` 是
+硬编码常量——正常验收结束后必然留下 revision 2 孤儿，返回的计数也是假的。旧单测把这个 1
+断言了进去，等于把 bug 固化。
+
+**实现：** `_all_revision_numbers()` 用 `list_revisions_page` 游标循环取该 characterId 的
+**全部** revision（处理超单页，不扫描其他角色）；逐条调正式 `delete_revision` 并记实际条数
+（零条是合法幂等结果）；删完 `_verify_no_residue()` 回读 definition/instances/revisions/sessions，
+有残留即 `SystemExit`；`main()` 把存储/连接异常转成**脱敏 JSON + 退出码 1**，不打印成功汇总。
+
+**测试：** `test_cleanup_removes_every_revision_of_the_fixture`（1/2/3 全删、计数为 3）、
+`test_cleanup_second_run_reports_zeros`、`test_cleanup_leaves_other_character_revisions_intact`、
+`test_cleanup_raises_when_revision_storage_fails`、`test_cleanup_raises_when_residue_survives`。
+
+**反向验证：** 还原旧 cleanup（只删固定 R1 + 计数写死 + 无复查）→ 其中 3 条立即失败
+（revision 残留、二次执行计数不为零、残留未抛 `SystemExit`）。
+
+### 7.4 BE-H2-03：真实开发库 smoke（`scripts/dev/stage_h_pinned_smoke.py`）
+
+显式 `STAGE_H_FIXTURES=1` opt-in + 非公网 Mongo 守卫 + 固定 fixture ID；**进程内**
+`create_app` + 真实开发 Mongo/Milvus + stub LLM（不启动也不需要用户的后端进程，不产生外部
+provider 调用）。执行顺序：带 agent 跑 seed/两轮真实回合 → **关机** → 收尾副作用 → cleanup
+→ 复查 → **冷启动**第二个服务做公开读取 → 关机回写复查 → 二次 cleanup。
+
+**结果：27/27 通过、退出码 0。**
+
+| 断言 | 观测值 |
+|---|---|
+| BE-R1 list/detail | HTTP 200；含 fixture；`createdBy=migration` |
+| BE-R2 推进到 revision 2 | `PUT /api/characters/{id}` → HTTP 200，`currentRevision=2`（全程未手工改 Mongo） |
+| BE-R2 pinned 回合 | `generation.completed`；registry 解析 **revision 1** |
+| BE-R2 follow_latest 回合 | `generation.completed`；被 reconcile 到 **revision 2** |
+| BE-R5 cleanup 计数 | `{sessions: 2, instances: 2, revisions: 2, characters: 1}`（revisions 为实际条数，含 H-44 推到的 r2） |
+| BE-R3 冷服务公开读取 | list 200 且不含 fixture；detail **404 `CHARACTER_NOT_FOUND`** |
+| BE-R4 / no_resurrection | 四类记录全空；冷服务关机后仍全空 |
+| BE-R5 二次 cleanup | 全零 |
+
+smoke 结束对开发库逐集合复查：`characters` / `character_revisions` / `character_instances` /
+`sessions`（含 `character_binding.instance_id`）/ `message_archive` / `token_usage` /
+`generations` 对固定 fixture ID **均 0 条残留**。
+
+### 7.5 本轮暴露的两个验收顺序问题（S1/S2）
+
+**S1 — cleanup 会被关机回写「复活」。** 跑过 fixture 会话的 agent 在 `stop()` 时把内存里的
+session 与 character runtime 状态 flush 回 Mongo；先 cleanup 再关机，刚删的 2 session +
+2 instance 会被重新创建（实测 `updated_at` 正是关机时刻、`state_version` 已被 reflector 推进）。
+→ **cleanup 必须在服务停止之后执行**（或 cleanup 后重启服务再复查）；smoke 已按此顺序实现并
+加 `BE-R4.no_resurrection.*` 断言。
+
+**S2 — 运行中的服务上跑 cleanup，detail 返回 503 而非 404。** `CharacterRepository` 有进程内
+LRU 缓存；夹具脚本按真实形态用**自己的** repository 实例（真实用法里是独立进程）写库，服务端
+缓存不失效 → 缓存里 definition 在、revision 已删 → `get()` 抛 `CharacterStorageUnavailableError`
+→ 503。判定为**非产品缺陷**（生产只有单一写入方，删除走同一实例自行失效），故不为夹具加产品
+分支；smoke 用冷启动的第二个服务做 BE-R3，天然避开该状态。
+
+### 7.6 门禁与契约
+
+| 门禁 | 结果 |
+|---|---|
+| `make lint` | ✅ All checks passed |
+| `make check-types` | ✅ 0 漂移 + 41 错误码单源一致 |
+| `make pyright` | ✅ 0 errors, 0 warnings |
+| `scripts/tests/` + `core/storage/tests/` + `core/character/tests/` | ✅ 485 passed |
+| `make test-normal`（完整集 `not slow and not external`） | ✅ **4159 passed, 2 skipped**（76 deselected） |
+| 真实开发库 smoke | ✅ 27/27，退出码 0 |
+
+**契约：无前端契约变更**——`frontend_contract/` 与 `frontend/src/types/` 本轮 0 文件改动，
+`schemaHash` 未变化（`dece6f372e22f4f5`）。
+
+**运行版本：** 本轮**未**启动/停止用户的后端服务；三个修复提交在用户手动启动前尚未在
+`8765` 生效，`/health.build_sha` 与 `/ready.fullReady=true` 需启动后核对。
