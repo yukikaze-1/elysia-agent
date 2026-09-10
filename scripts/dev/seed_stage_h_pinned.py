@@ -38,6 +38,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 if TYPE_CHECKING:
+    from core.character.definition import CharacterDefinition
     from core.character.revision import CharacterRevision
     from core.storage.character_instance_repo import CharacterInstanceRepository
     from core.storage.character_repo import CharacterRepository
@@ -82,6 +83,7 @@ def _fixture_revision() -> "CharacterRevision":
     """复用生产 draft→revision 构建器，保证与真实保存的 revision 同形。"""
     from core.character.draft import CharacterDraft
     from core.character.service import CharacterService
+    from frontend_contract.rest import CharacterCreatedBy
 
     draft = CharacterDraft.model_validate({
         "displayName": "Stage H 夹具角色",
@@ -98,9 +100,32 @@ def _fixture_revision() -> "CharacterRevision":
         FIXTURE_CHARACTER_ID,
         draft,
         revision=FIXTURE_REVISION,
-        created_by="fixture",
+        # BE-H2-01：领域 CharacterRevision.createdBy 是宽松 str，写库不校验；公开
+        # CharacterRevisionContent 只接受 system|user|migration。fixture 用它表达
+        # 「受控脚本注入」，不污染公开枚举。
+        created_by=CharacterCreatedBy.MIGRATION,
     )
     return revision
+
+
+def _assert_public_serialization(
+    definition: "CharacterDefinition", revision: "CharacterRevision",
+) -> None:
+    """fixture 数据必须能走公开 REST 序列化路径。
+
+    回归 BE-H2-01：非法 createdBy 在领域层无感，却会让 GET /api/characters 整页
+    ValidationError → INTERNAL_ERROR（目录里所有角色一起挂掉，不是单条坏数据）。
+    """
+    from pydantic import ValidationError
+
+    from core.character.service import _summary  # noqa: PLC2701
+
+    try:
+        _summary(definition, revision)
+    except ValidationError as exc:
+        raise SystemExit(
+            f"拒绝继续：fixture revision 无法通过公开契约序列化（{exc.error_count()} 处校验失败）"
+        ) from None
 
 
 async def seed_fixture(
@@ -144,6 +169,14 @@ async def seed_fixture(
             SessionId(conversation_id),
             {"character_id": FIXTURE_CHARACTER_ID, "instance_id": instance_id},
         )
+
+    # BE-H2-01：回读并过一遍公开序列化路径——坏 createdBy 到此即失败，不会等到
+    # 前端打开角色目录时才暴露成整页 INTERNAL_ERROR。
+    definition = await characters.get_definition(FIXTURE_CHARACTER_ID)
+    revision = await revisions.get_revision(FIXTURE_CHARACTER_ID, FIXTURE_REVISION)
+    if definition is None or revision is None:
+        raise SystemExit("拒绝宣告 seed 成功：fixture 数据回读失败")
+    _assert_public_serialization(definition, revision)
 
     return {
         "fixture": "stage-h-pinned",

@@ -32,6 +32,7 @@ from core.storage.character_revision_repo import CharacterRevisionRepository
 from core.schema.utils import now_iso
 from frontend_contract.rest import (
     CharacterArchiveResult,
+    CharacterCreatedBy,
     CharacterResetField,
     CharacterSource,
     CharacterStatus,
@@ -385,7 +386,8 @@ class CharacterService:
         )
 
     async def create(
-        self, draft: CharacterDraft, *, owner_user_id: str, created_by: str = "user"
+        self, draft: CharacterDraft, *, owner_user_id: str,
+        created_by: CharacterCreatedBy = CharacterCreatedBy.USER,
     ) -> CharacterDetail:
         await self._ensure_connected()
         err = await self._raise_on_validation(draft)
@@ -1260,7 +1262,7 @@ class CharacterService:
         draft: CharacterDraft,
         *,
         revision: int,
-        created_by: str = "user",
+        created_by: CharacterCreatedBy = CharacterCreatedBy.USER,
         state_policy: Literal["preserve", "reset_evolution"] = "preserve",
     ) -> CharacterRevision:
         profile = {

@@ -15,6 +15,8 @@ from scripts.dev.seed_stage_h_pinned import (
     FIXTURE_FOLLOW_INSTANCE_ID,
     FIXTURE_PINNED_INSTANCE_ID,
     _assert_non_production,
+    _assert_public_serialization,
+    _fixture_revision,
     _require_opt_in,
     cleanup_fixture,
     seed_fixture,
@@ -113,3 +115,57 @@ def test_assert_non_production_allows_private_and_rejects_public():
         _assert_non_production("mongodb://8.8.8.8:27017")
     with pytest.raises(SystemExit):
         _assert_non_production("mongodb://db.prod.example.com:27017")
+
+
+# ─────────────── BE-H2-01：fixture revision 必须通过公开契约序列化 ───────────────
+
+
+def test_fixture_revision_created_by_is_contract_valid():
+    """createdBy 必须落在公开 CharacterCreatedBy（system|user|migration）内。
+
+    回归：真实联调里 fixture 写 createdBy="fixture"，整页 GET /api/characters 因
+    响应模型校验失败返回 INTERNAL_ERROR。
+    """
+    assert _fixture_revision().createdBy == "migration"
+
+
+def test_fixture_revision_passes_public_serialization_guard():
+    """fixture revision 必须能走公开 _revision_wire（CharacterRevisionContent）路径。"""
+    revision = _fixture_revision()
+    _assert_public_serialization(
+        CharacterDefinition(
+            characterId=FIXTURE_CHARACTER_ID, slug="x", source="custom", mutable=True),
+        revision,
+    )
+
+
+def test_public_serialization_guard_rejects_unknown_created_by():
+    """守卫本身必须真的会拦——否则它只是装饰。"""
+    revision = _fixture_revision().model_copy(update={"createdBy": "fixture"})
+    with pytest.raises(SystemExit):
+        _assert_public_serialization(
+            CharacterDefinition(
+                characterId=FIXTURE_CHARACTER_ID, slug="x", source="custom", mutable=True),
+            revision,
+        )
+
+
+@pytest.mark.asyncio
+async def test_seeded_fixture_passes_public_catalog_list():
+    """seed 后的数据必须能整页通过公开 list 序列化（不再 INTERNAL_ERROR）。"""
+    from core.character.service import CharacterService
+    from core.profile.profile_store import UserIdentityStore
+
+    characters, revisions, instances, sessions = _repos()
+    await seed_fixture(characters, revisions, instances, sessions)
+
+    service = CharacterService(
+        repo=characters, rev_repo=revisions, catalog=None,
+        user_identity_store=UserIdentityStore(),
+    )
+    listed = await service.list(source="custom", limit=50)
+    assert [item.characterId for item in listed.items] == [FIXTURE_CHARACTER_ID]
+
+    detail = await service.get(FIXTURE_CHARACTER_ID)
+    assert detail is not None
+    assert detail.current.createdBy == "migration"
