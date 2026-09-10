@@ -14,8 +14,16 @@ instance + 同角色 follow_latest instance + 各自一条持久化 session bind
 约束：
 - 仅在 `STAGE_H_FIXTURES=1` 且 Mongo 主机非公网（回环/内网/链路本地）时运行；
 - 幂等：固定 character/instance/session ID + setOnInsert，重复执行不产生副本；
-- 只写本脚本自己新建的 fixture 数据，不扫描/修改/迁移任何旧会话；
+- 只写/只删本脚本自己固定 ID 的 fixture 数据，不扫描/修改/迁移任何旧会话；
 - 输出脱敏 JSON（只有 characterId/instanceId/conversationId/revisionPolicy/revision）。
+
+**清理范围（--cleanup）**：两条 fixture session 的**全部派生记录**——`message_archive`、
+`token_usage`、`generations`，随后是 session / instance / 该 characterId 的全部 revision /
+definition；删完回读复查，有残留即非零退出。
+
+**执行顺序（重要）**：cleanup 必须在**服务停止之后**运行。跑过 fixture 会话的 agent 会在
+`stop()` 时把内存里的 session 与 character runtime 状态 flush 回 Mongo——先 cleanup 再关机，
+刚删掉的行会被关机回写重新创建。
 
 验收（§6.3）：seed 后从 REST 把 Definition 更新到 revision 2——follow_latest 下一轮
 用 revision 2，pinned 仍用 revision 1；清理后正式 active catalog 不残留测试角色。
@@ -28,6 +36,7 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import dataclass
 from ipaddress import ip_address
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -43,7 +52,10 @@ if TYPE_CHECKING:
     from core.storage.character_instance_repo import CharacterInstanceRepository
     from core.storage.character_repo import CharacterRepository
     from core.storage.character_revision_repo import CharacterRevisionRepository
+    from core.storage.generation_repo import GenerationRepository
+    from core.storage.message_repo import MessageRepository
     from core.storage.session_repo import SessionRepository
+    from core.storage.token_repo import TokenRepository
 
 FIXTURE_CHARACTER_ID = "chr_stage_h_fixture"
 FIXTURE_PINNED_INSTANCE_ID = "chi_stage_h_fixture_pinned"
@@ -53,6 +65,24 @@ FIXTURE_FOLLOW_CONVERSATION_ID = "conv_stage_h_fixture_follow"
 FIXTURE_OWNER_USER_ID = "usr_local_default"
 FIXTURE_SLUG = "[stage-h-fixture] pinned 对照角色"
 FIXTURE_REVISION = 1
+
+
+@dataclass(frozen=True)
+class FixtureRepos:
+    """夹具用到的全部正式 repository。
+
+    四类是夹具本体（definition/revision/instance/session）；后三类是**真实回合派生**的
+    副作用记录——清理时必须一起删，否则会留下指向已删会话的孤儿行（generations 还有
+    30 天 TTL）。
+    """
+
+    characters: "CharacterRepository"
+    revisions: "CharacterRevisionRepository"
+    instances: "CharacterInstanceRepository"
+    sessions: "SessionRepository"
+    archive: "MessageRepository"
+    tokens: "TokenRepository"
+    generations: "GenerationRepository"
 
 
 def _require_opt_in() -> None:
@@ -128,16 +158,14 @@ def _assert_public_serialization(
         ) from None
 
 
-async def seed_fixture(
-    characters: "CharacterRepository",
-    revisions: "CharacterRevisionRepository",
-    instances: "CharacterInstanceRepository",
-    sessions: "SessionRepository",
-) -> dict:
+async def seed_fixture(repos: FixtureRepos) -> dict:
     """幂等创建 fixture definition/revision/两个 instance/两条 session binding。"""
     from core.character.definition import CharacterDefinition
     from core.character.instance import CharacterInstance
     from core.schema.types import SessionId
+
+    characters, revisions = repos.characters, repos.revisions
+    instances, sessions = repos.instances, repos.sessions
 
     if await characters.get_definition(FIXTURE_CHARACTER_ID) is None:
         await characters.insert_definition(CharacterDefinition(
@@ -209,80 +237,97 @@ async def _all_revision_numbers(
         cursor = numbers[-1]
 
 
-async def _verify_no_residue(
-    characters: "CharacterRepository",
-    revisions: "CharacterRevisionRepository",
-    instances: "CharacterInstanceRepository",
-    sessions: "SessionRepository",
-) -> None:
+async def _verify_no_residue(repos: FixtureRepos) -> None:
     """删完回读复查——仍有残留就非零退出，不谎报干净。"""
     from core.schema.types import SessionId
 
     residue: list[str] = []
-    if await characters.get_definition(FIXTURE_CHARACTER_ID) is not None:
+    if await repos.characters.get_definition(FIXTURE_CHARACTER_ID) is not None:
         residue.append("definition")
     for instance_id in (FIXTURE_PINNED_INSTANCE_ID, FIXTURE_FOLLOW_INSTANCE_ID):
-        if await instances.get(instance_id) is not None:
+        if await repos.instances.get(instance_id) is not None:
             residue.append(f"instance:{instance_id}")
-    if await _all_revision_numbers(revisions, FIXTURE_CHARACTER_ID):
+    if await _all_revision_numbers(repos.revisions, FIXTURE_CHARACTER_ID):
         residue.append("revisions")
     for conversation_id in (
         FIXTURE_PINNED_CONVERSATION_ID, FIXTURE_FOLLOW_CONVERSATION_ID):
-        if await sessions.load(SessionId(conversation_id)) is not None:
+        sid = SessionId(conversation_id)
+        if await repos.sessions.load(sid) is not None:
             residue.append(f"session:{conversation_id}")
+        # 真实回合派生记录：三张表的会话字段都叫 session_id（不是 conversation_id）
+        _, archive_total = await repos.archive.query_by_session(sid, limit=1)
+        if archive_total:
+            residue.append(f"archive:{conversation_id}")
+        if await repos.tokens.query_by_session(conversation_id, limit=1):
+            residue.append(f"tokens:{conversation_id}")
+        gens, _, _ = await repos.generations.find_by_session(sid, limit=1)
+        if gens:
+            residue.append(f"generations:{conversation_id}")
     if residue:
         raise SystemExit("拒绝宣告清理成功：fixture 仍有残留 " + ", ".join(residue))
 
 
-async def cleanup_fixture(
-    characters: "CharacterRepository",
-    revisions: "CharacterRevisionRepository",
-    instances: "CharacterInstanceRepository",
-    sessions: "SessionRepository",
-) -> dict:
-    """只删除本夹具固定 ID 的新数据——不触碰任何其他记录。"""
+async def cleanup_fixture(repos: FixtureRepos) -> dict:
+    """删除本夹具固定 ID 的全部数据（含真实回合派生记录）——不触碰任何其他记录。
+
+    顺序：先删**派生记录**（archive / tokens / generations），再删本体
+    （session → instance → 全部 revision → definition）。派生记录必须删——否则留下
+    指向已删会话的孤儿行（generations 有 30 天 TTL，期间一直可见）。最后回读复查。
+    """
     from core.schema.types import SessionId
 
-    removed = {"sessions": 0, "instances": 0, "revisions": 0, "characters": 0}
+    removed = {"sessions": 0, "instances": 0, "revisions": 0, "characters": 0,
+               "archive": 0, "tokens": 0, "generations": 0}
     for conversation_id in (
         FIXTURE_PINNED_CONVERSATION_ID, FIXTURE_FOLLOW_CONVERSATION_ID):
-        removed["sessions"] += await sessions.delete(SessionId(conversation_id))
+        sid = SessionId(conversation_id)
+        removed["archive"] += await repos.archive.delete_by_session(sid)
+        removed["tokens"] += await repos.tokens.delete_by_session(sid)
+        removed["generations"] += await repos.generations.delete_by_session(sid)
+        removed["sessions"] += await repos.sessions.delete(sid)
     for instance_id in (FIXTURE_PINNED_INSTANCE_ID, FIXTURE_FOLLOW_INSTANCE_ID):
-        removed["instances"] += int(await instances.delete(instance_id))
+        removed["instances"] += int(await repos.instances.delete(instance_id))
     # BE-H2-02：H-44 会把同一 Definition 从 revision 1 推到 2，清理必须删净全部
     # revision（只删固定 R1 会留孤儿，且计数是假的）。
-    for number in await _all_revision_numbers(revisions, FIXTURE_CHARACTER_ID):
-        await revisions.delete_revision(FIXTURE_CHARACTER_ID, number)
+    for number in await _all_revision_numbers(repos.revisions, FIXTURE_CHARACTER_ID):
+        await repos.revisions.delete_revision(FIXTURE_CHARACTER_ID, number)
         removed["revisions"] += 1
     removed["characters"] = int(
-        await characters.delete_definition(FIXTURE_CHARACTER_ID))
+        await repos.characters.delete_definition(FIXTURE_CHARACTER_ID))
 
-    await _verify_no_residue(characters, revisions, instances, sessions)
+    await _verify_no_residue(repos)
     return {"fixture": "stage-h-pinned", "removed": removed}
 
 
-async def _repos() -> "tuple[CharacterRepository, CharacterRevisionRepository, CharacterInstanceRepository, SessionRepository]":
-    """按 Agent 的生产装配方式建连四个正式 repository。"""
+async def _repos() -> FixtureRepos:
+    """按 Agent 的生产装配方式建连夹具用到的全部正式 repository。"""
     from core.config import AppConfig
-    from core.storage.character_repo import CharacterRepository
     from core.storage.character_instance_repo import CharacterInstanceRepository
+    from core.storage.character_repo import CharacterRepository
     from core.storage.character_revision_repo import CharacterRevisionRepository
+    from core.storage.generation_repo import GenerationRepository
+    from core.storage.message_repo import MessageRepository
     from core.storage.session_repo import SessionRepository
+    from core.storage.token_repo import TokenRepository
 
     cfg = AppConfig()
     uri = cfg.database.mongodb_uri
+    db_name = cfg.database.db_name
     _assert_non_production(uri)
-    characters = CharacterRepository(base_url=uri)
-    revisions = CharacterRevisionRepository(base_url=uri)
-    instances = CharacterInstanceRepository(base_url=uri)
-    sessions = SessionRepository(database_name=cfg.database.db_name, base_url=uri)
-    for name, repo in (
-        ("characters", characters), ("revisions", revisions),
-        ("instances", instances), ("sessions", sessions),
-    ):
+    bundle = FixtureRepos(
+        characters=CharacterRepository(base_url=uri),
+        revisions=CharacterRevisionRepository(base_url=uri),
+        instances=CharacterInstanceRepository(base_url=uri),
+        sessions=SessionRepository(database_name=db_name, base_url=uri),
+        archive=MessageRepository(database_name=db_name, base_url=uri),
+        tokens=TokenRepository(database_name=db_name, base_url=uri),
+        generations=GenerationRepository(database_name=db_name, base_url=uri),
+    )
+    for repo in vars(bundle).values():
         if not await repo.connect():
-            raise SystemExit(f"MongoDB 不可用（{name}）——夹具未创建")
-    return characters, revisions, instances, sessions
+            raise SystemExit(
+                f"MongoDB 不可用（{type(repo).__name__}）——夹具未创建")
+    return bundle
 
 
 def main() -> int:
@@ -295,7 +340,7 @@ def main() -> int:
 
     async def _run() -> dict:
         repos = await _repos()
-        return await (cleanup_fixture(*repos) if args.cleanup else seed_fixture(*repos))
+        return await (cleanup_fixture(repos) if args.cleanup else seed_fixture(repos))
 
     try:
         payload = asyncio.run(_run())

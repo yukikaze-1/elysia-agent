@@ -28,7 +28,7 @@ import logging
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema.types import GenerationId, MessageId, SessionId
 from core.schema.utils import now_iso
-from core.storage.base import Repository, bson_expires
+from core.storage.base import Repository, StorageUnavailableError, bson_expires
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +257,32 @@ class GenerationRepository(Repository):
             next_cursor = _encode_cursor(
                 last.get("created_at", ""), last.get("generation_id", ""))
         return docs, has_more, next_cursor
+
+    async def delete_by_session(self, session_id: SessionId) -> int:
+        """按会话删除 generation 生命周期记录。
+
+        与 `MessageRepository.delete_by_session` / `TokenRepository.delete_by_session`
+        同语义：会话级收尾（删除会话、清理联调夹具）需要把该会话派生出的记录一并清掉，
+        否则留下指向已删会话的孤儿行（generations 有 30 天 TTL，期间一直可见）。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            删除的记录数（0 = 无记录，幂等）。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接——离线删除不得静默返回 0
+                被 caller 当成功（同 Message/Token 两个 delete_by_session）。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                "GenerationRepository 未连接（MongoDB 不可用），generation 记录未删除")
+        removed = await self._db.delete_many(COLLECTION, {"session_id": session_id})
+        logger.info(
+            "GenerationRepository delete_by_session: session_id=%s, deleted=%d",
+            session_id, removed)
+        return removed
 
     async def mark_stale(self, status_from: str, older_than_iso: str) -> int:
         """把 status_from 且 updated_at < older_than_iso 的 generation 标为 interrupted。

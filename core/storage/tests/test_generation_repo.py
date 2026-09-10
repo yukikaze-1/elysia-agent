@@ -202,6 +202,37 @@ class TestGenerationRepository:
         assert asyncio.run(repo.mark_stale("running", "iso")) == 0
 
 
+class TestDeleteBySession:
+    """夹具/会话级收尾：按 session 删净该会话的 generation 生命周期记录。"""
+
+    def test_removes_only_that_session(self):
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        _upsert(repo, generation_id="g1", session_id="conv_target")
+        _upsert(repo, generation_id="g2", session_id="conv_target")
+        _upsert(repo, generation_id="g3", session_id="conv_other")
+
+        removed = asyncio.run(repo.delete_by_session(SessionId("conv_target")))
+
+        assert removed == 2
+        docs, _, _ = asyncio.run(repo.find_by_session(SessionId("conv_target")))
+        assert docs == []
+        others, _, _ = asyncio.run(repo.find_by_session(SessionId("conv_other")))
+        assert [d["generation_id"] for d in others] == ["g3"]
+
+    def test_is_idempotent(self):
+        """第二次删除返回 0，不抛。"""
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        assert asyncio.run(repo.delete_by_session(SessionId("conv_missing"))) == 0
+
+    def test_raises_when_db_none(self):
+        """db=None 抛 StorageUnavailableError——离线删除不得静默返回 0 被当成功。"""
+        from core.storage.base import StorageUnavailableError
+
+        repo = GenerationRepository(db=None)
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.delete_by_session(SessionId("conv_x")))
+
+
 class TestTtlExpiry:
     """B6/P2-01：generation 临时记录 TTL 基于真实 BSON Date ttl_expires_at。"""
 
