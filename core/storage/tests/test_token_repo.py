@@ -82,6 +82,42 @@ class TestTokenRepository:
         repo = TokenRepository(db=None)
         asyncio.run(repo.flush([]))
 
+    @pytest.mark.asyncio
+    async def test_delete_by_session_removes_only_that_session(self):
+        """按会话删除：只删该会话的统计，返回实际条数（0 = 幂等）。"""
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+        db = FakeDocumentDBBackend()
+        repo = TokenRepository(db=db)
+        for session_id in ("conv_target", "conv_target", "conv_other"):
+            await repo.record(TokenUsage(
+                session_id=SessionId(session_id), model="m", input_tokens=1,
+                output_tokens=1, total_tokens=2, round_num=0,
+            ))
+
+        removed = await repo.delete_by_session(SessionId("conv_target"))
+
+        assert removed == 2
+        assert await repo.query_by_session("conv_target") == []
+        assert len(await repo.query_by_session("conv_other")) == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_by_session_is_idempotent(self):
+        """第二次删除返回 0，不抛。"""
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+        repo = TokenRepository(db=FakeDocumentDBBackend())
+        assert await repo.delete_by_session(SessionId("conv_missing")) == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_by_session_raises_when_db_none(self):
+        """db=None 时抛 StorageUnavailableError——离线删除不得静默返回 0 当成功。"""
+        from core.storage.base import StorageUnavailableError
+
+        repo = TokenRepository(db=None)
+        with pytest.raises(StorageUnavailableError):
+            await repo.delete_by_session(SessionId("conv_x"))
+
 
 @pytest.mark.unit
 class TestTokenRepositoryConnect:

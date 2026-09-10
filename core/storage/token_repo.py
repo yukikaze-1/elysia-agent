@@ -4,6 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
+from core.schema.types import SessionId
 from core.storage.attachment_repo import StorageUnavailableError
 from core.storage.base import Repository
 
@@ -112,6 +113,28 @@ class TokenRepository(Repository):
             except Exception:
                 continue  # 旧文档跳过
         return result
+
+    async def delete_by_session(self, session_id: SessionId) -> int:
+        """按会话删除 Token 用量记录（与 MessageRepository.delete_by_session 对称）。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            删除的记录数（0 = 无记录，幂等）。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接——离线删除不得静默返回 0
+                被 caller 当成功。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                "TokenRepository 未连接（MongoDB 不可用），token 用量未删除")
+        removed = await self._db.delete_many(COLLECTION, {"session_id": session_id})
+        logger.info(
+            "TokenRepository delete_by_session: session_id=%s, deleted=%d",
+            session_id, removed)
+        return removed
 
     async def total_tokens_by_session(self) -> dict[str, int]:
         """聚合每个 session 的 token 总量（MongoDB $group，单次查询）。
