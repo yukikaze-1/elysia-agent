@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 
 COLLECTION = "message_archive"
 
+ASSISTANT_WITHOUT_CHARACTER_FILTER: dict = {
+    "role": "assistant",
+    "$or": [{"character": None}, {"character": {"$exists": False}}],
+}
+"""缺少角色身份快照的 assistant 归档消息过滤条件（多角色完整性自检用）。
+
+`character_profiles=true` 时前端要求每条 assistant 消息都带角色身份快照，缺失会让
+消息历史整批拒绝，故启动期需能统计这类记录。
+"""
+
 # query_search 支持的 category 取值 → content part 类型 / role 映射（D3-B 枚举派生单源）。
 # tool 特殊：无 part type，走 role=tool；link 特殊：archive 无独立 link part，URL 正则特判。
 _CATEGORY_PART_TYPES = frozenset(m.value for m in SearchCategory) - {"tool"}
@@ -492,6 +502,24 @@ class MessageRepository(Repository):
         if self._db is None:
             return 0
         return await self._db.count(COLLECTION, {})
+
+    async def count_assistant_without_character(self) -> int:
+        """统计缺少角色身份快照的 assistant 归档消息数（多角色完整性自检）。
+
+        数据库侧 count，不拉取文档。用于启动期自检告警：`character_profiles=true`
+        时这类记录会让前端对消息历史整批拒绝。
+
+        Returns:
+            命中的 assistant 消息数。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（区分「0 条缺口」与「未扫描」——
+                调用方据此标记自检未执行，而非误报数据健康）。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                "MessageRepository 未连接（MongoDB 不可用），无法执行消息角色完整性自检")
+        return await self._db.count(COLLECTION, ASSISTANT_WITHOUT_CHARACTER_FILTER)
 
     async def delete_by_session(self, session_id: SessionId) -> int:
         """按会话删除所有消息。

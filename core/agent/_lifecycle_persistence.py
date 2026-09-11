@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from core.cognitive.generation_registry import GenerationRegistry
     from core.desktop.bridge import DesktopToolBridge
     from core.character.runtime import CharacterRuntime
+    from core.character.integrity import CharacterIntegrityReport
     from core.storage.character_instance_repo import CharacterInstanceRepository
     from core.profile.profile_store import UserIdentityStore
     from core.profile.user_identity import UserIdentity
@@ -68,6 +69,9 @@ class _LifecyclePersistence:
         idempotency_repo: IdempotencyRepository  # 类型占位：运行时来自 Agent @property（D6c，首访必非 None）
         _generation_registry: GenerationRegistry
         _desktop_bridge: DesktopToolBridge
+        # P3：多角色能力开关（Agent @property 恒 True）与自检结果
+        character_profiles: bool
+        _character_integrity_report: "CharacterIntegrityReport"
 
     def _start_db_health(self) -> None:
         """启动数据库健康检查后台任务。"""
@@ -280,6 +284,34 @@ class _LifecyclePersistence:
         except Exception:
             logger.warning("AttachmentRepository 建连失败（附件操作将 fail-closed）",
                            exc_info=True)
+
+    async def _check_character_data_integrity(self) -> None:
+        """多角色数据完整性自检（启动期，只读 + 建议性）。
+
+        `character_profiles=true` 时前端对会话列表/消息历史实行整页 fail-closed，
+        任何缺角色戳的记录都会让整个多角色功能面不可用。此处把该故障从「用户报障」
+        提前到「启动日志」。
+
+        只读：绝不修改数据；失败：仅降级为「未扫描」，绝不让启动失败
+        （见 core/character/integrity.py）。
+        """
+        from core.character.integrity import (
+            check_character_data_integrity,
+            log_integrity_report,
+        )
+
+        try:
+            report = await check_character_data_integrity(
+                enabled=bool(self.character_profiles),
+                session_repo=getattr(self, "_session_repo", None),
+                message_repo=getattr(self, "_message_repo", None),
+            )
+        except Exception:
+            # check_character_data_integrity 自身已兜底；此处是最后一道防线
+            logger.debug("多角色数据完整性自检异常（忽略）", exc_info=True)
+            return
+        self._character_integrity_report = report
+        log_integrity_report(report)
 
     async def _start_attachment_gc(self) -> None:
         """启动附件 GC 兜底扫描（批次 7 Task 7，置于 attachment_repo 建连步骤后）。

@@ -23,6 +23,21 @@ COLLECTION = "sessions"
 AUTO_TITLE_MAX_LEN = 20
 """自动标题最大长度（首条 UserMessage 文本截取字符数）。"""
 
+INCOMPLETE_CHARACTER_BINDING_FILTER: dict = {
+    "$or": [
+        {"character_binding.character_id": {"$exists": False}},
+        {"character_binding.character_id": {"$in": [None, ""]}},
+        {"character_binding.instance_id": {"$exists": False}},
+        {"character_binding.instance_id": {"$in": [None, ""]}},
+    ],
+}
+"""character_binding 缺失/不完整的会话过滤条件（多角色数据完整性自检用）。
+
+覆盖三种缺口：键不存在（`$exists: False` 对 `{}` 空对象同样命中——点号路径不存在）、
+值为 null、值为空串。`character_profiles=true` 时前端以「每条会话都带角色绑定」为
+前提 fail-closed（整页拒绝），故启动期需能统计这类记录。
+"""
+
 
 def _derive_title(messages: Sequence[Message]) -> str:
     """从首条 UserMessage 的文本内容派生自动标题（前 20 字符）。
@@ -367,3 +382,21 @@ class SessionRepository(Repository):
         result = await self._db.delete_many(COLLECTION, {})
         logger.warning("SessionRepository clear_all: deleted=%d sessions", result)
         return result
+
+    async def count_incomplete_character_binding(self) -> int:
+        """统计 character_binding 缺失/不完整的会话数（多角色完整性自检）。
+
+        数据库侧 count，不拉取文档。用于启动期自检告警：`character_profiles=true`
+        时这类记录会让前端对会话列表整页拒绝。
+
+        Returns:
+            命中的会话数。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（区分「0 条缺口」与「未扫描」——
+                调用方据此标记自检未执行，而非误报数据健康）。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），无法执行角色绑定完整性自检")
+        return await self._db.count(COLLECTION, INCOMPLETE_CHARACTER_BINDING_FILTER)

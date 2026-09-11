@@ -65,6 +65,71 @@ class TestStartupSteps:
         names = [name for name, _ in AgentLifecycle._STARTUP_STEPS]
         assert names.index("service_state") < names.index("tts")
 
+    def test_character_integrity_step_registered(self):
+        """P3：多角色数据完整性自检是启动步骤（把故障提前到启动日志）。"""
+        names = [name for name, _ in AgentLifecycle._STARTUP_STEPS]
+        assert "character_integrity" in names
+
+
+class TestCharacterIntegrityStartupStep:
+    """_check_character_data_integrity 启动步骤：只读、不阻塞、结果挂 agent。"""
+
+    @pytest.mark.asyncio
+    async def test_records_report_and_warns_on_gaps(self, caplog):
+        """发现缺口 → 显著告警 + 报告挂到 agent（供排查）。"""
+        import logging
+
+        from core.agent._lifecycle_persistence import _LifecyclePersistence
+
+        class _Repo:
+            def __init__(self, value):
+                self._value = value
+
+            async def count_incomplete_character_binding(self):
+                return self._value
+
+            async def count_assistant_without_character(self):
+                return self._value
+
+        class _Agent(_LifecyclePersistence):
+            character_profiles = True
+
+        agent = _Agent()
+        agent._session_repo = _Repo(50)   # noqa: SLF001
+        agent._message_repo = _Repo(14)   # noqa: SLF001
+
+        with caplog.at_level(logging.WARNING):
+            await agent._check_character_data_integrity()  # noqa: SLF001
+
+        report = agent._character_integrity_report  # noqa: SLF001
+        assert report.scanned is True
+        assert report.sessions_missing_binding == 50
+        assert report.assistant_messages_missing_character == 14
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    @pytest.mark.asyncio
+    async def test_storage_failure_does_not_break_startup(self):
+        """存储不可用 → 未扫描，且启动步骤不抛异常。"""
+        from core.agent._lifecycle_persistence import _LifecyclePersistence
+
+        class _DownRepo:
+            async def count_incomplete_character_binding(self):
+                raise RuntimeError("mongo down")
+
+            async def count_assistant_without_character(self):
+                raise RuntimeError("mongo down")
+
+        class _Agent(_LifecyclePersistence):
+            character_profiles = True
+
+        agent = _Agent()
+        agent._session_repo = _DownRepo()   # noqa: SLF001
+        agent._message_repo = _DownRepo()   # noqa: SLF001
+
+        await agent._check_character_data_integrity()  # noqa: SLF001
+
+        assert agent._character_integrity_report.scanned is False  # noqa: SLF001
+
 
 class TestApplyServiceState:
     """_apply_service_state 启动步骤：读 ServiceState → 设模式槽位 → LLM 应用。"""

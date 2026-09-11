@@ -84,6 +84,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("task_system",      "_start_task_system"),
         ("mailbox_polling",  "_start_mailbox_polling"),
         ("db_health",        "_start_db_health"),
+        ("character_integrity", "_check_character_data_integrity"),
         ("attachment_repo",  "_start_attachment_repo"),
         ("attachment_gc",    "_start_attachment_gc"),
     ]
