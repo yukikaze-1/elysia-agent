@@ -294,3 +294,59 @@ class TestToolSessionRebind:
             assert "describe_image" in [t["function"]["name"] for t in tool_defs2]
         finally:
             await loop._output.close()
+
+
+async def _drain_archive(session: SessionMemory) -> None:
+    """等待会话 fire-and-forget 归档 task 落库。"""
+    tasks = [t for t in session._archive_tasks if not t.done()]  # noqa: SLF001
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+class TestWriteGuardNoFalsePositive:
+    """端到端组合验证（P3-1 + P3-3）：真实工具回合归档全部带角色戳，且兜底不误报。
+
+    这条链路只有组合起来才成立：工具轮归档点补 character（P3-1）→ 兜底开关打开
+    （P3-3）→ 真实回合并**不**产生告警。若日后有人再摘掉某个归档点的 character，
+    本用例会红（兜底告警会被 caplog 捕获），而单点单测不会。
+    """
+
+    @pytest.mark.asyncio
+    async def test_real_tool_turn_stamps_every_assistant_and_no_warning(
+        self, tmp_path, monkeypatch, caplog,
+    ):
+        import logging
+
+        from core.storage.message_repo import COLLECTION as MSG_COLLECTION
+        from core.storage.message_repo import MessageRepository
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+        fake = FakeDocumentDBBackend()
+        repo = MessageRepository(db=fake, require_assistant_character=True)
+        session_a = SessionMemory(session_id="A", msg_repo=repo)
+        session_b = SessionMemory(session_id="B")
+        loop, ws, adapter, vision = await _build_loop(
+            session_a, session_b, tmp_path, monkeypatch)
+        try:
+            with caplog.at_level(logging.WARNING):
+                await loop.process("这张图里有什么？", content=_IMG_CONTENT_A,
+                                   conversation_id="A", protocol_version=2)
+                await _await_pending(loop)
+                await _drain_archive(session_a)
+
+            archived = await fake.find(MSG_COLLECTION, {})
+            assistant = [d for d in archived if d.get("role") == "assistant"]
+            assert len(assistant) >= 2, (
+                f"工具回合应归档工具轮 + 终轮共 ≥2 条 assistant，实得 {len(assistant)}")
+            missing = [d.get("message_id") for d in assistant if not d.get("character")]
+            assert not missing, f"这些归档 assistant 缺角色快照: {missing}"
+
+            guard_warnings = [
+                r.getMessage() for r in caplog.records
+                if "角色完整性告警" in r.getMessage()
+            ]
+            assert not guard_warnings, (
+                f"正常工具回合不应触发写入期兜底告警（说明有归档点漏传 character）: "
+                f"{guard_warnings}")
+        finally:
+            await loop._output.close()

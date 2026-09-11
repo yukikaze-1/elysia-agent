@@ -144,6 +144,19 @@ class TestPurgeMessagePublic:
         assert callable(agent.purge_message_from_session)
 
 
+class TestCharacterWriteGuardWiring:
+    """P3-3：生产 Agent 必须真的把写入期兜底打开（防「功能有实现但没接线」）。
+
+    P1-6 的教训：单测注入 mock 时全绿、生产依赖却缺方法。此处直接断言 Agent 实际构造
+    的两个 repo 上该开关为 True，且与 character_profiles 能力一致。
+    """
+
+    def test_both_repos_enable_guard(self, agent):
+        assert agent.character_profiles is True, "前提：本批能力恒真"
+        assert agent.session_repo._require_assistant_character is True  # noqa: SLF001
+        assert agent.message_repo._require_assistant_character is True  # noqa: SLF001
+
+
 class TestSttPublicInterface:
     @pytest.mark.unit
     @pytest.mark.asyncio

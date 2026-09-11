@@ -152,13 +152,18 @@ class Agent(AgentLifecycle, AgentServer):
 
         # ---- Storage Repositories ----
         db_cfg = config.database
+        # P3-3：写入期角色完整性兜底随能力开关开启——character_profiles=true 时
+        # assistant 消息缺角色快照会在两个落库边界发显著告警（而非静默落库）。
+        _require_char = self.character_profiles
         self._session_repo = SessionRepository(
             database_name=db_cfg.db_name,
             base_url=db_cfg.mongodb_uri,
+            require_assistant_character=_require_char,
         )
         self._message_repo = MessageRepository(
             database_name=db_cfg.db_name,
             base_url=db_cfg.mongodb_uri,
+            require_assistant_character=_require_char,
         )
         self._token_repo = TokenRepository(
             database_name=db_cfg.db_name,

@@ -16,6 +16,10 @@ from core.schema.service_state import ServiceState
 from core.schema.types import IsoTimestamp, SessionId
 
 from core.storage.base import Repository, StorageUnavailableError
+from core.storage.character_write_guard import (
+    count_assistant_without_character,
+    warn_missing_character_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 COLLECTION = "sessions"
@@ -76,18 +80,23 @@ class SessionRepository(Repository):
 
     def __init__(self, db: DocumentDBBackend | None = None, *,
                  database_name: str = "default",
-                 base_url: str | None = None):
+                 base_url: str | None = None,
+                 require_assistant_character: bool = False):
         """初始化会话存储。
 
         Args:
             db: 可选的文档数据库后端，为 None 时需调用 connect() 建立连接。
             database_name: MongoDB 数据库名称，默认 "default"。
             base_url: MongoDB 连接串，为 None 时从 MONGODB_URI 环境变量读取。
+            require_assistant_character: `character_profiles` 能力开启时置 True——
+                save() 落库内嵌 assistant 消息若缺角色身份快照，发显著告警（仍写入，
+                见 core/storage/character_write_guard.py 的设计取舍）。
         """
         self._db: DocumentDBBackend | None = db
         self._database_name = database_name
         self._base_url = base_url
         self._injected_db = db is not None
+        self._require_assistant_character = require_assistant_character
 
     async def connect(self) -> bool:
         """建立 MongoDB 连接并创建索引（sessions 无 Mongo TTL——删除走显式级联删除）。
@@ -149,6 +158,13 @@ class SessionRepository(Repository):
             raise StorageUnavailableError(
                 "SessionRepository 未连接（MongoDB 不可用），session 未持久化")
         db = self._db
+        # P3-3 写入期兜底：内嵌 assistant 缺角色快照 → 显著告警（仍写入；见 guard 模块）。
+        if self._require_assistant_character:
+            missing = count_assistant_without_character(messages)
+            if missing:
+                warn_missing_character_snapshot(
+                    collection=COLLECTION, session_id=str(session_id),
+                    missing=missing, total=len(messages))
         serialized = [m.model_dump(mode="json") for m in messages]
         doc = {
             "session_id": session_id,

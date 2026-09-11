@@ -10,6 +10,10 @@ from bson import ObjectId
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
 from core.storage.base import Repository, StorageUnavailableError
+from core.storage.character_write_guard import (
+    is_assistant_without_character,
+    warn_missing_character_snapshot,
+)
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.types import MessageId, SessionId
 from core.schema.message import Message, MessageRole
@@ -159,18 +163,23 @@ class MessageRepository(Repository):
 
     def __init__(self, db: DocumentDBBackend | None = None, *,
                  database_name: str = "default",
-                 base_url: str | None = None):
+                 base_url: str | None = None,
+                 require_assistant_character: bool = False):
         """初始化消息归档存储。
 
         Args:
             db: 可选的文档数据库后端，为 None 时需调用 connect() 建立连接。
             database_name: MongoDB 数据库名称，默认 "default"。
             base_url: MongoDB 连接串，为 None 时从 MONGODB_URI 环境变量读取。
+            require_assistant_character: `character_profiles` 能力开启时置 True——
+                append() 落库 assistant 消息若缺角色身份快照，发显著告警（仍写入，
+                见 core/storage/character_write_guard.py 的设计取舍）。
         """
         self._db: DocumentDBBackend | None = db
         self._database_name = database_name
         self._base_url = base_url
         self._injected_db = db is not None
+        self._require_assistant_character = require_assistant_character
 
     # ---- lifecycle ----
 
@@ -238,6 +247,11 @@ class MessageRepository(Repository):
             return
         doc = msg.model_dump(mode="json")
         doc["session_id"] = session_id
+        # P3-3 写入期兜底：assistant 缺角色快照 → 显著告警（仍写入；见 guard 模块）。
+        if self._require_assistant_character and is_assistant_without_character(msg):
+            warn_missing_character_snapshot(
+                collection=COLLECTION, session_id=str(session_id),
+                missing=1, total=1)
         await self._db.insert_one(COLLECTION, doc)
 
     async def query_by_session(self, session_id: SessionId, *,
