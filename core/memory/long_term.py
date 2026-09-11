@@ -180,7 +180,11 @@ class LongTermMemory:
 
         Args:
             max_entries: 最大条目数，超限时触发驱逐。
-            max_age_days: 最大保留天数（当前未使用，保留供后续实现）。
+            max_age_days: 最大保留天数。**当前有意不参与驱逐**——2026-07-28
+                ltm-eviction-fix 设计决策删除了年龄驱逐逻辑（cutoff 计算），仅保留
+                构造参数与 `MemoryConfig.ltm_max_age_days`（默认 90）以兼容既有调用点；
+                实际淘汰策略只有 `_evict_overflow()` 的数量上限。若日后要启用年龄
+                淘汰，须单独过 spec（会不可逆删除真实记忆）。
             embed_timeout: 嵌入后端加载超时（秒）。
             enable_eviction: 是否启用数量上限驱逐。
             repo: MemoryRepository 实例，用于 Milvus 操作。如果为 None，在 connect() 时自动创建。

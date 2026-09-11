@@ -530,3 +530,63 @@ class TestEmbeddingProviderForwardsDimensions:
 
         provider = EmbeddingProvider(embed_timeout=10.0)
         assert provider._openai_create_kwargs() == {}  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# P2-4：max_age_days 有意不参与驱逐
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestMaxAgeDaysDeliberatelyInert:
+    """固化 2026-07-28 设计决策：年龄驱逐已删除，仅数量上限生效。
+
+    设计稿明确「删除年龄驱逐（cutoff + _max_age_days）全部逻辑；max_age_days 参数
+    保留在构造函数和 config 中，但不参与驱逐逻辑」。若有人重新引入年龄淘汰，本用例
+    会失败——届时须先过 spec（年龄淘汰会不可逆删除真实记忆）。
+    """
+
+    @staticmethod
+    def _entry(mid: str, ts: float) -> MemoryEntry:
+        return MemoryEntry(
+            id=MemoryId(mid),
+            text="t",
+            memory_type=MemoryType("Note"),
+            poignancy=5,
+            timestamp=ts,
+            user_id="usr_local_default",
+            character_instance_id="chi_builtin_elysia",
+        )
+
+    @pytest.mark.asyncio
+    async def test_old_entries_survive_when_under_count_limit(self):
+        """远超 max_age_days 的旧条目，只要未超数量上限就保留。"""
+        import time
+
+        ltm = LongTermMemory(max_entries=100, max_age_days=1)
+        ltm._entries.append(self._entry("mem_old", time.time() - 30 * 86400))  # noqa: SLF001
+
+        removed = await ltm._evict_overflow()  # noqa: SLF001
+
+        assert removed == 0
+        assert ltm._get_by_id(MemoryId("mem_old")) is not None  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_count_limit_is_the_only_eviction_trigger(self):
+        """驱逐唯一依据是数量：超限时淘汰最旧者，与是否「超龄」无关。"""
+        import time
+
+        ltm = LongTermMemory(max_entries=2, max_age_days=1)
+        now = time.time()
+        for mid, ts in [
+            ("mem_newest", now),
+            ("mem_older", now - 10 * 86400),
+            ("mem_oldest", now - 30 * 86400),
+        ]:
+            ltm._entries.append(self._entry(mid, ts))  # noqa: SLF001
+
+        removed = await ltm._evict_overflow()  # noqa: SLF001
+
+        assert removed == 1
+        assert ltm._get_by_id(MemoryId("mem_oldest")) is None  # noqa: SLF001
+        assert ltm._get_by_id(MemoryId("mem_older")) is not None  # noqa: SLF001
+        assert ltm._get_by_id(MemoryId("mem_newest")) is not None  # noqa: SLF001
