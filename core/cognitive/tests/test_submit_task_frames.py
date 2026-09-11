@@ -26,7 +26,7 @@ from core.schema.types import ToolCallId
 from Module.output import OutputManager
 from Module.output.protocol import ChannelCapability, OutputChannel
 from Module.tool.protocol import ToolResult
-from Module.tool.safety import _safe_arg_summary
+from Module.tool.safety import summarize_tool_arguments
 
 
 class _RecordingOutput:
@@ -176,7 +176,7 @@ class TestSubmitTaskFrames:
         assert st["runtime"] == "backend"
         assert st["v1_suppress"] is True           # v1 帧集恒 {tool_done} 的关键
         assert st["v1_args"] == {}                  # submit_task 无旧 action{tool_executing}
-        assert st["input_summary"] == _safe_arg_summary({"intent": "帮我搜索天气"})
+        assert st["input_summary"] == summarize_tool_arguments({"intent": "帮我搜索天气"})
         assert st["generation_id"] == "gen_1"
         assert st["conversation_id"] == "sess_1"    # 调用点透传（B-6-04 关键）
 

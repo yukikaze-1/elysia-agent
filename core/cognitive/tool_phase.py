@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Callable
 
 from Module.tool.protocol import ToolResult
-from Module.tool.safety import _safe_arg_summary
+from Module.tool.safety import summarize_tool_arguments
 from Module.workflow_contract import WorkflowId
 from core.adapter.tool_call_parser import normalize_tool_calls
 from core.cognitive.tools import CognitiveTools
@@ -133,7 +133,7 @@ class CognitiveToolPhase(CognitiveTools):
             parsed = tc.function.parsed if isinstance(tc.function.parsed, dict) else {}
             await self._output.tool_started(
                 call_id=tc.id, tool_name="submit_task", runtime="backend",
-                v1_args={}, input_summary=_safe_arg_summary(parsed),
+                v1_args={}, input_summary=summarize_tool_arguments(parsed),
                 v1_suppress=True,   # submit_task v1 从未发 tool_executing，帧集不变
                 generation_id=(self._generation_ctx.generation_id
                                if self._generation_ctx is not None else None),
@@ -207,7 +207,7 @@ class CognitiveToolPhase(CognitiveTools):
                 runtime=(self._tool_adapter.runtime_for(func_name)
                          if self._tool_adapter is not None else "backend"),
                 v1_args={k: str(v) for k, v in args.items()},
-                input_summary=_safe_arg_summary(args),
+                input_summary=summarize_tool_arguments(args),
                 generation_id=(self._generation_ctx.generation_id
                                if self._generation_ctx is not None else None),
                 conversation_id=conversation_id,

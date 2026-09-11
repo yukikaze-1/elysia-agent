@@ -68,14 +68,38 @@ def test_repository_has_no_real_eager_cycle():
     assert r4 == [], f"出现 eager 环: {r4}"
 
 
-def test_allowlist_entries_are_all_real():
-    """allowlist 不得含失效项——文件/符号改名后必须同步，否则豁免会静默过期。"""
-    proc = subprocess.run(
-        [sys.executable, str(SCRIPT), "--list"], cwd=str(ROOT),
-        capture_output=True, text=True, timeout=180,
+def test_allowlist_has_no_stale_entries():
+    """allowlist 不得含**失效**条目——符号改名/收口后必须同步删除。
+
+    失效条目会让门禁「看起来很严」，实际豁免了一个已不存在的违规——
+    比没有豁免更危险（掩盖真实回归）。
+
+    判定按**声明 key 是否真的被命中**，而非比较条目数：一条
+    `_MODULE_TO_CORE_ALLOWLIST` 条目可按文件豁免多处（bench.py 同时依赖
+    core.config 与 core.agent），条目数与命中数本就不等。
+    """
+    from scripts.check_architecture import (
+        _MODULE_TO_CORE_ALLOWLIST,
+        _PRIVATE_SYMBOL_ALLOWLIST,
+        check_repository,
     )
-    accepted = [ln for ln in proc.stdout.splitlines() if "✔ 已豁免" in ln]
-    assert len(accepted) >= 10, f"存量豁免项异常偏少（allowlist 可能已失效）:\n{proc.stdout}"
+
+    accepted = [v for v in check_repository(ROOT) if v.accepted]
+    locations = "\n".join(v.location for v in accepted)
+
+    stale_module = [path for path in _MODULE_TO_CORE_ALLOWLIST if path not in locations]
+    stale_symbol = [
+        f"{mod}.{sym}"
+        for (mod, sym) in _PRIVATE_SYMBOL_ALLOWLIST
+        if f"{mod}.{sym}" not in locations
+    ]
+
+    assert not stale_module, (
+        f"以下 Module→core 豁免条目已失效（违规已不存在，请删除）：{stale_module}"
+    )
+    assert not stale_symbol, (
+        f"以下私有符号豁免条目已失效（符号已公开或改名，请删除）：{stale_symbol}"
+    )
 
 
 # ---------------------------------------------------------------- R1 依赖方向

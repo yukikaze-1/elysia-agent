@@ -14,7 +14,7 @@ import pytest
 from core.config.character_config import CharacterConfig
 from core.memory.session import SessionMemory
 from core.personality.engine import C1Data, C6Data, C9Data
-from Module.system_prompt.sections.speaking_style import _C6_L1_DEFAULT
+from Module.system_prompt.sections.speaking_style import C6_L1_DEFAULT
 
 
 # ReservedColdCharacter 的基准人格文本——不含任何 Elysia 词汇
@@ -70,12 +70,12 @@ def mock_session() -> SessionMemory:
 
 @pytest.fixture
 def elysia_config() -> CharacterConfig:
-    """构造 Elysia 正角色 CharacterConfig（speaking_style 复用 _C6_L1_DEFAULT）。"""
+    """构造 Elysia 正角色 CharacterConfig（speaking_style 复用 C6_L1_DEFAULT）。"""
     return CharacterConfig(
         name="Elysia",
         base_personality=Path("character/elysia/personality.md").read_text("utf-8").strip(),
         personality={
-            "speaking_style": _C6_L1_DEFAULT,
+            "speaking_style": C6_L1_DEFAULT,
         },
     )
 

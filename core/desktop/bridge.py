@@ -51,7 +51,7 @@ from core.storage.desktop_call_repo import (
     STATUS_PENDING,
     STATUS_REJECTED,
     STATUS_SUCCEEDED,
-    _ACTIVE_STATES,
+    is_active_desktop_call_state,
     DesktopCallRepository,
 )
 from frontend_contract.ws_message import ToolRequestMessage, ToolStatusMessage, ToolStatusEnum
@@ -199,7 +199,7 @@ class DesktopToolBridge:
                 existing = await self._repo.get(existing_id)
                 reuse_future = self._pending.get(existing_id)
                 if (existing is not None
-                        and existing.get("status") in _ACTIVE_STATES
+                        and is_active_desktop_call_state(existing.get("status"))
                         and reuse_future is not None):
                     # 复用原 future（锁内 await——同参并发串行化为一次投递）
                     result = await self._await_with_timeout(reuse_future)

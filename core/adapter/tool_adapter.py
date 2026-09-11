@@ -245,3 +245,92 @@ class ToolAdapter:
         """
         runtime = self._manager.runtime_of(tool_name)
         return runtime if runtime in ("backend", "desktop", "local_worker") else "backend"
+
+    # ---- 管理门面（批次 A / ARCH-INC-P2-04）----
+    #
+    # 背景：输入层与 debug 层此前**直接穿透** `ToolAdapter._manager`（9 处私有访问），
+    # 读 `_plugins` / `_build_param_summary` / `plugin_list` 等内部结构。评估
+    # ARCH-INC-P2-04 的处置是「先补门面，内部拆分暂缓」——本段即该门面：
+    # 下游只依赖这些方法，`ToolManager` 内部怎么拆都不再影响调用方。
+    #
+    # 门面**不做转发之外的加工**，以保证行为逐字节不变（评估 §5 批次 A 第 5 条：
+    # 不改变任何 wire 或运行时行为）。
+
+    @property
+    def plugin_list(self) -> list[dict]:
+        """工具面板列表（含 runtime/version/risk_level/available 等派生字段）。"""
+        return self._manager.plugin_list
+
+    @property
+    def executing_now(self) -> list[str]:
+        """当前正在执行的工具名列表。"""
+        return self._manager.executing_now
+
+    @property
+    def history(self) -> list[dict]:
+        """工具执行历史（最近若干条，含 success/error/duration_ms）。"""
+        return self._manager.history
+
+    @property
+    def capability_status(self) -> dict[str, bool]:
+        """工具能力声明汇总（能力名 → 是否有插件声明）。"""
+        return self._manager.capability_status
+
+    def registry_metadata(self, *, desktop_available: bool = False) -> list[Any]:
+        """完整注册表元数据（BE-042）。
+
+        Args:
+            desktop_available: desktop 运行时是否可用；false 时 desktop 工具仍列出
+                但 available=false。
+
+        Returns:
+            ToolMetadata 列表。
+        """
+        return self._manager.registry_metadata(desktop_available=desktop_available)
+
+    def set_desktop_available(self, available: bool) -> None:
+        """同步 desktop 运行时可用性（bridge 连接/断开时调用）。
+
+        Args:
+            available: desktop 客户端是否已连接可执行。
+        """
+        self._manager.set_desktop_available(available)
+
+    def get_pending_approvals(self) -> list[tuple[str, str, dict]]:
+        """待审批请求列表（WS 重连时重新广播用）。
+
+        Returns:
+            [(request_id, tool_name, params), ...]。
+        """
+        return self._manager.get_pending_approvals()
+
+    async def reload_plugin(self, name: str) -> tuple[bool, str]:
+        """热重载单个工具插件（原子替换 + 失败回滚）。
+
+        Args:
+            name: 要重载的工具名。
+
+        Returns:
+            (ok, reason)；ok=False 时 reason 为失败原因。
+        """
+        return await self._manager.reload_plugin(name)
+
+    def build_approval_payload(
+        self, request_id: str, tool_name: str, params: dict, *, enrich: bool = False,
+    ) -> dict[str, Any]:
+        """构造待审批请求的 wire payload（v1 基础 / v2 富化）。
+
+        payload 形状属于工具子系统，故不下放给传输层拼装；详见
+        `ToolManager.build_approval_payload`。
+
+        Args:
+            request_id: 审批请求 ID。
+            tool_name: 工具名。
+            params: 工具原始参数。
+            enrich: True 时附 v2 富化字段。
+
+        Returns:
+            可直接作为 `command="tool_approval"` 的 params 送出的 dict。
+        """
+        return self._manager.build_approval_payload(
+            request_id, tool_name, params, enrich=enrich)

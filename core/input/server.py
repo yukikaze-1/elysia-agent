@@ -175,7 +175,7 @@ def _register_management_routes(
             msg = "需要认证" if code == "AUTH_REQUIRED" else "认证失败"
             return _protocol_error_response(code, msg, 401)
         return web.json_response({
-            "plugins": agent.tool_adapter._manager.plugin_list,  # noqa: SLF001
+            "plugins": agent.tool_adapter.plugin_list,
         })
     app.router.add_get("/tools", tools_handler)
 
@@ -194,7 +194,7 @@ def _register_management_routes(
             return web.json_response({"ok": False, "error": "无效的请求体"}, status=400)
         if not name:
             return web.json_response({"ok": False, "error": "缺少插件名称"}, status=400)
-        ok, reason = await agent.tool_adapter._manager.reload_plugin(name)  # noqa: SLF001
+        ok, reason = await agent.tool_adapter.reload_plugin(name)
         if ok:
             return web.json_response({"ok": True, "name": name})
         return web.json_response({"ok": False, "name": name, "error": reason})

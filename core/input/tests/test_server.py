@@ -1155,11 +1155,13 @@ class TestToolEndpoints:
         agent.status.current_name.return_value = "idle"
         agent.output = MagicMock()
         agent.bus = MagicMock()
-        agent.tool_adapter._manager.plugin_list = [
+        # 批次 A（ARCH-INC-P2-04）：输入层改走 ToolAdapter 公开门面，不再穿透
+        # `_manager`——fixture 随之内移到门面这一层（stub 生产真实调用路径）。
+        agent.tool_adapter.plugin_list = [
             {"name": "web_search", "description": "搜索网页", "capabilities": ["network"], "safety": {}, "active": True},
             {"name": "read_file", "description": "读取文件", "capabilities": ["filesystem_read"], "safety": {}, "active": True},
         ]
-        agent.tool_adapter._manager.reload_plugin = AsyncMock(return_value=(True, ""))
+        agent.tool_adapter.reload_plugin = AsyncMock(return_value=(True, ""))
         return create_app(agent, serve_static=False)
 
     @pytest.mark.asyncio
@@ -1199,7 +1201,7 @@ class TestToolEndpoints:
 
     @pytest.mark.asyncio
     async def test_reload_plugin_failure(self, app, aiohttp_client):
-        app["agent"].tool_adapter._manager.reload_plugin = AsyncMock(return_value=(False, "some reason"))
+        app["agent"].tool_adapter.reload_plugin = AsyncMock(return_value=(False, "some reason"))
         client = await aiohttp_client(app)
         resp = await client.post("/tools/reload", json={"name": "unknown"})
         assert resp.status == 200

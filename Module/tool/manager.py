@@ -568,6 +568,46 @@ class ToolManager:
             }
         return summary
 
+    def build_approval_payload(
+        self, request_id: str, tool_name: str, params: dict, *, enrich: bool = False,
+    ) -> dict[str, Any]:
+        """构造待审批请求的 wire payload（ARCH-INC-P2-04 门面）。
+
+        v1 与 v2 的差异本就是「同一 payload 的富化程度」，不是两条业务逻辑——
+        此前该分支散在 `core/input/ws_handler.py`，由传输层直接读 `manager._plugins`
+        与 `manager._build_param_summary` 拼装（`# noqa: SLF001`）。payload 形状属于
+        工具子系统，故下沉至此：传输层只负责发送。
+
+        Args:
+            request_id: 审批请求 ID。
+            tool_name: 工具名。
+            params: 工具原始参数。
+            enrich: True 时附 v2 富化字段（summary/runtime/version/riskLevel/
+                permissionRequired/approvalAuthority）；插件未注册时退化为基础形状。
+
+        Returns:
+            可直接作为 `command="tool_approval"` 的 params 送出的 dict；形状与迁移前
+            逐字段一致（base 的 `str(params)[:200]` 兼容字段保留）。
+        """
+        base: dict[str, Any] = {
+            "tool": tool_name,
+            "params": str(params)[:200],
+            "request_id": request_id,
+        }
+        if not enrich:
+            return base
+        plugin = self._plugins.get(tool_name)
+        if plugin is None:
+            return base
+        enriched: dict[str, Any] = dict(base)
+        enriched["summary"] = self._build_param_summary(params)
+        enriched["runtime"] = plugin.runtime
+        enriched["version"] = plugin.version
+        enriched["riskLevel"] = plugin.risk_level
+        enriched["permissionRequired"] = plugin.permission_required
+        enriched["approvalAuthority"] = plugin.approval_authority
+        return enriched
+
     async def reload_plugin(self, name: str) -> tuple[bool, str]:
         """热重载单个插件——原子替换注册表 + 失败回滚（E1/P2-06）。
 

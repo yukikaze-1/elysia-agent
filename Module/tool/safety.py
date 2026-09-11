@@ -120,7 +120,7 @@ _REDACTED_KEYS = frozenset(
 _SAFE_STRING_KEYS: frozenset[str] = frozenset()
 
 
-def _safe_arg_summary(raw_params: dict, max_len: int = 60) -> str:
+def summarize_tool_arguments(raw_params: dict, max_len: int = 60) -> str:
     """工具参数的安全日志摘要（D4/P1-17）。
 
     默认只记录 key + 值类型/长度，不记录原值；敏感字段（token/key/password/
@@ -409,7 +409,7 @@ class SafetyPipeline:
         start = asyncio.get_event_loop().time()
         self._stats["total"] += 1
 
-        logger.info("工具开始: %s(%s)", name, _safe_arg_summary(raw_params))
+        logger.info("工具开始: %s(%s)", name, summarize_tool_arguments(raw_params))
 
         # 统一日志 + 返回
         def _finish(result: Any):

@@ -12,7 +12,7 @@
 - 队列满（mock process_message=False）→ rejected QUEUE_FULL + 幂等 entry reject 持久化 + refs 不递增
 - 同 clientRequestId 不同附件 → 摘要不同 → 非幂等重放（§4.2 异摘要 → rejected）
 - 删除消息 → refs 递减 + ref_count 归零 → mark_deleted + resolver unregister
-- _resolve_image_source：/api/attachments/{id} → data URI（resolver 注册后）
+- resolve_image_source：/api/attachments/{id} → data URI（resolver 注册后）
 - 资源索引：sticker 不再恒空；软删附件被过滤
 """
 
@@ -636,8 +636,8 @@ class TestAttachmentMessage:
 class TestResolveImageSource:
     @pytest.mark.asyncio
     async def test_attachment_src_resolves_to_data_uri(self, tmp_path, monkeypatch):
-        """_resolve_image_source('/api/attachments/att_x') → data URI（resolver 注册后）。"""
-        from core.schema.adapters.message_adapter import _resolve_image_source
+        """resolve_image_source('/api/attachments/att_x') → data URI（resolver 注册后）。"""
+        from core.schema.adapters.message_adapter import resolve_image_source
 
         monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS", str(tmp_path / "uploads"))
         img_dir = tmp_path / "uploads" / "image"
@@ -645,10 +645,10 @@ class TestResolveImageSource:
         (img_dir / "att_x.png").write_bytes(PNG)
         _ar.register("att_x", "image", "att_x.png")
         try:
-            uri = _resolve_image_source("/api/attachments/att_x")
+            uri = resolve_image_source("/api/attachments/att_x")
             assert uri.startswith("data:image/png;base64,")
             # 未注册的 attachment → 原样返回
-            assert _resolve_image_source("/api/attachments/att_missing") == \
+            assert resolve_image_source("/api/attachments/att_missing") == \
                 "/api/attachments/att_missing"
         finally:
             _ar.unregister("att_x")

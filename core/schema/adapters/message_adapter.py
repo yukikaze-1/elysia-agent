@@ -8,9 +8,7 @@
 用 parts_from_dicts() 在边界处转为 list[Part]，内部逻辑只处理 Part。
 """
 
-import base64 as _base64
 import re as _re
-from pathlib import Path as _Path
 from typing import Annotated, Any, Union
 
 from pydantic import Discriminator, Tag, TypeAdapter, ValidationError
@@ -154,73 +152,8 @@ def has_audio(parts: list[Part]) -> bool:
 
 # ── OpenAI 格式转换 ────────────────────────────────────
 
-from paths import ProjectPath as _ProjectPath
-
-_IMAGES_DIR = _ProjectPath.DATA_UPLOADS_IMAGES.resolve()
-_STATIC_DIR = _ProjectPath.STATIC.resolve()
-
-# 附件稳定路径 /api/attachments/{attachment_id}（批次 7 消息关联 wire 格式）
-_ATTACHMENT_SRC_RE = _re.compile(r"^/api/attachments/([^/]+)$")
-
-
-def _to_data_uri(path: _Path) -> str:
-    """读取本地文件，编码为 data URI。
-
-    Args:
-        path: 本地图片文件路径。
-
-    Returns:
-        base64 编码后的 data URI 字符串。
-    """
-    data = path.read_bytes()
-    ext = path.suffix.lower()
-    mime_map = {
-        ".png": ImageMime.PNG, ".jpg": ImageMime.JPEG, ".jpeg": ImageMime.JPEG,
-        ".gif": ImageMime.GIF, ".webp": ImageMime.WEBP,
-    }
-    mime = mime_map.get(ext, ImageMime.PNG)
-    b64 = _base64.b64encode(data).decode("ascii")
-    return f"data:{mime};base64,{b64}"
-
-
-def _resolve_image_source(src: str) -> str:
-    """将本地 src 转为 base64 data URI，远程 URL 原样返回。
-
-    Args:
-        src: 图片源路径或 URL。
-
-    Returns:
-        如果是本地文件则返回 base64 data URI，否则原样返回。
-    """
-    if src.startswith("data:"):
-        return src
-    # 批次 7：附件稳定路径 → AttachmentFileResolver 定位落盘文件 → data URI
-    m = _ATTACHMENT_SRC_RE.match(src)
-    if m:
-        local_path = _attachment_resolver.resolve(m.group(1))
-        if local_path is not None and local_path.is_file():
-            return _to_data_uri(local_path)
-        return src
-    if src.startswith("http://") or src.startswith("https://"):
-        if "://localhost" in src or "://127.0.0.1" in src:
-            filename = src.rsplit("/", 1)[-1]
-            for search_dir in (_IMAGES_DIR, _STATIC_DIR):
-                local_path = search_dir / filename
-                if local_path.exists():
-                    return _to_data_uri(local_path)
-        return src
-    if src.startswith("/"):
-        filename = src.rsplit("/", 1)[-1]
-        if filename:
-            for search_dir in (_IMAGES_DIR, _STATIC_DIR):
-                local_path = search_dir / filename
-                if local_path.exists():
-                    return _to_data_uri(local_path)
-        return src
-    local_path = _Path(src)
-    if local_path.exists():
-        return _to_data_uri(local_path)
-    return src
+# 图片源解析已提取为独立模块（批次 A「配套 API 收口」；理由见该模块 docstring）
+from core.schema.adapters.image_source import resolve_image_source
 
 
 def content_to_openai(parts: list[Part]) -> str | list[dict]:
@@ -241,7 +174,7 @@ def content_to_openai(parts: list[Part]) -> str | list[dict]:
     text_blocks: list[dict] = []
     for p in parts:
         if isinstance(p, ImagePart):
-            source = _resolve_image_source(p.src)
+            source = resolve_image_source(p.src)
             image_blocks.append({
                 "type": "image_url",
                 "image_url": {

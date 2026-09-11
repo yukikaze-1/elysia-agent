@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 import pytest
 
 from core.storage.idempotency import (
-    _IN_PROGRESS_RETRY_AFTER_MS,
+    IN_PROGRESS_RETRY_AFTER_MS,
     IdempotencyEntry,
     StoreResult,
     configure_store,
@@ -1354,7 +1354,7 @@ class TestVoiceCommitOrder:
         assert acks and acks[-1]["status"] == "rejected", f"实际 {ws.sent}"
         assert acks[-1]["error"]["code"] == "IN_PROGRESS"
         assert acks[-1]["error"]["retryable"] is True
-        assert acks[-1]["error"]["retryAfterMs"] == _IN_PROGRESS_RETRY_AFTER_MS == 30000
+        assert acks[-1]["error"]["retryAfterMs"] == IN_PROGRESS_RETRY_AFTER_MS == 30000
         assert mgr.reserve_calls == 1 and mgr.release_calls == 1
         assert vmg.commit_calls == [], "loser 不消费录音"
 

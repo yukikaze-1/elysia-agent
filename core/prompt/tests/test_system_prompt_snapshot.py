@@ -14,7 +14,7 @@ from core.prompt.tests.conftest import (  # noqa: F401
     cold_config, cold_engine_mock, elysia_config, make_assembler,
     mock_long_term, mock_session, render_system_prompt,
 )
-from Module.system_prompt.sections.speaking_style import _C6_L1_DEFAULT
+from Module.system_prompt.sections.speaking_style import C6_L1_DEFAULT
 
 pytestmark = pytest.mark.service
 
@@ -86,10 +86,10 @@ async def test_elysia_snapshot_unchanged(elysia_config, cold_engine_mock, mock_l
 
 
 def test_elysia_config_speaking_style_matches_template():
-    """Elysia config.yaml 的 speaking_style 必须等于 _C6_L1_DEFAULT（L1 默认常量）。"""
+    """Elysia config.yaml 的 speaking_style 必须等于 C6_L1_DEFAULT（L1 默认常量）。"""
     from core.config.character_config import CharacterConfig
     cfg = CharacterConfig.from_yaml(Path("character/elysia/config.yaml"))
-    assert cfg.speaking_style == _C6_L1_DEFAULT
+    assert cfg.speaking_style == C6_L1_DEFAULT
 
 
 def test_elysia_templates_byte_identical():

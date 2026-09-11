@@ -1112,7 +1112,7 @@ class ToolStartedMessage(ContractModel):
     callId: str = Field(description="LLM tool_call_id（归档同值，前端权威键）")
     toolName: str = Field(description="工具名")
     runtime: ToolRuntime = Field(description="工具 Runtime")
-    inputSummary: Optional[str] = Field(default=None, description="服务端脱敏参数摘要（_safe_arg_summary），可缺省")
+    inputSummary: Optional[str] = Field(default=None, description="服务端脱敏参数摘要（summarize_tool_arguments），可缺省")
     generationId: Optional[str] = Field(default=None, description="生成实例 ID，可缺省")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，可缺省")
 

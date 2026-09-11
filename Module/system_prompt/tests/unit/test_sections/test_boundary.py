@@ -13,7 +13,7 @@ from Module.system_prompt.sections.personality import PersonalitySection
 from Module.system_prompt.sections.relationship import RelationshipSection
 from Module.system_prompt.sections.proactive import ProactiveSection
 from Module.system_prompt.sections.conflict_rules import ConflictRulesSection
-from Module.system_prompt.sections.speaking_style import SpeakingStyleSection, _C6_L1_DEFAULT
+from Module.system_prompt.sections.speaking_style import SpeakingStyleSection, C6_L1_DEFAULT
 from Module.system_prompt.sections.output_format import OutputFormatSection
 from Module.system_prompt.sections.tts_markup import TTSMarkupSection
 from core.memory.session import SessionMemory
@@ -263,7 +263,7 @@ def test_speaking_style_bare_construct_renders():
 
 
 def test_c6_way_b_renders_l1_default():
-    """方式 B：speaking_style=_C6_L1_DEFAULT 渲染 L1 默认（裸构造）。"""
+    """方式 B：speaking_style=C6_L1_DEFAULT 渲染 L1 默认（裸构造）。"""
     sec = SpeakingStyleSection(f"{_TEMPLATES}/c6_speaking_style.j2")   # 裸构造 → 回退常量
     result = asyncio.run(sec.render())
     assert "五模式切换" in result

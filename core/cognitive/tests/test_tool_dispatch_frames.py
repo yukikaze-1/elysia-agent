@@ -25,7 +25,7 @@ from core.schema.message import AssistantMessage
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
 from Module.tool.protocol import ErrorType, ToolResult, to_llm_name
-from Module.tool.safety import _safe_arg_summary
+from Module.tool.safety import summarize_tool_arguments
 
 
 class _RecordingOutput:
@@ -139,7 +139,7 @@ class TestToolDispatchFrames:
         assert st["runtime"] == "backend"
         # v1_args 与旧 action{tool_executing}.args 逐字节一致（{k: str(v)}）
         assert st["v1_args"] == {"tz": "UTC"}
-        assert st["input_summary"] == _safe_arg_summary({"tz": "UTC"})
+        assert st["input_summary"] == summarize_tool_arguments({"tz": "UTC"})
         assert st["input_summary"] == "tz=<str:3>"
         assert st["generation_id"] == "gen_1"
         assert st["conversation_id"] == "sess_1"

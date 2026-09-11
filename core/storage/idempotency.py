@@ -51,7 +51,7 @@ _DEFAULT_TTL_SECONDS = 3600.0
 # 语义：原请求大概率仍在途，客户端应在此退避后重试；Task 6 golden 帧同值单源。
 # GRACE_SECONDS 单源在 core.storage.idempotency_repo（本文件顶部 import）。
 # 本文件 CORE-MOD-P1-01 从 core/input 迁入，与 repo 同包复用。
-_IN_PROGRESS_RETRY_AFTER_MS = int(GRACE_SECONDS * 1000)
+IN_PROGRESS_RETRY_AFTER_MS = int(GRACE_SECONDS * 1000)
 
 
 @dataclass

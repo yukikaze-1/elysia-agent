@@ -34,7 +34,7 @@ from core.storage.base import StorageUnavailableError
 from core.storage.session_repo import (
     SessionRepository,
     SessionSummary,
-    _derive_title,
+    derive_session_title,
 )
 from core.storage.message_repo import MessageRepository
 from core.memory.session import SessionMemory
@@ -749,7 +749,7 @@ class SessionManager:
                 if summary is None:
                     summary = SessionSummary(
                         session_id=sid, message_count=len(session.messages),
-                        updated_at=now_iso(), title=_derive_title(session.messages),
+                        updated_at=now_iso(), title=derive_session_title(session.messages),
                         character_binding=normalize_character_binding(session.character_binding),
                     )
                     self._local_summaries[sid] = summary

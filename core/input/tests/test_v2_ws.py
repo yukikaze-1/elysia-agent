@@ -1495,7 +1495,7 @@ class TestV2IdempotencyStateMachine:
         """同键 CLAIMED 新鲜 → rejected IN_PROGRESS（retryable + retryAfterMs=30000）。"""
         import hashlib as _hl
         from core.storage.idempotency import (
-            _IN_PROGRESS_RETRY_AFTER_MS, IdempotencyEntry, get_store,
+            IN_PROGRESS_RETRY_AFTER_MS, IdempotencyEntry, get_store,
         )
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
@@ -1512,7 +1512,7 @@ class TestV2IdempotencyStateMachine:
         err = acks[-1]["error"]
         assert err["code"] == "IN_PROGRESS"
         assert err["retryable"] is True
-        assert err["retryAfterMs"] == _IN_PROGRESS_RETRY_AFTER_MS == 30000
+        assert err["retryAfterMs"] == IN_PROGRESS_RETRY_AFTER_MS == 30000
         assert agent.process_calls == 0, "新鲜 CLAIMED 命中不进入业务处理"
         # entry 保持 claimed（未接管、未 complete）
         entry = await store.lookup("default", "r1")

@@ -1171,7 +1171,7 @@ export interface ToolStartedMessage {
   toolName: string
   /** 工具 Runtime */
   runtime: ToolRuntime
-  /** 服务端脱敏参数摘要（_safe_arg_summary），可缺省 */
+  /** 服务端脱敏参数摘要（summarize_tool_arguments），可缺省 */
   inputSummary?: string
   /** 生成实例 ID，可缺省 */
   generationId?: string

@@ -16,7 +16,7 @@ from aiohttp import web
 from core.input._common import _find_channel, _send_ack
 from core.storage.idempotency import (
     GRACE_SECONDS,
-    _IN_PROGRESS_RETRY_AFTER_MS,
+    IN_PROGRESS_RETRY_AFTER_MS,
     IdempotencyEntry,
     get_store,
 )
@@ -62,7 +62,7 @@ def _in_progress_error() -> dict:
     客户端按 retryAfterMs 退避重试。
     """
     return {"code": "IN_PROGRESS", "message": "请求处理中，请稍后重试",
-            "retryable": True, "retryAfterMs": _IN_PROGRESS_RETRY_AFTER_MS}
+            "retryable": True, "retryAfterMs": IN_PROGRESS_RETRY_AFTER_MS}
 
 
 async def _send_rejected(ws: "web.WebSocketResponse | None",
@@ -102,7 +102,7 @@ async def _handle_idempotency_hit(
     - ACCEPTED → 重放原 accepted ACK（持久化字段逐字一致，含原 receivedAt）→ REPLAYED；
     - REJECTED → 重放原 rejected ACK（持久化 error 逐字一致）→ REPLAYED；
     - CLAIMED 新鲜（now - claimed_at ≤ GRACE_SECONDS）→ rejected IN_PROGRESS
-      （retryable + retryAfterMs=_IN_PROGRESS_RETRY_AFTER_MS）→ REJECT；
+      （retryable + retryAfterMs=IN_PROGRESS_RETRY_AFTER_MS）→ REJECT；
     - CLAIMED 过期 + 提交证据（GenerationRegistry.find_by_user_message 命中）→
       ``store.complete`` 标记 ACCEPTED + 重放 accepted ACK → REPLAYED；
     - CLAIMED 过期 + 无证据 → TAKEOVER（调用方重新 claim 接管 stale CLAIMED 后进入业务流）。

@@ -10,7 +10,7 @@
 |---|---|---|---|
 | R1 | `Module/` 生产代码不得依赖 `core/` | 3 处（bench / `__main__`，见 allowlist） | 失败 |
 | R2 | 领域/基础设施层（`core.agent`/`storage`/`memory`/`character`/`cognitive`/`personality`）不得反向依赖 `core.input` | **0 处** | 失败 |
-| R3 | 禁止**跨包**导入下划线私有符号 | 6 符号 / 8 处（见 allowlist） | 失败 |
+| R3 | 禁止**跨包**导入下划线私有符号 | **0 处**（2026-09-11 批次 A 全部公开化） | 失败 |
 | R4 | 不得新增 **eager** import 环（运行时硬环） | **0 处** | 失败 |
 | R5 | `TYPE_CHECKING` 类型边：允许，仅报告 | — | 不阻断 |
 
@@ -39,8 +39,8 @@
   函数内懒导入打断与 `scoped_long_term` 的环并注释说明，`core/schema/types.py` 同理。
   （初版实现即如此误报。）
 - 若 R1/R3 只算 eager，会**漏掉全部 5 处真实泄漏**——`bench.py`/`documentdb/__main__.py`
-  的 core 依赖、`cognitive/tools.py` 的 `_safe_arg_summary`、`personality/compression.py`
-  的 `_C6_L1_DEFAULT` 都在函数内。（初版实现即如此漏报。）
+  的 core 依赖、`cognitive/tools.py` 的 `summarize_tool_arguments`、`personality/compression.py`
+  的 `C6_L1_DEFAULT` 都在函数内。（初版实现即如此漏报。）
 
 ## 刻意不做的
 
@@ -104,15 +104,17 @@ _R2_SOURCES = (
     "core.monitoring",
 )
 
-# ---- R3：跨包私有符号导入的**显式豁免**（每项对应评估 §4「配套 API 收口」）----
-_PRIVATE_SYMBOL_ALLOWLIST: dict[tuple[str, str], str] = {
-    ("Module.tool.safety", "_safe_arg_summary"): "待收口为公开 summarize_tool_arguments()（§4 配套 API）",
-    ("core.storage.desktop_call_repo", "_ACTIVE_STATES"): "待收口为 is_active_desktop_call_state()（§4 配套 API）",
-    ("core.schema.adapters.message_adapter", "_resolve_image_source"): "待提取为独立 Image Source Resolver（§4 配套 API）",
-    ("core.storage.idempotency", "_IN_PROGRESS_RETRY_AFTER_MS"): "重试间隔常量，待公开或移入契约层",
-    ("Module.system_prompt.sections.speaking_style", "_C6_L1_DEFAULT"): "C6 回退默认值，待公开访问器",
-    ("core.storage.session_repo", "_derive_title"): "标题派生纯函数，待移入 core/utils 或公开",
-}
+# ---- R3：跨包私有符号导入的**显式豁免** ----
+#
+# 2026-09-11（批次 A「配套 API 收口」）后**已清空**：原 6 个符号全部公开化——
+#   `summarize_tool_arguments`        → `Module.tool.safety.summarize_tool_arguments`
+#   `_ACTIVE_STATES`           → `core.storage.desktop_call_repo.is_active_desktop_call_state()`
+#   `IN_PROGRESS_RETRY_AFTER_MS` → 同名公开常量
+#   `_derive_title`            → `core.storage.session_repo.derive_session_title`
+#   `C6_L1_DEFAULT`           → 同名公开常量
+#   `resolve_image_source`    → 提取为 `core/schema/adapters/image_source.resolve_image_source`
+# 新增条目必须附理由；空表意味着 R3 全量硬失败（这是期望状态，勿为通过而随意登记）。
+_PRIVATE_SYMBOL_ALLOWLIST: dict[tuple[str, str], str] = {}
 
 
 @dataclass

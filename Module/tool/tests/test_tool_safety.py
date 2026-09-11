@@ -281,8 +281,8 @@ class TestLogRedaction:
     """D4/P1-17：日志脱敏——敏感字段值不落日志。"""
 
     def test_sensitive_keys_redacted(self):
-        from Module.tool.safety import _safe_arg_summary
-        summary = _safe_arg_summary({
+        from Module.tool.safety import summarize_tool_arguments
+        summary = summarize_tool_arguments({
             "note": "今天天气",
             "api_key": "sk-secret-12345",
             "content": "私聊正文",
@@ -301,14 +301,14 @@ class TestLogRedaction:
     def test_string_value_deny_by_default(self):
         """review 复核 #9：默认拒绝——任意字符串参数（如 Reminder 的 message）值不落
         日志，只记长度；杜绝正文/提醒内容类泄露。"""
-        from Module.tool.safety import _safe_arg_summary
-        summary = _safe_arg_summary({"message": "提醒内容很敏感"})
+        from Module.tool.safety import summarize_tool_arguments
+        summary = summarize_tool_arguments({"message": "提醒内容很敏感"})
         assert "message=<str:7>" in summary
         assert "提醒内容很敏感" not in summary
 
     def test_non_sensitive_long_value_truncated(self):
-        from Module.tool.safety import _safe_arg_summary
-        summary = _safe_arg_summary({"note": "a" * 100}, max_len=10)
+        from Module.tool.safety import summarize_tool_arguments
+        summary = summarize_tool_arguments({"note": "a" * 100}, max_len=10)
         # deny-by-default：长度而非截断值
         assert "note=<str:100>" in summary
         assert "…" not in summary

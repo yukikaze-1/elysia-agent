@@ -1135,11 +1135,11 @@ class Agent(AgentLifecycle, AgentServer):
         公开入口（2026-08-14 模块化修复——原私有 `_sync_desktop_available` 被输入层
         跨模块直调，违反「走公开接口」纪律，公开化后 ws_handler 正常调用）。
         ws_handler 在 `bridge.on_client_connect/disconnect` 后调用本入口，
-        把 `bridge.is_available()` 经 `tool_adapter._manager.set_desktop_available`
+        把 `bridge.is_available()` 经 `tool_adapter.set_desktop_available`
         写入 `_desktop_available`——plugin_list/registry_metadata 中 desktop 工具
         available 字段的数据源（BE-040 §3.2）。
         """
-        self._tool_adapter._manager.set_desktop_available(  # noqa: SLF001 — 组合根内深度同步
+        self._tool_adapter.set_desktop_available(
             self._desktop_bridge.is_available())
 
     @property

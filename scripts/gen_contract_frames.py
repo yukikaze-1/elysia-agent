@@ -383,7 +383,7 @@ def _rejected_acks() -> list[wm.RejectedUserAckMessage]:
     """7 个负面 rejected ACK 帧（Task 6，BE-P1-04：handler 产生的每一种 rejected ACK 都有 golden 基线）。
 
     均 rejected + messageId:"" + AckError；IN_PROGRESS 带 retryAfterMs=30000——
-    与 `core.storage.idempotency._IN_PROGRESS_RETRY_AFTER_MS`（= GRACE_SECONDS*1000）同值
+    与 `core.storage.idempotency.IN_PROGRESS_RETRY_AFTER_MS`（= GRACE_SECONDS*1000）同值
     （帧脚本保持零 core 依赖，测试断言与常量一致防漂移）。STORAGE_UNAVAILABLE 带
     details.idempotency_durable（D3）。
     """

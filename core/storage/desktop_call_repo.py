@@ -83,6 +83,22 @@ _TERMINAL = frozenset({
 # 未终态、可被断连/超时回收的活跃集合
 _ACTIVE_STATES = frozenset({STATUS_PENDING, STATUS_ACCEPTED, STATUS_RUNNING})
 
+
+def is_active_desktop_call_state(status: object) -> bool:
+    """status 是否属于「活跃」态（未终态、可被断连/超时回收）。
+
+    公开谓词（批次 A）：此前跨包消费方直接导入私有 `_ACTIVE_STATES` 集合判断，
+    把「哪些状态算活跃」这一领域知识泄漏给了调用方；改为语义化查询后，
+    集合本身可自由调整而不影响消费方。
+
+    Args:
+        status: 状态字符串（None/未知值一律 False）。
+
+    Returns:
+        True 表示处于 pending/accepted/running 之一。
+    """
+    return status in _ACTIVE_STATES
+
 # 状态迁移守卫表（spec §4.1，权威）。终态为值集合空集（不可再迁移）。
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     STATUS_PENDING: frozenset({
@@ -248,7 +264,7 @@ class DesktopCallRepository(Repository):
         return [
             dict(doc)
             for doc in self._cache.values()
-            if doc.get("status") in _ACTIVE_STATES
+            if is_active_desktop_call_state(doc.get("status"))
             and (doc.get("expires_at") or "") > cutoff
         ]
 
@@ -308,7 +324,7 @@ class DesktopCallRepository(Repository):
             call_id
             for call_id, doc in self._cache.items()
             if doc.get("target_connection") == connection_id
-            and doc.get("status") in _ACTIVE_STATES
+            and is_active_desktop_call_state(doc.get("status"))
         ]
         modified = 0
         for call_id in targets:
@@ -336,7 +352,7 @@ class DesktopCallRepository(Repository):
         targets = [
             call_id
             for call_id, doc in self._cache.items()
-            if doc.get("status") in _ACTIVE_STATES
+            if is_active_desktop_call_state(doc.get("status"))
             and (doc.get("updated_at") or "") < cutoff
         ]
         modified = 0

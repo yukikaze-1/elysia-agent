@@ -268,8 +268,8 @@ class CompressionManager:
         if not current:
             # 首次：渲染 L1 默认模板获取基准文本
             try:
-                from Module.system_prompt.sections.speaking_style import SpeakingStyleSection, _C6_L1_DEFAULT
-                speaking_style = self._character.speaking_style or _C6_L1_DEFAULT
+                from Module.system_prompt.sections.speaking_style import C6_L1_DEFAULT, SpeakingStyleSection
+                speaking_style = self._character.speaking_style or C6_L1_DEFAULT
                 sec = SpeakingStyleSection(
                     str(ProjectPath.SYSTEM_PROMPT_TEMPLATES.resolve() / "c6_speaking_style.j2"),
                     speaking_style=speaking_style,

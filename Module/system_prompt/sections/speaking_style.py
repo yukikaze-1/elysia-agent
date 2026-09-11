@@ -5,7 +5,7 @@ from Module.system_prompt.sections.authored import escape_authored_prompt
 
 # L1 默认说话风格（改造时把当前 C6 else 分支正文固化，模板删 else 后仍存在）
 # 注：必须是硬编码常量，不能运行时从模板 else 提取（模板改造后无 else 分支）
-_C6_L1_DEFAULT = """每次回复前，先在心里想一下（这是你自己的事），再决定说出来什么。
+C6_L1_DEFAULT = """每次回复前，先在心里想一下（这是你自己的事），再决定说出来什么。
 
 心里想的：你的真实想法——感受<voice>里的情绪信号，注意<message>里的内容，注意到<facts>里的时间背景，想起相关记忆时自然地感受。这里你可以真实、感性、不理性、腹诽、矛盾。
 
@@ -106,12 +106,12 @@ class SpeakingStyleSection(Jinja2Section):
         Args:
             template_path: 模板文件路径。
             speaking_style: L1 静态说话风格（来自 CharacterConfig.personality.speaking_style）。
-                None 时回退 _C6_L1_DEFAULT（裸构造保 L1 默认）。
+                None 时回退 C6_L1_DEFAULT（裸构造保 L1 默认）。
         """
         super().__init__(template_path)
         self._user_name = ""
         self._speaking_style_c6 = ""
-        self._speaking_style = speaking_style if speaking_style is not None else _C6_L1_DEFAULT
+        self._speaking_style = speaking_style if speaking_style is not None else C6_L1_DEFAULT
         self._authored = False
 
     def set_context(self, **kwargs: Any) -> None:

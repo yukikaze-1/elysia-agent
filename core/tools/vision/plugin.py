@@ -17,7 +17,7 @@ from Module.tool.safety import SafetyProfile
 from Module.llm.registry import LLMFactory
 from core.schema.message import UserMessage
 from core.schema.part import ImagePart
-from core.schema.adapters.message_adapter import _resolve_image_source
+from core.schema.adapters.image_source import resolve_image_source
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ class DescribeImagePlugin(ToolPlugin):
         image = images[params.image_index]
         source = image.src
 
-        data_uri = _resolve_image_source(source)
+        data_uri = resolve_image_source(source)
 
         image_data = None
         if data_uri.startswith("data:"):
@@ -211,7 +211,7 @@ class DescribeImagePlugin(ToolPlugin):
         for idx in (indices or []):
             image = images[idx]
             source = image.src
-            data_uri = _resolve_image_source(source)
+            data_uri = resolve_image_source(source)
             resolved.append((idx, data_uri))
 
         vision_model_id = self._get_vision_model_id(ctx)

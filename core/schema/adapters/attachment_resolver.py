@@ -1,7 +1,8 @@
 """AttachmentFileResolver — 附件 ID → 磁盘路径的进程内映射。
 
 批次 7（spec §4.5，plan review Minor 4 定一，不落 storage）：`content_to_openai`
-的 `_resolve_image_source`（message_adapter.py）把本地 src 转 data URI 喂 LLM，
+的 `resolve_image_source`（`core/schema/adapters/image_source.py`——批次 A 从
+message_adapter 提取为独立 resolver）把本地 src 转 data URI 喂 LLM，
 需要知道附件落盘位置。Mongo 离线时附件记录不可查，故用模块级 dict 缓存
 `attachment_id → (kind, stored_name)`，据此定位 `data/uploads/{kind}/{stored_name}`。
 

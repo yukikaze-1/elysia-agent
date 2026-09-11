@@ -24,9 +24,22 @@ from core.input.audio_buffer import AudioBuffer
 from core.input._common import _find_channel, _send_ack
 from core.services.capabilities import build_capabilities
 from core.input.ws_v2 import _handle_voice_commit, _route_v2_text
+from core.input.ws_handlers import _WS_HANDLERS
+from core.input.ws_handlers.context import WsRequestContext
+# re-export（评估 §5 批次 D 第 4 条「旧 import re-export」）：这些符号已迁入
+# core/input/ws_handlers/{chat,session}.py，但既有测试与同包模块仍从本模块导入，
+# 故在此保留导出以维持兼容。新增代码请直接从领域模块导入。
+from core.input.ws_handlers.chat import do_interrupt
+from core.input.ws_handlers.session import _handle_activate_session
+from core.input.ws_handlers.voice import (  # noqa: F401 — re-export 兼容层
+    _is_v2,
+    _send_voice_error,
+    _voice_descriptor,
+    _voice_stt_gate,
+)
 from core.storage.idempotency import (
     GRACE_SECONDS,
-    _IN_PROGRESS_RETRY_AFTER_MS,
+    IN_PROGRESS_RETRY_AFTER_MS,
     IdempotencyEntry,
     get_store,
 )
@@ -299,35 +312,17 @@ async def _open_ws_connection(
 
     try:
         if hasattr(agent, 'tool_adapter') and agent.tool_adapter is not None:
-            pending = agent.tool_adapter._manager.get_pending_approvals()  # noqa: SLF001
-            for request_id, tool_name, params in pending:
-                base = {
-                    "tool": tool_name,
-                    "params": str(params)[:200],
-                    "request_id": request_id,
-                }
-                if protocol_version >= 2:
-                    manager = agent.tool_adapter._manager  # noqa: SLF001
-                    plugin = manager._plugins.get(tool_name)  # noqa: SLF001
-                    if plugin is not None:
-                        enriched: dict[str, Any] = dict(base)
-                        enriched["summary"] = manager._build_param_summary(params)  # noqa: SLF001
-                        enriched["runtime"] = plugin.runtime
-                        enriched["version"] = plugin.version
-                        enriched["riskLevel"] = plugin.risk_level
-                        enriched["permissionRequired"] = plugin.permission_required
-                        enriched["approvalAuthority"] = plugin.approval_authority
-                        await ws.send_json(CommandMessage(
-                            command="tool_approval",
-                            params=enriched,
-                        ).wire_dict())
-                        logger.debug(
-                            "Re-broadcast pending approval to new client (v2 enrich): %s (%s)",
-                            request_id, tool_name)
-                        continue
+            adapter = agent.tool_adapter
+            for request_id, tool_name, params in adapter.get_pending_approvals():
+                # payload 组装（含 v1/v2 富化差异）收口在工具子系统门面——
+                # 传输层只负责发送（批次 A / ARCH-INC-P2-04）
+                payload = adapter.build_approval_payload(
+                    request_id, tool_name, params,
+                    enrich=protocol_version >= 2,
+                )
                 await ws.send_json(CommandMessage(
                     command="tool_approval",
-                    params=base,
+                    params=payload,
                 ).wire_dict())
                 logger.debug("Re-broadcast pending approval to new client: %s (%s)",
                              request_id, tool_name)
@@ -515,485 +510,36 @@ async def handle_ws(
     return conn.ws
 
 
-def _is_v2(agent: "Agent", ws: "web.WebSocketResponse | None") -> bool:
-    """三种语音模式消息 v2-only 门禁（仿 activate_session/tool.status）。"""
-    ch = _find_channel(agent, ws)
-    return ch is not None and ch.protocol_version >= 2
 
 
-async def _send_voice_error(ws: "web.WebSocketResponse | None",
-                            error: VoiceSessionError) -> None:
-    """VoiceSessionError → error 信封（ws 可空——缺发送连接时静默跳过）。"""
-    if ws is None:
-        return
-    from frontend_contract import ErrorMessage
-    try:
-        await ws.send_json(ErrorMessage(
-            message=error.message, code=error.code,
-            requestId=_current_request_id(),
-            retryable=error.retryable,
-        ).wire_dict())
-    except Exception:
-        logger.debug("发送 voice error 失败", exc_info=True)
 
 
-def _voice_descriptor(msg: Any, data: dict) -> AudioInputDescriptor | None:
-    """从 v2 判别联合 msg（已校验模型）或原始 data 提取输入音频描述（9C-1）。
-
-    v2 连接 msg 为校验后的 start 帧模型，``msg.audio`` 已是 ``AudioInputDescriptor``；
-    msg 为 None（防御路径）→ 走 ``data.get("audio")`` 原始 dict 解析，结构非法返回
-    None（语义校验 codec/rate/channels 由 ``VoiceSessionManager._validate_audio_descriptor``
-    负责，二者任一不符都会 CONTRACT_VALIDATION 拒绝）。
-    """
-    raw = msg.audio if msg is not None else data.get("audio")
-    if raw is None:
-        return None
-    if isinstance(raw, AudioInputDescriptor):
-        return raw
-    try:
-        return AudioInputDescriptor.model_validate(raw)
-    except ValidationError:
-        return None
 
 
-async def _voice_stt_gate(agent: "Agent",
-                          voice_mgr: "VoiceSessionManager | None") -> None:
-    """会话 JSON 消息入口检查 stt_enabled（spec §5.3 NEW-D/NEW-W）。
-
-    stt 关闭 → 结束活动 REALTIME/DICTATION 会话——暂停中会话无帧流入、idle 计时
-    挂起，靠此入口检测避免静默悬挂至连接关闭；RECORDING 由 notify_stt_disabled
-    内部忽略（spec §3.2 NEW-XA）。9abc P1-2：仅对依赖全局 STT 的会话生效——
-    profile dictation（`_dictation_stt` 快照）独立于全局开关，stop 不被此门禁取消。
-    """
-    if (voice_mgr is not None and not getattr(agent, "stt_enabled", False)
-            and voice_mgr.depends_on_global_stt()):
-        try:
-            await voice_mgr.notify_stt_disabled()
-        except Exception:
-            logger.debug("voice stt 门控 notify 失败", exc_info=True)
 
 
-async def _dispatch_wake_toggle(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    enabled = msg.enabled if msg is not None else data.get("enabled", False)
-    if audio_buf:
-        audio_buf.set_wake_enabled(enabled)
-        logger.debug("唤醒词开关: %s", "开启" if enabled else "关闭")
 
-async def _dispatch_text(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    # 9abc P1-3：v2 文本完整帧 V2TextMessage 校验——ValidationError → ACK
-    # rejected CONTRACT_VALIDATION（保留 v2 ACK rejected 通道，spec §4.2），
-    # 非 ErrorMessage；合法帧 → 校验后模型交给 _route_v2_text（attachments 等
-    # 为已校验字段，消除对未校验 data 加法/索引的 TypeError 断连源）。
-    if channel is not None and channel.protocol_version >= 2:
-        try:
-            text_model = V2TextMessage.model_validate(data)
-        except ValidationError as e:
-            # clientRequestId 缺失/非 str 也是 ValidationError——错误 ACK 只能回显
-            # 合法 str（非 str 原值直传会导致 UserAckMessage 构造失败、ACK 被吞）。
-            raw_crid = data.get("clientRequestId", "")
-            if not isinstance(raw_crid, str):
-                raw_crid = ""
-            # 9abc R4：clientMessageId/conversationId 同收口——非 str → None，
-            # 否则 UserAckMessage 的 Optional[str] 校验抛 → bare except 吞 ACK，
-            # 客户端拿到已拒绝的校验错误却无响应。
-            raw_cmid = data.get("clientMessageId")
-            raw_cid = data.get("conversationId")
-            await _send_ack(ws, "", raw_crid,
-                            raw_cmid if isinstance(raw_cmid, str) else None,
-                            raw_cid if isinstance(raw_cid, str) else None,
-                            "rejected",
-                            error={"code": "CONTRACT_VALIDATION",
-                                   "message": f"消息校验失败: {e}",
-                                   "retryable": False})
-            return
-        # spec §3.8：v2 空文本/空媒体 → rejected CONTRACT_VALIDATION（不再静默丢弃）
-        if not (text_model.content.strip() or text_model.stickerId
-                or text_model.attachments):
-            await _send_ack(ws, "", text_model.clientRequestId,
-                            text_model.clientMessageId, text_model.conversationId,
-                            "rejected",
-                            error={"code": "CONTRACT_VALIDATION",
-                                   "message": "消息内容为空", "retryable": False})
-            return
-        await _route_v2_text(agent, ws, text_model,
-                             sent_message_ids=sent_message_ids)
-        # BE-081 敏感纪律：只记文本长度 + 客户端消息 ID，不记正文
-        logger.debug("WS 收到文本 (len=%d, clientMessageId=%s)",
-                     len(text_model.content.strip()),
-                     text_model.clientMessageId or "")
-        return
-    # v1 老路径（data.get + 多模态 content-as-parts，v1 不受 v2 收紧影响）
-    # 注：原先此处还有 `elif _is_v2(...)` 的空文本 ACK 分支，已删除——本分支只在
-    # `channel is None or channel.protocol_version < 2` 时进入，而 _is_v2 复用同一次
-    # _find_channel 结果且两处之间无 await（无让出点），故该 elif 恒 False、不可达；
-    # v2 空文本的 rejected ACK 由上方 v2 分支（V2TextMessage 校验后）独占处理。
-    text_content = data.get("content", "")
-    if isinstance(text_content, str):
-        if text_content.strip() or data.get("stickerId") or data.get("attachments"):
-            await agent.process_message(text=text_content.strip())
-            # BE-081 敏感纪律：只记文本长度 + 客户端消息 ID，不记正文
-            logger.debug("WS 收到文本 (len=%d, clientMessageId=%s)",
-                         len(text_content.strip()),
-                         data.get("clientMessageId", ""))
-    elif isinstance(text_content, list):
-        # 多模态 content-as-parts 分支原样保留（不动）
-        from core.schema.adapters.message_adapter import content_text, parts_from_dicts
-        await agent.process_message(text=content_text(parts_from_dicts(text_content)), user_name=agent.user_name, content=text_content)
-        logger.debug("WS 收到多模态消息")
 
-async def _dispatch_interrupt(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    logger.debug("WS 收到打断指令")
-    await do_interrupt(agent)
 
-async def _dispatch_switch_model(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    service = msg.service if msg is not None else data.get("service", "")
-    model = msg.model if msg is not None else data.get("model", "")
-    if service == "llm":
-        result = await agent.switch_llm(model)
-    elif service == "stt":
-        result = await agent.switch_stt(model)
-    elif service == "tts":
-        result = await agent.switch_tts(model)
-    else:
-        result = {"ok": False, "error": f"未知 service: {service}"}
-    from Module.output import WebSocketChannel
-    if ws is not None:
-        for ch in agent.output._channels:  # noqa: SLF001
-            if isinstance(ch, WebSocketChannel) and ch._ws is ws:  # noqa: SLF001
-                try:
-                    # 契约：error 仅失败带（成功缺省省略，非 null）
-                    await ws.send_json(SwitchModelResultMessage(
-                        service=service,
-                        model=model,
-                        ok=result.get("ok", False),
-                        error=result.get("error"),
-                    ).wire_dict())
-                except Exception:
-                    logger.debug("Failed to send switch_model_result", exc_info=True)
-                break
-    logger.info("WS 切换模型: service=%s model=%s ok=%s", service, model, result.get("ok"))
 
-async def _dispatch_set_tts_voice(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    # 批次 5（Task 11，BE-051）：设置活动会话 TTS 声音覆盖。
-    # 经活动会话激活 TTS 后端 list_voices() 校验 voice 存在 → 写活动会话
-    # service_state.tts_voice + save → 回 set_tts_voice_result；未知 voice/
-    # 后端不可用 → {ok: False, error}，不改 state（失败保留原选择）。
-    voice = msg.voice if msg is not None else data.get("voice", "")
-    result: dict = {"ok": False, "error": "TTS 未启用"}
-    # review 修正：空串/缺省 voice = 清除覆盖，回退 character 默认音色——
-    # 否则 tts_voice 只进不出（list_voices 只含系统音色，角色默认不在列），无恢复路径。
-    if not voice:
-        agent.session.service_state.tts_voice = None
-        try:
-            await agent.session.save()
-        except Exception as e:
-            logger.warning("TTS voice 已清除但持久化失败: %s", e)
-        result = {"ok": True, "voice": None}
-    backend = _active_tts_profile(agent)
-    if backend is not None and voice:
-        try:
-            voices = await backend.list_voices()
-            if not any(v.get("id") == voice for v in voices):
-                result = {"ok": False, "error": f"未知音色: {voice}"}
-            else:
-                agent.session.service_state.tts_voice = voice
-                try:
-                    await agent.session.save()
-                except Exception as e:
-                    # 持久化失败不回滚已生效的写入——运行中 state 是权威，仅告警
-                    logger.warning("TTS voice 已设置但持久化失败: %s", e)
-                result = {"ok": True, "voice": voice}
-        except Exception as e:
-            logger.warning("set_tts_voice 失败: %s", e)
-            # 信封不携带异常文本（review Minor）——只出通用消息
-            result = {"ok": False, "error": "设置声音失败"}
-    from Module.output import WebSocketChannel
-    if ws is not None:
-        for ch in agent.output._channels:  # noqa: SLF001
-            if isinstance(ch, WebSocketChannel) and ch._ws is ws:  # noqa: SLF001
-                try:
-                    await ws.send_json(SetTtsVoiceResultMessage(
-                        ok=result.get("ok", False),
-                        voice=result.get("voice"),
-                        error=result.get("error"),
-                    ).wire_dict())
-                except Exception:
-                    logger.debug("Failed to send set_tts_voice_result", exc_info=True)
-                break
-    logger.info("WS 设置 TTS 声音: voice=%s ok=%s", voice, result.get("ok"))
 
-async def _dispatch_set_service(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    service = msg.service if msg is not None else data.get("service", "")
-    enabled = msg.enabled if msg is not None else data.get("enabled", False)
-    result = await agent.set_service(service, enabled)
-    # 广播给所有 WebSocket 客户端（而非仅发送者）——含失败时的 enabled 字段。
-    # 不复制 switch_model_result 模式（那只回给请求方）。capabilities 重播在 Task 7 接入。
-    from Module.output import WebSocketChannel
-    try:
-        for ch in agent.output._channels:  # noqa: SLF001
-            if isinstance(ch, WebSocketChannel):
-                # 契约：error 键恒存在（成功为 null，ts_null 标记）
-                await ch._send_json(ServiceModeResultMessage(  # noqa: SLF001
-                    service=service,
-                    enabled=result.get("enabled", enabled),
-                    ok=result.get("ok", False),
-                    error=result.get("error"),
-                ).wire_dict())
-    except Exception:
-        # 并发 connect/disconnect 会改 _channels 列表长度——捕获记录，
-        # 不向请求方传播（per-channel 发送失败已由 _send_json 内部记录）
-        logger.warning("set_service 广播失败（连接并发变化？）", exc_info=True)
-    logger.info("WS 设置服务开关: service=%s enabled=%s ok=%s", service, enabled, result.get("ok"))
-    # 批次 6（spec §3.2 NEW-X/XA）：stt 关闭成功 → 通知本连接语音会话（RECORDING 除外）。
-    # 9abc P1-2：仅对依赖全局 STT 的会话生效——profile dictation 途中关闭全局 STT
-    # 不取消独立会话（depends_on_global_stt() 判定，与 _voice_stt_gate 共用）。
-    if (service == "stt" and not enabled and result.get("ok")
-            and voice_mgr is not None and voice_mgr.depends_on_global_stt()):
-        try:
-            await voice_mgr.notify_stt_disabled()
-        except Exception:
-            logger.debug("notify_stt_disabled 失败", exc_info=True)
 
-async def _dispatch_tool_approval(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    request_id = msg.request_id if msg is not None else data.get("request_id", "")
-    approved = msg.approved if msg is not None else data.get("approved", False)
-    if request_id:
-        # P1-6：走 ToolAdapter 公开 API（原先直取 ._manager，违反跨模块私有访问纪律）。
-        ok = agent.tool_adapter.submit_approval(request_id, approved)
-        if ok:
-            logger.info("WS 审批结果: request=%s approved=%s", request_id, approved)
-        else:
-            logger.debug("WS 审批结果: request=%s 不存在或已过期", request_id)
 
-async def _dispatch_activate_session(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    # 批次 3：切 active + 重发新活动会话回放；未知 conversationId → SESSION_NOT_FOUND
-    # review 修复（兼容#5）：activate_session 仅 v2 连接处理——v1 恒 default 无
-    # 切会话语义，处理会让 v1 连接意外切走 active 影响 v2 客户端。
-    if ws is None:
-        logger.debug("WS activate_session 无发送连接，忽略")
-    else:
-        channel = _find_channel(agent, ws)
-        if channel is None or channel.protocol_version < 2:
-            logger.debug("WS activate_session: v1 连接忽略（v1 恒 default）")
-        else:
-            await _handle_activate_session(agent, ws, data)
 
-async def _dispatch_tool_status(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    # 批次 4（spec §5.3）：桌面工具状态回传 → bridge.handle_status。
-    # 仅 v2 连接处理——v1 无 desktop 概念，忽略（含 v1 伪冒 platform 头隔离）。
-    # 批次 8a（D2）：发送连接校验——channel.connection_id 作为 sender 传入
-    # handle_status（发送连接必须是投递目标）；v2 但无 conn_id（异常）→ 拒绝。
-    if ws is None:
-        logger.debug("WS tool.status 无发送连接，忽略")
-    else:
-        channel = _find_channel(agent, ws)
-        if channel is None or channel.protocol_version < 2:
-            logger.debug("WS tool.status: v1 连接忽略")
-        elif channel.connection_id is None:
-            logger.warning("WS tool.status: channel 无 connection_id，拒绝")
-        else:
-            # data 已由判别联合校验为合法 ToolStatusMessage——bridge.handle_status
-            # 契约接受 wire 帧（camelCase dict），原样透传（既有行为保持）。
-            await agent.desktop_bridge.handle_status(
-                data, sender_connection_id=channel.connection_id)
 
-async def _dispatch_voice_record_start(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("voice.record.start: 非 v2 或无 mgr，忽略")
-    else:
-        try:
-            await voice_mgr.start_recording(
-                msg.recordingId if msg is not None else data.get("recordingId", ""),
-                audio_descriptor=_voice_descriptor(msg, data))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_voice_record_stop(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("voice.record.stop: 非 v2 或无 mgr，忽略")
-    else:
-        try:
-            await voice_mgr.stop_recording(
-                msg.recordingId if msg is not None else data.get("recordingId", ""))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_voice_commit(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("voice.commit: 非 v2 或无 mgr，忽略")
-    else:
-        await _handle_voice_commit(agent, ws, voice_mgr, data,
-                                   sent_message_ids=sent_message_ids)
 
-async def _dispatch_voice_discard(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("voice.discard: 非 v2 或无 mgr，忽略")
-    else:
-        try:
-            await voice_mgr.discard_recording(
-                msg.recordingId if msg is not None else data.get("recordingId", ""))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_voice_session_start(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("voice_session.start: 非 v2，忽略")
-    else:
-        await _voice_stt_gate(agent, voice_mgr)
-        try:
-            await voice_mgr.start_realtime(
-                msg.sessionId if msg is not None else data.get("sessionId", ""),
-                msg.conversationId if msg is not None else data.get("conversationId"),
-                audio_descriptor=_voice_descriptor(msg, data))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_voice_session_pause(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("voice_session.pause: 非 v2，忽略")
-    else:
-        await _voice_stt_gate(agent, voice_mgr)
-        try:
-            await voice_mgr.pause_session(
-                msg.sessionId if msg is not None else data.get("sessionId", ""))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_voice_session_resume(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("voice_session.resume: 非 v2，忽略")
-    else:
-        await _voice_stt_gate(agent, voice_mgr)
-        try:
-            await voice_mgr.resume_session(
-                msg.sessionId if msg is not None else data.get("sessionId", ""))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_voice_session_stop(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("voice_session.stop: 非 v2，忽略")
-    else:
-        await _voice_stt_gate(agent, voice_mgr)
-        try:
-            await voice_mgr.stop_session(
-                msg.sessionId if msg is not None else data.get("sessionId", ""))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_voice_session_cancel(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("voice_session.cancel: 非 v2，忽略")
-    else:
-        await _voice_stt_gate(agent, voice_mgr)
-        try:
-            await voice_mgr.cancel_session(
-                msg.sessionId if msg is not None else data.get("sessionId", ""))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_dictation_start(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("dictation.start: 非 v2，忽略")
-    else:
-        await _voice_stt_gate(agent, voice_mgr)
-        try:
-            await voice_mgr.start_dictation(
-                msg.clientRequestId if msg is not None else data.get("clientRequestId", ""),
-                data.get("sttProfileId"),
-                audio_descriptor=_voice_descriptor(msg, data))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_dictation_stop(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("dictation.stop: 非 v2，忽略")
-    else:
-        await _voice_stt_gate(agent, voice_mgr)
-        try:
-            await voice_mgr.stop_dictation(
-                msg.clientRequestId if msg is not None else data.get("clientRequestId", ""))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_dictation_cancel(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("dictation.cancel: 非 v2，忽略")
-    else:
-        await _voice_stt_gate(agent, voice_mgr)
-        try:
-            await voice_mgr.cancel_dictation(
-                msg.clientRequestId if msg is not None else data.get("clientRequestId", ""))
-        except VoiceSessionError as e:
-            await _send_voice_error(ws, e)
 
-async def _dispatch_audio_cancel(data: dict, agent: "Agent", msg: Any, channel: WebSocketChannel | None, audio_buf: AudioBuffer | None = None, ws: web.WebSocketResponse | None = None,
-                        voice_mgr: VoiceSessionManager | None = None, sent_message_ids: set | None = None, limiter: RateLimiter | None = None, rate_key: str | None = None) -> None:
-    # 批次 6（BE-063）：取消在途 TTS 播放实例（全局播放操作，v2-only）。
-    if voice_mgr is None or not _is_v2(agent, ws):
-        logger.debug("audio.cancel: 非 v2，忽略")
-    else:
-        sid = msg.stream_id if msg is not None else data.get("stream_id")
-        if sid is None:
-            await _send_voice_error(ws, VoiceSessionError(
-                "CONTRACT_VALIDATION", "缺少 stream_id"))
-            return
-        try:
-            sid_int = int(sid)  # 非数字 → CONTRACT_VALIDATION（review #17）
-        except (TypeError, ValueError):
-            await _send_voice_error(ws, VoiceSessionError(
-                "CONTRACT_VALIDATION", "stream_id 非法"))
-            return
-        tts_mgr = getattr(agent, "tts_manager", None)
-        if tts_mgr is None or not tts_mgr.cancel_stream(sid_int):
-            await _send_voice_error(ws, VoiceSessionError(
-                "PLAYBACK_NOT_FOUND", "播放实例不存在或已结束"))
 
-_WS_HANDLERS: dict[str, Callable[..., Awaitable[None]]] = {
-    "wake_toggle": _dispatch_wake_toggle,
-    "text": _dispatch_text,
-    "interrupt": _dispatch_interrupt,
-    "switch_model": _dispatch_switch_model,
-    "set_tts_voice": _dispatch_set_tts_voice,
-    "set_service": _dispatch_set_service,
-    "tool_approval": _dispatch_tool_approval,
-    "activate_session": _dispatch_activate_session,
-    "tool.status": _dispatch_tool_status,
-    "voice.record.start": _dispatch_voice_record_start,
-    "voice.record.stop": _dispatch_voice_record_stop,
-    "voice.commit": _dispatch_voice_commit,
-    "voice.discard": _dispatch_voice_discard,
-    "voice_session.start": _dispatch_voice_session_start,
-    "voice_session.pause": _dispatch_voice_session_pause,
-    "voice_session.resume": _dispatch_voice_session_resume,
-    "voice_session.stop": _dispatch_voice_session_stop,
-    "voice_session.cancel": _dispatch_voice_session_cancel,
-    "dictation.start": _dispatch_dictation_start,
-    "dictation.stop": _dispatch_dictation_stop,
-    "dictation.cancel": _dispatch_dictation_cancel,
-    "audio.cancel": _dispatch_audio_cancel,
-}
 
 async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffer | None" = None, ws: "web.WebSocketResponse | None" = None, voice_mgr: "VoiceSessionManager | None" = None, sent_message_ids: set | None = None, limiter: "RateLimiter | None" = None, rate_key: str | None = None) -> None:
     """将来自 WebSocket 客户端的 JSON 消息路由到对应 handler。
@@ -1070,86 +616,21 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
                 return
     handler = _WS_HANDLERS.get(msg_type)
     if handler is not None:
-        await handler(data, agent, msg, channel, audio_buf=audio_buf, ws=ws,
-                       voice_mgr=voice_mgr, sent_message_ids=sent_message_ids,
-                       limiter=limiter, rate_key=rate_key)
+        # ARCH-INC-P2-01（批次 D）：handler 签名收口为 (ctx, data, msg, channel)——
+        # 连接级状态打包进 WsRequestContext，新增消息类型不再扩参数面。
+        await handler(
+            WsRequestContext(
+                agent=agent, ws=ws, audio_buf=audio_buf, voice_mgr=voice_mgr,
+                sent_message_ids=sent_message_ids, limiter=limiter, rate_key=rate_key,
+            ),
+            data, msg, channel,
+        )
     else:
         logger.debug("WS 未知消息类型: %s", msg_type)
 
 
-async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", data: dict) -> None:
-    """处理 activate_session：切 active + 重发目标会话回放；未知会话 → 404。
-
-    spec §6.1：`await agent.switch_session(conversationId)` → 重发 SessionMessage
-    （新活动会话回放，复用建连回放路径）。未知 conversationId → 不发回放，
-    发 `ErrorMessage{code: SESSION_NOT_FOUND}`（批次 1 错误信封）。
-
-    批次 3 review 修复（F1-a）：切换前 FSM 门禁——agent 忙（生成/TTS 中，
-    is_accepting_input=False）→ 拒绝 AGENT_BUSY（retryable 语义由码名表达），
-    不执行切换。Task 11（M3）：engine per-instance 后无全局单例 attach_session
-    换绑向量，但忙时切换仍拒绝——防与一次 v2 生成流式/TTS 并发 → mood/L3 跨会话污染。
-    """
-    sid = data.get("conversationId", "")
-    if not sid:
-        await ws.send_json(ErrorMessage(
-            message="缺少 conversationId",
-            code="CONTRACT_VALIDATION",
-            requestId=_current_request_id(),
-        ).wire_dict())
-        return
-    try:
-        if not getattr(agent.status, "is_accepting_input", True):
-            logger.info("activate_session: agent 忙（is_accepting_input=False），拒绝切换 %s", sid)
-            await ws.send_json(ErrorMessage(
-                message="Agent 忙（生成/TTS 中），无法切换会话",
-                code="AGENT_BUSY",
-                requestId=_current_request_id(),
-            ).wire_dict())
-            return
-        if not await agent.session_manager.has_session(sid):
-            logger.debug("activate_session: 未知会话 %s → SESSION_NOT_FOUND", sid)
-            await ws.send_json(ErrorMessage(
-                message=f"会话不存在: {sid}",
-                code="SESSION_NOT_FOUND",
-                requestId=_current_request_id(),
-            ).wire_dict())
-            return
-        target = await agent.switch_session(SessionId(sid))
-        await _send_session_replay(ws, agent, target)
-        # 阶段 G(§7.1):v2 + character_state_stream=true 时发角色状态快照(强制,不看 last)
-        if getattr(agent, "character_state_stream", False):
-            await _emit_state_snapshot(agent, ws)
-        logger.info("WS activate_session: 已切到会话 %s", sid)
-    except SessionBusyError:
-        # review 修复（批次 C）：switch() 双保险 busy check 抛 SessionBusyError——
-        # 此前被通用 except Exception 吞成 INTERNAL。单独捕获 → AGENT_BUSY（可重试）。
-        logger.info("activate_session: 双保险 busy check 命中（SessionBusyError），拒绝切换 %s", sid)
-        await ws.send_json(ErrorMessage(
-            message="Agent 忙（生成/TTS 中），无法切换会话",
-            code="AGENT_BUSY",
-            requestId=_current_request_id(),
-        ).wire_dict())
-    except Exception:
-        logger.warning("activate_session 处理失败 sid=%s", sid, exc_info=True)
-        await ws.send_json(ErrorMessage(
-            message="激活会话失败",
-            code="INTERNAL",  # review 修复（兼容#4）：INTERNAL_ERROR → 错误目录标准码 INTERNAL
-            requestId=_current_request_id(),
-        ).wire_dict())
 
 
-async def do_interrupt(agent: "Agent", skip_vad: bool = False) -> None:
-    """发布 INTERRUPT 事件。
-
-    Args:
-        agent: Agent 实例。
-        skip_vad: 为 True 时，THINKING/EXECUTING 阶段抑制打断（VAD 误报防护）。
-                  按钮打断应传 skip_vad=False（默认值）。
-    """
-    if skip_vad and agent.status.should_suppress_vad_interrupt:
-        return
-    from core.monitoring.event_bus import EventPriority
-    agent.bus.post(InterruptData(source="websocket"), priority=EventPriority.INTERRUPT)
 
 
 async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: str,

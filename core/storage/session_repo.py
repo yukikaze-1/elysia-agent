@@ -47,7 +47,7 @@ INCOMPLETE_CHARACTER_BINDING_FILTER: dict = {
 """
 
 
-def _derive_title(messages: Sequence[Message]) -> str:
+def derive_session_title(messages: Sequence[Message]) -> str:
     """从首条 UserMessage 的文本内容派生自动标题（前 20 字符）。
 
     幂等派生：仅在 session 文档无显式 title 时由 save() 调用，
@@ -186,7 +186,7 @@ class SessionRepository(Repository):
             reason="SessionRepository.save 查询失败",
         )
         existing_title = existing[0].get("title", "") if existing else ""
-        doc["title"] = existing_title if existing_title else _derive_title(messages)
+        doc["title"] = existing_title if existing_title else derive_session_title(messages)
         await self._call(
             lambda: db.update_one(
                 COLLECTION, {"session_id": session_id}, {"$set": doc}, upsert=True,

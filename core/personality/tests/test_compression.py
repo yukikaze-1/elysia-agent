@@ -1,7 +1,7 @@
 """CompressionManager._refresh_c6 首刷读 character.speaking_style（阶段 B-2）。
 
 Cyrene 的 _refresh_c6 首刷（state.speaking_style_c6 == ""）应读
-character_config.speaking_style 而非 speaking_style 模块的 _C6_L1_DEFAULT 常量，
+character_config.speaking_style 而非 speaking_style 模块的 C6_L1_DEFAULT 常量，
 防止 Cyrene L2→C6 被 Elysia 常量污染。
 
 实现说明：_refresh_c6 内对 SpeakingStyleSection 的导入是函数级本地
@@ -55,10 +55,10 @@ def _make_cm(character_config):
 
 
 def test_refresh_c6_uses_character_speaking_style():
-    """_refresh_c6 首刷读 character.speaking_style（非 _C6_L1_DEFAULT）。"""
+    """_refresh_c6 首刷读 character.speaking_style（非 C6_L1_DEFAULT）。"""
     cfg = CharacterConfig.from_yaml(_CYRENE_CONFIG)
     assert cfg.speaking_style.strip(), "前置：Cyrene speaking_style 非空"
-    assert cfg.speaking_style != ss_mod._C6_L1_DEFAULT, "前置：Cyrene speaking_style 不同于 Elysia 常量"
+    assert cfg.speaking_style != ss_mod.C6_L1_DEFAULT, "前置：Cyrene speaking_style 不同于 Elysia 常量"
 
     cm, state = _make_cm(cfg)
 
@@ -68,7 +68,7 @@ def test_refresh_c6_uses_character_speaking_style():
     def fake_init(template_path: str, speaking_style: str | None = None):
         captured["speaking_style"] = speaking_style
         # 用注入的 speaking_style 构造真实章节，渲染返回它（校验传参路径）
-        effective = speaking_style if speaking_style is not None else ss_mod._C6_L1_DEFAULT
+        effective = speaking_style if speaking_style is not None else ss_mod.C6_L1_DEFAULT
         return orig(template_path, speaking_style=effective)
 
     ss_mod.SpeakingStyleSection = fake_init
@@ -79,11 +79,11 @@ def test_refresh_c6_uses_character_speaking_style():
 
     # 断言首刷传给 SpeakingStyleSection 的是 Cyrene 的 speaking_style，而非 Elysia 常量
     assert captured.get("speaking_style") == cfg.speaking_style
-    assert captured.get("speaking_style") != ss_mod._C6_L1_DEFAULT
+    assert captured.get("speaking_style") != ss_mod.C6_L1_DEFAULT
 
 
 def test_refresh_c6_uses_default_when_character_style_empty():
-    """character.speaking_style 为空时回退 _C6_L1_DEFAULT（行为兼容）。"""
+    """character.speaking_style 为空时回退 C6_L1_DEFAULT（行为兼容）。"""
     cfg = CharacterConfig.from_yaml(_CYRENE_CONFIG)
     cfg.personality["speaking_style"] = ""  # 模拟空 speaking_style
     assert cfg.speaking_style == "", "前置：speaking_style 为空"
@@ -95,7 +95,7 @@ def test_refresh_c6_uses_default_when_character_style_empty():
 
     def fake_init(template_path: str, speaking_style: str | None = None):
         captured["speaking_style"] = speaking_style
-        effective = speaking_style if speaking_style is not None else ss_mod._C6_L1_DEFAULT
+        effective = speaking_style if speaking_style is not None else ss_mod.C6_L1_DEFAULT
         return orig(template_path, speaking_style=effective)
 
     ss_mod.SpeakingStyleSection = fake_init
@@ -104,4 +104,4 @@ def test_refresh_c6_uses_default_when_character_style_empty():
     finally:
         ss_mod.SpeakingStyleSection = orig
 
-    assert captured.get("speaking_style") == ss_mod._C6_L1_DEFAULT
+    assert captured.get("speaking_style") == ss_mod.C6_L1_DEFAULT

@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: dece6f372e22f4f5
+// schemaHash: 3a2a29cc7bdb52b9
 
 /** Managed presentation references; arbitrary URLs/paths are rejected. */
 export interface CharacterPresentation {
@@ -1175,7 +1175,7 @@ export interface ToolStartedMessage {
   toolName: string
   /** 工具 Runtime */
   runtime: ToolRuntime
-  /** 服务端脱敏参数摘要（_safe_arg_summary），可缺省 */
+  /** 服务端脱敏参数摘要（summarize_tool_arguments），可缺省 */
   inputSummary?: string
   /** 生成实例 ID，可缺省 */
   generationId?: string

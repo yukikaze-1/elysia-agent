@@ -195,7 +195,7 @@ async def _collect_session_and_memory(agent: "Agent", info: DebugInfo) -> None:
 
 def _collect_tools_and_consolidation(agent: "Agent", info: DebugInfo) -> None:
     """收集 Tools / Consolidation 面板数据。"""
-    tm = agent.tool_adapter._manager  # noqa: SLF001
+    tm = agent.tool_adapter  # 公开门面（批次 A：原 `._manager` 私有穿透）
     info.currently_executing = list(tm.executing_now)
     info.tools = tm.plugin_list
     info.tool_history = list(tm.history)[-5:]

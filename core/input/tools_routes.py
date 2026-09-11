@@ -88,8 +88,7 @@ async def tools_registry_handler(request: web.Request) -> web.Response:
     agent = request.app["agent"]
     bridge = agent.desktop_bridge
     desktop_available = bridge.is_available()
-    manager = agent.tool_adapter._manager  # noqa: SLF001 — 与 server.py/ws_handler 同款深度访问先例
-    metadata = manager.registry_metadata(desktop_available=desktop_available)
+    metadata = agent.tool_adapter.registry_metadata(desktop_available=desktop_available)
     tools = [_tool_metadata_to_contract(m) for m in metadata]
     return web.json_response(
         rest_contract.ToolRegistryResponse(
