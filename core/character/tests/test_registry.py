@@ -75,7 +75,7 @@ def test_registry_release_evicts():
     assert reg.get("chi_1", _factory("chi_1")) is not None  # 释放后可重建，但缓存清掉了
 
 
-"""CharacterRuntimeRegistry 激活测试（M3：_busy/_session_binding_index）。"""
+"""CharacterRuntimeRegistry 激活测试（M3：_busy lease + LRU 驱逐/flush）。"""
 import pytest
 from core.character.registry import CharacterRuntimeRegistry
 from core.character.runtime import CharacterRuntime
@@ -108,10 +108,32 @@ def test_mark_busy_prevents_evict():
     reg.get("chi_c", _factory("chi_c"))
     assert reg.get("chi_b", _factory("chi_b")) is rt_b
 
-def test_session_binding_index_prevents_evict():
+
+def test_evicts_oldest_when_not_busy():
+    """P2-3：非 busy 的 runtime 按 LRU 正常驱逐（不再有死掉的绑定索引保护）。"""
     reg = CharacterRuntimeRegistry(max_size=1)
-    reg.get("chi_a", _factory("chi_a"))
+    rt_a = reg.get("chi_a", _factory("chi_a"))
     rt_b = reg.get("chi_b", _factory("chi_b"))
-    reg.set_session_binding_index({"chi_b"})
-    reg.get("chi_c", _factory("chi_c"))
-    assert reg.get("chi_b", _factory("chi_b")) is rt_b
+    # max_size=1 → 取 chi_b 时 chi_a 被驱逐
+    assert reg.get_existing("chi_a") is None
+    assert reg.get_existing("chi_b") is rt_b
+    assert rt_a is not rt_b
+
+
+@pytest.mark.asyncio
+async def test_evict_flushes_state_before_drop():
+    """P2-3：被驱逐的 runtime 先 flush 落库再丢弃（架构稿 §7.1「驱逐前必须 flush」）。"""
+    reg = CharacterRuntimeRegistry(max_size=1)
+    persisted = []
+
+    async def _persist(state):
+        persisted.append(state)
+
+    rt_a = reg.get("chi_a", _factory("chi_a"))
+    rt_a.set_persist_fn(_persist)
+
+    reg.get("chi_b", _factory("chi_b"))   # 超出 max_size → 驱逐 chi_a
+    assert reg.get_existing("chi_a") is None
+    await asyncio.sleep(0)                # 让 create_task 调度的 flush 执行
+    await asyncio.sleep(0)
+    assert persisted, "被驱逐的 runtime 未 flush（状态会随对象丢弃）"
