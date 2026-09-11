@@ -63,6 +63,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ClientMessage 判别联合的校验适配器——提为模块级单例（Pydantic 官方建议，同
+# core/memory/consolidator.py 的 _compare_actions_adapter 先例）。原先是每条 v2 入站
+# 消息现场构造 TypeAdapter(ClientMessage)，判别联合较大，重复构造纯属浪费。
+_CLIENT_MESSAGE_ADAPTER: TypeAdapter[ClientMessage] = TypeAdapter(ClientMessage)
+
 
 def resolve_protocol_version(header: str) -> int | None:
     """X-Protocol-Version 头 → 协议版本号（9B-3 单源判定）。
@@ -1056,7 +1061,7 @@ async def handle_json_message(data: dict, agent: "Agent", audio_buf: "AudioBuffe
             msg = None  # text 不走判别联合——保留既有 v2 text 错误通道
         else:
             try:
-                msg = TypeAdapter(ClientMessage).validate_python(data)
+                msg = _CLIENT_MESSAGE_ADAPTER.validate_python(data)
             except ValidationError as e:
                 if ws is not None:  # _find_channel 命中即 ws 非空，此处仅满足 pyright 收紧
                     await ws.send_json(ErrorMessage(
