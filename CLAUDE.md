@@ -36,6 +36,10 @@ make lint
 # pyright 类型检查门禁（core + Module + frontend_contract 生产代码，basic + 排除测试；须 Elysia env——base env 无 aiohttp 会漏报 ~25 处）
 make pyright
 # 或: conda run -n Elysia pyright
+
+# 架构边界门禁（ARCH-INC-P1-03，纯 AST 无外部依赖，秒级）：依赖方向 + 跨包私有符号 + eager 环
+make check-arch
+# 或: python scripts/check_architecture.py [--list]
 ```
 
 ### 按模块运行
@@ -478,6 +482,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 
 - **`docs/code-style-guide.md`** — 代码风格与类型约束。写代码前先读：ID NewType 体系 + 类型权威归属（core 定义 vs 契约层定义）+ StrEnum/coerce 用法 + getattr 使用纪律。
 - **pyright 门禁** — `make pyright`（`pyrightconfig.json`：include `core/` + `Module/` + `frontend_contract/`、排除 `**/tests/**`、`typeCheckingMode: basic`、`pythonVersion: 3.12`）。须在 Elysia env 运行——base env 无 aiohttp 会漏报 ~25 处。
+- **架构边界门禁** — `make check-arch`（`scripts/check_architecture.py`，ARCH-INC-P1-03）。四条规则：R1 `Module/` 生产代码与 `frontend_contract/` 不得反向依赖；R2 领域/基础设施层不得依赖 `core.input`；R3 禁止**跨包**导入下划线私有符号；R4 不得新增 **eager** import 环。存量泄漏（3×R1 + 8×R3）在脚本 allowlist 逐项登记理由——**新增即红**；收口某项后须同步删除对应 allowlist 条目。`TYPE_CHECKING` 类型边允许（R5 仅报告），函数内**懒导入**是打断 import 环的正当手段（R4 只算 eager，但 R1/R2/R3 仍算运行时依赖）。
 - **`docs/readme-conventions.md`** — README 编写规范。新增/修改模块时必须按模板写 README（面包屑 + 相关文档节），并在根 README 文档导航中注册。
 - **`docs/testing.md`** — 测试分层体系。新测试必须加 marker（unit/service/integration/slow），日常用 `make test-quick` / `make test-normal` / `make test-full`。
 - **`core/prompts/README.md`** — Prompt 模板命名规范（PascalCase `.j2`）+ 渲染方式（`str.replace()` / Jinja2 `render_macro()`，通过 `PromptManager`）。

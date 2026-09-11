@@ -186,6 +186,13 @@ conda run -n Elysia python -m pytest <文件> --collect-only -q -m "unit or serv
 marker=unit。`make gen-types` 重新生成 `frontend/src/types/contract.generated.ts`，
 `make check-types` 漂移门禁。
 
+`scripts/check_architecture.py` 是**架构边界静态门禁**（ARCH-INC-P1-03，`make check-arch`）：
+纯 AST、无外部依赖、秒级，覆盖依赖方向（`Module/`→`core/`、零依赖层反向依赖、领域层→`core.input`）、
+跨包私有符号导入、eager import 环。存量泄漏在脚本 allowlist 逐项登记理由，**新增即红**；
+`TYPE_CHECKING` 类型边允许，函数内懒导入是打断环的正当手段（R4 只算 eager，R1/R2/R3 仍算运行时依赖）。
+其测试 `scripts/tests/test_check_architecture.py` 用合成 fixture 仓库验证 eager/lazy/type 三分
+——该区分两个方向都踩过坑：全算 eager 会误报伪环，只算 eager 会漏报懒导入的真实泄漏。
+
 ## Marker 标准
 
 ### unit

@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -84,6 +84,12 @@ check-types:
 # 生产不发布数据库管理端口。无需 docker/凭据即可运行（静态解析 compose 文件）。
 check-compose:
 	conda run -n $(CONDA_ENV) python scripts/check_compose_security.py
+
+# 架构边界门禁（ARCH-INC-P1-03）：依赖方向（Module→core / 零依赖层 / 领域层→input）
+# + 跨包私有符号 + eager import 环。纯 AST、无外部依赖、秒级。
+# 存量泄漏在脚本内 allowlist 逐项登记理由，新增即红。
+check-arch:
+	python scripts/check_architecture.py
 
 start:
 	bash scripts/start.sh
