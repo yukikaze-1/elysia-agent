@@ -876,8 +876,13 @@ class TestMemoryStress:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("fake_storage")
     async def test_session_isolation_between_agents(self):
-        """两个 Agent 实例应各自拥有独立的会话记忆。"""
+        """两个 Agent 实例应各自拥有独立的会话记忆。
+
+        用 FakeLLMBackend——无需真实 LLM，也不该碰真实 Mongo（`fake_storage` 把
+        Agent 的存储导流到内存 fake；否则 stop() 的 save_all 会把测试会话写进生产库）。
+        """
         import os as _os
         _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         import uuid

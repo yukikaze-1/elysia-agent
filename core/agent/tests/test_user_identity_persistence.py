@@ -3,6 +3,14 @@
 真实联调复现：只重启后端进程、不清数据库，`GET /api/me` 回到
 `initialized=false / revision=1 / defaultCharacterId=null`——角色「不再认识我」。
 本文件用同一份假 Mongo 数据跨两个 Agent 实例验证重启后档案与 revision 不变。
+
+**存储隔离**：身份仓储经 `_make_agent` **直接注入** `_DurableFakeDB`（不走
+`DocumentDBFactory`），故根 conftest 的真实库防线**照常生效**——`agent.start()`
+连接的其余仓储（session/message/token/...）会被导流到内存 fake。
+
+> 历史：本文件曾标 `no_storage_guard`（关掉防线）。那让 `agent.start()` 把**其余
+> 仓储全部真连生产库**——实测一次全量跑产生 **108 次** `MongoDBBackend(db="default")`
+> 真实构造。直接注入本就与防线解耦，无需关掉它。
 """
 
 import asyncio
@@ -18,7 +26,7 @@ os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 from core.agent.agent import Agent          # noqa: E402
 from core.config import AppConfig           # noqa: E402
 
-pytestmark = [pytest.mark.service, pytest.mark.usefixtures("no_storage_guard")]
+pytestmark = pytest.mark.service
 
 
 class _DurableFakeDB(FakeDocumentDBBackend):
@@ -44,27 +52,16 @@ def _isolate_probes(agent: Agent) -> None:
 
 
 async def _run_health_rounds(agent: Agent, n_rounds: int) -> None:
-    """在单次真实 `_db_health_loop` 任务内跑 n 轮探测/恢复。
+    """直接驱动 n 轮健康探测/恢复（`Agent._db_health_round`）。
 
-    asyncio.sleep 替换为「前 n 轮立即返回、此后抛 CancelledError」——每轮 = 一次完整
-    探测 + 恢复触发判定（技法同 core/agent/tests/test_lifecycle_idempotency.py）。
+    **不再 patch `asyncio.sleep`**：全局 patch 会误伤调度器 `_prune_loop`(10s) /
+    idle(1s) / mailbox(0.5s) 等后台循环的 sleep，抢占轮次预算，使健康循环首轮就被
+    取消、循环体从不执行（2026-09-11 实测：测试假绿）。直接调单轮方法，确定性强、
+    与其它后台任务无关。
     """
-    rounds_done = 0
-
-    async def _fast_sleep(*args: object, **kwargs: object) -> None:
-        nonlocal rounds_done
-        if rounds_done >= n_rounds:
-            raise asyncio.CancelledError
-        rounds_done += 1
-
-    with patch("core.agent._lifecycle_persistence.asyncio.sleep",
-               side_effect=_fast_sleep):
-        task = asyncio.create_task(agent._db_health_loop())  # noqa: SLF001
-        try:
-            await asyncio.wait_for(task, timeout=5.0)
-        except asyncio.CancelledError:
-            pass
-    assert rounds_done == n_rounds, "health loop 未跑满预期轮次"
+    prev: dict[str, bool] = {}
+    for _ in range(n_rounds):
+        prev = await agent._db_health_round(prev)  # noqa: SLF001
 
 
 @pytest.mark.asyncio

@@ -41,6 +41,7 @@ if str(_ROOT) not in sys.path:  # 保证 `core.tests._real_db_guard` 可导入
 from core.tests._real_db_guard import (  # noqa: E402
     install_blocked_milvus,
     install_fake_mongo,
+    install_test_milvus_collection,
     is_exempt,
 )
 
@@ -57,6 +58,7 @@ def fake_storage(monkeypatch):
     """
     install_fake_mongo(monkeypatch)
     install_blocked_milvus(monkeypatch)
+    install_test_milvus_collection(monkeypatch)
 
 
 @pytest.fixture
@@ -65,16 +67,50 @@ def no_storage_guard():
 
     用于注入自有 fake（如 `_DurableFakeDB`）并驱动真实 `connect()` 路径的测试——
     防线的导流会改变其语义。
+
+    ⚠️ **慎用**：它关掉的是**整个测试**的防护，不只是你注入的那个仓储。若测试里调
+    `agent.start()`，Agent 的**其余全部仓储**（session / message / token / ...）会真连
+    生产库——实测 `test_user_identity_persistence.py` 曾因此产生 108 次
+    `MongoDBBackend(db="default")` 真实构造。
+
+    **多数情况不需要它**：若你是直接给某个仓储注入 `_db`（不经 `DocumentDBFactory`），
+    防线本来就影响不到你——把 fixture 去掉即可，其余仓储会自动被隔离。
+    """
+
+
+@pytest.fixture
+def real_milvus_collection():
+    """本测试**有意检查生产集合名**，请防线别改 `COLLECTION`。
+
+    用于钉住「仓储路由到 `long_term_memory_v2`（而非 v1）」的回归测试
+    （`core/storage/tests/test_memory_repo_v2.py`）——防线的 `*__test` 重命名会让
+    这类断言失真。**注意**：请求它只关闭「集合改名」，Mongo 导流仍然生效；
+    该测试只用 stub、不连真实 Milvus，故安全。
     """
 
 
 @pytest.fixture(autouse=True)
 def _guard_real_database(request, monkeypatch):
-    """unit / service 测试不得连接真实数据库（详见模块 docstring）。"""
-    if is_exempt(m.name for m in request.node.iter_markers()):
-        yield
+    """任何测试都不许碰生产库（详见模块 docstring）。
+
+    两条隔离对所有测试生效：
+    - **Milvus**：LTM 集合重定向到 `*__test`——`clear_all` 会 drop collection，
+      一条测试即可抹掉全部长期记忆（实测发生）。
+      `real_milvus_collection` fixture 可关闭改名（供钉住生产集合名的回归测试）。
+    - **Mongo**：生产连接导流到内存 `FakeDocumentDBBackend`。`integration`/`slow`
+      也照做——实测它们并非真需要 Mongo，只是用了 `AppConfig()` 建 Agent（如
+      `TestDebugDbApi` 往真实 `default` 会话写 `msg-test`/`hello`）。
+      仅 `external`（显式 opt-in 的真实 E2E）放开 Mongo。
+    """
+    fixtures = set(request.fixturenames)
+    if "real_milvus_collection" not in fixtures:
+        # 生产 LTM 集合对所有测试关闭：重定向到 *__test。
+        install_test_milvus_collection(monkeypatch)
+
+    if "external" in {m.name for m in request.node.iter_markers()}:
+        yield  # 真实 E2E：显式 opt-in，允许真实 Mongo
         return
-    if {"fake_storage", "no_storage_guard"} & set(request.fixturenames):
+    if {"fake_storage", "no_storage_guard"} & fixtures:
         yield  # 已显式隔离 / 自管存储
         return
 
@@ -82,7 +118,9 @@ def _guard_real_database(request, monkeypatch):
         _REDIRECTED_TESTS.add(request.node.nodeid)
 
     install_fake_mongo(monkeypatch, _record)
-    install_blocked_milvus(monkeypatch, _record)
+    if not is_exempt(m.name for m in request.node.iter_markers()):
+        # unit/service 连 Milvus 也无意义——拦截，省掉无谓连接。
+        install_blocked_milvus(monkeypatch, _record)
     yield
 
 
@@ -91,7 +129,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if not _REDIRECTED_TESTS:
         return
     terminalreporter.write_sep(
-        "-", f"真实库防線：{len(_REDIRECTED_TESTS)} 个 unit/service 测试的连接被导流到内存 fake"
+        "-", f"真实库防线：{len(_REDIRECTED_TESTS)} 个测试的生产 Mongo 连接被导流到内存 fake"
     )
     for nodeid in sorted(_REDIRECTED_TESTS)[:10]:
         terminalreporter.write_line(f"  {nodeid}")

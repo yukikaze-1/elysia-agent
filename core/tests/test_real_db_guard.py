@@ -16,6 +16,7 @@ from core.tests._real_db_guard import (
     EXEMPT_MARKERS,
     RealDatabaseAccessError,
     install_fake_mongo,
+    install_test_milvus_collection,
     is_exempt,
     make_blocked_client,
     production_mongo_provider_ids,
@@ -151,3 +152,40 @@ class TestInstallFakeMongo:
         backend = DocumentDBFactory.create("mongodb/elysia")
         assert type(backend).__name__ == "MongoDBBackend"
         assert seen == []
+
+
+class TestInstallTestMilvusCollection:
+    """`install_test_milvus_collection`：生产 LTM 集合对测试不可见。
+
+    背景（2026-09-11 实测）：`MemoryRepository.clear_all()` 是 **drop + recreate
+    collection**，`TestDebugDbApi::test_ltm_clear_all` 因此在真实 Milvus 上清空了整个
+    `long_term_memory_v2`。重定向后任何测试都只作用于 `*__test` 集合。
+    """
+
+    def test_redirects_both_collections(self, monkeypatch):
+        """两个仓储类的 COLLECTION 都以 `__test` 结尾（autouse 防线已在跑）。"""
+        from core.storage.memory_repo import MemoryRepository
+        from core.storage.memory_repo_v2 import MemoryRepositoryV2
+
+        install_test_milvus_collection(monkeypatch)
+        assert MemoryRepository.COLLECTION.endswith("__test")
+        assert MemoryRepositoryV2.COLLECTION.endswith("__test")
+
+    def test_does_not_touch_production_name(self, monkeypatch):
+        """重定向后不得等于生产集合名——这是防线的全部意义。"""
+        from core.storage.memory_repo import MemoryRepository
+        from core.storage.memory_repo_v2 import MemoryRepositoryV2
+
+        install_test_milvus_collection(monkeypatch)
+        assert MemoryRepository.COLLECTION != "long_term_memory"
+        assert MemoryRepositoryV2.COLLECTION != "long_term_memory_v2"
+
+    def test_is_idempotent(self, monkeypatch):
+        """重复调用不叠加后缀（autouse 防线与 fake_storage 都会调）。"""
+        from core.storage.memory_repo_v2 import MemoryRepositoryV2
+
+        install_test_milvus_collection(monkeypatch)
+        once = MemoryRepositoryV2.COLLECTION
+        install_test_milvus_collection(monkeypatch)
+        assert MemoryRepositoryV2.COLLECTION == once
+        assert once.endswith("__test") and not once.endswith("__test__test")

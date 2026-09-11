@@ -245,29 +245,18 @@ def _make_stop_agent(repo: _FlipIdemRepo) -> _LifecyclePersistence:
 
 async def _run_health_rounds(agent: object, n_rounds: int,
                              flip: Callable[[int], None] | None = None) -> None:
-    """在单次 `_db_health_loop` 任务内跑 n 轮探测/恢复。
+    """直接驱动 n 轮探测/恢复（`Agent._db_health_round`）。
 
-    asyncio.sleep 替换为「前 n 轮立即返回、此后抛 CancelledError」——每轮 = 一次完整
-    探测 + 恢复边界判定。flip(round_no) 可选：每轮探测前回调（模拟运行中 Mongo 切换）。
+    **不 patch `asyncio.sleep`**：全局 patch 会误伤其它后台循环（调度器 `_prune_loop`
+    10s / idle 1s / mailbox 0.5s）的 sleep，抢占轮次预算使健康循环首轮即被取消
+    （2026-09-11 实测于 test_user_identity_persistence.py）。直接调单轮方法确定性强。
+    flip(round_no) 可选：每轮探测前回调（模拟运行中 Mongo 切换）。
     """
-    rounds_done = 0
-
-    async def _fast_sleep(*args: object, **kwargs: object) -> None:
-        nonlocal rounds_done
-        if rounds_done >= n_rounds:
-            raise asyncio.CancelledError
-        rounds_done += 1
+    prev: dict[str, bool] = {}
+    for i in range(1, n_rounds + 1):
         if flip is not None:
-            flip(rounds_done)
-
-    with mock.patch("core.agent._lifecycle_persistence.asyncio.sleep",
-                    side_effect=_fast_sleep):
-        task = asyncio.create_task(_LifecyclePersistence._db_health_loop(agent))
-        try:
-            await asyncio.wait_for(task, timeout=5.0)
-        except asyncio.CancelledError:
-            pass
-    assert rounds_done == n_rounds, "health loop 未跑满预期轮次"
+            flip(i)
+        prev = await _LifecyclePersistence._db_health_round(agent, prev)  # type: ignore[arg-type]
 
 
 class TestHealthLoopProbeRecovery:

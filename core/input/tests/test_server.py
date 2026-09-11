@@ -222,6 +222,7 @@ class TestCreateAppIntegration:
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("fake_storage")
 class TestWebSocketHandler:
     @pytest.mark.asyncio
     async def test_text_message_triggers_process_message(self, aiohttp_client):
@@ -1388,6 +1389,7 @@ class TestErrorEnvelopeNoExceptionText:
 # ============================================================
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("fake_storage")
 class TestAssertionFixes:
     @pytest.mark.asyncio
     async def test_invalid_json_returns_error_message(self, aiohttp_client):

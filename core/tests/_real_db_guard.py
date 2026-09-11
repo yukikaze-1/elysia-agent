@@ -27,15 +27,34 @@ Mongo 在跑，就会连上并写入——`agent.start()` 加载会话、`agent.
 
 ## 防线做什么
 
-对**未标** `integration` / `slow` / `external` 的测试，把真实客户端（Mongo `AsyncIOMotorClient`、
-Milvus `MilvusClient`）替换为「**构造成功、任何操作即抛**」的桩：
+对**所有**测试（仅 `external` 放开），切断对生产库的写入：
 
-- 构造不拦——只建后端对象、不做 I/O 的测试（如 `documentdb_backend` fixture）不受影响；
-- 任何真实操作（`client[db][coll].insert_one(...)` / `client.admin.command(...)`）抛
-  `RealDatabaseAccessError` 并**记录访问尝试**；
-- teardown 时若发生过尝试 → **判该测试失败**，错误信息指明文件/测试名与修法。
+| 目标 | 处置 | 为什么 |
+|------|------|--------|
+| **Mongo**（生产连接串） | 导流到内存 `FakeDocumentDBBackend` | `agent.start()`/`stop()` 读写 `sessions` / `message_archive` |
+| **Milvus**（LTM 集合） | 集合名重定向到 `long_term_memory*__test` | `clear_all()` 是 **drop + recreate collection** |
 
-净效果：连库的 `unit`/`service` 测试**立刻红且不再污染库**，而不再「悄悄写生产库还全绿」。
+unit/service 另把 Milvus 客户端替换为「构造成功、任何操作即抛」的桩（它们本就不需要向量库）。
+
+**为什么 coverage 是「所有测试」而不是「unit/service」**：`integration`/`slow` 的语义是
+「允许使用真实依赖」，但实测这类测试**并不真的需要真库**——`TestMemoryIntegration`
+（写测试记忆）、`TestDebugDbApi`（清库）、`test_phase2::test_session_isolation_between_agents`
+都用 `FakeLLMBackend`，真库只是被 `AppConfig()` 顺带连上。且它们写入用的是**真实 scope**
+（`agent._user_identity.userId` + `chi_builtin_elysia`），与真实记忆无法区分。
+
+**Milvus 尤其不能豁免**：`MemoryRepository.clear_all()` 会 **drop collection**。实测
+`core/tests/test_phase3.py::TestDebugDbApi::test_ltm_clear_all` 跑一遍就把整个
+`long_term_memory_v2` 清空（row_count 4 → 0）——`make test-full` 一次即抹掉全部长期记忆。
+（当时 insert_log 里残留的条目全是测试数据，侥幸无真实记忆损失。）
+
+净效果：测试可以照常跑真实管线，但**碰不到生产数据**。
+
+## 手工检查残留
+
+存量清理脚本（默认 dry-run，先备份，见各自 `--help`）：
+
+- `scripts/dev/purge_test_residue.py`——集合级（测试会话 / `character_versions` 残留）。
+- `scripts/dev/purge_test_messages.py`——`default` 会话里逐条的测试消息。
 """
 
 from __future__ import annotations
@@ -47,6 +66,7 @@ __all__ = [
     "RealDatabaseAccessError",
     "install_blocked_milvus",
     "install_fake_mongo",
+    "install_test_milvus_collection",
     "is_exempt",
     "make_blocked_client",
     "production_mongo_provider_ids",
@@ -78,13 +98,23 @@ def _production_mongo_uris() -> frozenset[str]:
 def _targets_production_mongo(kwargs: dict) -> bool:
     """本次 create 的目标是否就是生产库。
 
-    判据是**实际连接串**而非仅 provider_id：测试若显式把 `MONGODB_URI` 改到别处
+    判据是**实际生效的连接串**而非仅 provider_id：测试若显式把 `MONGODB_URI` 改到别处
     （如指向不可达端口以测失败分支），就不该被当成「生产库访问」而导流。
     调用点发生在测试体内，此时测试自己的 monkeypatch 已生效。
+
+    注意要按**真实代码的同一解析链**回退（`base_url` → `MONGODB_URI` → 配置默认值）：
+    都没设置时，实际生效的就是配置默认值（= 生产库），必须导流——否则会落到真工厂，
+    报「MongoDB 连接串未设置」而不是被隔离。
     """
     import os
 
-    uri = kwargs.get("base_url") or os.getenv("MONGODB_URI", "")
+    from core.config import AppConfig
+
+    uri = (
+        kwargs.get("base_url")
+        or os.getenv("MONGODB_URI")
+        or AppConfig().database.mongodb_uri
+    )
     return uri in _production_mongo_uris()
 
 
@@ -128,6 +158,36 @@ def install_blocked_milvus(monkeypatch, record: Callable[[str], None] | None = N
         "Module.database.vectordb.milvus.MilvusClient",
         make_blocked_client(record or (lambda _w: None), "MilvusClient"),
     )
+
+
+_TEST_COLLECTION_SUFFIX = "__test"
+
+
+def install_test_milvus_collection(monkeypatch) -> None:
+    """把 LTM 的 Milvus 集合名重定向到 `*__test`——生产记忆对任何测试不可见。
+
+    **为什么必须做（2026-09-11 实测）**：`MemoryRepository.clear_all()` 是
+    **drop + recreate collection**（`core/storage/memory_repo.py:163-169`），而
+    `DELETE /debug/api/ltm` 会调它。`core/tests/test_phase3.py::TestDebugDbApi::
+    test_ltm_clear_all` 因此会在真实 Milvus 上**清空整个 `long_term_memory_v2`**——
+    `make test-full` 一次就抹掉全部长期记忆（实测 row_count 4 → 0）。
+
+    反向的污染同样存在：`TestMemoryIntegration` / `test_insert_and_search_async` 往真实
+    集合**写**「上周和妖梦约定周六去爬香山」等测试记忆，且用**真实 scope**
+    （`agent._user_identity.userId` + `chi_builtin_elysia`）——与真实记忆无法区分。
+
+    重定向后这些测试照常走 Milvus，但只作用于 `long_term_memory*__test`；生产集合不被
+    任何测试读写。测试集合由 `connect()` 按需创建。
+
+    幂等：autouse 防线与 `fake_storage` 都会调它，重复调用不叠加后缀。
+    """
+    from core.storage.memory_repo import MemoryRepository
+    from core.storage.memory_repo_v2 import MemoryRepositoryV2
+
+    for cls in (MemoryRepository, MemoryRepositoryV2):
+        current = cls.COLLECTION
+        if not current.endswith(_TEST_COLLECTION_SUFFIX):
+            monkeypatch.setattr(cls, "COLLECTION", current + _TEST_COLLECTION_SUFFIX)
 
 _MESSAGE = (
     "该测试试图访问真实数据库（{where}）。\n"

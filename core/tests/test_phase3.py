@@ -708,6 +708,7 @@ class TestPromptAssemblerUnit:
 # ============================================================================
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("fake_storage")
 class TestAgentProcessMessage:
     @pytest.mark.asyncio
     async def test_empty_message_returns(self):
@@ -1434,6 +1435,7 @@ class TestIdleMonitor:
 # ============================================================================
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("fake_storage")
 class TestDebugInfo:
     @pytest.mark.asyncio
     async def test_collect_returns_debug_info(self):

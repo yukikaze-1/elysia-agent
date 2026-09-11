@@ -344,64 +344,83 @@ class _LifecyclePersistence:
         （session 加载 pending、LTM 同步脏条目、generation 崩溃残留清理、identity 重载
         权威档案、idempotency reconcile）。
 
+        循环体在 `_db_health_round`（可单独驱动，测试无需 patch `asyncio.sleep`）。
+
         Raises:
             单轮探测失败仅记日志，不中断循环。
         """
         prev: dict[str, bool] = {}
         while True:
             await asyncio.sleep(60)
-            try:
-                probes: dict[str, Callable[[], Awaitable[bool]]] = {
-                    "session": self._session_manager.health_check,
-                    "ltm": self._long_term.health_check,
-                    "message": self._message_repo.health_check,
-                    "token": self._token_repo.health_check,
-                    "version": self._version_repo.health_check,
-                    "idempotency": self.idempotency_repo.health_check,
-                }
-                attachment = getattr(self, "_attachment_repo", None)
-                if attachment is not None:
-                    probes["attachment"] = attachment.health_check
-                gen_registry = getattr(self, "_generation_registry", None)
-                if gen_registry is not None:
-                    probes["generation"] = gen_registry.health_check
-                desktop_bridge = getattr(self, "_desktop_bridge", None)
-                if desktop_bridge is not None:
-                    probes["desktop"] = desktop_bridge.storage_health_check
-                identity_store = getattr(self, "_user_identity_store", None)
-                if identity_store is not None and getattr(
-                        identity_store, "is_authoritative", False):
-                    probes["identity"] = identity_store.health_check
+            prev = await self._db_health_round(prev)
 
-                results: dict[str, bool] = {}
-                for name, probe in probes.items():
-                    try:
-                        results[name] = bool(
-                            await asyncio.wait_for(probe(), timeout=3.0))
-                    except Exception:
-                        results[name] = False
+    async def _db_health_round(self, prev: dict[str, bool]) -> dict[str, bool]:
+        """单轮：探测全部存储依赖 → 触发补偿 hook（`_db_health_loop` 的循环体）。
 
-                self._mongo_available = bool(
-                    results.get("session") and results.get("message"))
-                self._milvus_available = bool(results.get("ltm"))
+        从 `_db_health_loop` 抽出，使测试可直接驱动 N 轮，无需全局 patch `asyncio.sleep`
+        ——那会误伤调度器 `_prune_loop`(10s) / idle(1s) / mailbox(0.5s) 等后台循环的
+        sleep，抢占轮次预算导致健康循环首轮即被取消（2026-09-11 实测）。
 
-                # 恢复触发：False→True 边界（既有）∪ 依赖自报需补偿（BE-P1-07：首轮
-                # prev={} 无边界可依，按依赖补偿状态补触发；durable 已强化——无关成功
-                # 操作不再静默清零）
-                for name, ok in results.items():
-                    if not ok:
-                        continue
-                    edge_recovery = name in prev and not prev[name]
-                    if not edge_recovery and not self._dependency_needs_recovery(name):
-                        continue
-                    if not await self._recover_dependency(name):
-                        results[name] = False  # 补偿未完成 → 下轮重试
-                prev = results
+        Args:
+            prev: 上一轮 probe 结果（首轮传 `{}`）。
 
-                if not results.get("session", False):
-                    logger.warning("Session/Mongo 离线")
-            except Exception:
-                logger.warning("Database health check failed", exc_info=True)
+        Returns:
+            本轮 `{依赖名: 是否健康}`；本轮探测整体异常时原样返回 `prev`（不推进边界，
+            下轮按依赖自报状态重试）。
+        """
+        try:
+            probes: dict[str, Callable[[], Awaitable[bool]]] = {
+                "session": self._session_manager.health_check,
+                "ltm": self._long_term.health_check,
+                "message": self._message_repo.health_check,
+                "token": self._token_repo.health_check,
+                "version": self._version_repo.health_check,
+                "idempotency": self.idempotency_repo.health_check,
+            }
+            attachment = getattr(self, "_attachment_repo", None)
+            if attachment is not None:
+                probes["attachment"] = attachment.health_check
+            gen_registry = getattr(self, "_generation_registry", None)
+            if gen_registry is not None:
+                probes["generation"] = gen_registry.health_check
+            desktop_bridge = getattr(self, "_desktop_bridge", None)
+            if desktop_bridge is not None:
+                probes["desktop"] = desktop_bridge.storage_health_check
+            identity_store = getattr(self, "_user_identity_store", None)
+            if identity_store is not None and getattr(
+                    identity_store, "is_authoritative", False):
+                probes["identity"] = identity_store.health_check
+
+            results: dict[str, bool] = {}
+            for name, probe in probes.items():
+                try:
+                    results[name] = bool(
+                        await asyncio.wait_for(probe(), timeout=3.0))
+                except Exception:
+                    results[name] = False
+
+            self._mongo_available = bool(
+                results.get("session") and results.get("message"))
+            self._milvus_available = bool(results.get("ltm"))
+
+            # 恢复触发：False→True 边界（既有）∪ 依赖自报需补偿（BE-P1-07：首轮
+            # prev={} 无边界可依，按依赖补偿状态补触发；durable 已强化——无关成功
+            # 操作不再静默清零）
+            for name, ok in results.items():
+                if not ok:
+                    continue
+                edge_recovery = name in prev and not prev[name]
+                if not edge_recovery and not self._dependency_needs_recovery(name):
+                    continue
+                if not await self._recover_dependency(name):
+                    results[name] = False  # 补偿未完成 → 下轮重试
+
+            if not results.get("session", False):
+                logger.warning("Session/Mongo 离线")
+            return results
+        except Exception:
+            logger.warning("Database health check failed", exc_info=True)
+            return prev
 
     async def _recover_dependency(self, name: str) -> bool:
         """依赖恢复补偿 hook（False→True 边界触发）。

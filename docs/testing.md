@@ -39,10 +39,22 @@ Mongo 在跑就会连上并写入（`agent.stop()` 的 `save_all()` 回写 `sess
 问题从不自我暴露。实测残留（`default` 库）：`sessions` 标题 `active`/`lease`/`burst`、
 `character_versions.session_id="test_default_type"`；2026-09-10 清过一次，测试跑完后再次出现。
 
-**根 `conftest.py` 的 autouse 防线**：未标 `integration`/`slow`/`external` 的测试，把**指向生产库**
-的 Mongo 连接导流到内存 `FakeDocumentDBBackend`、Milvus 客户端拦截为抛错桩。判据是**实际连接串**
-而非只看 provider_id——测试若显式把 `MONGODB_URI` 改到别处（如指向不可达端口验证失败分支），不受影响。
-防线**导流而不判失败**，运行结束时在终端汇总被导流的测试数（保持可见，避免为上百个既有测试批量加标记）。
+**根 `conftest.py` 的 autouse 防线**，对所有测试生效（仅 `external` 放开）：
+
+| 目标 | 处置 | 为什么 |
+|------|------|--------|
+| **Mongo**（生产连接串） | 导流到内存 `FakeDocumentDBBackend` | `agent.start()`/`stop()` 会读写 `sessions` / `message_archive` |
+| **Milvus**（LTM 集合） | 集合名重定向到 `long_term_memory*__test` | `clear_all()` 是 **drop + recreate collection**——`TestDebugDbApi::test_ltm_clear_all` 实测**清空了整个 `long_term_memory_v2`** |
+
+Mongo 的判据是**实际连接串**而非只看 provider_id——测试若显式把 `MONGODB_URI` 改到别处
+（如指向不可达端口验证失败分支），不受影响。unit/service 另把 Milvus 客户端拦截为抛错桩
+（它们本就不需要向量库，省掉无谓连接）。防线**导流而不判失败**，运行结束时在终端汇总被导流
+的测试数（保持可见，避免为上百个既有测试批量加标记）。
+
+> **为什么 Milvus 必须重定向而不是豁免 `slow`**：`slow`/`integration` 的语义是「允许用真实依赖」，
+> 但实测它们**并不真的需要**——`TestMemoryIntegration`（写测试记忆）、`TestDebugDbApi`（清库）
+> 都用 `FakeLLMBackend`，真库只是被 `AppConfig()` 顺带连上。且测试写入用的是**真实 scope**
+> （`agent._user_identity.userId` + `chi_builtin_elysia`），与真实记忆无法区分。
 
 需要防线让位的测试：
 
@@ -54,8 +66,11 @@ pytestmark = [pytest.mark.service, pytest.mark.usefixtures("no_storage_guard")]
 @pytest.mark.usefixtures("fake_storage")
 ```
 
-实现与背景见 `core/tests/_real_db_guard.py`。已核实的存量残留清理脚本：
-`scripts/dev/purge_test_residue.py --dry-run|--apply`。
+实现与背景见 `core/tests/_real_db_guard.py`。存量清理脚本：
+
+- `scripts/dev/purge_test_residue.py --dry-run|--apply`——集合级残留（测试会话 / character_versions）。
+- `scripts/dev/purge_test_messages.py --dry-run|--apply`——`default` 会话里**逐条**的测试消息
+  （实测 238 条归档中 123 条来自测试；脚本只删高置信来源，模糊项仅列出供人工判断）。
 
 ### 外部测试门禁（E4，`RUN_EXTERNAL_TESTS=1`）
 

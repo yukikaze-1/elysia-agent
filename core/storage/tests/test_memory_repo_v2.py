@@ -2,7 +2,10 @@ import pytest
 from core.storage.memory_repo_v2 import MemoryRepositoryV2
 
 # 与同目录 test_memory_repo.py（v1）同模式：单模块 + MagicMock stub（marker=unit）。
-pytestmark = pytest.mark.unit
+# `real_milvus_collection`：本模块断言的是**生产集合名**（v2 路由回归），必须让
+# 真实库防线放过集合改名（防线默认把它重定向到 `long_term_memory_v2__test`）。
+# 只用 stub，不连真实 Milvus——见 conftest.py 的 fixture 说明。
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("real_milvus_collection")]
 
 
 def test_collection_name():
