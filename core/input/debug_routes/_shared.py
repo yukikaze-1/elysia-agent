@@ -10,7 +10,7 @@ import uuid
 
 from aiohttp import web
 
-from core.schema.message import Message
+from core.schema.message import Message, character_snapshot_to_wire
 from frontend_contract.rest import ProtocolError, Message as ContractMessage
 
 logger = logging.getLogger(__name__)
@@ -27,10 +27,20 @@ def _protocol_error_response(code: str, message: str, status: int = 401,
 
 
 def _archive_to_client(msgs: list[Message]) -> list[dict]:
-    """将 Message 列表转为前端兼容格式（补 parts + _id 字段）。"""
+    """将 Message 列表转为前端兼容格式（补 parts + _id 字段）。
+
+    P2-2：character 快照转换必须与 `core/input/_common._archive_to_client` 一致——
+    快照经 `character_snapshot_to_wire` 译为 camelCase wire，None 时省略该键
+    （不写 `character: null`）。此前本副本漏掉该步，导致 /debug/api/archive 与业务
+    REST 的归档消息 wire 形状漂移（内部 snake_case + 空键）。
+    依赖 `core.schema.message`（非父包 core.input.*），保持 debug_routes 的解耦约束。
+    """
     result = []
     for msg in msgs:
         entry = msg.model_dump(mode="json")
+        character = character_snapshot_to_wire(entry.pop("character", None))
+        if character is not None:
+            entry["character"] = character
         mongo_id = entry.get("metadata", {}).pop("_mongo_id", None)
         if mongo_id:
             entry["_id"] = mongo_id

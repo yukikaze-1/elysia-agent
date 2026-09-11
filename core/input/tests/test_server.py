@@ -967,6 +967,75 @@ class TestSessionReplayContract:
         assert third == first
 
 
+@pytest.mark.unit
+class TestArchiveToClientParity:
+    """P2-2：两处 `_archive_to_client` 副本必须产出同一 wire 形状。
+
+    `core/input/_common.py` 供 session_routes/chat_routes 使用；
+    `core/input/debug_routes/_shared.py` 是刻意解耦的本地副本（debug_routes 不 import
+    父包 core.input.*），其 docstring 明确要求「行为必须保持一致」。
+    但 character 快照转换只在 _common 侧实现，debug 归档面板（/debug/api/archive）
+    因此返回内部 snake_case 的 character，且 None 时保留 `character: null` 键——
+    与业务 REST 的 wire 形状漂移。
+    """
+
+    @staticmethod
+    def _assistant_with_character():
+        from core.schema.message import AssistantMessage, CharacterMessageSnapshot
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
+        return AssistantMessage(
+            content=[TextPart(content="hi")],
+            message_id=MessageId("msg_cccccccccccccccccccccccccc"),
+            character=CharacterMessageSnapshot(
+                character_id="chr_builtin_elysia",
+                character_instance_id="chi_builtin_elysia",
+                character_revision=1,
+                display_name="Elysia",
+            ),
+        )
+
+    @staticmethod
+    def _assistant_without_character():
+        from core.schema.message import AssistantMessage
+        from core.schema.part import TextPart
+        from core.schema.types import MessageId
+
+        return AssistantMessage(
+            content=[TextPart(content="hi")],
+            message_id=MessageId("msg_dddddddddddddddddddddddddd"),
+        )
+
+    def test_character_snapshot_shape_matches(self):
+        """有角色快照：两侧 character 键的 wire 形状一致（camelCase）。"""
+        from core.input._common import _archive_to_client as common_impl
+        from core.input.debug_routes._shared import _archive_to_client as debug_impl
+
+        msg = self._assistant_with_character()
+        common_entry = common_impl([msg])[0]
+        debug_entry = debug_impl([msg])[0]
+
+        assert common_entry["character"] == debug_entry["character"]
+        # wire 形状为 camelCase（而非内部 snake_case）
+        assert common_entry["character"]["characterId"] == "chr_builtin_elysia"
+        assert common_entry["character"]["presentation"] == {
+            "avatarAssetId": None, "live2dModelId": None, "themeColor": None,
+        }
+
+    def test_absent_character_omits_key_in_both(self):
+        """无角色快照：两侧都省略 character 键（不写 null）。"""
+        from core.input._common import _archive_to_client as common_impl
+        from core.input.debug_routes._shared import _archive_to_client as debug_impl
+
+        msg = self._assistant_without_character()
+        common_entry = common_impl([msg])[0]
+        debug_entry = debug_impl([msg])[0]
+
+        assert "character" not in common_entry
+        assert "character" not in debug_entry
+
+
 @pytest.mark.service
 @pytest.mark.asyncio
 async def test_session_replay_token_stats_camel_key(aiohttp_client):

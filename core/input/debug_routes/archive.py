@@ -1,9 +1,10 @@
 """Debug 归档 + 会话路由：消息归档 CRUD + 会话管理。
 
 响应构造 `frontend_contract.debug` 契约模型 + `wire_dict()`；归档消息经
-`api_routes._archive_to_client`（内部 core.schema.Message → 客户端 dict）再经
-`_archive_msg_to_contract`（block_index → content_type 归一化）→ 契约 `rest.Message` 视图；
-session 详情消息经 `_common.sessions_to_client` → 契约 `SessionDetailMessage` 视图。
+`_shared._archive_to_client`（内部 core.schema.Message → 客户端 dict，含 character
+快照 camelCase 转换）再经 `_archive_msg_to_contract`（block_index → content_type 归一化）
+→ 契约 `rest.Message` 视图；session 详情消息经 `_common.sessions_to_client` →
+契约 `SessionDetailMessage` 视图。
 """
 
 import logging
