@@ -12,6 +12,8 @@ from aiohttp import web
 from core.input.debug_routes._shared import _protocol_error_response
 from core.schema.memory import MemoryType
 from core.schema.types import MemoryId
+from core.storage.base import StorageUnavailableError
+from core.storage.destructive_guard import DestructiveConfirmRequired
 from frontend_contract import debug as contract
 
 logger = logging.getLogger(__name__)
@@ -141,15 +143,28 @@ async def ltm_update_handler(request: web.Request) -> web.Response:
 
 
 async def ltm_clear_handler(request: web.Request) -> web.Response:
-    """清空所有 LTM 条目。
+    """清空所有 LTM 条目（**破坏性**，需 `?confirm=ltm` 类型化确认）。
 
     Args:
-        request: aiohttp Request。
+        request: aiohttp Request；query `confirm` 必填，须等于 `MemoryRepository.CONFIRM_TOKEN`。
 
     Returns:
-        web.Response: DebugResult 契约 wire（ok true + deleted 计数）。
+        web.Response: DebugResult 契约 wire（ok true + deleted 计数）；
+        缺 confirm → 400，confirm 不匹配 → 400，存储不可用 → 503。
     """
     agent = request.app["agent"]
-    count = await agent.long_term.clear_all()
-    logger.warning("DEBUG API: ltm_clear deleted=%d", count)
+    confirm = (request.query.get("confirm") or "").strip()
+    if not confirm:
+        return _protocol_error_response(
+            "CONTRACT_VALIDATION",
+            "清空 LTM 是破坏性且不可逆的操作，需 ?confirm=<目标资源名> 显式确认",
+            400,
+        )
+    try:
+        count = await agent.long_term.clear_all(confirm=confirm)
+    except DestructiveConfirmRequired as e:
+        return _protocol_error_response("CONTRACT_VALIDATION", str(e), 400)
+    except StorageUnavailableError as e:
+        return _protocol_error_response("STORAGE_UNAVAILABLE", str(e), 503, retryable=True)
+    logger.warning("DEBUG API: ltm_clear deleted=%d confirm=%s", count, confirm)
     return web.json_response(contract.DebugResult(ok=True, deleted=count).wire_dict())

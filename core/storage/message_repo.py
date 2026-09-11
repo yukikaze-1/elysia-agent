@@ -14,6 +14,7 @@ from core.storage.character_write_guard import (
     is_assistant_without_character,
     warn_missing_character_snapshot,
 )
+from core.storage.destructive_guard import require_confirm
 from core.schema.adapters.message_adapter import validate_message_legacy_compat
 from core.schema.types import MessageId, SessionId
 from core.schema.message import Message, MessageRole
@@ -22,6 +23,9 @@ from frontend_contract.rest import SearchCategory
 logger = logging.getLogger(__name__)
 
 COLLECTION = "message_archive"
+
+CONFIRM_TOKEN = "archive"
+"""破坏性 `clear_all` 的确认令牌（稳定资源名——理由见 core/storage/destructive_guard.py）。"""
 
 ASSISTANT_WITHOUT_CHARACTER_FILTER: dict = {
     "role": "assistant",
@@ -555,14 +559,27 @@ class MessageRepository(Repository):
         logger.info("MessageRepository delete_by_session: session_id=%s, deleted=%d", session_id, result)
         return result
 
-    async def clear_all(self) -> int:
-        """清空全部消息归档。
+    async def clear_all(self, *, confirm: str) -> int:
+        """清空全部消息归档（**破坏性且不可逆**，要求类型化确认）。
+
+        Args:
+            confirm: 必须等于 `CONFIRM_TOKEN`（破坏性操作的目标资源确认）。
 
         Returns:
-            删除的消息数。若数据库不可用返回 0。
+            删除的消息数。
+
+        Raises:
+            DestructiveConfirmRequired: confirm 不匹配。
+            StorageUnavailableError: 数据库未连接（此前静默返回 0，调用方会
+                误以为已清空，现改 fail-closed）。
         """
+        require_confirm(
+            target=CONFIRM_TOKEN, confirm=confirm, operation="清空消息归档",
+        )
         if self._db is None:
-            return 0
+            raise StorageUnavailableError(
+                f"MessageRepository.clear_all: {COLLECTION} 未连接，拒绝静默成功",
+            )
         result = await self._db.delete_many(COLLECTION, {})
         logger.warning("MessageRepository clear_all: deleted=%d messages", result)
         return result

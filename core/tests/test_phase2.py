@@ -181,13 +181,22 @@ class TestLongTermMemory:
     @pytest.mark.service
     @pytest.mark.asyncio
     async def test_clear_all(self):
-        """清空所有记忆，count 归零。"""
+        """清空所有记忆，count 归零。
+
+        2026-09-11：clear_all 改为破坏性 fail-closed（存储不可达时**抛出**而非静默
+        按内存条数返回），故此处注入 mock repo——本测试只验证内存清空与计数语义，
+        不需要真实 Milvus（`service` 定义即「不连真实 DB」）。
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
+        mem._repo = MagicMock()
+        mem._repo.clear_all = AsyncMock()
         await mem.insert("entry 1", type="note")
         await mem.insert("entry 2", type="note")
         assert mem.count == 2
-        deleted = await mem.clear_all()
+        deleted = await mem.clear_all(confirm="ltm")
         assert deleted == 2
         assert mem.count == 0
 

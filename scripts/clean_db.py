@@ -208,17 +208,26 @@ class MilvusCleaner:
     """
 
     async def clean(self) -> tuple[str, bool, int | str]:
-        """执行清理，返回 (collection, ok, detail)。"""
+        """执行清理，返回 (collection, ok, detail)。
+
+        ⚠️ **集合归属未对齐（待决策，勿擅自改）**：此处 `LongTermMemory()` 不带 repo，
+        走 `clear_all()` 的临时 repo 分支 → `MemoryRepository`（**v1**
+        `long_term_memory`）；而生产 Agent 注入的是 `MemoryRepositoryV2`
+        （**v2** `long_term_memory_v2`，stage-f `30471524` 起）。故本清理器目前
+        **只清 v1，不触碰真实记忆所在的 v2**。确认为 bug 后应改为显式注入 v2 repo，
+        但那会让 `make clean-db` 从「实际空转」变为「真的抹掉全部长期记忆」——
+        属破坏范围变更，需单独决策。代码内注释已标注该缺口，确需清理真实记忆时显式注入 v2 repo。
+        """
         ltm = LongTermMemory()
         try:
-            # 先验证 Milvus 连通性，防止 clear_all() 静默降级
+            # 先验证 Milvus 连通性（clear_all() 已 fail-closed，此处保留为快速失败）
             try:
                 vector_db = VectorDBFactory.create("milvus/memory")
                 await vector_db.close()
             except Exception as e:
                 return (MEM_COLLECTION, False, f"Milvus unreachable: {e}")
 
-            deleted = await ltm.clear_all()
+            deleted = await ltm.clear_all(confirm="ltm")
             return (MEM_COLLECTION, True, deleted)
         except Exception as e:
             return (MEM_COLLECTION, False, str(e))

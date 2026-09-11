@@ -96,7 +96,7 @@ class TestMessageRepository:
     def test_clear_all_calls_delete_many(self):
         repo = MessageRepository(db=MagicMock())
         repo._db.delete_many = AsyncMock(return_value=5)  # type: ignore[reportOptionalMemberAccess]
-        result = asyncio.run(repo.clear_all())
+        result = asyncio.run(repo.clear_all(confirm="archive"))
         assert result == 5
 
     def test_query_with_before(self):

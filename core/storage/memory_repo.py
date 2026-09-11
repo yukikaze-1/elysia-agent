@@ -4,13 +4,16 @@ import logging
 from typing import TYPE_CHECKING
 
 from Module.database.vectordb import VectorDBFactory, VectorDBBackend
-from core.storage.base import Repository
+from core.storage.base import Repository, StorageUnavailableError
+from core.storage.destructive_guard import require_confirm
 
 if TYPE_CHECKING:
     from core.memory.long_term import MemoryEntry
 
 logger = logging.getLogger(__name__)
 COLLECTION = "long_term_memory"
+CONFIRM_TOKEN = "ltm"
+"""破坏性 `clear_all` 的确认令牌（稳定资源名——理由见 core/storage/destructive_guard.py）。"""
 DIMENSION = 1024  # 模块级保留（兼容外部 import）；权威值见 MemoryRepository.DIMENSION
 
 
@@ -23,6 +26,9 @@ class MemoryRepository(Repository):
     # 向量维度（实例级同源——方法内用 self.DIMENSION；调用方可据此对齐 embedding 维度，
     # 避免 embedding provider 输出维度与集合固定维度不一致导致写入被拒）
     DIMENSION = DIMENSION
+    # 破坏性 clear_all 的确认令牌（**稳定资源名**，与 COLLECTION 解耦：v1/v2 子类共用，
+    # 且不受测试防线重写 COLLECTION 影响——理由见 core/storage/destructive_guard.py）
+    CONFIRM_TOKEN = CONFIRM_TOKEN
 
     def __init__(self, db: VectorDBBackend | None = None, *,
                  base_url: str | None = None,
@@ -163,10 +169,26 @@ class MemoryRepository(Repository):
         )
         return len(results)
 
-    async def clear_all(self) -> None:
-        """清空所有记忆，删除并重建 collection。"""
+    async def clear_all(self, *, confirm: str) -> None:
+        """清空所有记忆，删除并重建 collection。
+
+        **破坏性且不可逆**（`drop + recreate`），因此要求类型化确认。
+        此前 `_db is None` 时静默 `return`——调用方会误以为已清空，现改 fail-closed。
+
+        Args:
+            confirm: 必须等于 `self.CONFIRM_TOKEN`（破坏性操作的目标资源确认）。
+
+        Raises:
+            DestructiveConfirmRequired: confirm 与 `self.CONFIRM_TOKEN` 不一致。
+            StorageUnavailableError: 向量库未连接。
+        """
+        require_confirm(
+            target=self.CONFIRM_TOKEN, confirm=confirm, operation="清空长期记忆",
+        )
         if self._db is None:
-            return
+            raise StorageUnavailableError(
+                f"MemoryRepository.clear_all: {self.COLLECTION} 未连接，拒绝静默成功",
+            )
         logger.warning("MemoryRepository clear_all: dropping + recreating collection %s", self.COLLECTION)
         await self._db.drop_collection(self.COLLECTION)
         await self._db.create_collection(self.COLLECTION, self.DIMENSION)

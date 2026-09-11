@@ -98,7 +98,8 @@ async function deleteSelected() {
 
 async function clearAll() {
   try {
-    await fetch('/debug/api/ltm', { method: 'DELETE' })
+    // 破坏性操作：后端要求 ?confirm=<目标资源名> 类型化确认（core/storage/destructive_guard.py）
+    await fetch('/debug/api/ltm?confirm=ltm', { method: 'DELETE' })
     load()
   } catch (e) { error.value = '清空失败: ' + (e as Error).message }
 }

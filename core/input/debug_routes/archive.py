@@ -24,6 +24,8 @@ from core.storage.attachment_release import (
     release_message_attachments,
     release_session_attachments,
 )
+from core.storage.base import StorageUnavailableError
+from core.storage.destructive_guard import DestructiveConfirmRequired
 from frontend_contract import debug as contract
 
 logger = logging.getLogger(__name__)
@@ -132,18 +134,31 @@ async def archive_update_handler(request: web.Request) -> web.Response:
 
 
 async def archive_clear_handler(request: web.Request) -> web.Response:
-    """清空全部归档并同步清空当前 session（debug 专用）。
+    """清空全部归档并同步清空当前 session（**破坏性**，需 `?confirm=archive` 类型化确认）。
 
     Args:
-        request: aiohttp Request。
+        request: aiohttp Request；query `confirm` 必填，须等于 MessageRepository.CONFIRM_TOKEN。
 
     Returns:
-        web.Response: DebugResult 契约 wire（ok true + deleted 计数）。
+        web.Response: DebugResult 契约 wire（ok true + deleted 计数）；
+        缺 confirm → 400，confirm 不匹配 → 400，存储不可用 → 503。
     """
     agent = request.app["agent"]
+    confirm = (request.query.get("confirm") or "").strip()
+    if not confirm:
+        return _protocol_error_response(
+            "CONTRACT_VALIDATION",
+            "清空归档是破坏性且不可逆的操作，需 ?confirm=<目标资源名> 显式确认",
+            400,
+        )
     # 批次 7：清空前列出全部消息释放附件 refs（附件软删联动）
     await release_all_attachments(agent)
-    deleted = await agent.message_repo.clear_all()
+    try:
+        deleted = await agent.message_repo.clear_all(confirm=confirm)
+    except DestructiveConfirmRequired as e:
+        return _protocol_error_response("CONTRACT_VALIDATION", str(e), 400)
+    except StorageUnavailableError as e:
+        return _protocol_error_response("STORAGE_UNAVAILABLE", str(e), 503, retryable=True)
     # 同步清空当前 session：archive 删光后 session 也要保持一致
     session = agent.session
     n_session = len(session.messages)
@@ -292,15 +307,24 @@ async def session_delete_handler(request: web.Request) -> web.Response:
 
 
 async def sessions_clear_handler(request: web.Request) -> web.Response:
-    """清空所有会话及内存中的会话状态。
+    """清空所有会话及内存中的会话状态（**破坏性**，需 `?confirm=sessions` 类型化确认）。
 
     Args:
-        request: aiohttp Request。
+        request: aiohttp Request；query `confirm` 必填，须等于 SessionRepository.CONFIRM_TOKEN。
 
     Returns:
-        web.Response: DebugResult 契约 wire（ok true + deleted 计数）或错误。
+        web.Response: DebugResult 契约 wire（ok true + deleted 计数）；
+        缺 confirm → 400，confirm 不匹配 → 400，MongoDB 不可用 → 503。
     """
     agent = request.app["agent"]
+    # 校验先于存储健康检查：请求本身不合法与后端状态无关
+    confirm = (request.query.get("confirm") or "").strip()
+    if not confirm:
+        return _protocol_error_response(
+            "CONTRACT_VALIDATION",
+            "清空会话是破坏性且不可逆的操作，需 ?confirm=<目标资源名> 显式确认",
+            400,
+        )
     if not await agent.session_repo.health_check():
         return _protocol_error_response(
             "STORAGE_UNAVAILABLE", "MongoDB 不可用", 503, retryable=True)
@@ -310,10 +334,14 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
             await release_all_attachments(agent)
         except Exception as e:
             logger.warning("sessions_clear 附件释放失败: %s", e)
-        deleted = await agent.session_repo.clear_all()
+        deleted = await agent.session_repo.clear_all(confirm=confirm)
         logger.warning("DEBUG API: sessions_clear deleted=%d", deleted)
         agent.session.clear()
         return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
+    except DestructiveConfirmRequired as e:
+        return _protocol_error_response("CONTRACT_VALIDATION", str(e), 400)
+    except StorageUnavailableError as e:
+        return _protocol_error_response("STORAGE_UNAVAILABLE", str(e), 503, retryable=True)
     except Exception:
         logger.warning("DEBUG API: 清空会话失败", exc_info=True)
         return _protocol_error_response(

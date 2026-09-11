@@ -1592,7 +1592,19 @@ class TestDebugDbApi:
         app = create_app(agent, serve_static=False)
         async with aiohttp.test_utils.TestServer(app) as srv:  # type: ignore[attr-defined]
             async with aiohttp.test_utils.TestClient(srv) as client:  # type: ignore[attr-defined]
+                # 缺 confirm → 400（破坏性操作需类型化确认）
                 resp = await client.delete("/debug/api/ltm")
+                assert resp.status == 400
+                assert (await resp.json())["code"] == "CONTRACT_VALIDATION"
+                assert agent._long_term.count == count_before + 2
+
+                # confirm 不匹配 → 400，且不触碰存储
+                resp = await client.delete("/debug/api/ltm?confirm=wrong")
+                assert resp.status == 400
+                assert agent._long_term.count == count_before + 2
+
+                # 正确 confirm → 清空
+                resp = await client.delete("/debug/api/ltm?confirm=ltm")
                 data = await resp.json()
                 assert data["ok"] is True
                 assert data["deleted"] >= 2

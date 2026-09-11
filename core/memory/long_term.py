@@ -793,39 +793,47 @@ class LongTermMemory:
                     return True
             return False
 
-    async def clear_all(self) -> int:
-        """清空所有记忆（内存 + Milvus 重建 collection）。可独立调用，无需先 connect()。
+    async def clear_all(self, *, confirm: str) -> int:
+        """清空所有记忆（Milvus 重建 collection + 内存清空）。可独立调用，无需先 connect()。
+
+        **破坏性且不可逆**——`confirm` 必须报出目标集合名（见
+        `core.storage.destructive_guard`），实际集合名由仓储侧校验。
+
+        顺序为**先动存储、后清内存**：drop 失败则内存保持不变（状态一致、可重试）。
+        此前 Milvus 不可达时 `except Exception: pass` **静默降级**——按内存条数返回，
+        调用方（含 debug UI）会误以为已清空，现改为向上抛出。
+
+        Args:
+            confirm: 目标集合名确认，透传给仓储校验。
 
         Returns:
             清除的条目总数。
+
+        Raises:
+            DestructiveConfirmRequired: confirm 与目标集合名不一致。
+            StorageUnavailableError: 存储未连接（拒绝静默成功）。
         """
         async with self._write_lock:
             count = len(self._entries)
-            logger.info("LongTermMemory: clearing all %d entries", count)
+
+            # 先动存储：失败则内存不动（状态一致，可重试），异常上抛给调用方
+            if self._repo is not None:
+                await self._repo.clear_all(confirm=confirm)
+            else:
+                # 无已有 repo（如 scripts/clean_db.py 独立调用）→ 临时 repo
+                from core.storage.memory_repo import MemoryRepository
+                temp_repo = MemoryRepository()
+                try:
+                    await temp_repo.connect()
+                    await temp_repo.clear_all(confirm=confirm)
+                finally:
+                    await temp_repo.close()
+
+            logger.info("LongTermMemory: cleared all %d entries", count)
             self._entries.clear()
             self._absorbed_ids.clear()
             self._dirty_ids.clear()
             self._save_pending_syncs()  # review 复核 #6：清空 journal（空集合删除文件）
-
-            if self._repo is not None:
-                # 已有 repo → 直接操作
-                await self._repo.clear_all()
-            else:
-                # 无已有 repo → 自行创建临时 repo
-                from core.storage.memory_repo import MemoryRepository
-                try:
-                    temp_repo = MemoryRepository()
-                except Exception:
-                    # MemoryRepository 创建失败（极端情况）→ 静默降级
-                    return count
-                try:
-                    await temp_repo.connect()
-                    await temp_repo.clear_all()
-                except Exception:
-                    # Milvus 不可达时静默降级：内存已清空，返回 count
-                    pass
-                finally:
-                    await temp_repo.close()
             return count
 
     # ---- Read ----

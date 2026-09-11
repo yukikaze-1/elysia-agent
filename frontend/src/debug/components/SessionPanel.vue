@@ -59,7 +59,7 @@ async function deleteSessions(ids: string[]) {
 }
 
 async function clearAll() {
-  await fetch('/debug/api/sessions', { method: 'DELETE' }); load()
+  await fetch('/debug/api/sessions?confirm=sessions', { method: 'DELETE' }); load()
 }
 
 function confirmThen(fn: () => Promise<void>, msg: string) {

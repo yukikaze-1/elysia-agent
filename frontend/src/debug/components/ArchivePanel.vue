@@ -53,7 +53,7 @@ function toggleAll() { if (selectedIds.value.size === entries.value.length) sele
 
 async function deleteEntry(id: string) { try { await fetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); load() } catch (e) { error.value = '删除失败: ' + (e as Error).message } }
 async function deleteSelected() { try { for (const id of selectedIds.value) await fetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); selectedIds.value = new Set(); load() } catch (e) { error.value = '批量删除失败: ' + (e as Error).message } }
-async function clearAll() { try { await fetch('/debug/api/archive', { method: 'DELETE' }); load() } catch (e) { error.value = '清空失败: ' + (e as Error).message } }
+async function clearAll() { try { await fetch('/debug/api/archive?confirm=archive', { method: 'DELETE' }); load() } catch (e) { error.value = '清空失败: ' + (e as Error).message } }
 
 function startEdit(e: ArchiveEntry) { editingId.value = e._id; editText.value = (e.parts || []).map(p => p.content).join(' ') }
 async function saveEdit(id: string) { try { await fetch(`/debug/api/archive/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) }); editingId.value = null; load() } catch (e) { error.value = '保存失败: ' + (e as Error).message } }

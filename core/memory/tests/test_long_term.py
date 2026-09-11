@@ -7,6 +7,8 @@ from core.memory.long_term import LongTermMemory, MemoryEntry
 from core.memory.scope import MemoryScope
 from core.schema.memory import MemoryType
 from core.schema.types import MemoryId
+from core.storage.base import StorageUnavailableError
+from core.storage.destructive_guard import DestructiveConfirmRequired
 
 
 @pytest.fixture
@@ -184,7 +186,12 @@ class TestPKMatching:
 
 @pytest.mark.service
 class TestLongTermMemoryClearAll:
-    """clear_all() 可独立调用（无需先 connect()），失败时优雅降级。"""
+    """clear_all() 可独立调用（无需先 connect()），且**破坏性操作 fail-closed**。
+
+    2026-09-11 语义变更：此前存储失败**静默降级**（按内存条数返回，调用方误以为
+    已清空），现改为向上抛出；顺序也改为「先动存储、后清内存」——drop 失败则内存
+    保持不变（状态一致、可重试）。
+    """
 
     @pytest.mark.asyncio
     async def test_clear_all_without_connect_creates_temp_backend(self):
@@ -203,7 +210,7 @@ class TestLongTermMemoryClearAll:
             "Module.database.vectordb.VectorDBFactory.create",
             return_value=mock_backend,
         ) as mock_create:
-            deleted = await ltm.clear_all()
+            deleted = await ltm.clear_all(confirm="ltm")
 
         assert deleted == 3
         assert len(ltm._entries) == 0
@@ -213,7 +220,7 @@ class TestLongTermMemoryClearAll:
 
     @pytest.mark.asyncio
     async def test_clear_all_with_existing_backend_reuses_it(self):
-        """_repo 已设置时，clear_all() 复用它，不创建新连接。"""
+        """_repo 已设置时，clear_all() 复用它，不创建新连接，并透传确认令牌。"""
         ltm = LongTermMemory(max_entries=10)
         ltm._entries = [MagicMock()]
         mock_repo = MagicMock()
@@ -221,10 +228,10 @@ class TestLongTermMemoryClearAll:
         mock_repo.health_check = AsyncMock(return_value=True)  # 模拟已连接
         ltm._repo = mock_repo
 
-        deleted = await ltm.clear_all()
+        deleted = await ltm.clear_all(confirm="ltm")
 
         assert deleted == 1
-        mock_repo.clear_all.assert_awaited_once()
+        mock_repo.clear_all.assert_awaited_once_with(confirm="ltm")
 
     @pytest.mark.asyncio
     async def test_clear_all_without_connect_collection_not_exists(self):
@@ -241,16 +248,20 @@ class TestLongTermMemoryClearAll:
             "Module.database.vectordb.VectorDBFactory.create",
             return_value=mock_backend,
         ):
-            deleted = await ltm.clear_all()
+            deleted = await ltm.clear_all(confirm="ltm")
 
         assert deleted == 0
         mock_backend.close.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_clear_all_propagates_collection_exception(self):
-        """临时路径：collection_exists 失败时异常被 repo.connect() 捕获，
-        repo 内部清理 (_db=None)，LTM 的 clear_all 静默降级并调用 close()（no-op）。"""
+    async def test_storage_failure_raises_and_keeps_entries(self):
+        """存储不可达时**抛出**（不再静默降级），且内存条目保持不变（可重试）。
+
+        此前 `except Exception: pass` 会按内存条数返回，debug UI 显示「已清空 N 条」
+        而 Milvus 根本没动。
+        """
         ltm = LongTermMemory(max_entries=10)
+        ltm._entries = [MagicMock(), MagicMock()]
 
         mock_backend = AsyncMock()
         mock_backend.collection_exists = AsyncMock(side_effect=RuntimeError("connection refused"))
@@ -260,15 +271,15 @@ class TestLongTermMemoryClearAll:
             "Module.database.vectordb.VectorDBFactory.create",
             return_value=mock_backend,
         ):
-            deleted = await ltm.clear_all()
+            with pytest.raises(StorageUnavailableError):
+                await ltm.clear_all(confirm="ltm")
 
-        # repo.connect() 在异常时将 _db 置为 None，因此 close() 不会调用 mock_backend.close()
-        # 这是 repo 内部清理行为 — mock_backend 资源在 connect 异常时由 repo 丢弃
-        assert deleted == 0
+        # 先动存储、后清内存：drop 未成功 → 内存未被清空
+        assert len(ltm._entries) == 2
 
     @pytest.mark.asyncio
-    async def test_clear_all_factory_create_fails_returns_count(self):
-        """MemoryRepository 创建失败（极端情况）时静默降级，返回已清空的内存条目数。"""
+    async def test_repo_construction_failure_propagates(self):
+        """MemoryRepository 构造失败（极端情况）不再吞掉，向上抛出。"""
         ltm = LongTermMemory(max_entries=10)
         ltm._entries = [MagicMock(), MagicMock()]  # 2 entries
 
@@ -276,10 +287,33 @@ class TestLongTermMemoryClearAll:
             "core.storage.memory_repo.MemoryRepository",
             side_effect=RuntimeError("Cannot create repo"),
         ):
-            deleted = await ltm.clear_all()
+            with pytest.raises(RuntimeError, match="Cannot create repo"):
+                await ltm.clear_all(confirm="ltm")
 
-        assert deleted == 2
-        assert len(ltm._entries) == 0
+        assert len(ltm._entries) == 2
+
+    @pytest.mark.asyncio
+    async def test_wrong_confirm_rejected_without_touching_store(self):
+        """确认令牌不匹配 → fail-closed，不 drop、不清内存。
+
+        用**真实** MemoryRepository（mock 后端）以覆盖实际校验路径——mock repo
+        不会执行校验，测不出这条不变量。
+        """
+        from core.storage.memory_repo import MemoryRepository
+
+        repo = MemoryRepository(db=MagicMock())
+        repo._db.drop_collection = AsyncMock()  # type: ignore[reportOptionalMemberAccess]
+        repo._db.create_collection = AsyncMock()  # type: ignore[reportOptionalMemberAccess]
+
+        ltm = LongTermMemory(max_entries=10)
+        ltm._entries = [MagicMock()]
+        ltm._repo = repo
+
+        with pytest.raises(DestructiveConfirmRequired):
+            await ltm.clear_all(confirm="long_term_memory_v2")
+
+        repo._db.drop_collection.assert_not_awaited()  # type: ignore[reportOptionalMemberAccess]
+        assert len(ltm._entries) == 1
 
 
 @pytest.mark.unit

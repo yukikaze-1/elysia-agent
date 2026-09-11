@@ -20,9 +20,13 @@ from core.storage.character_write_guard import (
     count_assistant_without_character,
     warn_missing_character_snapshot,
 )
+from core.storage.destructive_guard import require_confirm
 
 logger = logging.getLogger(__name__)
 COLLECTION = "sessions"
+
+CONFIRM_TOKEN = "sessions"
+"""破坏性 `clear_all` 的确认令牌（稳定资源名——理由见 core/storage/destructive_guard.py）。"""
 
 AUTO_TITLE_MAX_LEN = 20
 """自动标题最大长度（首条 UserMessage 文本截取字符数）。"""
@@ -387,14 +391,27 @@ class SessionRepository(Repository):
             for d in docs
         ]
 
-    async def clear_all(self) -> int:
-        """清空全部会话。
+    async def clear_all(self, *, confirm: str) -> int:
+        """清空全部会话（**破坏性且不可逆**，要求类型化确认）。
+
+        Args:
+            confirm: 必须等于 `CONFIRM_TOKEN`（破坏性操作的目标资源确认）。
 
         Returns:
-            删除的会话数。若数据库不可用返回 0。
+            删除的会话数。
+
+        Raises:
+            DestructiveConfirmRequired: confirm 不匹配。
+            StorageUnavailableError: 数据库未连接（此前静默返回 0，调用方会
+                误以为已清空，现改 fail-closed）。
         """
+        require_confirm(
+            target=CONFIRM_TOKEN, confirm=confirm, operation="清空全部会话",
+        )
         if self._db is None:
-            return 0
+            raise StorageUnavailableError(
+                f"SessionRepository.clear_all: {COLLECTION} 未连接，拒绝静默成功",
+            )
         result = await self._db.delete_many(COLLECTION, {})
         logger.warning("SessionRepository clear_all: deleted=%d sessions", result)
         return result
