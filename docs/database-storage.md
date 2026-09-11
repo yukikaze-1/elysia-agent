@@ -1,6 +1,6 @@
 # 数据库存储表格
 
-项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **14 个集合**（Milvus 2 + MongoDB 12），外加若干内存/文件存储结构。没有使用 SQL 数据库。
+项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **15 个集合**（Milvus 2 + MongoDB 13），外加若干内存/文件存储结构。没有使用 SQL 数据库。
 
 | 集合 | 位置 | 用途 | 保留策略 |
 |------|------|------|----------|
@@ -17,7 +17,7 @@
 | `generations` | MongoDB | generation 生命周期状态（BE-024） | 30天 TTL（按真实 BSON Date `ttl_expires_at`） |
 | `attachments` | MongoDB | 附件元数据（BE-070，fail-closed） | TTL 不设，生命周期由 GC 管（软删 24h / 未关联 7d） |
 | `desktop_calls` | MongoDB | 桌面工具调用状态（批次 4） | 30天 TTL（按真实 BSON Date `ttl_expires_at`） |
-| `idempotency` | MongoDB | `clientRequestId` 幂等 claim（D6c，2026-08-11） | 1h TTL（`expires_at` BSON Date，TTL 索引）；`(conversation_id, client_request_id)` 唯一约束防并发双写 |
+| `idempotency` | MongoDB | `clientRequestId` 幂等 claim（D6c，2026-08-11） | 1h 有效期（`expires_at` BSON Date + TTL 索引 `expireAfterSeconds=0`，按绝对时间到期）；`(conversation_id, client_request_id)` 唯一约束防并发双写 |
 
 ---
 
