@@ -1,6 +1,6 @@
 # 数据库存储表格
 
-项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **15 个集合**（Milvus 2 + MongoDB 13），外加若干内存/文件存储结构。没有使用 SQL 数据库。
+项目共有 **2 个持久化数据库**（Milvus 向量库 + MongoDB 文档库），共 **14 个集合**（Milvus 2 + MongoDB 12），外加若干内存/文件存储结构。没有使用 SQL 数据库。
 
 | 集合 | 位置 | 用途 | 保留策略 |
 |------|------|------|----------|
@@ -328,17 +328,39 @@
 | GET | `/debug/api/ltm?search=&type=&limit=&offset=` | 查询 LTM 条目。`type` 过滤大小写不敏感（`try_coerce` 归一），无效值返回空 |
 | POST | `/debug/api/ltm` | 新增条目 `{text, memory_type, poignancy}` |
 | DELETE | `/debug/api/ltm/{entry_id}` | 删除单条 |
-| DELETE | `/debug/api/ltm` | 清空全部（drop + recreate collection） |
+| DELETE | `/debug/api/ltm?confirm=ltm` | 清空全部（drop + recreate collection）— **需类型化确认** |
 | GET | `/debug/api/sessions` | 列出 MongoDB 所有会话 |
 | GET | `/debug/api/sessions/{session_id}` | 查看会话消息详情 |
 | DELETE | `/debug/api/sessions/{session_id}` | 删除会话 |
+| DELETE | `/debug/api/archive?confirm=archive` | 清空全部归档 — **需类型化确认** |
+| DELETE | `/debug/api/sessions?confirm=sessions` | 清空全部会话 — **需类型化确认** |
+
+### 破坏性清空端点的类型化确认（2026-09-11）
+
+三个**批量清空**端点不可逆（`ltm` 更是 `drop + recreate collection`），因此强制要求
+`?confirm=<目标资源名>`：缺省或值不符一律 **400 `CONTRACT_VALIDATION`**。守卫实现见
+`core/storage/destructive_guard.py`，令牌为各仓储的 `CONFIRM_TOKEN` 类属性。
+
+| 端点 | 确认令牌 |
+|------|----------|
+| `DELETE /debug/api/ltm` | `ltm` |
+| `DELETE /debug/api/archive` | `archive` |
+| `DELETE /debug/api/sessions` | `sessions` |
+
+**令牌是稳定资源名，不是物理集合名**——`LongTermMemory` 注入生产 `MemoryRepositoryV2`
+（`long_term_memory_v2`）时走 v2、独立调用走临时 `MemoryRepository`（`long_term_memory`）；
+用物理集合名会让客户端被迫猜服务端装配。同时这些 `clear_all` 现已 **fail-closed**：
+存储不可用时**抛出**（`StorageUnavailableError` → 503）而非静默返回 0——此前 debug UI 会
+显示「已清空 N 条」而实际未动存储。
+
+> 单条删除（`/{id}`）不受影响，仍是普通 DELETE。
 
 ### LongTermMemory 新增方法
 
 | 方法 | 说明 |
 |------|------|
 | `delete(entry_id) -> bool` | 删除单条记忆（内存 + Milvus） |
-| `clear_all() -> int` | 清空所有记忆（drop + recreate collection），返回删除数 |
+| `clear_all(*, confirm) -> int` | 清空所有记忆（drop + recreate collection），返回删除数；**需 `confirm` 类型化确认**，存储不可用时抛出 |
 
 ### VectorDBBackend 新增方法
 

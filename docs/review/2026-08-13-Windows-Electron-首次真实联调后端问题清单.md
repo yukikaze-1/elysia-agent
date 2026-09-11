@@ -1,5 +1,14 @@
 # Electron v2 Windows 首次真实联调：后端问题清单
 
+> **状态回填（2026-09-11 复核）：✅ 表中 3 项后端问题均已关闭。**
+> 关闭证据见 [`electron-v2-message-id-fix-report-2026-08-13.md`](electron-v2-message-id-fix-report-2026-08-13.md)
+> （BE-INT-P0-01 / P0-02 已关闭、P1-01 已闭环；含真实 Mongo 回填 69→0 与门禁证据）。
+> 代码侧可复核证据：`core/schema/message.py::ToolResultMessage.message_id` 现为**必填**
+> （无 default）且带 `_message_id_non_empty` 校验器——空 ID 已无法构造。
+> **本文保留为问题发现时的历史快照**；§7 的未勾选复选框记录的是**当时**的后端侧动作，
+> 真实 Electron 跨仓回归由 `elysia-frontend` 侧执行，不在本清单关闭条件内。
+> 当前进度以 `todo.md` 与各修复报告为准。
+
 **日期：** 2026-08-13
 
 **后端审查基线：** `/home/yomu/elysia-agent` `main@bd03c4178b61ced2470ca82f00f637af94212e97`

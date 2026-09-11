@@ -6,13 +6,17 @@
 
 | 文档 | 内容 |
 |------|------|
-| [handoff.md](handoff.md) | **交接文档**——当前阶段 / 已知问题与技术债 / 门禁约定 / 关键文档索引（新接手先读这篇） |
 | [architecture.md](architecture.md) | 完整架构详解（数据流、模块、目录结构） |
 | [testing.md](testing.md) | 测试命令速查 + 分层体系（unit/service/integration/slow）+ 真实库防线 + 残留清理脚本 |
 | [readme-conventions.md](readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 | [database-storage.md](database-storage.md) | 数据库存储设计（MongoDB + Milvus 集合/索引） |
 | [code-style-guide.md](code-style-guide.md) | 代码风格与类型约束（ID NewType 体系 + 权威归属 + StrEnum/coerce + getattr 纪律） |
 | [completed.md](completed.md) | 已完成工作记录（月度归档见 [completed/](completed/)） |
+
+> **待办与已知问题总表**见仓库根 [`todo.md`](../todo.md)（Bug 表 / 决策记录 / 功能 backlog）；
+> **项目约定总入口**见根 [`CLAUDE.md`](../CLAUDE.md)。
+> （原 `handoff.md` 交接文档已于 2026-09-11 删除——其有效内容分别归入 `CLAUDE.md`、本索引、
+> `todo.md` 与各问题单，避免多份「当前事实」互相漂移。）
 
 ### Electron 后端联调（协议 / 安全）
 | 文档 | 内容 |
@@ -33,7 +37,7 @@
 
 | 文档 | 内容 |
 |------|------|
-| [Provider、模型发现、协议适配与运行状态后端架构设计](2026-08-30-provider-model-runtime-backend-architecture-design.md) | ProviderConnection/ModelProfile 拆分、在线模型发现、Chat Completions/Responses Adapter、Secret 与 SSRF 边界、v1 迁移、运行状态接口及完整实施清单 |
+| [Provider、模型发现、协议适配与运行状态后端架构设计](2026-08-30-provider-model-runtime-backend-architecture-design.md) | ⚠️ **未实施规划稿**（`ProviderConnection`/`ModelProfile` 拆分、协议 Adapter Registry、`/api/runtime/status`、在线模型发现——**代码中均不存在**）：ProviderConnection/ModelProfile 拆分、在线模型发现、Chat Completions/Responses Adapter、Secret 与 SSRF 边界、v1 迁移、运行状态接口及完整实施清单 |
 
 ### 多角色、角色 Prompt 与自定义角色设计（2026-08-30）
 
@@ -56,8 +60,8 @@
 
 | 文档 | 内容 |
 |------|------|
-| [任务系统与任务中心总体架构设计](2026-08-29-task-system-overall-architecture-design.md) | 前后端共同领域模型、Runtime 边界、公共契约、状态机、持久化、分批实施与待决策项；与 `elysia-frontend` 中同名文档保持镜像同步 |
-| [任务系统后端架构设计](2026-08-29-task-system-backend-architecture-design.md) | TaskService、WorkflowEngine、ToolExecutionCoordinator、正式 REST/WS API、Mongo 持久化和 Desktop Runtime 后端接入设计 |
+| [任务系统与任务中心总体架构设计](2026-08-29-task-system-overall-architecture-design.md) | ⚠️ **未实施规划稿**（`TaskService`/`ToolExecutionCoordinator`/`ExecutionGateway`/`TaskCenter` 全仓命中 0，无 `/api/tasks`）：前后端共同领域模型、Runtime 边界、公共契约、状态机、持久化、分批实施与待决策项；与 `elysia-frontend` 中同名文档保持镜像同步 |
+| [任务系统后端架构设计](2026-08-29-task-system-backend-architecture-design.md) | ⚠️ **未实施规划稿**（同上，目标组件均不存在）：TaskService、WorkflowEngine、ToolExecutionCoordinator、正式 REST/WS API、Mongo 持久化和 Desktop Runtime 后端接入设计 |
 
 ## 子目录
 

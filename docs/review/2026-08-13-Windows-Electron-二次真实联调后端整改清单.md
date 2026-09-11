@@ -1,5 +1,13 @@
 # Electron v2 Windows 二次真实联调：后端整改清单
 
+> **状态回填（2026-09-11 复核）：✅ 表中 2 项后端问题均已关闭。**
+> 关闭证据见 [`electron-v2-int2-replay-identity-fix-report-2026-08-13.md`](electron-v2-int2-replay-identity-fix-report-2026-08-13.md)
+> （BE-INT2-P0-01 已关闭、P1-01 已闭环，含 D1-D4 + 真实 sanity + 门禁证据）。
+> **本文保留为问题发现时的历史快照**；§7 的未勾选复选框记录的是**当时**的后端侧动作，
+> 真实 Electron 跨仓回归与前端配套清单（Renderer 水合 / replay fallback / 取消码消费）
+> 由 `elysia-frontend` 侧执行，不在本清单关闭条件内。
+> 当前进度以 `todo.md` 与各修复报告为准。
+
 **日期：** 2026-08-13
 
 **后端联调基线：** `/home/yomu/elysia-agent` `main@88ee650125db681b2289296dbaf8551a1c44fb56`
