@@ -30,6 +30,10 @@ _PARAM_PREVIEW_LIMIT = 100
 # 仍在旧实例上执行的 in-flight 并发关闭共享资源（E1 review）
 _DEFERRED_TEARDOWN_WAIT = 5.0
 
+# 关机时等待被取消的 in-flight 工具任务落定的总预算（秒，ARCH-INC-P2-03）。
+# 与 _DEFERRED_TEARDOWN_WAIT 同量级：都是「取消后给旧实例一个体面退场窗口」。
+_SHUTDOWN_DRAIN_TIMEOUT = 3.0
+
 
 @dataclass(frozen=True)
 class ToolMetadata:
@@ -184,11 +188,21 @@ class ToolManager:
         """优雅关闭管理器。
 
         持 _reload_lock 与 reload 互斥（防 double-teardown / 半替换状态）；
-        取消所有 in-flight 工具执行任务，依次调用所有插件的 teardown()，
-        最后收尾延迟 teardown 任务（reload 排空超时登记，不被 cancel_all 取消）。
+        取消并**等待**所有 in-flight 工具执行任务落定，依次调用所有插件的
+        teardown()，最后收尾延迟 teardown 任务（reload 排空超时登记，
+        不被 cancel_all 取消）。
         """
         async with self._reload_lock:
-            await self.cancel_all()
+            # ARCH-INC-P2-03：cancel 之后必须等到落定再 teardown 插件。
+            # 只 cancel 不等待会与仍在旧实例上执行的协程并发关闭共享资源
+            # （http_client / DB 连接），正是 reload 路径（_drain_and_teardown）
+            # 明令禁止的——关机路径此前漏了同一约束。
+            drained = await self.cancel_all(drain_timeout=_SHUTDOWN_DRAIN_TIMEOUT)
+            if drained:
+                logger.warning(
+                    "ToolManager 关停：%d 个 in-flight 工具任务未在 %.1fs 内落定",
+                    drained, _SHUTDOWN_DRAIN_TIMEOUT,
+                )
             teardowns = [
                 p.teardown()
                 for p in self._plugins.values()
@@ -234,7 +248,11 @@ class ToolManager:
             self._pipeline.execute(plugin, name, ctx, raw_params, sem),
         )
         # C2/P1-13：_tasks 按 call_id 跟踪（同工具可同时多个调用，互不覆盖）
-        self._tasks[ctx.call_id or name] = task
+        # ARCH-INC-P2-03：call_id 为空时必须合成唯一 key——此前退化成工具名，
+        # WorkflowEngine 的并发子智能体（同一工具多次调用）会互相覆盖 key，
+        # 被覆盖的任务再也 cancel 不到（executor.py 构造的 ToolContext 无 call_id）。
+        task_key = ctx.call_id or f"{name}#{id(task)}"
+        self._tasks[task_key] = task
         self._inflight.setdefault(name, set()).add(task)  # 供 reload 排空快照
         try:
             result = await task
@@ -247,7 +265,7 @@ class ToolManager:
             self._inflight.setdefault(name, set()).discard(task)
             if not self._inflight[name]:
                 del self._inflight[name]           # 任务归零清 key（防永久空 set 条目）
-            self._tasks.pop(ctx.call_id or name, None)
+            self._tasks.pop(task_key, None)
 
     async def execute_stream(
         self, name: str, *, ctx: ToolContext, emit: ToolEmitter | None = None, **raw_params: Any,
@@ -295,8 +313,10 @@ class ToolManager:
                 await queue.put(None)  # sentinel
 
         task = asyncio.create_task(_drive())
-        # C2/P1-13：按 call_id 跟踪（流式同理）
-        self._tasks[ctx.call_id or name] = task
+        # C2/P1-13：按 call_id 跟踪（流式同理）；call_id 为空时合成唯一 key
+        # （ARCH-INC-P2-03，理由同 execute）
+        task_key = ctx.call_id or f"{name}#{id(task)}"
+        self._tasks[task_key] = task
         self._inflight.setdefault(name, set()).add(task)  # 供 reload 排空快照
         try:
             while True:
@@ -313,7 +333,7 @@ class ToolManager:
             self._inflight.setdefault(name, set()).discard(task)
             if not self._inflight[name]:
                 del self._inflight[name]           # 任务归零清 key（防永久空 set 条目）
-            self._tasks.pop(ctx.call_id or name, None)
+            self._tasks.pop(task_key, None)
 
     # ---- Schema Export ----
 
@@ -462,13 +482,55 @@ class ToolManager:
 
     # ---- Control ----
 
-    async def cancel_all(self) -> None:
-        """取消所有 in-flight 工具执行任务（按 call_id 全量，C2/P1-13）。"""
+    def _inflight_all(self) -> set[asyncio.Task]:
+        """全部在途执行任务的并集快照（按工具名分桶的 ``_inflight`` 展平）。
+
+        ``_tasks`` 以 ``call_id`` 为 key，但 call_id 为空时退化成工具名——
+        同一工具的并发调用会**互相覆盖 key**，因此取消范围必须以集合语义的
+        ``_inflight`` 为准（ARCH-INC-P2-03）。
+        """
+        merged: set[asyncio.Task] = set()
+        for bucket in self._inflight.values():
+            merged |= bucket
+        return merged
+
+    async def cancel_all(self, *, drain_timeout: float = 0.0) -> int:
+        """取消所有 in-flight 工具执行任务（按 call_id 全量，C2/P1-13）。
+
+        Args:
+            drain_timeout: >0 时在取消后等待任务落定（总预算，秒）。关机路径必须
+                给一个正数——只 cancel 不等待会让插件 teardown 与仍在跑的协程
+                并发关闭共享资源（见 :meth:`shutdown`）。
+
+        Returns:
+            超时前未落定的任务数（不 drain 时为 0）。
+        """
+        # ARCH-INC-P2-03：取消范围取 _tasks 与 _inflight 的并集。两者此前只在
+        # key 不冲突时一致——`_tasks[ctx.call_id or name]` 在 call_id 为空时退化成
+        # 工具名，同一工具的并发调用（WorkflowEngine 最多 5 个子智能体）会互相
+        # 覆盖 key，漏掉的任务就再也 cancel 不到。_inflight 按工具名分桶存集合，
+        # 不丢任务，故以它兜底。
+        pending: set[asyncio.Task] = set(self._inflight_all())
         for task in list(self._tasks.values()):
+            if not task.done():
+                pending.add(task)
+        for task in pending:
             if not task.done():
                 task.cancel()
         self._executing.clear()
         self._tasks.clear()
+        if drain_timeout <= 0 or not pending:
+            return 0
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + drain_timeout
+        leftover = 0
+        for task in pending:
+            remaining = deadline - loop.time()
+            if remaining > 0:
+                await asyncio.wait([task], timeout=remaining)
+            if not task.done():
+                leftover += 1
+        return leftover
 
     def submit_approval(self, request_id: str, approved: bool) -> bool:
         """提交 HITL 审批结果。

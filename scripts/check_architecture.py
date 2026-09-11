@@ -4,7 +4,7 @@
 但边界主要靠**文档与人工 review** 维持——已治理过的反向依赖、私有接口泄漏会随功能提交
 重新出现（上一轮清理的包级反向依赖就是这样回来的）。本脚本把这几条纪律固化为自动检查。
 
-## 五条规则
+## 六条规则
 
 | 规则 | 内容 | 存量基线 | 违规后果 |
 |---|---|---|---|
@@ -13,9 +13,25 @@
 | R3 | 禁止**跨包**导入下划线私有符号 | **0 处**（2026-09-11 批次 A 全部公开化） | 失败 |
 | R4 | 不得新增 **eager** import 环（运行时硬环） | **0 处** | 失败 |
 | R5 | `TYPE_CHECKING` 类型边：允许，仅报告 | — | 不阻断 |
+| R6 | 裸 `create_task`/`ensure_future` 必须逐点登记所有权 | 24 处（逐点附理由，见 `_TASK_SPAWN_ALLOWLIST`） | 失败 |
 
 `frontend_contract/` 的零依赖（不 import `core/`、`Module/`）由 R1 的同一条实现顺带覆盖
 （见 `_DISCIPLINE_ZERO_DEP`），因为 `CLAUDE.md` 已把它写成硬约定却无门禁。
+
+### R6：为什么登记而不是禁止（ARCH-INC-P2-03）
+
+评估 §ARCH-INC-P2-03 的诉求不是「消灭 `asyncio.create_task`」——很多站点本来就是对的
+（长期循环存字段、逐调用任务存集合、关机逐个 cancel + await）。它要的是**每处都能回答
+四个问题**：任务存在哪里、谁取消、谁等待、异常谁看。所以 R6 的形态是 allowlist +
+**期望条数**：
+
+- 只做「是否出现过 `create_task`」的布尔判断 → 同一函数里再塞一个裸 spawn 会漏过；
+- 记条数 → 新增（`count > expected`）与删除（`count < expected`）**都**报，
+  清理后忘删条目也会被自己揪出来（陈旧登记单独报）。
+
+新增后台任务应走 `Module/_common/task_scope.py` 的 `AsyncTaskScope`
+（强引用 + done callback 统一记未处理异常 + `cancel_all`/`drain`/`aclose`），
+它本身就是 R6 表里唯一被允许直接调用 `loop.create_task` 的实现点。
 
 ## eager / lazy / TYPE_CHECKING 的三分（关键）
 
@@ -62,7 +78,7 @@ import argparse
 import ast
 import json
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -116,6 +132,67 @@ _R2_SOURCES = (
 # 新增条目必须附理由；空表意味着 R3 全量硬失败（这是期望状态，勿为通过而随意登记）。
 _PRIVATE_SYMBOL_ALLOWLIST: dict[tuple[str, str], str] = {}
 
+# ---- R6：裸后台任务创建点的**显式豁免**（ARCH-INC-P2-03）----
+#
+# key = (相对路径, 外层限定名)；value = (期望条数, 理由)。
+#
+# 「裸」= 直接 ``asyncio.create_task`` / ``ensure_future`` 而**不经**
+# ``Module/_common/task_scope.py`` 的 ``AsyncTaskScope``。允许存在，但必须逐点
+# 说明所有权：任务存在哪里、谁取消、谁等待、异常谁看。评估 §ARCH-INC-P2-03 要的
+# 不是「消灭 create_task」，而是「每处都能回答这四个问题」——本表就是这份答案。
+#
+# 期望条数而非布尔：新增与删除都算漂移（详见 _collect_task_spawns）。
+_TASK_SPAWN_METHODS = ("create_task", "ensure_future")
+_TASK_SPAWN_ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
+    # ── 原语自身：唯一被允许直接调用底层 API 的地方 ──
+    ("Module/_common/task_scope.py", "AsyncTaskScope.spawn"):
+        (1, "AsyncTaskScope 的实现本体——它就是收口点本身"),
+
+    # ── Module/：所有权已在 2026-09-12 普查中逐点核实 ──
+    ("Module/tool/manager.py", "ToolManager.execute"):
+        (1, "_tasks[唯一 key] + _inflight 桶；本帧 await，finally cancel；shutdown 限时 drain"),
+    ("Module/tool/manager.py", "ToolManager.execute_stream"):
+        (1, "_tasks[唯一 key] + _inflight 桶；队列哨兵协议消费，finally cancel"),
+    ("Module/tool/manager.py", "ToolManager._schedule_teardown"):
+        (1, "_teardown_tasks 字典 + done callback；shutdown() 显式 gather（刻意不被 cancel_all）"),
+    ("Module/workflow_engine/workflow_engine.py", "WorkflowEngine.start"):
+        (1, "_queue_worker 字段；stop() cancel + gather(return_exceptions=True)"),
+    ("Module/workflow_engine/workflow_engine.py", "WorkflowEngine._drain_queue"):
+        (2, "_task_futures[task_id] 注册表；stop() wait→cancel→再 wait；逐任务 cancel 走 lifecycle"),
+    ("Module/workflow_engine/workflow_engine.py", "WorkflowEngine.resume"):
+        (1, "_task_futures[task_id]（快路径，同 _drain_queue）；spawn 失败显式回滚槽位"),
+    ("Module/workflow_engine/debug_api.py", "WorkflowDebugAPI.start"):
+        (1, "_poll_task 字段；stop() cancel + await（aiohttp on_shutdown 驱动）"),
+    ("Module/workflow_engine/core/executor.py", "Executor.execute"):
+        (1, "orphan_tools 集合 + 两个 done callback（discard / 取异常）；正常路径 shield await，stop() 兜底清扫"),
+    ("Module/tts/gpt_sovits.py", "GPTSoVitsBackend._call_api"):
+        (1, "局部变量；生成器 finally 内 cancel + await，synthesize() 必然耗尽生成器"),
+
+    # ── core/：长期循环或逐调用任务，均有具名字段/集合接管 ──
+    ("core/task/scheduler.py", "TaskScheduler.start"):
+        (2, "_workers 列表 + _prune_task 字段；stop() 逐个 cancel + gather"),
+    ("core/monitoring/idle_monitor.py", "IdleMonitor.start"):
+        (1, "_task 字段；stop() cancel + await"),
+    ("core/memory/embedding_provider.py", "EmbeddingProvider.ensure"):
+        (1, "_task 字段；ensure(wait=True) 内 await，LongTermMemory.close() cancel"),
+    ("core/memory/session.py", "SessionMemory.add_message"):
+        (1, "_archive_tasks 集合 + done callback；close_archive 限时 wait→cancel→再 wait"),
+    ("core/adapter/tts_adapter.py", "TTSStreamManager.stream_sentence"):
+        (1, "_tasks 列表 + _task_by_sid 索引；wait_all / cancel_all / cancel_stream 接管"),
+    ("core/input/ws_handler.py", "_open_ws_connection"):
+        (1, "_WsConnection.monitor_task 字段；_close_ws_connection cancel"),
+    ("core/input/voice_sessions.py", "VoiceSessionManager.start_realtime"):
+        (2, "_ack_task / _idle_task 字段；_teardown_session cancel"),
+    ("core/input/voice_sessions.py", "VoiceSessionManager.stop_recording"):
+        (1, "_in_flight_stt 字段；_reset_recording / discard_recording / close cancel"),
+    ("core/input/voice_sessions.py", "VoiceSessionManager._make_dispatch_stt._dispatch"):
+        (1, "_stt_tasks 集合；teardown 批量 cancel + gather drain"),
+    ("core/cognitive/finalize.py", "CognitiveFinalize._archive_final_turn"):
+        (1, "_pending_after_response 注册表 + _observe_after_response 观察回调；shutdown 限时 drain"),
+    ("core/personality/engine.py", "CharacterEngine.buffer_message"):
+        (1, "返回给调用方（CognitiveLoop 登记入 tail registry）——刻意不在内部造不可见任务"),
+}
+
 
 @dataclass
 class Violation:
@@ -139,6 +216,11 @@ class _Module:
     eager: list[tuple[str, list[str]]] = field(default_factory=list)
     lazy: list[tuple[str, list[str]]] = field(default_factory=list)
     type_edges: list[tuple[str, list[str]]] = field(default_factory=list)
+    task_spawns: Counter[str] = field(default_factory=Counter)
+    """R6：本文件按「限定名」计数的裸后台任务创建点（见 _collect_task_spawns）。
+
+    ``Counter[str]`` 而非 list——allowlist 记录的是**期望条数**，加/删各算漂移。
+    """
 
     @property
     def runtime(self) -> list[tuple[str, list[str]]]:
@@ -214,6 +296,46 @@ def _collect_imports(
     return eager, lazy, type_edges
 
 
+def _collect_task_spawns(tree: ast.Module) -> Counter[str]:
+    """R6：收集裸后台任务创建点，按「外层限定名」计数（ARCH-INC-P2-03）。
+
+    识别 ``<任意表达式>.create_task(...)`` 与 ``.ensure_future(...)``——覆盖
+    ``asyncio.create_task``、``asyncio.ensure_future``、
+    ``asyncio.get_running_loop().create_task``、``loop.create_task`` 全部写法。
+
+    限定名取「类.方法」链（模块级为 ``<module>``）。计数而非仅记录存在性：
+    allowlist 声明期望条数，**新增**与**删除**都算漂移——既堵住「同一函数里再塞
+    一个裸 spawn」，也让清理后的陈旧条目自动暴露。
+    """
+    stack: list[str] = []
+    counts: Counter[str] = Counter()
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr in _TASK_SPAWN_METHODS:
+                counts[".".join(stack) or "<module>"] += 1
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+    return counts
+
+
 def _scan(root: Path) -> tuple[list[_Module], set[str]]:
     """扫描三个顶层包，返回 (生产模块列表, 全部已知模块名)。"""
     modules: list[_Module] = []
@@ -233,7 +355,11 @@ def _scan(root: Path) -> tuple[list[_Module], set[str]]:
                 raise SystemExit(f"解析失败 {path}: {e}") from e
             eager, lazy, type_edges = _collect_imports(tree)
             modules.append(
-                _Module(path, _module_name(path.relative_to(root)), eager, lazy, type_edges)
+                _Module(
+                    path, _module_name(path.relative_to(root)),
+                    eager, lazy, type_edges,
+                    task_spawns=_collect_task_spawns(tree),
+                )
             )
 
     # 补包名（__init__ 未显式出现时的父包）
@@ -381,6 +507,40 @@ def check_repository(root: Path | None = None) -> list[Violation]:
             "如需运行时解耦请用函数内懒导入（评估 §4 P1-03 规则 4）",
         ))
 
+    # ---- R6: 裸后台任务创建点必须逐点登记所有权（ARCH-INC-P2-03）----
+    # allowlist 描述的是**本仓库**的存量站点，因此只对真实仓库生效；合成 fixture
+    # 仓库（测试用）里一切都是「未登记」，不套用也不做陈旧反查。
+    is_real_repo = root == _ROOT
+    seen_spawns: set[tuple[str, str]] = set()
+    for mod in modules:
+        rel = _rel(mod.path) if is_real_repo else str(mod.path.relative_to(root))
+        for qualname, count in sorted(mod.task_spawns.items()):
+            key = (rel, qualname)
+            seen_spawns.add(key)
+            entry = _TASK_SPAWN_ALLOWLIST.get(key) if is_real_repo else None
+            if entry is None:
+                violations.append(Violation(
+                    "R6", f"{rel}::{qualname}（{count} 处）",
+                    "裸后台任务创建点未登记。优先改用 Module/_common/task_scope.py 的 "
+                    "AsyncTaskScope（强引用 + 异常观察 + cancel/drain），确需裸用则在 "
+                    "_TASK_SPAWN_ALLOWLIST 登记「任务存哪 / 谁取消 / 谁等待 / 异常谁看」"
+                    "（评估 §ARCH-INC-P2-03）",
+                ))
+            elif entry[0] != count:
+                violations.append(Violation(
+                    "R6", f"{rel}::{qualname}（登记 {entry[0]} 处，实到 {count} 处）",
+                    f"裸 create_task 条数漂移——{entry[1]}。"
+                    "新增请改用 AsyncTaskScope；删除请同步更新登记条数",
+                ))
+
+    if is_real_repo:
+        for (rel, qualname), (expected, reason) in sorted(_TASK_SPAWN_ALLOWLIST.items()):
+            if (rel, qualname) not in seen_spawns:
+                violations.append(Violation(
+                    "R6", f"{rel}::{qualname}（登记 {expected} 处，实际 0 处）",
+                    f"陈旧登记：该创建点已不存在或已改经 AsyncTaskScope，请删除此条（原理由：{reason}）",
+                ))
+
     return violations
 
 
@@ -426,7 +586,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n修复或（确属有意）在 scripts/check_architecture.py 的 allowlist 中登记理由。")
         return 1
 
-    print("架构边界检查通过：R1 Module→core / R2 领域层→input / R3 跨包私有符号 / R4 eager 环")
+    print("架构边界检查通过：R1 Module→core / R2 领域层→input / R3 跨包私有符号 / R4 eager 环 / R6 裸后台任务登记")
     if args.list:
         print(f"\n存量豁免（allowlist，{len(accepted)} 项）：")
         for v in accepted:

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from paths import ProjectPath
 from Module.system_prompt import PromptManager
+from Module._common.task_scope import AsyncTaskScope
 from core.adapter.llm_adapter import LLMAdapter
 
 if TYPE_CHECKING:
@@ -60,6 +61,8 @@ class CharacterReflector:
         self._prompt_dir = prompt_dir
         self._buffer: list[tuple[str, str]] = []  # (user_msg, assistant_msg)
         self._reflect_lock = asyncio.Lock()
+        # ARCH-INC-P2-03：consume_trigger 提交任务作用域（强引用 + 异常观察 + 可 drain）
+        self._consume_tasks = AsyncTaskScope(f"reflector:{character_name}")
         self._context: list[dict] = []  # 滚动窗口：保留最近 N 轮对话用于反思
         _dir = self._prompt_dir
         if _dir is None:
@@ -149,6 +152,17 @@ class CharacterReflector:
 
         async with self._reflect_lock:
             await self._reflect()
+
+    async def drain_consume_tasks(self, *, timeout: float = 3.0) -> int:
+        """等待本 reflector 提交的 ``consume_trigger`` 后台任务落定（ARCH-INC-P2-03）。
+
+        Args:
+            timeout: 总预算（秒）。
+
+        Returns:
+            超时前未落定的任务数（0 = 全部完成）。
+        """
+        return await self._consume_tasks.drain(timeout=timeout)
 
     # ---- debug 属性 ----
 
@@ -331,15 +345,17 @@ class CharacterReflector:
             logger.debug("CharacterReflector: 反思结果为空，跳过")
             return
 
-        # 提交给 CharacterEngine——加 done callback 捕获异常，
-        # 否则 MongoDB 写入失败会 "Task exception was never retrieved"
-        async def _consume():
+        async def _consume_guarded():
             try:
                 await self._engine.consume_trigger("reflector", {"content": text})
             except Exception:
                 logger.warning("CharacterReflector: consume_trigger 失败", exc_info=True)
 
-        asyncio.create_task(_consume())
+        # ARCH-INC-P2-03：登记入 scope 而非裸 create_task——此前任务既无强引用也无人
+        # 观察。这条路径**也会从关机流程自身进入**（_flush_reflector → flush() →
+        # _reflect() → 此处），任务随即返回而 ``_stop_persistence`` 立刻关闭
+        # version repo；scope 让 Agent 关机能 drain 它，避免「写向已关闭的 repo」。
+        self._consume_tasks.try_spawn(_consume_guarded(), name="reflector-consume")
         self._last_success = True
         self._last_duration_ms = elapsed_ms
         self._last_text_len = len(text)

@@ -22,6 +22,22 @@ from core.text.parts import BlockRef, build_parts
 from core.utils import log_conversation, new_message_id
 from core.utils.text_utils import MessageObj
 
+logger = logging.getLogger(__name__)
+
+
+def _observe_after_response(task: "asyncio.Task[None]") -> None:
+    """after-response 任务的异常观察回调（ARCH-INC-P2-03）。
+
+    这些任务在正常运行时无人 await（registry 按 ``not t.done()`` 剪除），
+    失败必须在这里上报，否则只剩 asyncio 关闭阶段的 GC 噪音。
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("after-response 收尾任务异常", exc_info=exc)
+
+
 if TYPE_CHECKING:
     from Module.output import OutputManager
     from core.adapter.tts_adapter import TTSStreamManager
@@ -223,6 +239,10 @@ class CognitiveFinalize:
                 self._session_work_releaser(target.session_id)
             raise
         self._pending_after_response.append(task)
+        # ARCH-INC-P2-03：登记时挂观察回调——此前只在关机 drain 时才 await 这些
+        # 任务，正常运行期间失败的任务被 `not t.done()` 静默剪除，异常只留一句
+        # asyncio 的 "Task exception was never retrieved"。
+        task.add_done_callback(_observe_after_response)
         self._pending_after_response = [
             t for t in self._pending_after_response if not t.done()
         ]

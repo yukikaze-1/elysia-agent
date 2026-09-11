@@ -387,9 +387,16 @@ class CharacterEngine:
             self._safe_buffer(user_msg, assistant_msg, reflector=target))
 
     async def flush_reflector(self) -> None:
-        """Agent shutdown 时调用 — 触发未完成的反思。"""
+        """Agent shutdown 时调用 — 触发未完成的反思。
+
+        ARCH-INC-P2-03：反思触发后 ``consume_trigger`` 是**后台**任务（L3 写入 +
+        可能的 L3→L2 压缩）。此前 ``flush()`` 返回即走人，Agent 随后的
+        ``_stop_persistence`` 会关闭 version repo，而该任务可能仍在写。这里等它
+        落定（限时），把「写向已关闭的 repo」变成「关机前写完」。
+        """
         if self._reflector:
             await self._reflector.flush()
+            await self._reflector.drain_consume_tasks(timeout=3.0)
 
     # ================================================================
     # 情绪引擎方法（委托给 EmotionDetector）

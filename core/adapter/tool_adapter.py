@@ -189,9 +189,17 @@ class ToolAdapter:
         )
         return self._manager.definitions(format, filter_runtime=filter_runtime)
 
-    async def cancel_all(self) -> None:
-        """打断所有运行中的工具。"""
-        await self._manager.cancel_all()
+    async def cancel_all(self, *, drain_timeout: float = 0.0) -> int:
+        """打断所有运行中的工具。
+
+        Args:
+            drain_timeout: >0 时在取消后等待落定（总预算，秒）——关机路径传正数，
+                避免插件 teardown 与仍在跑的协程并发关闭共享资源（ARCH-INC-P2-03）。
+
+        Returns:
+            超时前未落定的任务数。
+        """
+        return await self._manager.cancel_all(drain_timeout=drain_timeout)
 
     def submit_approval(self, request_id: str, approved: bool) -> bool:
         """回传 HITL 审批结果（公开 API，委托 ToolManager → SafetyPipeline）。

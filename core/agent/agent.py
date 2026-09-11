@@ -62,6 +62,7 @@ if TYPE_CHECKING:
 
 from Module.output import OutputManager, ConsoleChannel
 from Module.workflow_contract.schema import WorkflowId
+from Module._common.task_scope import AsyncTaskScope
 
 from core.agent._types import RunState, _PendingMessage, _BackgroundTaskEntry
 from core.agent.lifecycle import AgentLifecycle
@@ -466,6 +467,12 @@ class Agent(AgentLifecycle, AgentServer):
         self._state = RunState.STOPPED
         self._event_task: asyncio.Task | None = None
         self._req_counter: int = 0
+        # ARCH-INC-P2-03：后台协程按 owner 收口。
+        #   _lifecycle_tasks — Agent 长期循环（event/mailbox/db-health/GC/embed）
+        #   _turns           — 每回合认知任务（用户输入 / 主动搭话 / 后台任务唤醒）
+        # 两者都由 Agent 独占，生命周期随 Agent 走；不持久化、不进任务中心。
+        self._lifecycle_tasks = AsyncTaskScope("agent")
+        self._turns = AsyncTaskScope("agent-turns")
         # FIFO 消息排队 — FSM != IDLE 时暂存消息
         self._pending_messages: list[_PendingMessage] = []
         # C1/P1-06：已真正开始执行的 cognitive task 集合——pre-start 任务不被后一
@@ -861,7 +868,7 @@ class Agent(AgentLifecycle, AgentServer):
                 data.conversation_id, data.session_work_reserved)
 
         try:
-            task = asyncio.create_task(
+            task = self._turns.spawn(
                 _run_with_session_lease(),
                 name=f"cognitive-{text[:20] if text else 'multimodal'}",
             )
@@ -889,7 +896,7 @@ class Agent(AgentLifecycle, AgentServer):
                 parent_id=rid, calls=calls,
             )
             self._cognitive.cancel_current()
-            task = asyncio.create_task(
+            task = self._turns.spawn(
                 self._cognitive.process(
                     f"（系统提示：用户已经{int(elapsed)}秒没有说话了，请自然地开启一个话题）",
                     _on_tool_calls=_on_tool_calls,
@@ -909,7 +916,7 @@ class Agent(AgentLifecycle, AgentServer):
         rid = self.next_request_id()
         set_request_id(rid)
         self._cognitive.cancel_current()
-        task = asyncio.create_task(
+        task = self._turns.spawn(
             self._cognitive.process(
                 user_message="",
                 is_task_result=True,

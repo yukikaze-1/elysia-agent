@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from Module.stt import STTFactory
+from Module._common.task_scope import AsyncTaskScope
 from core.input.audio_buffer import AudioBuffer, Callback, pcm_to_wav, _FRAME_BYTES
 from core.providers.custom_providers import resolve_model_params
 from core.memory.session_manager import SessionNotFoundError
@@ -111,6 +112,10 @@ class VoiceSessionManager:
         self._dict_text: list[str] = []
         # 9C-2：dictation 会话内 STT profile 快照后端（None → 用全局 agent.stt，不改全局活动 STT）
         self._dictation_stt: "STTBackend | None" = None
+        # ARCH-INC-P2-03：脱离会话生命周期的收尾任务（STT 快照 backend 的 close）。
+        # 这类 backend 持有独立 httpx client，裸 create_task 一旦丢失引用既无异常
+        # 观察也无 drain——close() 时统一收尾。
+        self._detached_tasks = AsyncTaskScope("voice-detached")
         # D3（spec §3.3）：STT 后台派发状态——seq 单调、epoch 代际、pending 缓冲、任务集合、双锁
         self._stt_seq = 0
         self._stt_epoch = 0                 # 会话代际——teardown 时 +=1，绝不归零（B1）
@@ -235,15 +240,15 @@ class VoiceSessionManager:
             if t is not asyncio.current_task() and not t.done():
                 t.cancel()
         self._stt_tasks = set()
-        # 9C-2：释放 dictation 会话内 STT profile 快照 backend（fire-and-forget + guard，
-        # 照抄 llm_adapter.py:194-198）——不阻塞会话结束，close 失败也不外抛。
+        # 9C-2：释放 dictation 会话内 STT profile 快照 backend（后台关闭，不阻塞
+        # 会话结束，close 失败也不外抛）。
+        # ARCH-INC-P2-03：经 scope 调度——此前裸 create_task 的结果被丢弃，该 backend
+        # 的 httpx client 若在事件循环关闭前没跑完就永不关闭，异常也无人观察。
         if self._dictation_stt is not None:
             stt = self._dictation_stt
             self._dictation_stt = None
-            try:
-                asyncio.get_running_loop().create_task(stt.close())
-            except RuntimeError:
-                logger.warning("dictation profile STT close 无 running loop，跳过（泄漏告警）")
+            self._detached_tasks.try_spawn(
+                stt.close(), name="dictation-stt-close")
         self._mode = VoiceMode.IDLE
 
     # ---- RECORDING（BE-060） ----
@@ -744,11 +749,19 @@ class VoiceSessionManager:
             await self.notify_stt_disabled()
 
     async def close(self) -> None:
-        """连接断开清理（spec §3.2 NEW-AA/XB/XC）——不发 InterruptData（复用 finally）。"""
+        """连接断开清理（spec §3.2 NEW-AA/XB/XC）——不发 InterruptData（复用 finally）。
+
+        ARCH-INC-P2-03：末尾收尾 ``_detached_tasks``（如 dictation STT 快照 backend
+        的 close）——这些 backend 持有独立 httpx client，连接关掉后就再没有第二次
+        机会收它们了。
+        """
         if self._in_flight_stt is not None and not self._in_flight_stt.done():
             self._in_flight_stt.cancel()
         self._teardown_session()
         self._reset_recording()
+        leftover = await self._detached_tasks.drain(timeout=3.0)
+        if leftover:
+            logger.warning("语音会话收尾任务未在 3s 内落定（%d 个仍在途）", leftover)
 
     # ---- 后台循环 ----
 

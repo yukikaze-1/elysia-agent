@@ -11,6 +11,7 @@ from core.status.agent_fsm import AgentFSM, AgentState
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
+from Module._common.task_scope import AsyncTaskScope, cancel_and_drain
 # 运行时导入：cast(WebSocketChannel, target) 的实参类型名须在运行时解析
 # （Module.output 不依赖 core，无环）
 from Module.output import WebSocketChannel
@@ -51,6 +52,8 @@ class _LifecycleTools:
         _embed_task: asyncio.Task[Any] | None
         _idle: IdleMonitor
         _event_task: asyncio.Task[None] | None
+        _lifecycle_tasks: AsyncTaskScope
+        _turns: AsyncTaskScope
         _process_events: Callable[[], Coroutine[Any, Any, None]]
         _desktop_bridge: DesktopToolBridge
         _output: OutputManager
@@ -121,24 +124,27 @@ class _LifecycleTools:
     async def _start_worker_pool(self) -> None:
         """启动 Worker Pool + embedding 预加载后台任务。"""
         await self._scheduler.start()
-        self._embed_task = asyncio.create_task(
+        self._embed_task = self._lifecycle_tasks.spawn(
             self._long_term._embedding_provider.ensure(), name="embedding-preload")
 
     async def _start_idle_and_events(self) -> None:
-        """启动 IdleMonitor + 主事件循环（独立 asyncio.Task）。"""
+        """启动 IdleMonitor + 主事件循环（独立 asyncio.Task）。
+
+        ``_process_events`` 经 AsyncTaskScope 调度——此前裸 create_task 无 done
+        callback，分发链上任何异常都会**静默杀死 EventBus 消费者**，此后 Agent
+        再也收不到用户输入，且直到关机才由 stop() 的 await 把异常翻出来。
+        现在由 scope 的观察回调即时记 ERROR（ARCH-INC-P2-03）。
+        """
         await self._idle.start()
-        self._event_task = asyncio.create_task(self._process_events())
+        self._event_task = self._lifecycle_tasks.spawn(
+            self._process_events(), name="agent-events")
 
     async def _stop_event_task(self) -> None:
         """停止 _process_events 事件循环——防止它在 shutdown 期间继续 post 新任务。"""
-        if self._event_task:
-            logger.debug("Cancelling event task...")
-            self._event_task.cancel()
-            try:
-                await asyncio.wait_for(self._event_task, timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-            self._event_task = None
+        logger.debug("Cancelling event task...")
+        await cancel_and_drain(
+            self._event_task, timeout=3.0, label="agent-event")
+        self._event_task = None
 
     def _stop_cognitive_and_tts(self) -> None:
         """Cancel 当前 cognitive task + TTS 任务（belt-and-suspenders）。"""
@@ -147,15 +153,15 @@ class _LifecycleTools:
         self._cognitive._tts_mgr.cancel_all()
 
     async def _stop_embedding_if_running(self) -> None:
-        """取消并等待 embedding 预加载任务完成。"""
-        if self._embed_task and not self._embed_task.done():
-            self._embed_task.cancel()
-        # 等待 task 完成——cancel 后仍需 await 消耗 CancelledError
-        if self._embed_task:
-            try:
-                await asyncio.wait_for(self._embed_task, timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
+        """取消并等待 embedding 预加载任务完成。
+
+        注意：``ensure(wait=False)`` 只是**外层**任务，真正的加载任务由
+        EmbeddingProvider 自己持有（``embedding_provider.py`` 的 ``self._task``），
+        由 ``LongTermMemory.close()`` 负责收尾——这里取消外层不影响它。
+        """
+        await cancel_and_drain(
+            self._embed_task, timeout=3.0, label="agent-embed-preload")
+        self._embed_task = None
 
     async def _stop_scheduler(self) -> None:
         """停止 Scheduler Worker Pool。"""

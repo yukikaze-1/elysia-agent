@@ -37,7 +37,7 @@ make lint
 make pyright
 # 或: conda run -n Elysia pyright
 
-# 架构边界门禁（ARCH-INC-P1-03，纯 AST 无外部依赖，秒级）：依赖方向 + 跨包私有符号 + eager 环
+# 架构边界门禁（ARCH-INC-P1-03/P2-03，纯 AST 无外部依赖，秒级）：依赖方向 + 跨包私有符号 + eager 环 + 裸后台任务登记
 make check-arch
 # 或: python scripts/check_architecture.py [--list]
 ```
@@ -288,7 +288,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `core.network` | 网络运行时基础设施（CORE-MOD-P2-01 从 input 迁入） | `rate_limiter.py` |
 | `core.prompt` | System prompt 组装层（CORE-MOD-P1-02 从 adapter 迁入） | `message_builder.py` + `prompt_assembler.py` |
 | `core.input` | Input layer: WebSocket + HTTP server | `server.py` (纯装配：create_app + 管理端点；bind 守卫在 core/utils/server_guard.py，批次 D), `middleware.py` (认证/payload/限流中间件工厂 + `_nosniff_uploads`；限流器在 core/network，批次 D), `health.py` (health/ready 探针，批次 D), `ws_handler.py` (协议 framing + 连接生命周期：握手/回放/消息循环；**1210→691 行**，22 个 dispatcher 已按领域迁出，2026-08-14 批次 B + 2026-09-11 ARCH-INC-P2-01), `ws_handlers/` (package：`context.py` 收口连接级状态 `WsRequestContext`——handler 签名由 10 参数收敛为 `(ctx, data, msg, channel)`；`chat/session/tool/voice.py` 四领域 handler；`__init__.py` 单一装配点 `_WS_HANDLERS`——wire 不变), `ws_v2.py` (v2 深业务：`_route_v2_text`/`_handle_voice_commit` + 幂等/ACK helper，批次 B 下移), `_common.py` (跨业务共享：`_send_ack`/`_find_channel`/`_tool_error`/`_archive_*`), `errors.py` (统一错误信封，批次 A 下沉), `provider_routes.py`/`tts_routes.py`/`upload_routes.py`/`tools_routes.py`/`chat_routes.py` (批次 C 拆 5 域，api_routes 退役), `attachment_routes.py` (附件签名下载 + 签发，BE-070), `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `voice_sessions.py` (三模式语音状态机：普通录音/实时语音/输入法转写，BE-060~062), `sticker_registry.py` (内置表情注册表，BE-071), `audio_buffer.py` (VAD 分段 + STT 提交), `debug_routes/` (package, 7 modules) |
-| `Module._common` | Shared utility layer | env, registry helpers, test helpers |
+| `Module._common` | Shared utility layer | env, registry helpers, test helpers, **`task_scope.py`（`AsyncTaskScope`/`cancel_and_drain`——后台协程所有权收口点，ARCH-INC-P2-03）** |
 
 ## Config system
 
@@ -498,7 +498,8 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 
 - **`docs/code-style-guide.md`** — 代码风格与类型约束。写代码前先读：ID NewType 体系 + 类型权威归属（core 定义 vs 契约层定义）+ StrEnum/coerce 用法 + getattr 使用纪律。
 - **pyright 门禁** — `make pyright`（`pyrightconfig.json`：include `core/` + `Module/` + `frontend_contract/`、排除 `**/tests/**`、`typeCheckingMode: basic`、`pythonVersion: 3.12`）。须在 Elysia env 运行——base env 无 aiohttp 会漏报 ~25 处。
-- **架构边界门禁** — `make check-arch`（`scripts/check_architecture.py`，ARCH-INC-P1-03）。四条规则：R1 `Module/` 生产代码与 `frontend_contract/` 不得反向依赖；R2 领域/基础设施层不得依赖 `core.input`；R3 禁止**跨包**导入下划线私有符号；R4 不得新增 **eager** import 环。存量泄漏（现仅 3×R1：bench/documentdb CLI 两处刻意豁免）在脚本 allowlist 逐项登记理由——**新增即红**；收口某项后须同步删除对应 allowlist 条目（R3 已于 2026-09-11 批次 A 清空）。`TYPE_CHECKING` 类型边允许（R5 仅报告），函数内**懒导入**是打断 import 环的正当手段（R4 只算 eager，但 R1/R2/R3 仍算运行时依赖）。
+- **架构边界门禁** — `make check-arch`（`scripts/check_architecture.py`，ARCH-INC-P1-03/P2-03）。六条规则：R1 `Module/` 生产代码与 `frontend_contract/` 不得反向依赖；R2 领域/基础设施层不得依赖 `core.input`；R3 禁止**跨包**导入下划线私有符号；R4 不得新增 **eager** import 环；R5 `TYPE_CHECKING` 类型边仅报告；R6 裸 `create_task`/`ensure_future` 必须逐点登记所有权。存量泄漏（现仅 3×R1：bench/documentdb CLI 两处刻意豁免）在脚本 allowlist 逐项登记理由——**新增即红**；收口某项后须同步删除对应 allowlist 条目（R3 已于 2026-09-11 批次 A 清空）。`TYPE_CHECKING` 类型边允许（R5 仅报告），函数内**懒导入**是打断 import 环的正当手段（R4 只算 eager，但 R1/R2/R3 仍算运行时依赖）。R6 记的是**期望条数**而非布尔——同一函数内追加裸 spawn、或清理后忘删条目，都会报；其 allowlist 只对真实仓库生效，测试用的合成 fixture 仓库不套用。
+- **后台协程所有权** — 新增后台协程一律走 `Module/_common/task_scope.py` 的 `AsyncTaskScope`（按 owner 实例化：`spawn` 强引用 + done callback 统一记未处理异常 + `cancel_all`/`drain`/`aclose`）或 `cancel_and_drain(task, ...)`（单任务有序收尾）。`drain(timeout)` 是**总预算**而非逐任务超时。终态 owner（VoiceSession/ToolPlugin）用 `aclose()`；可重启 owner（Agent 同一实例 `stop()`→`start()`）用 `cancel_all()`+`drain()`——封闭 scope 会让重启后一律 `TaskScopeClosedError`。确需裸 `create_task` 的，须在 `_TASK_SPAWN_ALLOWLIST` 登记「任务存哪 / 谁取消 / 谁等待 / 异常谁看」。新 owner 停止后必须 drain 再关它依赖的资源（repo/客户端）。详见 `docs/review/2026-08-30-后端架构分层与模块化增量评估.md` §ARCH-INC-P2-03。
 - **`docs/readme-conventions.md`** — README 编写规范。新增/修改模块时必须按模板写 README（面包屑 + 相关文档节），并在根 README 文档导航中注册。
 - **`docs/testing.md`** — 测试分层体系。新测试必须加 marker（unit/service/integration/slow），日常用 `make test-quick` / `make test-normal` / `make test-full`。
 - **`core/prompts/README.md`** — Prompt 模板命名规范（PascalCase `.j2`）+ 渲染方式（`str.replace()` / Jinja2 `render_macro()`，通过 `PromptManager`）。

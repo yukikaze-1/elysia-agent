@@ -15,6 +15,7 @@ from core.schema.memory_reflector import MemoryReflectorState
 from core.storage.attachment_gc import run_attachment_gc
 from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.character.registry import CharacterRuntimeRegistry
+from Module._common.task_scope import AsyncTaskScope, cancel_and_drain
 
 if TYPE_CHECKING:
     from core.storage.character_version_repo import CharacterVersionRepository
@@ -44,6 +45,7 @@ class _LifecyclePersistence:
     if TYPE_CHECKING:
         _db_health_task: asyncio.Task[None] | None
         _attachment_gc_task: asyncio.Task[None] | None
+        _lifecycle_tasks: AsyncTaskScope
         _session_manager: SessionManager
         _long_term: LongTermMemory
         _message_repo: MessageRepository
@@ -78,7 +80,8 @@ class _LifecyclePersistence:
 
     def _start_db_health(self) -> None:
         """启动数据库健康检查后台任务。"""
-        self._db_health_task = asyncio.create_task(self._db_health_loop())
+        self._db_health_task = self._lifecycle_tasks.spawn(
+            self._db_health_loop(), name="agent-db-health")
 
     async def _start_persistence(self) -> tuple[bool, bool]:
         """连接 MongoDB/Milvus，加载活动会话，恢复 JSONL 快照。
@@ -364,7 +367,7 @@ class _LifecyclePersistence:
         except Exception:
             logger.warning("附件记录查询失败——跳过 resolver 预热", exc_info=True)
             return
-        self._attachment_gc_task = asyncio.create_task(
+        self._attachment_gc_task = self._lifecycle_tasks.spawn(
             self._attachment_gc_runner(), name="attachment-gc")
 
     async def _attachment_gc_runner(self) -> None:
@@ -382,15 +385,9 @@ class _LifecyclePersistence:
 
     async def _stop_attachment_gc(self) -> None:
         """取消并等待附件 GC 后台任务（置于 _stop_attachment_repo 前）。"""
-        task = getattr(self, "_attachment_gc_task", None)
-        if task is None:
-            return
-        if not task.done():
-            task.cancel()
-        try:
-            await asyncio.wait_for(task, timeout=3.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            pass
+        await cancel_and_drain(
+            getattr(self, "_attachment_gc_task", None),
+            timeout=3.0, label="attachment-gc")
         self._attachment_gc_task = None
 
     async def _db_health_loop(self) -> None:
@@ -575,14 +572,10 @@ class _LifecyclePersistence:
 
     async def _stop_db_health(self) -> None:
         """停止数据库健康检查循环。"""
-        if self._db_health_task:
-            logger.debug("Cancelling db health task...")
-            self._db_health_task.cancel()
-            try:
-                await asyncio.wait_for(self._db_health_task, timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-            self._db_health_task = None
+        logger.debug("Cancelling db health task...")
+        await cancel_and_drain(
+            self._db_health_task, timeout=3.0, label="agent-db-health")
+        self._db_health_task = None
 
     async def _stop_persistence(self) -> None:
         """持久化关闭：session.save() → long_term.close() → EmbeddingFactory.shutdown()。
@@ -590,6 +583,15 @@ class _LifecyclePersistence:
         顺序要求：先 save session（需要 L2 连接仍然有效），再关闭 L2，最后关 embedding。
         """
         logger.debug("Saving session...")
+        # ARCH-INC-P2-03：先等在途的「逐出 save」落定。逐出的会话已离开缓存池，
+        # save_all() 看不到它们——若不等，它们会写向下面即将关闭的 session repo。
+        try:
+            leftover = await self._session_manager.drain_evictions(timeout=5.0)
+            if leftover:
+                logger.warning("逐出 save 未在 5s 内落定（%d 个仍在途）", leftover)
+        except Exception:
+            logger.error("逐出 save drain 失败", exc_info=True)
+
         try:
             await asyncio.wait_for(self._session_manager.save_all(), timeout=3.0)
         except asyncio.TimeoutError:

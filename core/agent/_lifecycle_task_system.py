@@ -5,6 +5,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
+from Module._common.task_scope import AsyncTaskScope, cancel_and_drain
+
 if TYPE_CHECKING:
     from core.monitoring.event_bus import EventBus
     from core.cognitive import CognitiveLoop
@@ -30,6 +32,7 @@ class _LifecycleTaskSystem:
         _user_name: str
         _register_background_task: Callable[[str, Any, str, IsoTimestamp], None]
         _mailbox_task: asyncio.Task[None] | None
+        _lifecycle_tasks: AsyncTaskScope
         _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
 
     async def _start_task_system(self) -> None:
@@ -68,17 +71,14 @@ class _LifecycleTaskSystem:
 
     def _start_mailbox_polling(self) -> None:
         """启动后台任务 mailbox 轮询（独立 asyncio.Task）。"""
-        self._mailbox_task = asyncio.create_task(self._poll_mailboxes())
+        self._mailbox_task = self._lifecycle_tasks.spawn(
+            self._poll_mailboxes(), name="agent-mailbox")
 
     async def _stop_mailbox(self) -> None:
         """停止后台任务 mailbox 轮询——cancel 后必须 await 消耗 CancelledError。"""
-        if self._mailbox_task:
-            self._mailbox_task.cancel()
-            try:
-                await asyncio.wait_for(self._mailbox_task, timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-            self._mailbox_task = None
+        await cancel_and_drain(
+            self._mailbox_task, timeout=3.0, label="agent-mailbox")
+        self._mailbox_task = None
 
     async def _stop_task_system(self) -> None:
         """停止 WorkflowEngine（5s 超时）。"""

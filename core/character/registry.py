@@ -23,6 +23,7 @@ from collections import OrderedDict
 from typing import Awaitable, Callable
 
 from core.character.runtime import CharacterRuntime
+from Module._common.task_scope import AsyncTaskScope
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class CharacterRuntimeRegistry:
         # retained for the bounded set of instance IDs seen by this process so a
         # failed load cannot race a queued retry through a replacement lock.
         self._load_locks: dict[str, asyncio.Lock] = {}
+        # ARCH-INC-P2-03：release/LRU 逐出调度的 flush 任务。这些 runtime 已从
+        # _runtimes 弹出，close_all() 的常规遍历看不到它们——必须由 scope 独立持有。
+        self._flush_tasks = AsyncTaskScope("character-runtime-flush")
 
     def get(self, instance_id: str, factory: Callable[[], CharacterRuntime]) -> CharacterRuntime:
         if instance_id in self._runtimes:
@@ -101,14 +105,16 @@ class CharacterRuntimeRegistry:
             logger.debug("runtime invalidated: %s (%s)", instance_id, reason)
 
     def release(self, instance_id: str, reason: str) -> None:
-        """释放 runtime（先 flush 再清）。"""
-        import asyncio
+        """释放 runtime（先 flush 再清）。
+
+        ARCH-INC-P2-03：flush 任务登记入 ``_flush_tasks``——此前裸 create_task 无
+        强引用、无 done callback、无取消点，``_persist_fn`` 抛
+        ``CharacterStateConflictError`` 时只在 GC 阶段留一句 "Task exception was
+        never retrieved"，角色状态静默丢失。现由 scope 观察异常并在关机时 drain。
+        """
         rt = self._runtimes.pop(instance_id, None)
         if rt is not None:
-            try:
-                asyncio.get_running_loop().create_task(rt.flush())
-            except RuntimeError:
-                pass
+            self._flush_tasks.try_spawn(rt.flush(), name=f"release-flush-{instance_id}")
             logger.debug("runtime released: %s (%s)", instance_id, reason)
 
     def flush(self, instance_id: str) -> None:
@@ -121,10 +127,18 @@ class CharacterRuntimeRegistry:
             rt.dirty = False
 
     async def close_all(self) -> None:
-        """关机 flush 全部（A1：shutdown 走这里，非单 engine）。"""
+        """关机 flush 全部（A1：shutdown 走这里，非单 engine）。
+
+        ARCH-INC-P2-03：除了缓存池里的 runtime，还要 drain 此前 release()/LRU 逐出
+        调度出的 flush 任务——它们对应的 runtime 已不在 ``_runtimes`` 里，此前
+        ``close_all()`` 完全看不到，可能在 repo 关闭后才落库或直接丢失。
+        """
         for rt in self._runtimes.values():
             await rt.flush()
         self._runtimes.clear()
+        leftover = await self._flush_tasks.drain(timeout=3.0)
+        if leftover:
+            logger.warning("runtime flush 未在 3s 内落定（%d 个仍在途）", leftover)
 
     def __len__(self) -> int:
         return len(self._runtimes)
@@ -134,7 +148,8 @@ class CharacterRuntimeRegistry:
 
         busy（generation/反思/压缩在途，含 tail lease）受保护；全部受保护时提前
         退出，不强制牺牲。选中者先调度 flush()——`flush()` 无条件经 persist_fn 落库，
-        因此即便状态未标记 dirty 也不会丢失。
+        因此即便状态未标记 dirty 也不会丢失（ARCH-INC-P2-03：任务入 scope，
+        由 ``close_all()`` drain，见其 docstring）。
         """
         while len(self._runtimes) > self._max_size:
             evicted: str | None = None
@@ -148,9 +163,6 @@ class CharacterRuntimeRegistry:
             rt = self._runtimes.pop(evicted, None)
             if rt is not None:
                 # 架构稿 §7.1「驱逐前必须 flush dirty state」：调度落库再丢弃对象。
-                # 同步上下文无法 await（get/get_or_load 为 sync 点），故仿 release() 起后台任务。
-                try:
-                    asyncio.get_running_loop().create_task(rt.flush())
-                except RuntimeError:
-                    pass                # 无运行事件循环（同步测试）→ 无持久化后端可写
+                # 同步上下文无法 await（get/get_or_load 为 sync 点），故起后台任务。
+                self._flush_tasks.try_spawn(rt.flush(), name=f"evict-flush-{evicted}")
             logger.debug("runtime evicted (LRU): %s", evicted)

@@ -38,6 +38,7 @@ from core.storage.session_repo import (
 )
 from core.storage.message_repo import MessageRepository
 from core.memory.session import SessionMemory
+from Module._common.task_scope import AsyncTaskScope
 
 if TYPE_CHECKING:
     from core.memory.memory_reflector import MemoryReflector
@@ -109,6 +110,9 @@ class SessionManager:
         # B2/P1-01：每会话 in-flight load future——并发 ensure_loaded 合并为一次 load；
         # 仅成功后加入 _loaded，失败移除 future 允许重试。
         self._load_futures: dict[SessionId, asyncio.Future[SessionMemory]] = {}
+        # ARCH-INC-P2-03：逐出 save 的后台任务作用域。逐出后会话即离开缓存池，
+        # 无法再被 save_all() 覆盖——必须由 scope 持有强引用 + 观察异常 + 关机 drain。
+        self._evict_tasks = AsyncTaskScope("session-evictions")
         self._active_id = DEFAULT_SESSION
         # F1(a)：switch 忙时拒绝的检查回调（agent 注入 `not status.is_accepting_input`）
         self._busy_check = None
@@ -766,7 +770,15 @@ class SessionManager:
     def evict_if_needed(self) -> None:
         """超出 max_sessions 时逐出最久未用非活动会话（逐出前 save）。
 
-        同步方法：save 经 fire-and-forget task 调度（无运行事件循环时跳过）。
+        同步方法：save 经 ``_evict_tasks`` 后台任务调度（无运行事件循环时记
+        warning 并跳过——见 ``AsyncTaskScope.try_spawn``）。
+
+        **ARCH-INC-P2-03 修复（数据丢失窗口）**：此前 ``ensure_future(session.save())``
+        的 Task 被完全丢弃，而下一行就把会话弹出缓存池——于是 ``save_all()`` /
+        ``drain_all_archives()`` 都不可能再覆盖它（它们只遍历 ``_sessions``）。
+        逐出是该会话最后一次落库机会，却无人 await/取消/观察异常。现在任务登记
+        入 scope，``drain_evictions()`` 在关机时等待它落定。
+
         保护（F7）：永不逐出默认会话 default（v1 锚点，与 delete 守卫同主题）。
         """
         while len(self._sessions) > self._max_sessions:
@@ -780,10 +792,17 @@ class SessionManager:
                 break  # 只剩活动会话，无法逐出
             sid, session = evicted
             if sid in self._loaded:
-                try:
-                    asyncio.ensure_future(session.save())
-                except RuntimeError:
-                    # 无运行事件循环：跳过保存（会话数据已在前次 save 落库）
-                    logger.debug("evict: 无运行事件循环，跳过 save session=%s", sid)
+                self._evict_tasks.try_spawn(session.save(), name=f"evict-save-{sid}")
             self._sessions.pop(sid, None)
             self._loaded.discard(sid)
+
+    async def drain_evictions(self, *, timeout: float = 5.0) -> int:
+        """等待全部逐出 save 落定（ARCH-INC-P2-03）。
+
+        必须在 ``_stop_persistence`` 关闭 session repo **之前**调用，否则仍在途的
+        逐出 save 会写向已关闭的连接。
+
+        Returns:
+            超时前未落定的任务数（0 = 全部完成）。
+        """
+        return await self._evict_tasks.drain(timeout=timeout)

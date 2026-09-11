@@ -252,6 +252,117 @@ def test_r4_ignores_type_checking_cycle(tmp_path):
     assert code == 0, out
 
 
+# ---------------------------------------------------------------- R6 裸后台任务登记
+
+
+def test_r6_flags_unregistered_bare_create_task(tmp_path):
+    """未登记的裸 create_task 必须报出（ARCH-INC-P2-03 的回归防线）。"""
+    repo = _make_repo(tmp_path, {
+        "core/__init__.py": "",
+        "core/thing.py": (
+            "import asyncio\n"
+            "class Thing:\n"
+            "    def go(self):\n"
+            "        return asyncio.create_task(asyncio.sleep(0))\n"
+        ),
+    })
+    code, out = _run(repo)
+    assert code == 1
+    assert "[R6]" in out and "core/thing.py::Thing.go" in out
+
+
+def test_r6_flags_ensure_future_and_loop_create_task(tmp_path):
+    """三条等价写法都要抓到——ensure_future 与 loop.create_task 同样绕过收口。"""
+    repo = _make_repo(tmp_path, {
+        "core/__init__.py": "",
+        "core/a.py": (
+            "import asyncio\n"
+            "def f():\n"
+            "    asyncio.ensure_future(asyncio.sleep(0))\n"
+            "async def g():\n"
+            "    asyncio.get_running_loop().create_task(asyncio.sleep(0))\n"
+        ),
+    })
+    code, out = _run(repo)
+    assert code == 1
+    assert "core/a.py::f" in out
+    assert "core/a.py::g" in out
+    assert out.count("[R6]") == 2
+
+
+def test_r6_reports_count_drift_within_same_function(tmp_path):
+    """同一函数内**追加**第二个裸 spawn 也要报——布尔式判断会漏掉这种。
+
+    登记表按 (文件, 限定名) 记期望**条数**，故 1 → 2 是漂移。
+    """
+    repo = _make_repo(tmp_path, {
+        "core/__init__.py": "",
+        "core/thing.py": (
+            "import asyncio\n"
+            "def f():\n"
+            "    asyncio.create_task(asyncio.sleep(0))\n"
+        ),
+    })
+    code, out = _run(repo)
+    assert code == 1 and "1 处" in out
+
+    # 再塞一个：限定名不变，但条数变了
+    (repo / "core" / "thing.py").write_text(
+        "import asyncio\n"
+        "def f():\n"
+        "    asyncio.create_task(asyncio.sleep(0))\n"
+        "    asyncio.create_task(asyncio.sleep(0))\n",
+        encoding="utf-8",
+    )
+    code2, out2 = _run(repo)
+    assert code2 == 1
+    assert "2 处" in out2, out2
+
+
+def test_r6_accepts_async_task_scope(tmp_path):
+    """走 AsyncTaskScope 的调度不算裸 spawn——它就是收口点。"""
+    repo = _make_repo(tmp_path, {
+        "core/__init__.py": "",
+        "core/thing.py": (
+            "from Module._common.task_scope import AsyncTaskScope\n"
+            "SCOPE = AsyncTaskScope('x')\n"
+            "def f():\n"
+            "    return SCOPE.spawn(_work())\n"
+            "async def _work():\n"
+            "    return None\n"
+        ),
+    })
+    code, out = _run(repo)
+    assert code == 0, out
+
+
+def test_r6_ignores_tests(tmp_path):
+    """测试代码不受 R6 约束。"""
+    repo = _make_repo(tmp_path, {
+        "core/__init__.py": "",
+        "core/tests/test_x.py": (
+            "import asyncio\n"
+            "def test_a():\n"
+            "    asyncio.create_task(asyncio.sleep(0))\n"
+        ),
+    })
+    code, out = _run(repo)
+    assert code == 0, out
+
+
+def test_r6_allowlist_matches_real_repository_counts():
+    """真实仓库的登记条数必须与实际完全一致（含陈旧登记）。
+
+    R6 的「陈旧登记」是**独立**报出的违规（按 (文件, 限定名) 反查），
+    因此这里只需断言真实仓库零 R6 硬违规——若某处被改成 AsyncTaskScope
+    而忘了删登记条目，`test_real_repository_passes` 与本测试都会红。
+    """
+    from scripts.check_architecture import check_repository
+
+    r6 = [v for v in check_repository(ROOT) if v.rule == "R6"]
+    assert r6 == [], "R6 违规（含陈旧登记）：\n" + "\n".join(v.render() for v in r6)
+
+
 # ---------------------------------------------------------------- 忽略范围
 
 

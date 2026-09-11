@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from Module.llm import LLMBackend, LLMFactory
+from Module._common.task_scope import AsyncTaskScope
 
 from core.adapter.tool_call_parser import normalize_tool_calls
 from core.schema.tool import ToolCall
@@ -45,6 +46,8 @@ class LLMAdapter:
             _test_backend: 测试用后端实例，为 None 时通过工厂创建。
         """
         self._requested_model = model or "deepseek/deepseek-chat"
+        # ARCH-INC-P2-03：热切换时旧后端的关闭任务作用域（见 switch_model / close）
+        self._closing_backends = AsyncTaskScope("llm-adapter")
 
         if _test_backend is not None:
             self._backend: LLMBackend = _test_backend
@@ -170,7 +173,15 @@ class LLMAdapter:
         return None
 
     async def close(self) -> None:
-        """关闭底层 LLM 后端的连接。"""
+        """关闭底层 LLM 后端的连接。
+
+        ARCH-INC-P2-03：先收尾热切换遗留的「旧后端关闭」任务。此前 switch_model
+        对旧后端是裸 create_task 且无任何引用——反复热切换后进程退出，旧连接池
+        可能从未关闭，close 抛错也无人知晓。
+        """
+        leftover = await self._closing_backends.drain(timeout=3.0)
+        if leftover:
+            logger.warning("旧 LLM 后端关闭未在 3s 内落定（%d 个仍在途）", leftover)
         if self._backend:
             await self._backend.close()
 
@@ -190,16 +201,12 @@ class LLMAdapter:
         """
         new_backend = LLMFactory.create(new_model_id, **kwargs)
         old, self._backend, self._requested_model = self._backend, new_backend, new_model_id
-        # 先建后换：创建成功后旧后端 fire-and-forget 关闭（不阻塞切换返回）
+        # 先建后换：创建成功后旧后端后台关闭（不阻塞切换返回）。
+        # ARCH-INC-P2-03：任务入 scope——有强引用、异常被观察、close() 时 drain。
         close_meth = getattr(old, "close", None)
         if close_meth is not None:
-            try:
-                asyncio.get_running_loop().create_task(close_meth())
-            except RuntimeError:
-                # 同步上下文无运行中的事件循环——旧后端连接池无法异步关闭，
-                # 记录 warning 暴露泄漏隐患
-                logger.warning(
-                    "switch_model: 同步上下文无法异步关闭旧后端（连接池可能泄漏）")
+            self._closing_backends.try_spawn(
+                close_meth(), name=f"llm-close-{id(old)}")
         logger.info("LLM switched to: %s", new_model_id)
 
     @property

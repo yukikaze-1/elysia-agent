@@ -11,6 +11,7 @@ from core.agent._lifecycle_services import _LifecycleServices
 from core.agent._lifecycle_tools import _LifecycleTools
 from core.agent._lifecycle_task_system import _LifecycleTaskSystem
 from core.agent._types import RunState, _PendingMessage, _BackgroundTaskEntry
+from Module._common.task_scope import AsyncTaskScope
 
 if TYPE_CHECKING:
     from core.storage.character_version_repo import CharacterVersionRepository
@@ -54,10 +55,12 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
     _SHUTDOWN_STEPS: list[tuple[str, str]] = [
         ("stop_event_task",      "_stop_event_task"),
         ("stop_cognitive_tts",   "_stop_cognitive_and_tts"),
+        ("drain_cognitive",      "_drain_cognitive_turns"),
         ("flush_after_response", "_flush_after_response"),
         ("flush_consolidator",   "_flush_consolidator"),
         ("flush_reflector",      "_flush_reflector"),
         ("flush_compression",    "_flush_compression"),
+        ("drain_personality",    "_drain_personality_tasks"),
         ("stop_db_health",       "_stop_db_health"),
         ("stop_mailbox",         "_stop_mailbox"),
         ("stop_task_system",     "_stop_task_system"),
@@ -128,6 +131,8 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _pending_messages: list[_PendingMessage]
         _background_tasks: dict[str, _BackgroundTaskEntry]
         _started_cognitive_tasks: set[asyncio.Task]  # C1/P1-06（agent 定义，lifecycle 复位）
+        _lifecycle_tasks: AsyncTaskScope  # ARCH-INC-P2-03：Agent 长期循环
+        _turns: AsyncTaskScope            # ARCH-INC-P2-03：每回合认知任务
         _mongo_ok: bool
         _milvus_ok: bool
         _mongo_available: bool
@@ -213,6 +218,13 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
             except Exception:
                 logger.warning("Shutdown step %s failed", name, exc_info=True)
 
+        # ARCH-INC-P2-03：兜底 drain——上面逐步收尾已各自限时，这里只处理
+        # 未被任何具名字段接管的残留后台任务。用 drain 而非 aclose：同一实例
+        # 支持 stop→start 重启，封闭 scope 会让重启后一律 TaskScopeClosedError。
+        leftover = await self._lifecycle_tasks.drain(timeout=2.0)
+        if leftover:
+            logger.warning("Agent 关停后仍有 %d 个后台任务未落定", leftover)
+
         # 当前 cognitive task 已取消并完成 shutdown；清掉 EventBus 中未消费事件可能
         # 留下的引用，保证同一 Agent 实例 restart 后无陈旧删除门禁。
         self._session_manager.clear_work()
@@ -220,6 +232,18 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         logger.info("Agent stopped")
 
     # ---- stop() sub-methods ----
+
+    async def _drain_cognitive_turns(self) -> None:
+        """等待被取消的回合任务真正跑完收尾，再让后续步骤关掉它们依赖的资源。
+
+        ARCH-INC-P2-03 修复：``cancel_current()`` 只发 `.cancel()` 就丢弃引用，
+        而 ``CognitiveLoop.process`` 会吞掉 CancelledError 转去 ``_handle_interrupt``
+        继续写 generation 终态/租约。此前 stop() 不 await 它，于是
+        ``_stop_persistence`` 可能在回合收尾**仍在写库**时关掉 Mongo/repo。
+        """
+        leftover = await self._turns.drain(timeout=3.0)
+        if leftover:
+            logger.warning("回合任务未在 3s 内收尾（%d 个仍在运行）", leftover)
 
     async def _flush_after_response(self) -> None:
         """等待 fire-and-forget after-response task 完成，防止记忆保存丢失。"""
@@ -291,3 +315,16 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
                 logger.warning("CharacterEngine compression flush timed out")
             except Exception:
                 logger.warning("CharacterEngine compression flush failed", exc_info=True)
+
+    async def _drain_personality_tasks(self) -> None:
+        """等待 personality 域的 fire-and-forget 任务落定（ARCH-INC-P2-03）。
+
+        这些任务是 awareness LLM 判定与表情帧推送（``core/personality/_utils.py``
+        的 ``_schedule``）。含 LLM 调用的那些必须在 ``stop_llm_tts`` 之前收尾，
+        否则会调向已关闭的 LLM 客户端。
+        """
+        from core.personality._utils import drain_scheduled
+
+        leftover = await drain_scheduled(timeout=3.0)
+        if leftover:
+            logger.warning("personality 域后台任务未在 3s 内落定（%d 个仍在途）", leftover)

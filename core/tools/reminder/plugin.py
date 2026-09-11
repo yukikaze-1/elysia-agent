@@ -5,6 +5,7 @@ import logging
 import uuid
 
 from pydantic import BaseModel, Field
+from Module._common.task_scope import AsyncTaskScope
 from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
@@ -27,6 +28,28 @@ class SetReminderPlugin(ToolPlugin):
     param_model = ReminderParams
     capabilities = {Capability.SCHEDULE}
     safety = SafetyProfile()
+
+    def __init__(self) -> None:
+        # ARCH-INC-P2-03：到期提醒是**跨工具调用存活**的后台协程（最长 24h）。
+        # 此前裸 ensure_future 无强引用/无观察/无取消点：Agent 关机时任务被直接
+        # 销毁，用户收到过「已设置提醒」却永远等不到提醒，且无任何日志。
+        # 现在由插件实例持有，teardown() 统一收尾（ToolManager.shutdown 会调用）。
+        self._reminders = AsyncTaskScope("reminder")
+
+    async def teardown(self) -> None:
+        """插件卸载时取消未到期的提醒（ARCH-INC-P2-03）。
+
+        提醒依赖进程内 EventBus 投递，Agent 关停后即使留着也投不出去——
+        显式取消并记录，好过静默销毁一个已向用户承诺过的任务。
+
+        用 ``aclose()`` 而非 ``cancel_all()``：teardown 后本实例即终结
+        （ToolManager 卸载时清出 ``_plugins``，reload 也是换新实例），
+        之后再 spawn 属于生命周期错误，应当响亮失败而不是继续接受提醒。
+        """
+        cancelled = self._reminders.cancel_all()
+        if cancelled:
+            logger.info("reminder 插件卸载：取消 %d 个未到期提醒", cancelled)
+        await self._reminders.aclose(timeout=2.0)
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: ReminderParams,
@@ -68,7 +91,9 @@ class SetReminderPlugin(ToolPlugin):
                 )
 
         try:
-            asyncio.ensure_future(_remind())
-            return f"已设置提醒，{params.delay_seconds} 秒后通知: {params.message}"
+            self._reminders.spawn(_remind(), name=f"reminder-{task_id}")
         except Exception as e:
+            # spawn 在被拒（作用域已关闭）或无事件循环时抛——两种情况都不该对
+            # 用户谎报「已设置」：工具返回值是用户唯一能看到的结果面。
             return f"设置提醒失败: {e}"
+        return f"已设置提醒，{params.delay_seconds} 秒后通知: {params.message}"
