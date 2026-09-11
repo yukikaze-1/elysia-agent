@@ -131,6 +131,97 @@ class TestCharacterIntegrityStartupStep:
         assert agent._character_integrity_report.scanned is False  # noqa: SLF001
 
 
+class TestSchemaDriftStep:
+    """_check_schema_drift 启动步骤：只读、不阻塞、结果挂 agent。
+
+    背景：`ensure_index` 只增不删，改过索引键后旧索引留在库里并静默改变行为
+    （实测：sessions 的 30 天 TTL 索引从代码删除后仍存留）。
+    """
+
+    def test_schema_drift_step_registered(self):
+        """索引 schema 漂移自检是启动步骤（把故障提前到启动日志）。"""
+        names = [name for name, _ in AgentLifecycle._STARTUP_STEPS]
+        assert "schema_drift" in names
+
+    def test_schema_drift_runs_after_character_integrity(self):
+        """置于 character_integrity 之后（同为只读诊断，且那时 repo 已连接）。"""
+        names = [name for name, _ in AgentLifecycle._STARTUP_STEPS]
+        assert names.index("character_integrity") < names.index("schema_drift")
+
+    @pytest.mark.asyncio
+    async def test_orphan_index_logged_as_warning(self, caplog):
+        """检出孤儿索引 → 显著 warning，且结果挂到 agent。"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from core.agent._lifecycle_persistence import _LifecyclePersistence
+        from core.storage.schema_drift import EXPECTED_INDEXES
+
+        def _indexes(coll: str) -> list[dict]:
+            items = [{"name": "_id_"}, *[{"name": n} for n in EXPECTED_INDEXES[coll]]]
+            if coll == "sessions":
+                items.append({"name": "updated_at_1"})  # 复刻实测残留
+            return items
+
+        backend = MagicMock()
+        backend.list_indexes = AsyncMock(side_effect=_indexes)
+        repo = MagicMock()
+        repo.backend = backend
+
+        class _Agent(_LifecyclePersistence):
+            pass
+
+        agent = _Agent()
+        agent._session_repo = repo  # noqa: SLF001
+
+        with caplog.at_level(logging.WARNING, logger="core.storage.schema_drift"):
+            await agent._check_schema_drift()  # noqa: SLF001
+
+        assert agent._schema_drift_report.has_drift is True  # noqa: SLF001
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    @pytest.mark.asyncio
+    async def test_clean_schema_is_quiet(self, caplog):
+        """无漂移 → 不产生 warning。"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from core.agent._lifecycle_persistence import _LifecyclePersistence
+        from core.storage.schema_drift import EXPECTED_INDEXES
+
+        backend = MagicMock()
+        backend.list_indexes = AsyncMock(side_effect=lambda coll: [
+            {"name": "_id_"}, *[{"name": n} for n in EXPECTED_INDEXES[coll]],
+        ])
+        repo = MagicMock()
+        repo.backend = backend
+
+        class _Agent(_LifecyclePersistence):
+            pass
+
+        agent = _Agent()
+        agent._session_repo = repo  # noqa: SLF001
+
+        with caplog.at_level(logging.DEBUG, logger="core.storage.schema_drift"):
+            await agent._check_schema_drift()  # noqa: SLF001
+
+        assert agent._schema_drift_report.has_drift is False  # noqa: SLF001
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    @pytest.mark.asyncio
+    async def test_missing_backend_does_not_break_startup(self):
+        """仓储未连接（backend=None）→ 未扫描，启动步骤不抛异常。"""
+        from core.agent._lifecycle_persistence import _LifecyclePersistence
+
+        class _Agent(_LifecyclePersistence):
+            pass
+
+        agent = _Agent()
+        agent._session_repo = None  # noqa: SLF001
+
+        await agent._check_schema_drift()  # noqa: SLF001
+
+        assert agent._schema_drift_report.scanned is False  # noqa: SLF001
+
+
 class TestApplyServiceState:
     """_apply_service_state 启动步骤：读 ServiceState → 设模式槽位 → LLM 应用。"""
 

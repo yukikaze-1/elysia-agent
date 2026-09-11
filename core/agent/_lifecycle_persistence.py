@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from core.desktop.bridge import DesktopToolBridge
     from core.character.runtime import CharacterRuntime
     from core.character.integrity import CharacterIntegrityReport
+    from core.storage.schema_drift import SchemaDriftReport
     from core.storage.character_instance_repo import CharacterInstanceRepository
     from core.profile.profile_store import UserIdentityStore
     from core.profile.user_identity import UserIdentity
@@ -72,6 +73,8 @@ class _LifecyclePersistence:
         # P3：多角色能力开关（Agent @property 恒 True）与自检结果
         character_profiles: bool
         _character_integrity_report: "CharacterIntegrityReport"
+        # ARCH-INC-P1-04（小方案）：索引 schema 漂移自检结果
+        _schema_drift_report: "SchemaDriftReport"
 
     def _start_db_health(self) -> None:
         """启动数据库健康检查后台任务。"""
@@ -312,6 +315,33 @@ class _LifecyclePersistence:
             return
         self._character_integrity_report = report
         log_integrity_report(report)
+
+    async def _check_schema_drift(self) -> None:
+        """索引 schema 漂移自检（启动期，只读 + 建议性）。
+
+        `ensure_index` 只增不删——改过索引键后旧索引会留在库里并静默改变行为
+        （实测：`sessions` 的 30 天 TTL 索引从代码删除后仍存留，若不清掉会话会
+        静默过期消失）。此处把该故障提前到启动日志。
+
+        只读：绝不删除任何索引；失败：仅降级为「未扫描」，绝不让启动失败
+        （见 core/storage/schema_drift.py）。
+        """
+        from core.storage.schema_drift import (
+            check_schema_drift,
+            log_schema_drift_report,
+        )
+
+        try:
+            # 复用已连接的仓储句柄，避免为诊断再开一条 Mongo 连接
+            repo = getattr(self, "_session_repo", None)
+            backend = getattr(repo, "backend", None)
+            report = await check_schema_drift(backend)
+        except Exception:
+            # check_schema_drift 自身已兜底；此处是最后一道防线
+            logger.debug("索引 schema 漂移自检异常（忽略）", exc_info=True)
+            return
+        self._schema_drift_report = report
+        log_schema_drift_report(report)
 
     async def _start_attachment_gc(self) -> None:
         """启动附件 GC 兜底扫描（批次 7 Task 7，置于 attachment_repo 建连步骤后）。

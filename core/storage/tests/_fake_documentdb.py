@@ -228,6 +228,31 @@ class FakeDocumentDBBackend(DocumentDBBackend):
             specs.append(spec)
         return name
 
+    async def list_indexes(self, collection: str) -> list[dict]:
+        """列出已声明索引（含内建 _id），与真 driver 的返回形状对齐。
+
+        schema 漂移自检在 fake 上也走同一条代码路径，因此这里必须返回
+        与 `list_indexes()` 真实现同构的 dict（至少含 name/key）。
+        """
+        out = [{"name": "_id_", "key": [("_id", 1)], "unique": True}]
+        for spec in self.indexes.get(collection, []):
+            out.append({
+                "name": spec["name"],
+                "key": list(spec["keys"]),
+                "unique": spec["unique"],
+                "expireAfterSeconds": spec["ttl"],
+            })
+        return out
+
+    async def drop_index(self, collection: str, name: str) -> bool:
+        """删除已声明索引；不存在返回 False（幂等）。`_id_` 不可删。"""
+        if name == "_id_":
+            return False
+        specs = self.indexes.get(collection, [])
+        before = len(specs)
+        self.indexes[collection] = [s for s in specs if s["name"] != name]
+        return len(self.indexes[collection]) < before
+
     @property
     def unique_indexes(self) -> dict[str, list[dict]]:
         """已声明的唯一索引（collection → specs），供测试断言。"""

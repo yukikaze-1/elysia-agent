@@ -120,6 +120,37 @@ class DocumentDBBackend(ABC):
         ...
 
     @abstractmethod
+    async def list_indexes(self, collection: str) -> list[dict]:
+        """列出 collection 的全部索引（schema 漂移自检用，只读）。
+
+        Args:
+            collection: 目标 collection 名称。
+
+        Returns:
+            索引描述列表，每项含 name/key/unique/TTL 等元信息；
+            collection 不存在时返回空列表（不抛错——自检不得因缺集合而失败）。
+        """
+        ...
+
+    @abstractmethod
+    async def drop_index(self, collection: str, name: str) -> bool:
+        """删除指定索引（**schema 变更的唯一出路**）。
+
+        `ensure_index` 是幂等**只增**的：改了索引键会新建一个，旧索引**永远留着**
+        （Mongo 按键自动命名，键不同即名字不同），而残留索引会静默改变行为
+        （实测案例：`sessions` 的 30 天 TTL 索引从代码删除后仍留在库里，
+        若不清掉会话会静默过期消失）。本方法补上这个缺失的原语。
+
+        Args:
+            collection: 目标 collection 名称。
+            name: 索引名。
+
+        Returns:
+            True 表示已删除；False 表示索引不存在（幂等，不抛错）。
+        """
+        ...
+
+    @abstractmethod
     async def aggregate(self, collection: str, pipeline: list[dict]) -> list[dict]:
         """执行 MongoDB 聚合管道。
 

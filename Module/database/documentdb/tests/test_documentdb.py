@@ -39,6 +39,8 @@ class TestDocumentDBBackendProtocol:
             async def delete_many(self, c, f): return 0
             async def count(self, c, f): return 0
             async def ensure_index(self, c, k, **kw): return ""
+            async def list_indexes(self, c): return []
+            async def drop_index(self, c, n): return False
             async def aggregate(self, c, p): return []
             async def ping(self): return True
             async def close(self): pass
@@ -199,6 +201,75 @@ class TestMongoDBIndex:
         mock_coll.create_index = AsyncMock(return_value="idx_1")
         result = await backend.ensure_index("test", [("timestamp", -1)])
         assert result == "idx_1"
+
+    @staticmethod
+    def _with_indexes(backend, names: list[str]):
+        """装配 mock collection，使 list_indexes() 返回给定索引名。"""
+        mock_coll = _setup_mock_collection(backend, "test")
+
+        class _AsyncCursor:
+            def __init__(self, items):
+                self._items = iter(items)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._items)
+                except StopIteration:
+                    raise StopAsyncIteration from None
+
+        mock_coll.list_indexes = MagicMock(
+            return_value=_AsyncCursor([{"name": n} for n in names]))
+        mock_coll.drop_index = AsyncMock()
+        return mock_coll
+
+    @pytest.mark.asyncio
+    async def test_drop_index_returns_true_when_present(self, backend):
+        mock_coll = self._with_indexes(backend, ["_id_", "updated_at_1"])
+        assert await backend.drop_index("test", "updated_at_1") is True
+        mock_coll.drop_index.assert_awaited_once_with("updated_at_1")
+
+    @pytest.mark.asyncio
+    async def test_drop_index_returns_false_when_absent(self, backend):
+        """**回归防护（2026-09-11 实测）**：Mongo `dropIndexes` 对不存在的索引
+        **不报错**（返回 ok:1），故不能靠「不抛异常」判断删除成功——必须先用
+        `list_indexes()` 查存在性；否则本方法永远返回 True，调用方无法区分
+        「删掉了」与「本来就没有」。
+        """
+        mock_coll = self._with_indexes(backend, ["_id_"])
+        assert await backend.drop_index("test", "updated_at_1") is False
+        mock_coll.drop_index.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_drop_index_refuses_id_index(self, backend):
+        """内建 `_id_` 不可删——直接返回 False，不调用底层。"""
+        mock_coll = self._with_indexes(backend, ["_id_"])
+        assert await backend.drop_index("test", "_id_") is False
+        mock_coll.drop_index.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_drop_index_swallows_failure(self, backend):
+        """底层抛错（权限/连接）→ 返回 False，不向上抛（幂等语义）。"""
+        mock_coll = self._with_indexes(backend, ["_id_", "idx"])
+        mock_coll.drop_index = AsyncMock(side_effect=RuntimeError("no permission"))
+        assert await backend.drop_index("test", "idx") is False
+
+    @pytest.mark.asyncio
+    async def test_list_indexes_returns_empty_on_error(self, backend):
+        """集合不存在 / 权限不足 → 空列表，不抛（自检不得因缺集合而失败）。"""
+        mock_coll = _setup_mock_collection(backend, "test")
+
+        class _Boom:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise RuntimeError("ns does not exist")
+
+        mock_coll.list_indexes = MagicMock(return_value=_Boom())
+        assert await backend.list_indexes("test") == []
 
 
 @pytest.mark.service

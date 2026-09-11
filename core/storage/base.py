@@ -67,6 +67,15 @@ class Repository(ABC):
     _db: "DocumentDBBackend | None" = None
     _injected_db: bool = False
 
+    @property
+    def backend(self) -> "DocumentDBBackend | None":
+        """已连接的后端句柄（None 表示未连接）。
+
+        公开访问器：组合根与只读自检（如 `core/storage/schema_drift.py` 列索引）
+        需要共享同一连接，避免为诊断再开一条 Mongo 连接。
+        """
+        return self._db
+
     @abstractmethod
     async def connect(self) -> bool:
         """建立连接。

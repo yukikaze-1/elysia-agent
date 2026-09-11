@@ -304,7 +304,54 @@
 
 ---
 
-## 五、数据流
+## 五、Schema 变更与索引维护（ARCH-INC-P1-04 小方案）
+
+**本项目没有、也刻意不做「正式迁移框架」**。实测（2026-05-25 ~ 2026-09-11，4 个月）索引
+定义变更 24 次提交，其中约 20 次是**纯增量**（新集合/新索引/新字段）——这些由
+`ensure_index` 在每次 `connect()` 自动完成（幂等），**零成本**：
+
+| 变更类型 | 处理方式 |
+|---|---|
+| 新增集合 / 新增索引 / 新增字段 | ✅ 自动（`ensure_index` 幂等，每次 connect 生效） |
+| 字段需回填值 | 一次性脚本（`scripts/backfill_*.py`，幂等 + `--dry-run`） |
+| **删/改已有索引** | ⚠️ **需人工**：`ensure_index` 只增不删，旧索引会留着 |
+| **给脏数据加唯一索引** | ⚠️ `character_version_repo` 有降级+告警；其余 8 个唯一索引无防护 |
+| Milvus 维度/度量变更 | ⚠️ 不可 alter，只能 drop + 重建 + 重嵌（低频高危，未自动化） |
+
+### 索引删除：`drop_index`
+
+`DocumentDBBackend` 提供 `list_indexes(collection)`（只读）与 `drop_index(collection, name)`
+（幂等，不存在返回 False，拒绝删 `_id_`）。
+
+> ⚠️ **Mongo 的 `dropIndexes` 对不存在的索引不报错**（实测返回 `{nIndexesWas:N, ok:1}`），
+> 所以 `drop_index()` 内部**先 `list_indexes()` 查存在性再删**——否则它永远返回 True，
+> 调用方无法区分「删掉了」与「本来就没有」。
+
+### 启动期漂移自检
+
+`core/storage/schema_drift.py`（启动步骤 `schema_drift`，紧随 `character_integrity`）：
+只读比对库中索引与代码声明，把**孤儿索引**（库里在、代码不再声明）报为显著 warning
+并给出 `drop_index` 命令；**绝不自动删除**（残留索引可能是有人故意建的）。
+
+`EXPECTED_INDEXES` 是**派生缓存**（24 项 / 12 集合），由
+`core/storage/tests/test_schema_drift.py` 用 AST 反向校验钉住——改索引却忘记同步该表时
+单测会失败并指出差异。
+
+**实测教训（该自检的存在理由）**：`sessions` 曾在 2026-07-16 声明
+`[("updated_at",1)], expireAfterSeconds=30*86400`，2026-08-10 从代码删除，**但代码删不掉
+库里已建的索引**——当时只能手工 drop。若漏掉，30 天未更新的会话会**静默过期消失**。
+
+### 唯一索引降级不自我修复
+
+`character_version_repo` 在检出重复版本号时降级为非唯一索引（可用性优先，S8）。注意：
+**降级不会自动恢复**——唯一索引一旦降级，后续启动不会再升级回来；且「同名索引已存在但
+选项不同」时调用 `create_index` 会抛 `OperationFailure` 并令**整个 repo 不可用**（实测确认），
+故该仓储先 `list_indexes()` 比对，冲突则保留现状 + 告警。恢复唯一性需：
+清理重复 → `drop_index()` → 重启。
+
+---
+
+## 六、数据流
 
 ```
 用户消息 → SessionMemory（MongoDB sessions）←→ 会话持久化
@@ -316,7 +363,7 @@
          工具调用时可查 MemorySearch / MemorySave
 ```
 
-## 六、数据库调试接口
+## 七、数据库调试接口
 
 开发阶段可通过 Web UI 直接操作数据库。访问 `http://localhost:8765/debug` → 「数据库」Tab。
 
@@ -370,7 +417,7 @@
 
 ---
 
-## 七、配置方式
+## 八、配置方式
 
 数据库连接可通过 `config.yaml` 或环境变量配置。优先级：环境变量 > config.yaml > 默认值。
 

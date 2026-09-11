@@ -476,6 +476,12 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 | `attachments` | MongoDB `default.attachments` | 附件元数据（BE-070，fail-closed）：ref_count/refs/status（软删 deleted_at）；TTL 不设，生命周期由 GC 管（24h/7d 规则） |
 | `user_identity_profiles` | MongoDB `default.user_identity_profiles` | 用户最小身份（BE-STAGEH-02，Mongo 权威）：`user_id` 唯一索引 + revision CAS；Agent.start() 装载，重启不回到 bootstrap |
 
+**Schema 变更（ARCH-INC-P1-04）**：**不做迁移框架**——新增集合/索引/字段由 `ensure_index`
+（每次 `connect()` 幂等执行）自动覆盖，实测 4 个月 24 次索引变更中约 20 次属此类。
+只有「删/改已有索引」需人工，用 `DocumentDBBackend.drop_index()`（Mongo 对不存在索引不报错，
+故内部先 `list_indexes()` 查存在性）。启动步骤 `schema_drift` 只读比对代码声明与库中实况，
+**孤儿索引**报 warning 并给命令，**绝不自动删**。详见 `docs/database-storage.md` §五。
+
 ## Conventions
 
 项目有以下约束文档，所有代码和文档变更必须遵守：

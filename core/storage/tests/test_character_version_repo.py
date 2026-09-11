@@ -205,15 +205,83 @@ class TestCharacterVersionRepoContentType:
 class TestCharacterVersionRepoConnectFallback:
     """连接期重复检测的保守降级（单元，mock DocumentDBFactory，无需 MongoDB）。"""
 
-    def _make_repo(self, monkeypatch, backend):
+    def _make_repo(self, monkeypatch, backend, *, existing_indexes=None):
+        """装配 repo + mock backend。
+
+        Args:
+            existing_indexes: `list_indexes()` 的返回值（默认空 = 全新库无既有索引）。
+                新增于 2026-09-11——`_ensure_version_index` 会先读现有索引以规避
+                「同名不同选项 → OperationFailure」（见该方法纪律 2）。
+        """
         from unittest.mock import AsyncMock
 
         from Module.database.documentdb import DocumentDBFactory
         from core.storage.character_version_repo import CharacterVersionRepository
 
         backend.ensure_index = AsyncMock()
+        backend.list_indexes = AsyncMock(return_value=list(existing_indexes or []))
         monkeypatch.setattr(DocumentDBFactory, "create", lambda *a, **kw: backend)
         return CharacterVersionRepository(), backend
+
+    @pytest.mark.asyncio
+    async def test_option_conflict_skips_create_index(self, monkeypatch):
+        """**回归防护（2026-09-11 实测确认的哑弹）**：既有索引为 unique 时，
+        检测失败会算出 desired=False；若照旧调用 `create_index(unique=False)`，
+        Mongo 抛 `OperationFailure`（"An existing index has the same name..."）
+        → 外层 except 把 `_db` 置 None → **整个 repo 不可用**。
+
+        现在改为：先 `list_indexes()` 比对，选项冲突则**保留现有索引**并告警，
+        **绝不**重复调用 `create_index`，且 connect() 仍返回 True。
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        name = "session_id_1_content_type_1_version_-1"
+        backend = MagicMock()
+        # 检测失败 → desired=False；但库里已是 unique=True → 冲突
+        backend.aggregate = AsyncMock(side_effect=RuntimeError("network down"))
+        repo, backend = self._make_repo(
+            monkeypatch, backend,
+            existing_indexes=[{"name": "_id_", "unique": False},
+                              {"name": name, "unique": True}],
+        )
+
+        ok = await repo.connect()
+
+        assert ok is True, "选项冲突不得让 connect() 失败"
+        assert repo._db is not None, "repo 必须保持可用（这正是该哑弹的伤害）"
+        backend.ensure_index.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_matching_option_does_not_conflict(self, monkeypatch):
+        """既有索引选项与期望一致 → 照常调用 ensure_index（幂等，正常路径）。"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        name = "session_id_1_content_type_1_version_-1"
+        backend = MagicMock()
+        backend.aggregate = AsyncMock(return_value=[])
+        repo, backend = self._make_repo(
+            monkeypatch, backend,
+            existing_indexes=[{"name": "_id_", "unique": False},
+                              {"name": name, "unique": True}],
+        )
+
+        ok = await repo.connect()
+        assert ok is True
+        backend.ensure_index.assert_awaited_once()
+        assert backend.ensure_index.call_args.kwargs.get("unique") is True
+
+    @pytest.mark.asyncio
+    async def test_unique_restored_after_index_dropped(self, monkeypatch):
+        """索引被 drop 后（冲突解除）→ 正常重建唯一索引（唯一性可恢复）。"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        backend = MagicMock()
+        backend.aggregate = AsyncMock(return_value=[])  # 数据已干净
+        repo, backend = self._make_repo(monkeypatch, backend, existing_indexes=[])
+
+        ok = await repo.connect()
+        assert ok is True
+        assert backend.ensure_index.call_args.kwargs.get("unique") is True
 
     @pytest.mark.asyncio
     async def test_aggregate_failure_falls_back_to_non_unique_index(self, monkeypatch):

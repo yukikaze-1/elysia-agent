@@ -123,6 +123,42 @@ class MongoDBBackend(DocumentDBBackend):
         _validate_collection(collection)
         return await self._db[collection].create_index(keys, **kwargs)
 
+    async def list_indexes(self, collection: str) -> list[dict]:
+        """列出 collection 的全部索引（只读；schema 漂移自检用）。
+
+        collection 不存在时返回空列表——自检不得因缺集合而失败。
+        """
+        _validate_collection(collection)
+        try:
+            cursor = self._db[collection].list_indexes()
+            return [dict(idx) async for idx in cursor]
+        except Exception:
+            # 集合不存在 / 权限不足 / 服务端不支持 → 视为"无索引"而非中断自检
+            return []
+
+    async def drop_index(self, collection: str, name: str) -> bool:
+        """删除指定索引；索引不存在返回 False（幂等，不抛错）。
+
+        **为什么必须先 `list_indexes()` 查存在性**：Mongo 的 `dropIndexes` 对
+        **不存在的索引不报错**（实测返回 `{nIndexesWas: N, ok: 1}`），因此直接
+        `await drop_index(name)` 会让本方法**永远返回 True**——调用方无法区分
+        「删掉了」与「本来就没有」。故先查后删（此处竞态无害：属运维/诊断操作）。
+
+        `_id_` 是 Mongo 内建索引，删除会报错——显式拒绝并返回 False。
+        """
+        _validate_collection(collection)
+        if name == "_id_":
+            return False
+        try:
+            existing = {idx.get("name") for idx in await self.list_indexes(collection)}
+            if name not in existing:
+                return False
+            await self._db[collection].drop_index(name)
+            return True
+        except Exception:
+            # 权限不足 / 连接失败等 → 视为未删除（幂等语义，不抛）
+            return False
+
     # ---- Aggregate ----
 
     async def aggregate(self, collection: str, pipeline: list[dict]) -> list[dict]:
