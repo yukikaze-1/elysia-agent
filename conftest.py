@@ -90,6 +90,35 @@ def real_milvus_collection():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_session_pending_jsonl(tmp_path, monkeypatch):
+    """会话 pending JSONL 隔离到 tmp_path（防「测试残留 → 真实 Agent 回收进生产库」）。
+
+    ## 为什么需要（2026-09-11 实测发现）
+
+    `SessionMemory.save()` 在无 repo（`_repo is None`，测试常态）时降级写
+    `data/session_{id}.json`。测试用 `SessionMemory(session_id="A")` 这类假会话，
+    于是 `data/` 里堆积测试残留。而**任何一次真实 Agent 启动**都会走
+    `SessionManager.recover_pending_sessions()` —— 它 glob 该目录、导入 Mongo、
+    并在 durable 后**删除 JSONL**。
+
+    实测后果：`test_tool_session_rebind.py` 的假会话 A/B 被真实 Agent 启动回收进生产
+    `sessions` 集合（`character_binding={}`，无绑定）。`character_profiles=true` 时前端
+    对会话列表整页 fail-closed → 用户的会话面板直接不可用——正是问题单
+    「多角色数据完整性缺口导致前端整页拒绝」的触发形态。
+
+    **本路径是真实库防线覆盖不到的**：防线只拦 pytest 进程内的 Mongo 写入，而这里是
+    「pytest 写本地文件 → 之后由非 pytest 的真实进程洗进库」。
+
+    隔离手段用 `ProjectPath.resolve()` 自带的环境变量覆盖（`ELYSIA_PATH_<NAME>`），
+    故对 `SessionMemory` 的构造路径零侵入。
+    """
+    monkeypatch.setenv(
+        "ELYSIA_PATH_SESSION_PENDING",
+        str(tmp_path / "session_{session_id}.json"),
+    )
+
+
+@pytest.fixture(autouse=True)
 def _guard_real_database(request, monkeypatch):
     """任何测试都不许碰生产库（详见模块 docstring）。
 

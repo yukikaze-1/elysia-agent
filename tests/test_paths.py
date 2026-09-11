@@ -45,8 +45,11 @@ class TestProjectPathResolve:
         result = ProjectPath.CONFIG_YAML.resolve()
         assert result.name == "config.yaml"
 
-    def test_resolve_with_placeholder(self):
+    def test_resolve_with_placeholder(self, monkeypatch):
         """占位符填充。"""
+        # 默认路径断言：清掉防线的会话隔离覆盖（见根 conftest 的
+        # _isolate_session_pending_jsonl），否则本测试在测试环境下得不到默认值。
+        monkeypatch.delenv("ELYSIA_PATH_SESSION_PENDING", raising=False)
         result = ProjectPath.SESSION_PENDING.resolve(session_id="test123")
         assert result.name == "session_test123.json"
         assert str(result).endswith("data/session_test123.json")
