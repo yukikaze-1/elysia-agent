@@ -66,11 +66,15 @@ pytestmark = [pytest.mark.service, pytest.mark.usefixtures("no_storage_guard")]
 @pytest.mark.usefixtures("fake_storage")
 ```
 
-实现与背景见 `core/tests/_real_db_guard.py`。存量清理脚本：
+实现与背景见 `core/tests/_real_db_guard.py`。存量清理脚本（均默认 dry-run，先整体备份）：
 
-- `scripts/dev/purge_test_residue.py --dry-run|--apply`——集合级残留（测试会话 / character_versions）。
-- `scripts/dev/purge_test_messages.py --dry-run|--apply`——`default` 会话里**逐条**的测试消息
-  （实测 238 条归档中 123 条来自测试；脚本只删高置信来源，模糊项仅列出供人工判断）。
+- `scripts/dev/purge_test_residue.py`——集合级残留（测试会话 / `character_versions`）。
+- `scripts/dev/purge_test_messages.py`——`default` 会话里**逐条**的测试消息。判据是
+  「(role, text) 组合不可能来自真实对话」（如 assistant 侧的 `hello`/`ok`/`test`）；
+  另有模糊项（`我叫妖梦`/`你好呀` 等）默认保留，经上下文核查确认无误后加
+  `--include-ambiguous` 一并删除。
+- `scripts/dev/purge_test_generations.py`——测试跑留下的孤儿 generation
+  （`request_id=P001` 且关联消息文本为空；真实中断的生成通常仍有部分文本，故保留）。
 
 ### 外部测试门禁（E4，`RUN_EXTERNAL_TESTS=1`）
 

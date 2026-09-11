@@ -18,10 +18,14 @@
 - **assistant** 侧 FakeLLM 固定响应：`hello` / `ok` / `test` / `test response` /
   `好的我记住了`——真实角色回复是长篇中文台词，不会是这些短英文词。
 
-**模糊**（只列出，**不删**）——单独看都可能是真实消息：
+**模糊**（需 `--include-ambiguous` 才删）——单独看可能是真实消息：
 
-- `我叫妖梦`（用户本名就是妖梦）/ `你还记得我叫什么吗`（像真实追问）；
-- 通用寒暄 `你好呀` / `你好` / `hi` / `hello`（user 侧）。
+- `我叫妖梦` / `你还记得我叫什么吗` / `你好呀` / `你好` / `hi` / `hello`。
+
+**2026-09-11 核查结论：模糊项经上下文核查后确认也是测试流量**——它们从不孤立出现，
+要么紧邻高置信测试消息，要么在**每次测试批次后的相同位置**重复（同一句 `我叫妖梦`
+在 05:00/13:25/13:31/13:57/14:06/14:12 六个批次后重复出现；真实用户不会如此）。
+故本次以 `--include-ambiguous` 一并清理。
 
 ## 安全
 
@@ -30,8 +34,9 @@
 - 同时从 `sessions.default.messages` 内嵌列表移除，保持两处一致。
 
 用法:
-    python scripts/dev/purge_test_messages.py            # dry-run
-    python scripts/dev/purge_test_messages.py --apply
+    python scripts/dev/purge_test_messages.py                      # dry-run
+    python scripts/dev/purge_test_messages.py --apply              # 只删高置信
+    python scripts/dev/purge_test_messages.py --apply --include-ambiguous
 """
 
 from __future__ import annotations
@@ -92,6 +97,10 @@ def _classify(doc: dict) -> str | None:
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="实际删除（默认 dry-run）")
+    parser.add_argument(
+        "--include-ambiguous", action="store_true",
+        help="同时删除模糊项（需先人工核查；见模块 docstring 的上下文核查结论）",
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -108,6 +117,7 @@ async def main() -> None:
             test_docs.append(d)
         elif kind == "ambiguous":
             ambiguous.append(d)
+    to_delete = test_docs + (ambiguous if args.include_ambiguous else [])
 
     print(f"archive({SESSION_ID}) 共 {len(docs)} 条")
     print(f"  高置信测试来源: {len(test_docs)} 条")
@@ -115,13 +125,17 @@ async def main() -> None:
         for (role, text), n in Counter(
                 (d.get("role"), _text_of(d)) for d in test_docs).most_common():
             print(f"      {n:3d}  [{role}] {text[:34]!r}")
-    print(f"  模糊（需人工判断，本脚本不删）: {len(ambiguous)} 条")
-    for text, n in Counter(_text_of(d) for d in ambiguous).most_common():
-        print(f"      {n:3d}  {text[:34]!r}")
+    print(f"  模糊: {len(ambiguous)} 条"
+          f"（{'一并删除' if args.include_ambiguous else '保留，加 --include-ambiguous 删除'}）")
+    if ambiguous:
+        for text, n in Counter(_text_of(d) for d in ambiguous).most_common():
+            print(f"      {n:3d}  {text[:34]!r}")
+    print(f"  → 本次将删除 {len(to_delete)} 条")
 
     session = await db[SESSIONS].find_one({"session_id": SESSION_ID})
     embedded = (session or {}).get("messages") or []
-    embedded_hits = [m for m in embedded if _classify(m) == "test"]
+    delete_ids = {str(d["message_id"]) for d in to_delete}
+    embedded_hits = [m for m in embedded if str(m.get("message_id")) in delete_ids]
 
     if not args.apply:
         print("\n[dry-run] 未做任何修改。加 --apply 执行。")
@@ -129,17 +143,17 @@ async def main() -> None:
         return
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    if test_docs:
-        await db[f"{ARCHIVE}_deleted_backup_{stamp}"].insert_many(test_docs)
+    if to_delete:
+        await db[f"{ARCHIVE}_deleted_backup_{stamp}"].insert_many(to_delete)
         res = await db[ARCHIVE].delete_many({
             "session_id": SESSION_ID,
-            "message_id": {"$in": [str(d["message_id"]) for d in test_docs]},
+            "message_id": {"$in": sorted(delete_ids)},
         })
         print(f"archive 删除 {res.deleted_count} 条（备份 → {ARCHIVE}_deleted_backup_{stamp}）")
 
     if embedded_hits and session is not None:
         await db[f"{SESSIONS}_backup_{stamp}"].insert_one(session)
-        kept = [m for m in embedded if _classify(m) != "test"]
+        kept = [m for m in embedded if str(m.get("message_id")) not in delete_ids]
         await db[SESSIONS].update_one(
             {"session_id": SESSION_ID}, {"$set": {"messages": kept}}
         )

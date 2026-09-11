@@ -54,7 +54,9 @@ unit/service 另把 Milvus 客户端替换为「构造成功、任何操作即�
 存量清理脚本（默认 dry-run，先备份，见各自 `--help`）：
 
 - `scripts/dev/purge_test_residue.py`——集合级（测试会话 / `character_versions` 残留）。
-- `scripts/dev/purge_test_messages.py`——`default` 会话里逐条的测试消息。
+- `scripts/dev/purge_test_messages.py`——`default` 会话里逐条的测试消息
+  （模糊项需 `--include-ambiguous`）。
+- `scripts/dev/purge_test_generations.py`——测试跑留下的孤儿 generation。
 """
 
 from __future__ import annotations
