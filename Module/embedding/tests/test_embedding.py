@@ -251,6 +251,78 @@ class TestOpenAICompatEmbedding:
 
 
 # ============================================================
+# OpenAICompatEmbeddingBackend —— 显式 dimensions（P2-1 维度对齐）
+# ============================================================
+
+@pytest.mark.service
+class TestOpenAICompatDimensions:
+    """构造时显式指定 dimensions，使向量维度与向量库集合固定维度对齐。
+
+    背景：Milvus 集合固定 1024 维，而 text-embedding-3-small 原生 1536 维——
+    不显式限定则写入被维度校验拒绝。
+    """
+
+    def test_dimension_known_before_first_call(self):
+        """显式声明维度后，首次 API 调用前 dimension 即为真值（而非 0）。"""
+        from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
+        with patch("Module.embedding.openai_compat.os.getenv", return_value="sk-test"):
+            backend = OpenAICompatEmbeddingBackend(
+                model="text-embedding-3-small", dimensions=1024,
+            )
+        assert backend.dimension == 1024
+
+    def test_dimension_zero_without_explicit(self):
+        """未显式声明 → 首次调用前仍为 0（保持既有语义）。"""
+        from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
+        with patch("Module.embedding.openai_compat.os.getenv", return_value="sk-test"):
+            backend = OpenAICompatEmbeddingBackend(model="text-embedding-3-small")
+        assert backend.dimension == 0
+
+    @pytest.mark.asyncio
+    async def test_explicit_dimensions_sent_to_api(self):
+        """构造时声明的 dimensions 透传给 embeddings.create。"""
+        from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
+        with patch("Module.embedding.openai_compat.os.getenv", return_value="sk-test"):
+            backend = OpenAICompatEmbeddingBackend(
+                model="text-embedding-3-small", dimensions=1024,
+            )
+        mock_create = AsyncMock(
+            return_value=_make_embedding_response([[0.1] * 1024])
+        )
+        with patch.object(backend._client.embeddings, "create", mock_create):
+            await backend.embed_query("hello")
+        assert mock_create.call_args.kwargs["dimensions"] == 1024
+
+    @pytest.mark.asyncio
+    async def test_caller_dimensions_wins_over_constructor(self):
+        """调用方显式传 dimensions 时优先于构造默认值。"""
+        from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
+        with patch("Module.embedding.openai_compat.os.getenv", return_value="sk-test"):
+            backend = OpenAICompatEmbeddingBackend(
+                model="text-embedding-3-small", dimensions=1024,
+            )
+        mock_create = AsyncMock(
+            return_value=_make_embedding_response([[0.1] * 512])
+        )
+        with patch.object(backend._client.embeddings, "create", mock_create):
+            await backend.embed_documents(["hello"], dimensions=512)
+        assert mock_create.call_args.kwargs["dimensions"] == 512
+
+    @pytest.mark.asyncio
+    async def test_no_dimensions_kwarg_when_unset(self):
+        """未声明维度 → 不向 API 传 dimensions（避免不支持该参数的兼容端点报错）。"""
+        from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
+        with patch("Module.embedding.openai_compat.os.getenv", return_value="sk-test"):
+            backend = OpenAICompatEmbeddingBackend(model="text-embedding-3-small")
+        mock_create = AsyncMock(
+            return_value=_make_embedding_response([[0.1, 0.2]])
+        )
+        with patch.object(backend._client.embeddings, "create", mock_create):
+            await backend.embed_documents(["hello"])
+        assert "dimensions" not in mock_create.call_args.kwargs
+
+
+# ============================================================
 # EmbeddingFactory —— shutdown（关闭）
 # ============================================================
 

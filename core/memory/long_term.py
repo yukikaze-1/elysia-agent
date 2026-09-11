@@ -189,7 +189,13 @@ class LongTermMemory:
         """
         self._entries: list[MemoryEntry] = []
         self._repo: "MemoryRepository | None" = repo
-        self._embedding_provider = EmbeddingProvider(embed_timeout)
+        # P2-1：把向量库集合的固定维度透传给 embedding provider，使远端 embedding
+        # （OpenAI 兼容）显式输出同维向量——否则 text-embedding-3-small 的 1536 维
+        # 与集合 1024 维不匹配，写入会被维度校验整体拒绝。
+        self._embedding_provider = EmbeddingProvider(
+            embed_timeout,
+            expected_dimension=self._repo_dimension(repo),
+        )
         self._dirty_ids: set[MemoryId] = set()  # 未同步到 Milvus 的条目 ID
         self._max_entries = max_entries
         self._max_age_days = max_age_days
@@ -230,6 +236,16 @@ class LongTermMemory:
         from core.memory.scoped_long_term import ScopedLongTermMemory
         return ScopedLongTermMemory(self, scope)
 
+    @staticmethod
+    def _repo_dimension(repo: "MemoryRepository | None") -> int | None:
+        """读取向量库集合的固定维度（用于对齐 embedding 输出维度）。
+
+        repo 未注入或实现未声明 DIMENSION 时返回 None——此时不做维度限定，
+        沿用后端原生维度（纯内存模式无集合可冲突）。
+        """
+        dim = getattr(repo, "DIMENSION", None) if repo is not None else None
+        return dim if isinstance(dim, int) and dim > 0 else None
+
     async def connect(self) -> bool:
         """连接 Milvus（快速）。嵌入推迟到首次使用时加载。
 
@@ -239,6 +255,10 @@ class LongTermMemory:
         if self._repo is None:
             from core.storage.memory_repo import MemoryRepository
             self._repo = MemoryRepository()
+        # P2-1：repo 在 connect() 才创建时，补一次维度对齐（embedding 尚未加载，
+        # 在首次 insert/search 前设置即生效）。
+        if self._embedding_provider.expected_dimension is None:
+            self._embedding_provider.expected_dimension = self._repo_dimension(self._repo)
         result = await self._repo.connect()
         if result:
             loaded = await self._load_from_milvus()

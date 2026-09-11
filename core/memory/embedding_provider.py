@@ -18,16 +18,22 @@ class EmbeddingProvider:
     线程池执行模型加载，避免阻塞事件循环。
     """
 
-    def __init__(self, embed_timeout: float = 10.0):
+    def __init__(self, embed_timeout: float = 10.0,
+                 expected_dimension: int | None = None):
         """初始化嵌入提供器。
 
         Args:
             embed_timeout: 嵌入后端加载超时（秒），默认 10s。
+            expected_dimension: 期望的向量维度。非空时透传给支持该参数的远端后端
+                （OpenAI 兼容 embedding 的 `dimensions`），使输出维度与向量库集合的
+                固定维度对齐——text-embedding-3-small 原生 1536 维，若不显式限定，
+                写入 1024 维集合会被维度校验拒绝。
         """
         self._backend: EmbeddingBackend | None = None
         self._tried = False
         self._task: asyncio.Task | None = None
         self._timeout = embed_timeout
+        self.expected_dimension = expected_dimension
 
     async def ensure(self, wait: bool = False) -> "EmbeddingBackend | None":
         """确保嵌入后端已加载。
@@ -91,6 +97,16 @@ class EmbeddingProvider:
             logger.debug("Embedding failed", exc_info=True)
             return []
 
+    def _openai_create_kwargs(self) -> dict:
+        """构造 OpenAI 兼容后端的额外构造参数。
+
+        仅在显式声明 expected_dimension 时传 `dimensions`——未声明时不传，
+        避免不支持该参数的兼容端点报错（保持后端原生维度）。
+        """
+        if self.expected_dimension:
+            return {"dimensions": self.expected_dimension}
+        return {}
+
     def _try_load_sync(self) -> "EmbeddingBackend | None":
         """尝试加载 embedding 后端。在线程中运行。
 
@@ -106,7 +122,12 @@ class EmbeddingProvider:
         openai_key = os.getenv("OPENAI_API_KEY", "")
         if openai_key:
             try:
-                emb = EmbeddingFactory.create("openai/text-embedding-3-small")
+                # P2-1：显式限定输出维度，与 Milvus 集合固定维度对齐
+                # （text-embedding-3-small 原生 1536，集合为 1024）
+                emb = EmbeddingFactory.create(
+                    "openai/text-embedding-3-small",
+                    **self._openai_create_kwargs(),
+                )
                 dim = emb.dimension
                 logger.info("Embedding: OpenAI embedding connected (dim=%d)", dim)
                 return emb
@@ -114,6 +135,7 @@ class EmbeddingProvider:
                 logger.debug("OpenAI embedding unavailable: %s", e)
 
         # 2. Try HuggingFace local model (slower, loads model to memory)
+        # 注：BGE 原生 1024 维，与集合维度一致，不传 dimensions（该后端无此参数）。
         try:
             emb = EmbeddingFactory.create("huggingface/BAAI/bge-large-zh-v1.5")
             dim = emb.dimension

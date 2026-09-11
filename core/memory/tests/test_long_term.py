@@ -460,3 +460,73 @@ class TestMemoryOfflineConsistency:
 
         assert repo.deleted and 5 in repo.deleted[0]
         assert MemoryId("mem_gone") not in ltm._pending_deletes  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# P2-1：embedding 维度与向量库集合维度对齐
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestEmbeddingDimensionAlignment:
+    """集合固定维度必须透传到 embedding provider，避免维度不匹配导致写入被拒。
+
+    背景：Milvus 集合固定 1024 维；embedding fallback 首选
+    openai/text-embedding-3-small（原生 1536 维，且此前从不传 dimensions）——
+    一旦设置 OPENAI_API_KEY，写入会被 Milvus 后端维度校验整体拒绝。
+    """
+
+    def test_repo_dimension_read_from_repo(self):
+        """注入的 repo 声明 DIMENSION 时，provider 拿到该值。"""
+        from core.storage.memory_repo import MemoryRepository
+        ltm = LongTermMemory(repo=MemoryRepository())
+        assert ltm._embedding_provider.expected_dimension == 1024  # noqa: SLF001
+
+    def test_repo_dimension_none_when_repo_lacks_it(self):
+        """repo 未声明 DIMENSION（纯内存/fake）→ None，不做维度限定。"""
+        ltm = LongTermMemory(repo=FakeMemoryRepo())
+        assert ltm._embedding_provider.expected_dimension is None  # noqa: SLF001
+
+    def test_repo_dimension_none_without_repo(self):
+        """未注入 repo → None（后续 connect() 时补对齐）。"""
+        ltm = LongTermMemory()
+        assert ltm._embedding_provider.expected_dimension is None  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_dimension_backfilled_on_connect_when_repo_lazy(self):
+        """repo 缺失时 connect() 才创建 → 补一次维度对齐（embedding 尚未加载）。"""
+        ltm = LongTermMemory()
+        assert ltm._embedding_provider.expected_dimension is None  # noqa: SLF001
+
+        with patch(
+            "core.storage.memory_repo.MemoryRepository.connect",
+            new=AsyncMock(return_value=False),
+        ), patch.object(
+            LongTermMemory, "_load_from_milvus", new=AsyncMock(return_value=0),
+        ):
+            await ltm.connect()
+
+        assert ltm._embedding_provider.expected_dimension == 1024  # noqa: SLF001
+
+
+@pytest.mark.unit
+class TestEmbeddingProviderForwardsDimensions:
+    """EmbeddingProvider 把 expected_dimension 透传给 OpenAI 兼容后端。
+
+    注：core/memory/tests/conftest.py 的 autouse fixture 会整体替换
+    `_try_load_sync`，故此处直接验证其构造参数的纯函数接缝
+    `_openai_create_kwargs()`（_try_load_sync 内部即用它展开 kwargs）。
+    """
+
+    def test_dimensions_forwarded_when_expected_set(self):
+        """声明期望维度 → 后端构造参数含 dimensions=1024。"""
+        from core.memory.embedding_provider import EmbeddingProvider
+
+        provider = EmbeddingProvider(embed_timeout=10.0, expected_dimension=1024)
+        assert provider._openai_create_kwargs() == {"dimensions": 1024}  # noqa: SLF001
+
+    def test_no_dimensions_when_expected_unset(self):
+        """未声明期望维度 → 不传 dimensions（保持后端原生维度）。"""
+        from core.memory.embedding_provider import EmbeddingProvider
+
+        provider = EmbeddingProvider(embed_timeout=10.0)
+        assert provider._openai_create_kwargs() == {}  # noqa: SLF001

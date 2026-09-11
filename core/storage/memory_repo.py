@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 COLLECTION = "long_term_memory"
-DIMENSION = 1024
+DIMENSION = 1024  # 模块级保留（兼容外部 import）；权威值见 MemoryRepository.DIMENSION
 
 
 class MemoryRepository(Repository):
@@ -20,6 +20,9 @@ class MemoryRepository(Repository):
     # collection 名（实例级——v2 子类 MemoryRepositoryV2 遮蔽为 long_term_memory_v2；
     # 模块级 COLLECTION 保留兼容外部 import，但方法内一律 self.COLLECTION 以支持子类遮蔽）
     COLLECTION = "long_term_memory"
+    # 向量维度（实例级同源——方法内用 self.DIMENSION；调用方可据此对齐 embedding 维度，
+    # 避免 embedding provider 输出维度与集合固定维度不一致导致写入被拒）
+    DIMENSION = DIMENSION
 
     def __init__(self, db: VectorDBBackend | None = None, *,
                  base_url: str | None = None,
@@ -49,7 +52,7 @@ class MemoryRepository(Repository):
                 token=self._token,
             )
             if not await self._db.collection_exists(self.COLLECTION):
-                await self._db.create_collection(self.COLLECTION, DIMENSION)
+                await self._db.create_collection(self.COLLECTION, self.DIMENSION)
             else:
                 await self._db.load_collection(self.COLLECTION)
             logger.info("MemoryRepository: Milvus connected")
@@ -166,4 +169,4 @@ class MemoryRepository(Repository):
             return
         logger.warning("MemoryRepository clear_all: dropping + recreating collection %s", self.COLLECTION)
         await self._db.drop_collection(self.COLLECTION)
-        await self._db.create_collection(self.COLLECTION, DIMENSION)
+        await self._db.create_collection(self.COLLECTION, self.DIMENSION)
