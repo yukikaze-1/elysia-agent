@@ -88,7 +88,7 @@ window.desktopApi.getMessages({ conversationId: "default", limit: 50 })
 
 3. [`MessageRepository.append()`](../../core/storage/message_repo.py) 直接 `model_dump()` 后写入 `message_archive`，没有在存储边界拒绝空 ID。
 
-4. [`frontend_contract.rest.Message`](../../frontend_contract/rest.py) 当前只声明 `str`，没有 `min_length=1`，所以 [`_archive_msg_to_contract()`](../../core/input/api_routes.py) 会把空字符串当作合法 wire 值继续返回。
+4. [`frontend_contract.rest.Message`](../../frontend_contract/rest.py) 当前只声明 `str`，没有 `min_length=1`，所以 [`_archive_msg_to_contract()`](../../core/input/_common.py) 会把空字符串当作合法 wire 值继续返回。
 
 5. Electron 的 `RestMessageSchema` 使用 `z.string().min(1)`。这是正确的身份不变量；问题归属后端写入、后端契约与历史兼容层。
 

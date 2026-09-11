@@ -6,8 +6,9 @@
 
 | 文档 | 内容 |
 |------|------|
+| [handoff.md](handoff.md) | **交接文档**——当前阶段 / 已知问题与技术债 / 门禁约定 / 关键文档索引（新接手先读这篇） |
 | [architecture.md](architecture.md) | 完整架构详解（数据流、模块、目录结构） |
-| [testing.md](testing.md) | 测试命令速查 + 分层体系（unit/service/integration/slow） |
+| [testing.md](testing.md) | 测试命令速查 + 分层体系（unit/service/integration/slow）+ 真实库防线 + 残留清理脚本 |
 | [readme-conventions.md](readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 | [database-storage.md](database-storage.md) | 数据库存储设计（MongoDB + Milvus 集合/索引） |
 | [code-style-guide.md](code-style-guide.md) | 代码风格与类型约束（ID NewType 体系 + 权威归属 + StrEnum/coerce + getattr 纪律） |
@@ -16,7 +17,7 @@
 ### Electron 后端联调（协议 / 安全）
 | 文档 | 内容 |
 |------|------|
-| [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + 通用附件与媒体契约（§13）+ 错误码目录 41 码（批次 2-9C/9D） |
+| [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + 通用附件与媒体契约（§13）+ 多角色/身份契约（§14，Stage A–H）+ 错误码目录 54 码 |
 | [electron-backend-security.md](electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + 附件签名下载与签发安全（§3.5）+ 公开入口限流/幂等持久化 + 探针分层 /health /ready（§3.7，批次 1-9D + 2026-08-11 加固 + 2026-08-12 补偿门禁） |
 | [archive/electron-v2-first-integration-runbook.md](archive/electron-v2-first-integration-runbook.md) | **Electron v2 首次联调最小 runbook**（runtime SHA / schemaHash 离线门禁 / Token / 探针口径 / WS 三头 / clean-start / ACK 成功标准与负面用例）⚠️ 已归档 |
 | [archive/contract-release-2026-08-11.md](archive/contract-release-2026-08-11.md) | Contract 发版记录：transportVersion/protocolVersion/schemaHash/backend commit + 产物清单 ⚠️ 已归档 |

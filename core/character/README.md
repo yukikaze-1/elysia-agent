@@ -36,7 +36,7 @@ core/character/
     └── test_public_state.py
 ```
 
-> 相关配套：`CharacterRuntimeState`（instance-scoped 状态模型）在 [core/schema/character.py](../schema/character.py)；`CharacterInstanceRepository`（`character_instances` 集合持久化 + `state_version` CAS）在 [core/storage/character_instance_repo.py](../../storage/character_instance_repo.py)。
+> 相关配套：`CharacterRuntimeState`（instance-scoped 状态模型）在 [core/schema/character.py](../schema/character.py)；`CharacterInstanceRepository`（`character_instances` 集合持久化 + `state_version` CAS）在 [core/storage/character_instance_repo.py](../storage/character_instance_repo.py)。
 
 ## 核心概念
 
@@ -52,7 +52,7 @@ core/character/
 - **CharacterService**（[service.py](service.py)）：create/get/list/update/clone/archive/rollback/validate 业务编排。**Revision-first 写序**（先 `append_revision` 再 `cas_revision_pointer`，CAS 失败回滚已 append revision——`current_revision` 永远指向 durable revision，架构稿 §10.1）；`create`/`update`/`rollback` 均产生新 Revision（append-only，不删历史）；`list`/`get` 合并内置（catalog）与 custom（repo）。阶段 H 中，update/rollback 还会枚举相关 instance：`follow_latest` 原子推进到新 revision，`pinned` 保持原 revision；`preserve` 保留演化态，`reset_evolution` 通过 `stateVersion` CAS 重置并审计。中断的跨集合传播由 pending 字段与 runtime 懒加载对账收敛。
   - **归档一致性（P1）**：`archive()` 先在有限 CAS 重试内把 `UserIdentity.defaultCharacterId` 改到可用回退角色、**再**归档——反序会在 profile 冲突/存储失败时留下「默认角色仍指向已归档角色」的悬空引用。profile 更新失败或重试耗尽 → 整体失败，角色保持 `active`（可恢复）；归档的不是默认角色时不触碰 profile。
   - **无状态 preview（BE-STAGEH-03）**：经 `CharacterPreviewPort` 组装一次性 Prompt（无会话/无记忆/无工具）+ 单次推理，零持久化副作用；权威身份不可用时 503（P0-3 fail-closed）。
-- **CharacterRepository / CharacterRevisionRepository**（[core/storage](../../storage/README.md)）：`characters` + `character_revisions` 集合。snake_case 落库（`character_id`/`current_revision`），CAS 用 `modified_count>0` + `$set` 恒定含必变字段 `updated_at`（后端只暴露 `modified_count`，对齐 `idempotency_repo.py` 先例）。
+- **CharacterRepository / CharacterRevisionRepository**（[core/storage](../storage/README.md)）：`characters` + `character_revisions` 集合。snake_case 落库（`character_id`/`current_revision`），CAS 用 `modified_count>0` + `$set` 恒定含必变字段 `updated_at`（后端只暴露 `modified_count`，对齐 `idempotency_repo.py` 先例）。
 - **能力边界**：真实 `Agent` 已在四道隔离门禁通过后发布 `character_profiles=true`；轻量 facade/test double 若未实现该能力属性，`build_server_info` 仍 fail-closed 为 `false`。启用能力后，generation、expression、Live2D 与 TTS 起始帧使用完整角色身份三元组，客户端不得回退猜测“当前角色”。
 
 ### BuiltinCharacterSource（渐进式）
@@ -87,7 +87,7 @@ core/character/
 
 另有 `mark_busy`/`invalidate`/`flush`/`flush_all`/`close_all`（关机 flush 全部走这里，A1——非单 engine）。
 
-### CharacterInstanceRepository（阶段 E 新增，[core/storage/character_instance_repo.py](../../storage/character_instance_repo.py)）
+### CharacterInstanceRepository（阶段 E 新增，[core/storage/character_instance_repo.py](../storage/character_instance_repo.py)）
 
 `character_instances` 集合的 instance CRUD + `state_version` CAS（fail-closed）。`get(instance_id)` → `CharacterInstance | None`（含 `state: CharacterRuntimeState`）；`save(instance)` upsert；`cas_state_version(instance_id, expected, new_state, new_version)` 用 `state_version==expected` filter 做乐观锁。**区别于** `CharacterRepository`（后者是 `characters` 集合 + CharacterDefinition CRUD，无 instance 能力）。
 
