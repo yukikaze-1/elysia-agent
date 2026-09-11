@@ -1,4 +1,5 @@
 """gen_ts 发射器测试：三态映射 + wire_dict 递归序列化（marker=unit）。"""
+import inspect
 from enum import Enum
 from typing import Annotated, Any, Literal, Optional, Union
 
@@ -166,6 +167,37 @@ def test_emit_multiline_docstring_dedent():
     out = generate_ts([DocstringIndentModel])
     assert "续行（源码缩进 8 格）。" in out
     assert "        续行（源码缩进 8 格）。" not in out  # 续行行首 8 空格必须被 cleandoc 去掉
+
+
+class NoOwnDocstringModel(ContractModel):
+    # 故意不写 docstring——应输出「无注释」，而不是继承基类 ContractModel 的 docstring
+    type: Literal["no.own.doc"] = "no.own.doc"
+    value: str = "x"
+
+
+class OwnDocstringModel(ContractModel):
+    """自有说明（必须保留）。"""
+    type: Literal["own.doc"] = "own.doc"
+    value: str = "x"
+
+
+@pytest.mark.unit
+def test_no_own_docstring_does_not_inherit_base_docstring():
+    """无自有 docstring 的模型不得继承基类 ContractModel 的 docstring。
+
+    回归：原先用 inspect.getdoc(cls)，而该函数会沿 MRO 回溯继承的 docstring →
+    30 个无自有 docstring 的契约模型被挂上「契约模型基类：wire_dict() 统一序列化」，
+    把基类说明错标到具体契约类型上（生成产物误导读者）。
+    """
+    base_doc = inspect.cleandoc(ContractModel.__doc__ or "").strip()
+    assert base_doc, "前提：ContractModel 自身有 docstring（否则本回归无意义）"
+
+    out = generate_ts([NoOwnDocstringModel, OwnDocstringModel])
+    no_own_block = out.split("export interface NoOwnDocstringModel")[0]
+
+    assert base_doc not in no_own_block, "无自有 docstring 的模型继承了基类 docstring"
+    # 自有 docstring 仍必须输出
+    assert "自有说明（必须保留）。" in out
 
 
 class DesktopStatusEnum(str, Enum):

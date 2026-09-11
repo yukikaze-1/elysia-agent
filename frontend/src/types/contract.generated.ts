@@ -16,12 +16,6 @@ export interface CharacterBindingSnapshot {
   presentation: CharacterPresentation
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface MoodState {
   label: string
   intensity: number
@@ -1036,60 +1030,30 @@ export interface VoiceSessionStartMessage {
   audio?: AudioInputDescriptor
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface VoiceSessionPauseMessage {
   type: 'voice_session.pause'
   /** 会话 ID */
   sessionId: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface VoiceSessionResumeMessage {
   type: 'voice_session.resume'
   /** 会话 ID */
   sessionId: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface VoiceSessionStopMessage {
   type: 'voice_session.stop'
   /** 会话 ID */
   sessionId: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface VoiceSessionCancelMessage {
   type: 'voice_session.cancel'
   /** 会话 ID */
   sessionId: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface DictationStartMessage {
   type: 'dictation.start'
   /** 客户端请求 ID */
@@ -1100,24 +1064,12 @@ export interface DictationStartMessage {
   audio?: AudioInputDescriptor
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface DictationStopMessage {
   type: 'dictation.stop'
   /** 请求 ID */
   clientRequestId: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface DictationCancelMessage {
   type: 'dictation.cancel'
   /** 请求 ID */
@@ -1839,23 +1791,11 @@ export interface UserIdentityUpdate {
   expectedRevision: number
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterExample {
   user: string
   assistant: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterPromptProfile {
   corePersonality: string
   relationshipStyle: string
@@ -1865,45 +1805,21 @@ export interface CharacterPromptProfile {
   examples: CharacterExample[]
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterRuntimeVoice {
   providerId: string | null
   voiceId: string | null
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterRuntimeEmotion {
   idleExpressions: string[]
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterRuntimeProactive {
   enabled: boolean
   intervalSeconds: number
   triggers: string[]
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterRuntimeDefaults {
   voice: CharacterRuntimeVoice
   emotion: CharacterRuntimeEmotion
@@ -1911,12 +1827,6 @@ export interface CharacterRuntimeDefaults {
   proactive: CharacterRuntimeProactive
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterDraft {
   displayName: string
   description: string
@@ -1945,12 +1855,6 @@ export interface CharacterRevisionContent {
   createdAt: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterSummary {
   characterId: string
   source: CharacterSource
@@ -1981,24 +1885,12 @@ export interface CharacterPublicState {
   state: CharacterPublicStateView
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterListResponse {
   items: CharacterSummary[]
   has_more: boolean
   cursor?: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterRevisionSummary {
   revision: number
   checksum: string
@@ -2006,23 +1898,11 @@ export interface CharacterRevisionSummary {
   createdAt: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterDetail {
   summary: CharacterSummary
   current: CharacterRevisionContent
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterStateImpact {
   statePolicy: CharacterStatePolicy
   affectedInstances: number
@@ -2030,23 +1910,11 @@ export interface CharacterStateImpact {
   resetFields: CharacterResetField[]
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterMutationResult {
   character: CharacterDetail
   stateImpact: CharacterStateImpact
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterValidationIssue {
   severity: CharacterValidationSeverity
   code: string
@@ -2054,70 +1922,34 @@ export interface CharacterValidationIssue {
   message: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterValidationResult {
   valid: boolean
   issues: CharacterValidationIssue[]
   estimatedPromptChars?: number
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterRevisionListResponse {
   items: CharacterRevisionSummary[]
   has_more: boolean
   cursor?: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterArchiveResult {
   character: CharacterSummary
   userProfile?: UserIdentityProfile
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterPreviewRequest {
   draft: CharacterDraft
   userMessage: string
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterPreviewUsage {
   input?: number
   output?: number
   total?: number
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterPreviewResult {
   ephemeral: true
   reply: string
@@ -2125,22 +1957,10 @@ export interface CharacterPreviewResult {
   usage?: CharacterPreviewUsage
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterResetRequest {
   expectedStateVersion: number
 }
 
-/** 契约模型基类：wire_dict() 统一序列化。
-
-- exclude_none=True：可缺省字段（None）缺省省略
-- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
-- ts_null 标记字段：None 时补显式 null
-- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict */
 export interface CharacterResetResult {
   state: CharacterPublicState
   resetFields: CharacterResetField[]
