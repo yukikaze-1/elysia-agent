@@ -620,6 +620,10 @@ async def _dispatch_text(data: dict, agent: "Agent", msg: Any, channel: WebSocke
                      text_model.clientMessageId or "")
         return
     # v1 老路径（data.get + 多模态 content-as-parts，v1 不受 v2 收紧影响）
+    # 注：原先此处还有 `elif _is_v2(...)` 的空文本 ACK 分支，已删除——本分支只在
+    # `channel is None or channel.protocol_version < 2` 时进入，而 _is_v2 复用同一次
+    # _find_channel 结果且两处之间无 await（无让出点），故该 elif 恒 False、不可达；
+    # v2 空文本的 rejected ACK 由上方 v2 分支（V2TextMessage 校验后）独占处理。
     text_content = data.get("content", "")
     if isinstance(text_content, str):
         if text_content.strip() or data.get("stickerId") or data.get("attachments"):
@@ -628,13 +632,6 @@ async def _dispatch_text(data: dict, agent: "Agent", msg: Any, channel: WebSocke
             logger.debug("WS 收到文本 (len=%d, clientMessageId=%s)",
                          len(text_content.strip()),
                          data.get("clientMessageId", ""))
-        elif _is_v2(agent, ws):
-            # 批次 8b（§3.8）：v2 空文本 → rejected CONTRACT_VALIDATION（不再静默丢弃）
-            await _send_ack(ws, "", data.get("clientRequestId", ""),
-                            data.get("clientMessageId"), data.get("conversationId"),
-                            "rejected",
-                            error={"code": "CONTRACT_VALIDATION",
-                                   "message": "消息内容为空", "retryable": False})
     elif isinstance(text_content, list):
         # 多模态 content-as-parts 分支原样保留（不动）
         from core.schema.adapters.message_adapter import content_text, parts_from_dicts
@@ -763,7 +760,8 @@ async def _dispatch_tool_approval(data: dict, agent: "Agent", msg: Any, channel:
     request_id = msg.request_id if msg is not None else data.get("request_id", "")
     approved = msg.approved if msg is not None else data.get("approved", False)
     if request_id:
-        ok = agent.tool_adapter._manager.submit_approval(request_id, approved)  # noqa: SLF001
+        # P1-6：走 ToolAdapter 公开 API（原先直取 ._manager，违反跨模块私有访问纪律）。
+        ok = agent.tool_adapter.submit_approval(request_id, approved)
         if ok:
             logger.info("WS 审批结果: request=%s approved=%s", request_id, approved)
         else:
