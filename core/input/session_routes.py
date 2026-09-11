@@ -28,6 +28,7 @@ from core.character.service import (
     CharacterNotFoundError,
     CharacterStorageUnavailableError,
 )
+from core.character.session_binding import SnapshotUnavailableCause
 from core.memory.session_manager import SessionBusyError
 from core.schema.message import Message, MessageRole
 from core.schema.part import TextPart, ImagePart, FilePart, AudioPart, VideoPart, StickerPart
@@ -180,13 +181,34 @@ def _contract_messages(messages: list[Message]) -> list[rest_contract.Message]:
 
 
 async def _character_snapshot(
-    app: web.Application, value: object,
+    app: web.Application, value: object, *, session_id: object = None,
 ) -> rest_contract.CharacterBindingSnapshot | None:
+    """构造会话角色快照；取不到时**按成因分别处置**（读出期语义区分）。
+
+    wire 行为不变（一律省略 `character` 键——契约零变更）。区别在**服务端可见性**：
+
+    - legacy 无绑定（合法）→ 静默（不告警），这是未迁移会话的正常形态；
+    - 字段残缺 / 悬空引用（数据缺口）→ 显著 warning（含会话 ID），把「前端整页拒绝」
+      的定位信息提前到后端日志——此前两类都静默返回 None，无法区分（问题单 §5.2）。
+    """
     try:
-        return await app["character_session_binding_service"].snapshot(value)
+        snapshot, cause = await app[
+            "character_session_binding_service"
+        ].snapshot_with_cause(value)
     except Exception:
-        logger.warning("session character snapshot 解析失败", exc_info=True)
+        logger.warning("session character snapshot 解析失败 (session=%s)",
+                       session_id, exc_info=True)
         return None
+
+    if cause is not None and cause is not SnapshotUnavailableCause.LEGACY_ABSENT:
+        logger.warning(
+            "会话角色数据缺口 (session=%s, cause=%s)：前端对会话列表整页 "
+            "fail-closed，需补齐绑定或删除该残留会话；"
+            "排查见 scripts/backfill_character_snapshots.py 与 "
+            "docs/review/2026-09-10-多角色数据完整性缺口导致前端整页拒绝-后端.md",
+            session_id, cause.value,
+        )
+    return snapshot
 
 
 async def _session_summary(app: web.Application, agent: "Agent", sid: str,
@@ -208,7 +230,8 @@ async def _session_summary(app: web.Application, agent: "Agent", sid: str,
         return None
     if summary_item is None:
         return None
-    character = await _character_snapshot(app, summary_item.character_binding)
+    character = await _character_snapshot(
+        app, summary_item.character_binding, session_id=summary_item.session_id)
     summary = _to_contract_summary(summary_item, active_id, character)
     summary.messageCount = message_count
     return summary
@@ -464,7 +487,8 @@ async def sessions_list_handler(request: web.Request) -> web.Response:
     counts, characters = await asyncio.gather(
         asyncio.gather(*(_count(s) for s in items)),
         asyncio.gather(*(
-            _character_snapshot(request.app, s.character_binding) for s in items
+            _character_snapshot(request.app, s.character_binding, session_id=s.session_id)
+            for s in items
         )),
     )
     summaries = []
@@ -532,6 +556,7 @@ async def sessions_detail_handler(request: web.Request) -> web.Response:
         character = await _character_snapshot(
             request.app,
             getattr(agent.session_manager.get(SessionId(sid)), "character_binding", None),
+            session_id=sid,
         )
         summary = rest_contract.SessionSummary(
             conversationId=sid, messageCount=total, updatedAt="",

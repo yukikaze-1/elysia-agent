@@ -4,6 +4,7 @@ import pytest
 
 from core.character.session_binding import (
     CharacterSessionBindingService,
+    SnapshotUnavailableCause,
     canonical_instance_id,
 )
 from core.character.service import CharacterArchivedError, CharacterNotFoundError
@@ -166,3 +167,63 @@ async def test_resolve_for_create_fail_closed_when_identity_unavailable():
     with pytest.raises(StorageUnavailableError):
         await service.resolve_for_create(None)
     characters.get.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# 读出期语义区分（问题单 §5.2 ★★☆）
+# ---------------------------------------------------------------------------
+
+class TestSnapshotUnavailableCause:
+    """`snapshot_with_cause` 必须把「合法无绑定」与两类「数据缺口」分开。
+
+    `character_profiles=true` 时前端要求每条会话都带角色快照，缺失即整页 fail-closed；
+    此前三种成因一律返回 None、无法区分，运维无从定位。本区分只用于**服务端告警语义**，
+    不参与 wire（响应仍省略 `character` 键，契约零变更）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_absent_binding_is_legacy_not_gap(self):
+        """None / {} / 全空值对象 → LEGACY_ABSENT（合法，不告警）。"""
+        service, _chars, _inst, _ident = _service(_detail(character_id="chr_x"))
+        for value in (None, {}, {"character_id": "", "instance_id": ""},
+                      {"characterId": None, "instanceId": None}):
+            snapshot, cause = await service.snapshot_with_cause(value)
+            assert snapshot is None
+            assert cause is SnapshotUnavailableCause.LEGACY_ABSENT, repr(value)
+
+    @pytest.mark.asyncio
+    async def test_incomplete_binding_is_gap(self):
+        """字段带非空值却归一失败（残缺）→ INCOMPLETE_BINDING（缺口，需告警）。"""
+        service, _chars, _inst, _ident = _service(_detail(character_id="chr_x"))
+        for value in ({"character_id": "chr_x"},          # 缺 instance_id
+                      {"instance_id": "chi_x"},           # 缺 character_id
+                      {"character_id": "chr_x", "instance_id": "   "}):  # 空白值
+            snapshot, cause = await service.snapshot_with_cause(value)
+            assert snapshot is None
+            assert cause is SnapshotUnavailableCause.INCOMPLETE_BINDING, repr(value)
+
+    @pytest.mark.asyncio
+    async def test_dangling_reference_is_gap(self):
+        """绑定合法但角色解析不到（软删/悬空）→ DANGLING_REFERENCE（缺口，需告警）。"""
+        service, _chars, _inst, _ident = _service(None)   # characters.get → None
+        snapshot, cause = await service.snapshot_with_cause(
+            {"character_id": "chr_gone", "instance_id": "chi_gone"})
+        assert snapshot is None
+        assert cause is SnapshotUnavailableCause.DANGLING_REFERENCE
+
+    @pytest.mark.asyncio
+    async def test_ok_returns_snapshot_without_cause(self):
+        service, _chars, _inst, _ident = _service(_detail(character_id="chr_ok"))
+        snapshot, cause = await service.snapshot_with_cause(
+            {"character_id": "chr_ok", "instance_id": "chi_ok"})
+        assert cause is None
+        assert snapshot is not None and snapshot.characterId == "chr_ok"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_wrapper_is_backward_compatible(self):
+        """原 snapshot() 语义不变（既有调用方零影响）。"""
+        service, _chars, _inst, _ident = _service(_detail(character_id="chr_ok"))
+        ok = await service.snapshot({"character_id": "chr_ok", "instance_id": "chi_ok"})
+        assert ok is not None and ok.characterId == "chr_ok"
+        assert await service.snapshot(None) is None
+        assert await service.snapshot({}) is None

@@ -1989,3 +1989,78 @@ class TestSearchDateFailFast:
             "date_from": "2026-08-02", "date_to": "2026-08-01", "timezone": "UTC"})
         assert resp.status == 200
         assert (await resp.json())["items"] == []
+
+
+# ---------------------------------------------------------------------------
+# 读出期语义区分（问题单 §5.2 ★★☆）：缺口告警，wire 不变
+# ---------------------------------------------------------------------------
+
+class TestCharacterSnapshotCauseDiagnostics:
+    """会话列表的角色快照取不到时，按成因分别处置——wire 不变，仅服务端可见性。
+
+    legacy 无绑定（合法）静默；字段残缺/悬空引用（数据缺口）显著告警并带会话 ID，
+    把前端「整页 fail-closed」的定位信息提前到后端日志。
+    """
+
+    @pytest.mark.asyncio
+    async def test_gap_causes_log_warning_with_session_id(self, aiohttp_client, caplog):
+        import logging
+
+        from core.character.session_binding import SnapshotUnavailableCause
+
+        for cause in (SnapshotUnavailableCause.INCOMPLETE_BINDING,
+                      SnapshotUnavailableCause.DANGLING_REFERENCE):
+            agent = _FakeAgent()
+            await _create_session(agent, "conv_gap_probe", "缺口探针")
+            app = _make_app(agent)
+            app["character_session_binding_service"].snapshot_with_cause = AsyncMock(
+                return_value=(None, cause))
+            client = await aiohttp_client(app)
+            with caplog.at_level(logging.WARNING):
+                resp = await client.get("/api/sessions")
+            assert resp.status == 200
+            hits = [r.getMessage() for r in caplog.records
+                    if "会话角色数据缺口" in r.getMessage()]
+            assert hits, f"{cause} 应产生缺口告警"
+            # 列表端点对每个会话各判一次（default 同为本探针对象）——故按「存在」断言，
+            # 且必须能定位到目标会话。
+            target = [h for h in hits if "conv_gap_probe" in h]
+            assert target, f"告警须带会话 ID 以便定位；实得: {hits}"
+            assert cause.value in target[-1]
+
+    @pytest.mark.asyncio
+    async def test_legacy_absent_is_silent(self, aiohttp_client, caplog):
+        """legacy 无绑定是合法形态 → 不告警（避免刷日志）。"""
+        import logging
+
+        from core.character.session_binding import SnapshotUnavailableCause
+
+        agent = _FakeAgent()
+        await _create_session(agent, "conv_legacy_probe", "legacy 探针")
+        app = _make_app(agent)
+        app["character_session_binding_service"].snapshot_with_cause = AsyncMock(
+            return_value=(None, SnapshotUnavailableCause.LEGACY_ABSENT))
+        client = await aiohttp_client(app)
+        with caplog.at_level(logging.WARNING):
+            resp = await client.get("/api/sessions")
+        assert resp.status == 200
+        assert not [r for r in caplog.records if "会话角色数据缺口" in r.getMessage()]
+
+    @pytest.mark.asyncio
+    async def test_wire_shape_unchanged_for_both_causes(self, aiohttp_client):
+        """契约零变更：两种成因下响应都仍**省略** character 键（前端行为不变）。"""
+        from core.character.session_binding import SnapshotUnavailableCause
+
+        for cause in (SnapshotUnavailableCause.LEGACY_ABSENT,
+                      SnapshotUnavailableCause.INCOMPLETE_BINDING):
+            agent = _FakeAgent()
+            await _create_session(agent, "conv_wire_probe", "wire 探针")
+            app = _make_app(agent)
+            app["character_session_binding_service"].snapshot_with_cause = AsyncMock(
+                return_value=(None, cause))
+            client = await aiohttp_client(app)
+            resp = await client.get("/api/sessions")
+            assert resp.status == 200
+            row = next(s for s in (await resp.json())["sessions"]
+                       if s["conversationId"] == "conv_wire_probe")
+            assert "character" not in row, f"{cause} 不得改变 wire 形状"
