@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Callable, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from aiohttp import web
 from pydantic import ValidationError
@@ -521,8 +521,14 @@ async def _instance_reset_evolution(request: web.Request) -> web.Response:
         )
 
 
-def register_character_routes(app: web.Application, check_auth: Callable | None = None) -> None:
-    """注册角色/身份 REST 路由。"""
+def register_character_routes(app: web.Application) -> None:
+    """注册角色/身份 REST 路由。
+
+    鉴权归属：本组 14 条路由全部位于 `/api/` 前缀下，由 `_make_access_auth_middleware`
+    （产品 access_token，`AGENT_ACCESS_TOKEN`）统一保护——与 session/provider 等其余业务
+    REST 域一致，故此处不再接收 check_auth 回调。管理面 `_check_auth`
+    （`SERVER_AUTH_TOKEN`）只护 `/shutdown`、`/restart`、`/tools`、`/debug/api/*`。
+    """
     app.router.add_get("/api/me", _me_get)
     app.router.add_put("/api/me", _me_put)
     app.router.add_get("/api/characters", _characters_list)

@@ -322,7 +322,7 @@ def create_app(
         ),
         user_identity_store=app["user_identity_store"],
     )
-    register_character_routes(app, _check_auth)
+    register_character_routes(app)
 
     register_debug_routes(app, _check_auth)
 
