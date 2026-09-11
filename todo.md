@@ -16,6 +16,7 @@
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
+| 低 | **`live2d.directive` 无生产发射点** | 契约模型（`frontend_contract/ws_message.py::Live2DDirectiveMessage`）、发送链路（`Module/output/manager.py::live2d_directive` → `websocket.py::on_live2d_directive`）与 v2-only 门禁均已就绪且有单测，但 `core/` 内零调用者——该帧实际永不发送，Live2D 表现指令目前只能靠 `expression` 帧。协议文档 §14.5 已明确标注（「客户端需能容忍其缺席」），非回归；是否接线属产品决策（Live2D 表现层需求），未排期。 |
 | 中 | **LLM 有时不输出 <mood> 标签** | deepseek-v4-flash 遵循结构化输出不稳定，部分轮次 `<mood>` 缺失，回退到关键词 fallback。需强化 prompt 或在 F2 加更强制性的约束 |
 | 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |

@@ -210,6 +210,10 @@ frontend_contract/
 后端发送点构造契约模型 + `wire_dict()` 序列化；`make gen-types` 重新生成、`make check-types` 漂移门禁
 （CI 强制，覆盖 ts/schema/raw_ts + `scripts/gen_contract_frames.py --check` **17 个 golden frames**——含阶段 4
 普通录音/听写/音频播放/服务切换 WS 流程与 Profile/TTS REST 样例）。零依赖（仅 pydantic + stdlib），不 import core/ Module/。
+**依赖方向（有意，勿"修复"）**：本层是共享底座，**`Module/output` 依赖本层**（`manager.py` / `websocket.py` 直接
+构造 `ActionMessage`/`AudioMessage` 等契约模型，并复用 `MessageChannel`/`SegmentKind`/`AudioFormat`/`FinishReason`
+枚举）。单向无环（本层零依赖、绝不反向 import Module/core）；若改成 Module 自建枚举再在 core 映射，会重复定义这些
+枚举并重新引入漂移风险——正是契约单源要消除的问题。代价仅是 Module 不再是可独立分发的自底向上包。
 **阶段 4 确定性 smoke**：`conda run -n Elysia python scripts/stage4_smoke.py`——进程内 `create_app` + 真 agent(fake LLM) +
 STT/TTS 桩，覆盖 Profile/三语音模式/TTS 播放 5 场景（默认 stub 确定性、失败非零退出；`STAGE4_SMOKE_LIVE=1` 才接真实
 provider，不进 CI）；`scripts/tests/test_stage4_smoke.py` 为 slow pytest 包装。
