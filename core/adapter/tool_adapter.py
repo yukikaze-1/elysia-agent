@@ -193,6 +193,25 @@ class ToolAdapter:
         """打断所有运行中的工具。"""
         await self._manager.cancel_all()
 
+    def submit_approval(self, request_id: str, approved: bool) -> bool:
+        """回传 HITL 审批结果（公开 API，委托 ToolManager → SafetyPipeline）。
+
+        P1-6：`Module/workflow_engine/lifecycle.py::submit_approval` 经
+        `hasattr(tool_registry, "submit_approval")` 判定后委托，而生产注入
+        `AgentInfra.tool_registry` 的正是本类——缺此方法会让
+        `WorkflowEngine.submit_approval` 恒返回 False（死路径）。input 层也因此
+        原先直接访问 `agent.tool_adapter._manager`（`# noqa: SLF001`）。此处把委托
+        收口为公开方法：纵深防御，且消除跨模块私有访问。
+
+        Args:
+            request_id: 审批请求 ID（即 HITL 广播的 request_id）。
+            approved: True 批准，False 拒绝。
+
+        Returns:
+            bool: True 找到并处理；False 请求不存在（可能已超时或从未创建）。
+        """
+        return self._manager.submit_approval(request_id, approved)
+
     def execute_now(self) -> list[str]:
         """返回可立即执行的工具名列表。
 

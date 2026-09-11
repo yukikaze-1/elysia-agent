@@ -201,17 +201,21 @@ async def cancel(
 
 
 def submit_approval(
-    tool_registry: object,  # ToolManager 实例
+    tool_registry: object,  # ToolAdapter（core）或 ToolManager 实例
     agent_id: str,
     approved: bool,
 ) -> bool:
-    """审批结果回传。v1 桥接到 ToolManager 的 SafetyPipeline。
+    """审批结果回传。v1 桥接到工具子系统的 SafetyPipeline。
 
     将 agent_id 作为 request_id 委托给 tool_registry.submit_approval()。
-    ToolManager 内部 SafetyPipeline 设置 asyncio.Event 唤醒等待中的工具调用。
+    底层 SafetyPipeline 设置 asyncio.Event 唤醒等待中的工具调用。
+
+    P1-6：`AgentInfra.tool_registry` 生产注入的是 `core.adapter.tool_adapter.ToolAdapter`
+    （不是 ToolManager），故 ToolAdapter 必须同样公开 `submit_approval` 委托方法——
+    否则本函数的 hasattr 判定恒 False、`WorkflowEngine.submit_approval` 成为死路径。
 
     Args:
-        tool_registry: ToolManager 实例（runtime 类型，使用 object 避免循环导入）。
+        tool_registry: ToolAdapter 或 ToolManager 实例（runtime 类型，用 object 避免循环导入）。
         agent_id: 审批请求 ID（用作 request_id）。
         approved: 审批通过为 True，拒绝为 False。
 
@@ -219,8 +223,8 @@ def submit_approval(
         True:  审批请求已找到并处理
         False: 审批请求不存在（可能已超时或从未创建）
     """
-    # tool_registry 运行时是 ToolManager，submit_approval 方法
-    # 在 v1 的 SafetyPipeline 路径中始终可用。
+    # tool_registry 运行时是 ToolAdapter（生产）或 ToolManager；两者均公开
+    # submit_approval（见 ToolAdapter.submit_approval，P1-6），v1 SafetyPipeline 路径可用。
     if not hasattr(tool_registry, "submit_approval"):
         return False
     return tool_registry.submit_approval(  # type: ignore[attr-defined]

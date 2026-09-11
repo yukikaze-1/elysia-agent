@@ -1086,6 +1086,56 @@ def test_submit_approval_no_tool_manager():
     assert result is False
 
 
+def test_submit_approval_with_real_tool_adapter():
+    """P1-6 回归：生产实际注入的 tool_registry 是 ToolAdapter，不是 mock ToolManager。
+
+    原先仅用 `MagicMock(submit_approval=...)` 覆盖，掩盖了 ToolAdapter 缺
+    `submit_approval` 方法的事实——生产路径 `WorkflowEngine.submit_approval` 恒 False
+    （死路径），测试却全绿。本用例用**真实 ToolAdapter** 走通完整链路：
+    WorkflowEngine → ToolAdapter.submit_approval → ToolManager → SafetyPipeline。
+    """
+    import asyncio
+
+    from core.adapter.tool_adapter import ToolAdapter
+    from Module.workflow_contract import AgentInfra
+
+    adapter = ToolAdapter(plugins=[])
+    mock_llm = MagicMock()
+    mock_llm.chat = MagicMock()
+    mock_llm.chat.completions = MagicMock()
+    mock_llm.chat.completions.create = AsyncMock()
+
+    infra = AgentInfra(
+        llm=mock_llm,
+        milvus=None,
+        http=None,
+        tool_registry=adapter,  # 生产同款依赖（AgentInfra 注入 ToolAdapter）
+        constraints=ConstraintConfig(),
+    )
+    with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}):
+        ts = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=5)
+
+    # 未知 request_id：链路通、无审批 → False（而非因缺方法而 False）
+    assert ts.submit_approval(
+        task_id=WorkflowId("t1"),
+        agent_id=AgentId("req-unknown"),
+        approved=True,
+    ) is False
+
+    # 登记一个真实待审批请求（与 SafetyPipeline._run_hitl 同构）→ 经公开链路命中
+    pending_event = asyncio.Event()
+    adapter._manager._pipeline._hitl_requests["req-real"] = (  # noqa: SLF001
+        pending_event, "mock_tool", {},
+    )
+
+    assert ts.submit_approval(
+        task_id=WorkflowId("t1"),
+        agent_id=AgentId("req-real"),
+        approved=True,
+    ) is True
+    assert pending_event.is_set()  # 唤醒等待中的工具调用
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # E2: 提取的 _run_and_cleanup 方法
 # ═══════════════════════════════════════════════════════════════════════════

@@ -199,3 +199,49 @@ class TestShutdown:
         await adapter.start()
         await adapter.shutdown()
         await adapter.shutdown()  # 二次调用不抛异常
+
+
+# ---------------------------------------------------------------------------
+# submit_approval()（HITL 审批回传）
+# ---------------------------------------------------------------------------
+
+class TestSubmitApproval:
+    """P1-6：ToolAdapter 必须公开 submit_approval。
+
+    背景：`AgentInfra.tool_registry` 生产注入的是 **ToolAdapter**，而
+    `Module/workflow_engine/lifecycle.py::submit_approval` 经
+    `hasattr(tool_registry, "submit_approval")` 判定后委托——ToolAdapter 缺该方法时
+    `WorkflowEngine.submit_approval` 恒返回 False（死路径）。同时 input 层原先直接访问
+    `agent.tool_adapter._manager`（`# noqa: SLF001`），违反「跨模块禁止私有访问」。
+    本方法把委托收口为公开 API：既让 WorkflowEngine 的判定在真实依赖下成立，
+    也供 ws_handler 走公开接口。
+    """
+
+    @pytest.mark.service
+    def test_exposes_public_submit_approval(self):
+        """ToolAdapter 公开 submit_approval（而非只存在于私有 _manager 上）。"""
+        from core.adapter.tool_adapter import ToolAdapter
+        adapter = ToolAdapter(plugins=[_MockPlugin])
+        assert callable(getattr(adapter, "submit_approval", None))
+
+    @pytest.mark.service
+    def test_delegates_to_tool_manager(self):
+        """委托给 ToolManager.submit_approval，透传 request_id/approved 与返回值。"""
+        from unittest.mock import MagicMock
+
+        from core.adapter.tool_adapter import ToolAdapter
+        adapter = ToolAdapter(plugins=[_MockPlugin])
+        adapter._manager.submit_approval = MagicMock(return_value=True)  # noqa: SLF001
+
+        assert adapter.submit_approval("req_abc", True) is True
+        adapter._manager.submit_approval.assert_called_once_with(  # noqa: SLF001
+            "req_abc", True
+        )
+
+    @pytest.mark.service
+    def test_returns_false_for_unknown_request(self):
+        """未知/过期 request_id → False（不抛异常，由调用方记日志）。"""
+        from core.adapter.tool_adapter import ToolAdapter
+        adapter = ToolAdapter(plugins=[_MockPlugin])
+        assert adapter.submit_approval("req_never_existed", True) is False
+
