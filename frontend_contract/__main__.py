@@ -79,6 +79,16 @@ def _collect() -> tuple[list[type[BaseModel]], dict[str, list[type[BaseModel]]]]
             if union_alias is not None and get_origin(union_alias) is Annotated:
                 inner = get_args(union_alias)[0]
                 discriminated[alias] = _expand_union_members(inner)
+
+    # **稳定顺序**（ARCH-INC-P2-02）：`vars(module)` 的迭代顺序 = 源码里类的定义顺序，
+    # 因此产物顺序此前**耦合于文件布局**——把 `ws_message.py` 按领域拆成包、或仅调整
+    # import 顺序，都会让 `contract.generated.ts` / `contract.raw.ts` 产生接近全文件的
+    # 纯位移 diff（实测 91% 行位移），而语义完全不变（TS interface/type 声明都会 hoist，
+    # 顺序纯装饰）。按类名排序使产物顺序成为**模型集合的纯函数**，与文件怎么放无关。
+    #
+    # 依赖关系不受影响：`generate_ts` 内部仍走 `_topo_sort`（被引用者先输出），
+    # 排序只决定 DFS 的起始顺序，即无依赖关系者之间的稳定 tie-break。
+    models.sort(key=lambda m: m.__name__)
     return models, discriminated
 
 

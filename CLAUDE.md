@@ -198,7 +198,17 @@ core/
 frontend_contract/
 ├── base.py                 # ContractModel 基类 + TsNull marker + wire_key + wire_dict 序列化
 ├── version.py              # TRANSPORT_VERSION="2"（握手头可用值）/ PROTOCOL_VERSION="2.0"（仅展示）——协议版本单源（批次 9B）
-├── ws_message.py           # WS 消息契约：ServerMessage 判别联合（42 具名成员，批次 6 语音/TTS 播放契约）+ ClientMessage 判别联合（22 具名成员，批次 9B，不含 TextMessage——type="text" 撞 discriminator）+ 支持类型（ContentPart 6 类 + AttachmentRef + AudioInputDescriptor + V2TextMessage.attachments/stickerId + ErrorMessage.requestId + ServerInfoMessage.build_sha/media_upload，批次 7/9C）
+├── ws_message/             # WS 消息契约**包**（ARCH-INC-P2-02 物理拆分，原 1206 行单文件 → 9 模块）
+│   ├── __init__.py         #   **单一装配点**：唯一 ServerMessage/ClientMessage 联合定义位置 + 显式 re-export（97 名）
+│   ├── _types.py           #   共享词汇：ContentPart 联合 + 全部非联合成员类型（零跨模块依赖，426 行）
+│   ├── chat.py             #   chat 域 17 定义（Delta/Message/Token/Audio/Expression/Live2D/State/Typing/Transcription…）
+│   ├── session.py          #   session 域 12 定义（Session/Capabilities/ServerInfo/Command/Wake/SwitchModel/ServiceMode…）
+│   ├── tool.py             #   tool 域 5 定义（ToolStarted/ToolCompleted/ToolRequest/ToolStatus/ToolCall*）
+│   ├── generation.py       #   generation 域 6 定义（Started/SegmentStarted/Delta/SegmentCompleted/Completed/Failed）
+│   ├── voice.py            #   voice 域 21 定义（Voice*/Dictation* + 批次 6 TTS 播放控制 Audio*）
+│   ├── ack.py              #   ack 域 2 定义 + UserAckMessage 嵌套联合
+│   └── character.py        #   character 域 1 定义（CharacterStateChanged）
+# 成员数不变：ServerMessage 42 / ClientMessage 22（不含 TextMessage——type="text" 撞 discriminator）；
 ├── rest.py                 # REST 业务契约：providers / images / messages / 多会话 / Desktop / 附件与表情（AttachmentInfo/AttachmentUploadResponse/AttachmentSignResponse/StickerEntry/StickerListResponse，批次 7）等 73 模型（MessagesPageResponse.cursor，批次 9A）
 ├── debug.py                # Debug API 契约：/debug/api 响应（DebugData 16 面板等 38 模型）
 ├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）+ generate_raw_ts（raw wire 快照，批次 9B）
@@ -277,7 +287,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `core.services` | 服务运行时能力声明与广播（CORE-MOD-P1-01 从 input 迁入） | `capabilities.py` |
 | `core.network` | 网络运行时基础设施（CORE-MOD-P2-01 从 input 迁入） | `rate_limiter.py` |
 | `core.prompt` | System prompt 组装层（CORE-MOD-P1-02 从 adapter 迁入） | `message_builder.py` + `prompt_assembler.py` |
-| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (纯装配：create_app + 管理端点；bind 守卫在 core/utils/server_guard.py，批次 D), `middleware.py` (认证/payload/限流中间件工厂 + `_nosniff_uploads`；限流器在 core/network，批次 D), `health.py` (health/ready 探针，批次 D), `ws_handler.py` (协议 framing + 22 消息类型 `_WS_HANDLERS` 注册表分发，2026-08-14 批次 B), `ws_v2.py` (v2 深业务：`_route_v2_text`/`_handle_voice_commit` + 幂等/ACK helper，批次 B 下移), `_common.py` (跨业务共享：`_send_ack`/`_find_channel`/`_tool_error`/`_archive_*`), `errors.py` (统一错误信封，批次 A 下沉), `provider_routes.py`/`tts_routes.py`/`upload_routes.py`/`tools_routes.py`/`chat_routes.py` (批次 C 拆 5 域，api_routes 退役), `attachment_routes.py` (附件签名下载 + 签发，BE-070), `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `voice_sessions.py` (三模式语音状态机：普通录音/实时语音/输入法转写，BE-060~062), `sticker_registry.py` (内置表情注册表，BE-071), `audio_buffer.py` (VAD 分段 + STT 提交), `debug_routes/` (package, 7 modules) |
+| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (纯装配：create_app + 管理端点；bind 守卫在 core/utils/server_guard.py，批次 D), `middleware.py` (认证/payload/限流中间件工厂 + `_nosniff_uploads`；限流器在 core/network，批次 D), `health.py` (health/ready 探针，批次 D), `ws_handler.py` (协议 framing + 连接生命周期：握手/回放/消息循环；**1210→691 行**，22 个 dispatcher 已按领域迁出，2026-08-14 批次 B + 2026-09-11 ARCH-INC-P2-01), `ws_handlers/` (package：`context.py` 收口连接级状态 `WsRequestContext`——handler 签名由 10 参数收敛为 `(ctx, data, msg, channel)`；`chat/session/tool/voice.py` 四领域 handler；`__init__.py` 单一装配点 `_WS_HANDLERS`——wire 不变), `ws_v2.py` (v2 深业务：`_route_v2_text`/`_handle_voice_commit` + 幂等/ACK helper，批次 B 下移), `_common.py` (跨业务共享：`_send_ack`/`_find_channel`/`_tool_error`/`_archive_*`), `errors.py` (统一错误信封，批次 A 下沉), `provider_routes.py`/`tts_routes.py`/`upload_routes.py`/`tools_routes.py`/`chat_routes.py` (批次 C 拆 5 域，api_routes 退役), `attachment_routes.py` (附件签名下载 + 签发，BE-070), `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `voice_sessions.py` (三模式语音状态机：普通录音/实时语音/输入法转写，BE-060~062), `sticker_registry.py` (内置表情注册表，BE-071), `audio_buffer.py` (VAD 分段 + STT 提交), `debug_routes/` (package, 7 modules) |
 | `Module._common` | Shared utility layer | env, registry helpers, test helpers |
 
 ## Config system
