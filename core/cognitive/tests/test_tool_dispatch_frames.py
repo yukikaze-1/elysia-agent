@@ -21,6 +21,7 @@ import pytest
 from core.adapter.tool_adapter import ToolAdapter
 from core.cognitive.timing import TimingClock
 from core.cognitive.tool_phase import CognitiveToolPhase, _truncate_output_summary
+from core.schema.message import AssistantMessage
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
 from Module.tool.protocol import ErrorType, ToolResult, to_llm_name
@@ -94,7 +95,8 @@ def _make_tc(name: str, call_id: str = "call_1", args: dict | None = None) -> To
 
 
 def _make_phase(runtimes: dict[str, str] | None = None,
-                generation_id: str | None = None) -> CognitiveToolPhase:
+                generation_id: str | None = None,
+                character_snapshot: object = None) -> CognitiveToolPhase:
     """构造 CognitiveToolPhase 实例（mixin 无 __init__，逐属性注入测试替身）。"""
     phase = CognitiveToolPhase()
     phase._output = _RecordingOutput()
@@ -107,6 +109,9 @@ def _make_phase(runtimes: dict[str, str] | None = None,
     phase.phases = _FakePhases()
     phase._on_background_task = None
     phase._task_system = None
+    # 跨 mixin 协作方：运行时由 CognitiveLoop（CognitiveFinalize）提供——
+    # 独立实例化本 mixin 的测试必须同样注入，否则工具轮归档路径不可用。
+    phase._turn_character_snapshot = lambda: character_snapshot  # type: ignore[method-assign]
     return phase
 
 
@@ -219,3 +224,86 @@ class TestToolDispatchFrames:
         assert adapter.runtime_for("submit_task") == "backend"    # 未注册（合成工具）
         assert adapter.runtime_for("not_registered") == "backend"  # 未知幻觉名
         assert adapter.runtime_for("weird") == "backend"           # 越界兜底
+
+
+@pytest.mark.service
+class TestToolRoundCharacterSnapshot:
+    """工具轮归档的 assistant 消息必须携带角色身份快照。
+
+    回归（P3 剩余第 1 项）：本 mixin 归档 AssistantMessage 时漏传 `character=`，
+    而 finalize 的同一构造有 `character=self._turn_character_snapshot()`。工具轮在
+    真实对话中极常见（LLM 只发 tool_calls 不附文字时 content 还是空列表），于是
+    每条工具轮消息都以 `character=null` 落 message_archive —— 正是问题单
+    「14 条 assistant 缺角色戳」的源头（character_profiles=true 时前端对消息历史
+    整批 fail-closed）。
+    """
+
+    @staticmethod
+    def _snapshot():
+        from core.schema.message import CharacterMessageSnapshot
+
+        return CharacterMessageSnapshot(
+            character_id="chr_builtin_elysia",
+            character_instance_id="chi_builtin_elysia",
+            character_revision=1,
+            display_name="Elysia",
+        )
+
+    @pytest.mark.asyncio
+    async def test_tool_round_message_carries_character(self):
+        """工具轮归档的 AssistantMessage 带 character 快照（非 None）。"""
+        phase = _make_phase(
+            runtimes={"get_time": "backend"}, generation_id="gen_1",
+            character_snapshot=self._snapshot(),
+        )
+        tc = _make_tc("get_time", "call_1")
+
+        async def _run(dispatch_tcs: list[ToolCall]):
+            return [(dispatch_tcs[0], ToolResult.ok(name="get_time", content="ok", duration_ms=1.0))]
+
+        await phase._execute_tool_round([], "调用工具", [tc.model_dump(mode="json")], _run)
+
+        assistant_msgs = [m for m in phase._session.added
+                          if isinstance(m, AssistantMessage)]
+        assert len(assistant_msgs) == 1, "工具轮应归档恰好一条 assistant 消息"
+        assert assistant_msgs[0].character is not None, "工具轮消息缺 character 快照"
+        assert assistant_msgs[0].character.character_id == "chr_builtin_elysia"
+
+    @pytest.mark.asyncio
+    async def test_tool_round_empty_text_still_carries_character(self):
+        """LLM 只发 tool_calls 不附文字（content 为空）时，仍必须带 character。
+
+        这是真实对话里最常见的形态——空正文本身是合法的（工具调用记录靠 tool_calls
+        承载），但缺角色戳会让整页历史被前端拒绝。
+        """
+        phase = _make_phase(
+            runtimes={"get_time": "backend"}, generation_id="gen_1",
+            character_snapshot=self._snapshot(),
+        )
+        tc = _make_tc("get_time", "call_1")
+
+        async def _run(dispatch_tcs: list[ToolCall]):
+            return [(dispatch_tcs[0], ToolResult.ok(name="get_time", content="ok", duration_ms=1.0))]
+
+        await phase._execute_tool_round([], "", [tc.model_dump(mode="json")], _run)
+
+        assistant_msgs = [m for m in phase._session.added
+                          if isinstance(m, AssistantMessage)]
+        assert assistant_msgs[0].content == [], "前提：空正文（LLM 未附文字）"
+        assert assistant_msgs[0].character is not None, "空正文工具轮消息缺 character 快照"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_absent_does_not_break_tool_round(self):
+        """快照不可得（legacy/无 runtime）时返回 None，但不得阻断工具轮执行。"""
+        phase = _make_phase(runtimes={"get_time": "backend"}, character_snapshot=None)
+        tc = _make_tc("get_time", "call_1")
+
+        async def _run(dispatch_tcs: list[ToolCall]):
+            return [(dispatch_tcs[0], ToolResult.ok(name="get_time", content="ok", duration_ms=1.0))]
+
+        await phase._execute_tool_round([], "", [tc.model_dump(mode="json")], _run)
+
+        assistant_msgs = [m for m in phase._session.added
+                          if isinstance(m, AssistantMessage)]
+        assert len(assistant_msgs) == 1
+        assert assistant_msgs[0].character is None  # 优柔降级，不得抛

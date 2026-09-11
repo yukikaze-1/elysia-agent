@@ -141,6 +141,9 @@ def _make_phase(output: object | None = None,
     phase.phases = _FakePhases()
     phase._on_background_task = None
     phase._task_system = None
+    # 跨 mixin 协作方：运行时由 CognitiveLoop（CognitiveFinalize）提供——独立实例化
+    # 本 mixin 的测试必须同样注入，否则工具轮归档路径不可用。
+    phase._turn_character_snapshot = lambda: None  # type: ignore[method-assign]
     return phase
 
 

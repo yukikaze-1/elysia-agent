@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from core.cognitive.generation import GenerationContext
     from core.cognitive.timing import TimingClock
     from core.memory.session import SessionMemory
+    from core.schema.message import CharacterMessageSnapshot
     from core.status.fsm import FSMBackedPhaseController
 
 
@@ -86,6 +87,9 @@ class CognitiveToolPhase(CognitiveTools):
     _clock: "TimingClock | None"
     _generation_ctx: "GenerationContext | None"
     phases: "FSMBackedPhaseController"
+    # 跨 mixin 方法（定义于 CognitiveFinalize，运行时由 CognitiveLoop 组合提供）：
+    # 工具轮归档 assistant 消息需要与本 mixin 无关的角色身份快照。
+    _turn_character_snapshot: Callable[[], "CharacterMessageSnapshot | None"]
 
     def _prepare_tool_round(
         self,
@@ -292,6 +296,11 @@ class CognitiveToolPhase(CognitiveTools):
             content=[TextPart(content=acc_text)] if acc_text else [],
             message_id=new_message_id(),
             tool_calls=normalized if normalized else None,
+            # P3-1：工具轮消息同样必须带角色身份快照——此前漏传，导致每条工具轮
+            # 都以 character=null 落 message_archive；character_profiles=true 时前端
+            # 对消息历史整批 fail-closed（问题单「14 条 assistant 缺角色戳」的源头）。
+            # 快照不可得时该方法返回 None（legacy/无 runtime），不阻断工具轮。
+            character=self._turn_character_snapshot(),
         ))
 
         await self._dispatch_tool_calls(
