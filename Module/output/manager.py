@@ -117,6 +117,10 @@ class OutputManager:
     ):
         """流式输出 — 逐 delta 推送，完成后发送完整消息。
 
+        预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。
+        当前仅 Module/output/__main__.py 的冒烟 CLI 与测试使用；生产走
+        core/cognitive 的逐事件输出路径（turn_started/text_delta/...）。
+
         Args:
             deltas: 流式文本增量迭代器。
             finalize: 接收累积的完整文本，返回 ChatMessage 等消息对象。

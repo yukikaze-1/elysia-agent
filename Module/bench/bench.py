@@ -1,6 +1,7 @@
 """统一延迟基准测试。覆盖 LLM、TTS、STT 三个模块的流式和非流式路径。
 
->> 备注：此模块后续将移动至 tools/bench/，不作为 Module 的子模块。"""
+>> 备注：此模块后续将移动至 tools/bench/，不作为 Module 的子模块。
+>> 预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。"""
 
 import asyncio
 import os

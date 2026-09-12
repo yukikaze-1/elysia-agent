@@ -158,8 +158,12 @@ class ToolEmitter:
             return ToolResult.ok("scan", "扫描完成: 无异常", 1500.0)
     """
 
-    _queue: Any = field(default=None, repr=False)  # asyncio.Queue, set by execute_stream
-    _task: Any = field(default=None, repr=False)    # asyncio.Task, set by execute_stream
+    # 预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。
+    # 注意：此前注释写 "set by execute_stream"，但 execute_stream 从不赋值——
+    # 生产也从不构造 ToolEmitter（emit 恒为 None）。故 is_cancelled() 恒 False、
+    # progress() 为 no-op。整个插件侧流式上报面尚未接线。
+    _queue: Any = field(default=None, repr=False)
+    _task: Any = field(default=None, repr=False)
 
     async def progress(
         self, percent: float | None = None, message: str = "", data: Any = None,

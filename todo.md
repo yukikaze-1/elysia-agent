@@ -237,13 +237,26 @@
 
 ## 代码清理
 
+> **❗ 决策（2026-09-12）：剩余桩代码一律保留，不再作为死代码待办。**
+>
+> 2026-09-12 做过一次全仓符号级引用审计（AST 扫 3,933 个生产定义 → 63 个零引用方法），
+> 结论：**「零引用」不等于「该死」**。剩余项中绝大多数是**刻意的扩展储备**（图数据库后端、
+> 基准测试、HITL 通知器、Workflow 暂停恢复、插件侧流式上报面），删掉会让「以后要做」变成
+> 「以后要重写」。本仓已有 `预留` 注释惯例，本次统一加可 grep 的标记
+> **`P3-01-RESERVED`**——后续引用审计遇到该标记即跳过，不再逐轮重新发现、重新搁置。
+>
+> 判别标准（供下次审计用）：**预留** = 有明确未来用途、且有注释说明；**残留** = 已被别的实现
+> 取代（如 `LoggerFactory` 之于 `log_setup`）或注释与代码不符。本次处置的是后者。
+
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
-| 中 | `database/graphdb/` 不完整 | 只有 protocol.py，保留参考 |
-| 中 | `OutputManager.stream()` 未使用 | `manager.py:97`，保留参考 |
 | ✅ | ~~LoggerFactory 死代码~~ **(2026-09-12 已删)** | 核实「保留参考」是误判：它不是休眠的重复实现，而是**被取代的旧设计**——`Module/logger/factory.py` 把应用日志送 **stdout**，而本仓 stdout 保留给对话流（`Module/output/console.py:31` 的流式 `print`），采纳即污染角色输出；且按 logger 名建文件（110+ 个 logger → 200+ 个 `logger_*.log`）。生产早在 `core/utils/log_setup.py` 走了另一套。整个 `Module/logger/` 包已删（含 348 行测死代码的测试）；**唯一活着的 `get_caller_logger()` 迁至 `Module/_common/registry_helpers.py`**，与既有 `inject_logger` 并列。顺带清掉 `log/` 里 15 个由该包测试产生的 0 字节残留（2026-08-04 日志审查 3.1 已点名，5 周未修） |
-| 中 | `Module/bench/` 位置不当 | bench.py 自注释"将移至 tools/bench/"，依赖 core/，后续考虑迁移 |
-| 低 | **FilePart/AudioPart/VideoPart 预留代码** | `part.py` 130 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2。暂保留 |
+| 保留 | `database/graphdb/` 不完整 | 只有 protocol.py（54 行 ABC）。`P3-01-RESERVED`——Neo4j 等图后端储备，非死代码 |
+| 保留 | `OutputManager.stream()` 未使用 | `P3-01-RESERVED`——dev 冒烟 CLI + 测试用；生产走 `core/cognitive` 逐事件输出。保留作流式输出参考实现 |
+| 保留 | `Module/bench/` 位置不当 | `P3-01-RESERVED`——手工延迟基准工具（507 行）。自注释「后续移至 tools/bench/」，依赖 core 属**已知且接受**的 R1 例外（占 allowlist 3 条中的 2 条）。迁移与否待真实需求 |
+| 保留 | **FilePart/AudioPart/VideoPart 预留代码** | `P3-01-RESERVED`——`part.py` 130 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2 |
+| 保留 | `core/hitl.py`（85 行）与 `ToolEmitter` 流式上报面 | `P3-01-RESERVED`——HITL 通知器已端到端接好、插件侧 `emit.progress/is_cancelled` 已定义，但两侧都尚未接线。**半接线状态已如实标注在代码注释里**（原先两处注释与代码不符，本次已改正），不再每轮重新发现 |
+| 保留 | `WorkflowEngine.resume()`（91 行，13 项测试） | `P3-01-RESERVED`——暂停/恢复闭环尚未接线，先备好能力与测试 |
 | ~~低~~ ✅ | **衍生 ID 未类型化** | 2026-08-09 已修：AttachmentId/MemoryId/TaskId 立项 + 贯通（part/repo/long_term/schema/memory_reflector/task/scheduler/input）。spec/plan 见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-09-derived-id-newtype-design.md) / [plan](docs/superpowers/plans/archive/2026-08/2026-08-09-derived-id-newtype-plan.md)。已知权衡：Task.parent_id 语义混乱留待未来、scheduler:159 死代码 ignore |
 
 ## 模块化改进

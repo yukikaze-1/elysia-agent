@@ -214,7 +214,10 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._mood_applied: bool = False
         self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
-        self._tts_task: asyncio.Task | None = None  # 保留供 agent.py stop() 读取
+        # 预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。
+        # 注意：此前注释写「保留供 agent.py stop() 读取」，但全仓无任何读写点；
+        # TTS 取消实际走 _tts_mgr.cancel_all()（见 agent/_lifecycle_tools.py）。
+        self._tts_task: asyncio.Task | None = None
         self._pending_after_response: list[asyncio.Task] = []  # shutdown 时等待
         # Agent 可选注入：after_response 会异步保存目标 SessionMemory，必须独立持有
         # accepted-work 引用，不能随主 cognitive task 返回就允许删除。

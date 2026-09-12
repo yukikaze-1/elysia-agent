@@ -1,7 +1,9 @@
 """HITL（Human-in-the-Loop）通知器 —— EventBus 演示实现。
 
 HITLNotifier ABC 定义在契约层 Module/workflow_contract/schema.py。
-本文件提供基于 EventBus 的演示实现（非真实，后续由 CognitiveLoop 侧替换），
+本文件提供基于 EventBus 的演示实现（非真实，后续由 CognitiveLoop 侧替换）。
+预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。
+
 由 workflow_engine 分离项目自 Module/workflow_engine/protocol.py 迁入 core 侧。
 """
 

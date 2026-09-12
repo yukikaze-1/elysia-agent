@@ -501,6 +501,9 @@ class WorkflowEngine:
     async def resume(self, task_id: WorkflowId) -> WorkflowMailbox | ResumeError:
         """从 PAUSED 恢复执行。
 
+        预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。
+        当前仅测试覆盖（13 处），无生产调用方——暂停/恢复闭环尚未接线。
+
         幂等——已在 RUNNING/RESUMING 的任务直接返回 mailbox；resume_pending
         排队/恢复进行中重复 resume 短路返回同一 mailbox（不二次入队）。
         仅 PAUSED 状态经过 CAS 检查后进入实际恢复流程。

@@ -2,7 +2,11 @@ from abc import ABC, abstractmethod
 
 
 class GraphDBBackend(ABC):
-    """图数据库后端接口 — 预留（Neo4j 等）。"""
+    """图数据库后端接口。
+
+    预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。
+    用途：Neo4j 等图存储后端（当前无实现、无消费者）。
+    """
 
     @abstractmethod
     async def add_node(self, label: str, properties: dict) -> str:
