@@ -67,6 +67,49 @@
 > 而章节头与聚类表用的是**去重后计数**，两套口径混用且未标注。
 > 本次修订保留概览的原始计数但**显式标注为原始发现**，去重后计数以本表为准。
 
+## 0.4 处置进度（持续更新）
+
+> 本报告是 **2026-09-12 基线的审查快照**，发现内容不随后续修复改写；
+> 但**哪些已修、修在哪个提交**必须可查，否则报告自身就成了新的文档漂移源。
+
+| 项 | 状态 | 提交 |
+|---|---|---|
+| **CR-09** `/api/chat` content 直通 → 任意相对路径读 | ✅ 已修 | `00a304ff` |
+| **CR-04** `confirm` 校验先于副作用 | ✅ 已修 | `9b41beb8` |
+| **CR-03** 管理面鉴权不回退产品 token | ✅ 已修（**行为变更**）| `9b41beb8` |
+| **CR-07** `clean_db.py` 默认 dry-run + 类型化确认 | ✅ 已修（**行为变更**）| `9b41beb8` |
+| **S2-E1** `remove_channel` 移入 `try/finally` | ✅ 已修 | `9b41beb8` |
+| 报告编号空间 / 计数口径 / 缺失章节 | ✅ 已修订 | `2b10bbe0` |
+| **CR-01** 轮换泄露凭据（步骤 1–2）| ⏳ **待 owner 执行** | 运维动作，非代码 |
+| **CR-02** 信号处理（部分：`except BaseException` + `try/finally`）| ⏳ 未开始 | 计划 P0 `#5` |
+| **CR-10** embedding 永久不可用 | ⏳ 未开始 | 计划 P0 `#6b` |
+| **CR-05 / CR-06 / CR-08 / CR-11 / CR-12 / CR-13** | ⏳ 未开始 | 见各条目 |
+| 4 条 P0 级回归测试（P0 `#6d`）| ⏳ 部分已补 | 见下 |
+
+**本次修复新增的回归网**（`make test-quick` 由 4392 → **4447 passed**，零回归）：
+
+| 文件 | 覆盖 | 项数 |
+|---|---|---:|
+| `core/schema/tests/test_image_source_security.py` | CR-09：解析器不读本地文件 + 校验器不探文件系统 | 18 |
+| `core/input/tests/test_chat_content_sanitize.py` | CR-09：REST 入口收口 | 12 |
+| `core/input/tests/test_destructive_confirm_ordering.py` | CR-04：确认先于副作用 | 7 |
+| `core/tests/test_clean_db.py::TestCLIApplyGuard` | CR-07：默认 dry-run + 类型化确认 | 10 |
+| `core/input/tests/test_ws_close_always_removes_channel.py` | S2-E1：channel 无条件移除 | 5 |
+| `core/input/tests/test_auth.py::TestAdminAuthStrictSeparation` | CR-03：管理面不回退 | 改写原 6 项 |
+
+> 上述每一项都用「临时回退修复 → 断言测试变红 → 恢复」验证过**守卫确实能抓到违规**，
+> 而非只看绿灯。
+
+**⚠️ 遗留的行为变更影响（需运维动作）**：
+
+1. **CR-03 使 `/debug` 仪表盘在"只配 `AGENT_ACCESS_TOKEN`"的部署下 401** ——
+   需要设置 `SERVER_AUTH_TOKEN`；而 `/debug` 前端当前**无法携带**该 token
+   （`fetch` 不带 Authorization、`EventSource` 协议上加不了 header），即 **S2-F3**。
+   **两者需一起处理**才能恢复排障面。
+2. **CR-07 使 `python scripts/clean_db.py` 默认不再删除任何数据** ——
+   原用法（裸执行 / `-f`）需改为 `--apply --confirm=<scope>`。
+3. `POST /api/chat` 的 `content` 不再接受客户端自带的 `src`（见 CR-09）。
+
 ---
 
 # Executive Summary
