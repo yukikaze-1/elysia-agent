@@ -241,7 +241,7 @@
 |--------|------|------|
 | 中 | `database/graphdb/` 不完整 | 只有 protocol.py，保留参考 |
 | 中 | `OutputManager.stream()` 未使用 | `manager.py:97`，保留参考 |
-| 低 | LoggerFactory 死代码 | `Module/logger/factory.py` 246 行，保留参考 |
+| ✅ | ~~LoggerFactory 死代码~~ **(2026-09-12 已删)** | 核实「保留参考」是误判：它不是休眠的重复实现，而是**被取代的旧设计**——`Module/logger/factory.py` 把应用日志送 **stdout**，而本仓 stdout 保留给对话流（`Module/output/console.py:31` 的流式 `print`），采纳即污染角色输出；且按 logger 名建文件（110+ 个 logger → 200+ 个 `logger_*.log`）。生产早在 `core/utils/log_setup.py` 走了另一套。整个 `Module/logger/` 包已删（含 348 行测死代码的测试）；**唯一活着的 `get_caller_logger()` 迁至 `Module/_common/registry_helpers.py`**，与既有 `inject_logger` 并列。顺带清掉 `log/` 里 15 个由该包测试产生的 0 字节残留（2026-08-04 日志审查 3.1 已点名，5 周未修） |
 | 中 | `Module/bench/` 位置不当 | bench.py 自注释"将移至 tools/bench/"，依赖 core/，后续考虑迁移 |
 | 低 | **FilePart/AudioPart/VideoPart 预留代码** | `part.py` 130 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2。暂保留 |
 | ~~低~~ ✅ | **衍生 ID 未类型化** | 2026-08-09 已修：AttachmentId/MemoryId/TaskId 立项 + 贯通（part/repo/long_term/schema/memory_reflector/task/scheduler/input）。spec/plan 见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-09-derived-id-newtype-design.md) / [plan](docs/superpowers/plans/archive/2026-08/2026-08-09-derived-id-newtype-plan.md)。已知权衡：Task.parent_id 语义混乱留待未来、scheduler:159 死代码 ignore |

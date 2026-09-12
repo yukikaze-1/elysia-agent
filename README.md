@@ -250,8 +250,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Embedding | [Module/embedding/README.md](Module/embedding/README.md) | 文本向量化（HuggingFace/OpenAI） |
 | Output | [Module/output/README.md](Module/output/README.md) | 多通道输出（Console + WebSocket） |
 | Config | [Module/config/README.md](Module/config/README.md) | 配置基础设施（YAML + env + 校验） |
-| Logger | [Module/logger/README.md](Module/logger/README.md) | 日志工厂（plain + JSON） |
-| _common | [Module/_common/README.md](Module/_common/README.md) | 共享工具层（env + registry_helpers + test 工厂 + ssrf + error_type） |
+| _common | [Module/_common/README.md](Module/_common/README.md) | 共享工具层（env + registry_helpers + test 工厂 + ssrf + error_type + task_scope） |
 | System Prompt | [Module/system_prompt/README.md](Module/system_prompt/README.md) | System Prompt 引擎 + Section Provider |
 | WorkflowEngine | [Module/workflow_engine/README.md](Module/workflow_engine/README.md) | 后台任务委派与 DAG 编排 |
 | WorkflowContract | [Module/workflow_contract/README.md](Module/workflow_contract/README.md) | 跨边契约层（core ↔ workflow_engine 类型来源） |
@@ -422,7 +421,6 @@ Agent/
 │   ├── embedding/          # HuggingFace / OpenAI
 │   ├── output/             # Console + WebSocket 多通道
 │   ├── config/             # YAML + env 配置 + providers.yaml + preflight
-│   ├── logger/             # 日志工厂
 │   ├── system_prompt/      # Brain Prompt 引擎 — SystemPromptManager + 12 PromptSections
 │   ├── tool/               # 工具框架 (129 tests)
 │   ├── database/           # Milvus / MongoDB / GraphDB

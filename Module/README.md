@@ -14,7 +14,6 @@ Module/
 ├── embedding/            # 文本向量化
 ├── output/               # 多通道输出
 ├── config/               # 配置基础设施
-├── logger/               # 日志工厂
 ├── system_prompt/        # System Prompt 引擎 + Section Provider 架构
 ├── tool/                 # 工具执行框架
 ├── database/             # 数据库后端
@@ -146,19 +145,6 @@ cfg = ConfigLoader(MyConfig, yaml_path="config.yaml").load()
 
 > 📖 完整 API 文档 → [Module/config/README.md](config/README.md)
 
-### Logger — 日志工厂
-
-支持 plain / JSON 双格式，按模块差异化日志级别，自动日志轮转。
-
-```python
-from Module.logger import LoggerFactory
-
-factory = LoggerFactory(level="DEBUG", json_format=True)
-logger = factory.get("MyModule")
-```
-
-> 📖 完整 API 文档 → [Module/logger/README.md](logger/README.md)
-
 ### Prompt — System Prompt 引擎 + 通用渲染器
 
 提供两套 API：
@@ -280,7 +266,6 @@ python -m pytest Module/embedding/tests/ -v
 python -m pytest Module/output/tests/ -v
 python -m pytest Module/config/tests/ -v
 python -m pytest Module/system_prompt/tests/ -v
-python -m pytest Module/logger/tests/ -v
 python -m pytest Module/tool/tests/ -v
 python -m pytest Module/database/vectordb/tests/ -v
 python -m pytest Module/database/documentdb/tests/ -v

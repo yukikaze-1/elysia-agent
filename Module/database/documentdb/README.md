@@ -84,7 +84,7 @@ class DocumentDBBackend(ABC):
 backend = DocumentDBFactory.create("mongodb/elysia", logger=my_logger)
 ```
 
-不传则默认使用无 handler 的静默 logger，调用方可通过 `Module/logger/LoggerFactory` 注入。
+不传则默认使用无 handler 的静默 logger；需要输出的调用方自行传入 `logging.getLogger(...)` 的实例。应用侧的日志落盘与分流由 `core/utils/log_setup.py` 统一配置，库层不设置 handler。
 
 ## Config
 

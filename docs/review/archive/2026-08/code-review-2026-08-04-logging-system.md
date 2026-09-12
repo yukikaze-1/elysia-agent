@@ -82,13 +82,19 @@ Module/logger/factory.py:  LoggerFactory（plain/JSON 双格式 + 模块差异�
 - **另一处丢失**：`core/memory/embedding_provider.py:57` 用裸 `loop.run_in_executor(None, ...)` 不拷 context → request_id `"-"`。
 - **影响**：纯关联性丢失，无功能破坏。置信度：85
 
-### 2.5 【低·潜在 footgun】`LoggerFactory.get()` 短路：已有 handler 的 logger 静默不应用配置
+### 2.5 【低·潜在 footgun】`LoggerFactory.get()` 短路：已有 handler 的 logger 静默不应用配置 → ✅ 已随整类删除关闭（2026-09-12）
 
 - **位置**：`Module/logger/factory.py:149-150`（`if logger.handlers: return logger`）
 - **问题**：若 logger 已被 `log_setup` 配置过（如名字叫 "core"/"Module"，或与现有 logger 重名），factory 会静默不应用 `module_levels`、`formatter`、`setLevel`。且 factory 新建的 handler 挂 **stdout**（`:214`、`:242`），违反 `log_setup`「stdout 保留给对话输出」不变式；经 propagate 到 "Module" 还会再写一份到 app.log → 重复。
 - **附带**：`set_level`（`factory.py:161-172`）遍历 `logger.handlers` 全部 `setLevel`，会改到非本 factory 创建的 handler（如 log_setup 的 stderr/app/app-debug 共享 handler）。
 - **生产使用**：已确认 `LoggerFactory` 仅在 `Module/logger/__main__.py:22` 和测试实例化，生产路径不触发。属潜在坑。
 - **置信度**：90（机制）、80（当前影响）。历史 agent F5（stdout 冲突）同源
+- **✅ 处置（2026-09-12）**：本条建议「修默认值」，复核后判定**该修的是存在性而非默认值**。
+  进一步核实：`LoggerFactory` 不是「未被采纳的重复实现」，而是**被 `log_setup` 取代的旧设计**，
+  两者在策略层不可调和——本类把应用日志送 **stdout**（`:214`/`:242`），而本仓 stdout 保留给
+  对话流（`Module/output/console.py:31` 流式 `print`）；且按 logger 名建文件，110+ 个 logger
+  会造出 200+ 个 `logger_*.log`。故**整个 `Module/logger/` 包已删除**，唯一活着的
+  `get_caller_logger()` 迁至 `Module/_common/registry_helpers.py`。2.8/3.1 随之关闭。
 
 ### 2.6 【低】`_JsonFormatter` 不含 request_id
 
@@ -102,7 +108,7 @@ Module/logger/factory.py:  LoggerFactory（plain/JSON 双格式 + 模块差异�
 - **问题**：未调用 `setup()` 时 `log_conversation()` 直接返回无任何日志。生产路径 `app.py:115` 启动必调 setup，故当前无实际影响；但若未来在未 setup 的上下文直接使用 `CognitiveLoop`（`loop.py:334/754/757` 三个调用点）将静默丢对话日志且不可诊断。建议至少 debug 级提示。
 - **置信度**：80（生产无触发）
 
-### 2.8 【低】`LoggerFactory` 默认 `log_dir="log"` 仍是 cwd 相对路径（900253c 修复漏网）
+### 2.8 【低】`LoggerFactory` 默认 `log_dir="log"` 仍是 cwd 相对路径（900253c 修复漏网） → ✅ 已随整类删除关闭（2026-09-12）
 
 - **位置**：`Module/logger/factory.py:111` vs `core/utils/log_setup.py:18`（`LOG_DIR = ProjectPath.LOG.resolve()`）
 - **问题**：commit `900253c`「消除 cwd-relative 路径 → ProjectPath」只改了 log_setup，未同步 LoggerFactory 默认值。当前 app 走 log_setup 不实例化 LoggerFactory，影响暂有限（2.9 的 0 字节残留正是此默认值的直接后果）；若未来在非项目 cwd 下实例化，日志会写到错误目录。项目已明确 cwd 相对路径为反模式。
@@ -112,7 +118,7 @@ Module/logger/factory.py:  LoggerFactory（plain/JSON 双格式 + 模块差异�
 
 ## 三、测试卫生
 
-### 3.1 【低】Module/logger 测试污染运行日志目录（15 个 0 字节 `logger_*.log`）
+### 3.1 【低】Module/logger 测试污染运行日志目录（15 个 0 字节 `logger_*.log`） → ✅ 已随整包删除关闭（2026-09-12）
 
 - **位置**：`Module/logger/tests/test_logger.py:15-21`（`lf` fixture：`LoggerFactory(setup_root=False)` 使用默认 `log_dir="log"`）
 - **问题**：fixture 系测试（TestGet/TestClose/TestCritical/TestConcurrency/TestModuleLevel）调用 `lf.get("X")` 时，`_make_file_handler`（`factory.py:219-236`）执行 `mkdir(exist_ok=True)` 并以 append 模式打开文件 → 立即创建 0 字节 `log/logger_{name}.log`；`factory.close()` 只关 handler 不删文件。已实测确认 `log/` 下 15 个文件与「不传 logdir 的 fixture 测试」逐一精确对应（`logger_{TestModule,TestInfo,SameName,NoDup,CloseTest,CloseSet,test_crit_set,concurrent_test,ExactName,L1.BrainLayer,SensorLayer,RuntimeLevel,IntLevel,LoggerA,LoggerB}.log`）；传 `logdir`（tmp_path）的测试无任何残留。非 app 运行产生（app 走 log_setup，只生成 app.log/conversation.log 等，从不生成 `logger_*.log`）。
@@ -210,9 +216,10 @@ Module/logger/factory.py:  LoggerFactory（plain/JSON 双格式 + 模块差异�
 | P1 | 2.4 request_id 与 worker | 在 `scheduler.start()` 的 worker loop 每轮执行前 `set_request_id(task.parent_id or "-")`；`embedding_provider.py:57` 改 `asyncio.to_thread` |
 | P2 | 4.3 token 持久化失败 | 提级为 `logger.warning`（对齐 `session.py:265`） |
 | P2 | 2.2 setup() 幂等 | mongo/milvus 段补 `logger.handlers.clear()` 或引入「已 setup」守卫标志；顺带统一 `clear()` 前 `close()` |
+| ~~P3~~ | ~~2.5 `LoggerFactory.get()` 短路~~ | **✅ 2026-09-12 关闭**：随整类删除 |
 | P2 | 4.5 exc_info 缺失组 | scheduler/tools/server 三处 switch_* + 5 个 repo connect 统一补 `exc_info=True` |
 | P3 | 4.4 HITL 审批重播 | `ws_handler.py:133` 提级 warning（与 `:95` 对齐） |
-| P3 | 3.1 + 2.8 测试污染 / cwd 相对 log_dir | fixture 指向 tmp_path；`factory.py:111` 默认值改 `ProjectPath.LOG.resolve()` |
+| ~~P3~~ | ~~3.1 + 2.8 测试污染 / cwd 相对 log_dir~~ | **✅ 2026-09-12 关闭**：改为删除整个 `Module/logger/` 包（根因消除，非改默认值） |
 | P3 | 4.6/4.7/4.8 级别不一致 | consolidator 比对 / memory_reflector 单组 / embedding 运行时失败提级 warning，对齐同文件既有 warning 调用 |
 
 ---

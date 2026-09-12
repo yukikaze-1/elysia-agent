@@ -13,7 +13,7 @@ wire format:
 import logging
 from typing import Any, Literal
 
-from Module.logger import get_caller_logger
+from Module._common.registry_helpers import get_caller_logger
 from Module.output.protocol import ChannelCapability, OutputChannel
 from frontend_contract import (
     ActionMessage,

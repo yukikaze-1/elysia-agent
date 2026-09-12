@@ -77,7 +77,6 @@ python -m pytest Module/embedding/tests/ -v
 python -m pytest Module/output/tests/ -v
 python -m pytest Module/config/tests/ -v
 python -m pytest Module/system_prompt/tests/ -v
-python -m pytest Module/logger/tests/ -v
 python -m pytest Module/database/vectordb/tests/ -v
 python -m pytest Module/database/documentdb/tests/ -v
 python -m pytest Module/tool/tests/ -v
@@ -273,7 +272,6 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `Module.embedding` | Text vectorization | `huggingface`, `openai` |
 | `Module.output` | Multi-channel output | `ConsoleChannel`, `WebSocketChannel` |
 | `Module.config` | Config infrastructure | `ConfigLoader` (YAML + env + validation) |
-| `Module.logger` | Logging factory | `LoggerFactory` (plain + JSON, rotating) |
 | `Module.system_prompt` | System prompt engine | 12-section orchestration + templates |
 | `Module.workflow_engine` | 后台任务引擎（原 `task_system`）：ReAct 编排/规划/执行/子智能体。主类 `WorkflowEngine`；跨边类型经契约层 `Module/workflow_contract` | `orchestrator` + `planner` + `executor` + `sub_agent` |
 | `Module.workflow_contract` | 跨边契约层（core ↔ workflow_engine 唯一类型来源）：类型/枚举/协议 ABC/无状态纯函数/AgentInfra 运行时注入容器，零业务逻辑 | `schema` + `infra` + `utils` |
@@ -288,7 +286,7 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `core.network` | 网络运行时基础设施（CORE-MOD-P2-01 从 input 迁入） | `rate_limiter.py` |
 | `core.prompt` | System prompt 组装层（CORE-MOD-P1-02 从 adapter 迁入） | `message_builder.py` + `prompt_assembler.py` |
 | `core.input` | Input layer: WebSocket + HTTP server | `server.py` (纯装配：create_app + 管理端点；bind 守卫在 core/utils/server_guard.py，批次 D), `middleware.py` (认证/payload/限流中间件工厂 + `_nosniff_uploads`；限流器在 core/network，批次 D), `health.py` (health/ready 探针，批次 D), `ws_handler.py` (协议 framing + 连接生命周期：握手/回放/消息循环；**1210→691 行**，22 个 dispatcher 已按领域迁出，2026-08-14 批次 B + 2026-09-11 ARCH-INC-P2-01), `ws_handlers/` (package：`context.py` 收口连接级状态 `WsRequestContext`——handler 签名由 10 参数收敛为 `(ctx, data, msg, channel)`；`chat/session/tool/voice.py` 四领域 handler；`__init__.py` 单一装配点 `_WS_HANDLERS`——wire 不变), `ws_v2.py` (v2 深业务：`_route_v2_text`/`_handle_voice_commit` + 幂等/ACK helper，批次 B 下移), `_common.py` (跨业务共享：`_send_ack`/`_find_channel`/`_tool_error`/`_archive_*`), `errors.py` (统一错误信封，批次 A 下沉), `provider_routes.py`/`tts_routes.py`/`upload_routes.py`/`tools_routes.py`/`chat_routes.py` (批次 C 拆 5 域，api_routes 退役), `attachment_routes.py` (附件签名下载 + 签发，BE-070), `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `voice_sessions.py` (三模式语音状态机：普通录音/实时语音/输入法转写，BE-060~062), `sticker_registry.py` (内置表情注册表，BE-071), `audio_buffer.py` (VAD 分段 + STT 提交), `debug_routes/` (package, 7 modules) |
-| `Module._common` | Shared utility layer | env, registry helpers, test helpers, **`task_scope.py`（`AsyncTaskScope`/`cancel_and_drain`——后台协程所有权收口点，ARCH-INC-P2-03）** |
+| `Module._common` | Shared utility layer | env, registry helpers（含 `inject_logger` / `get_caller_logger` 两种 logger 注入风格）, test helpers, **`task_scope.py`（`AsyncTaskScope`/`cancel_and_drain`——后台协程所有权收口点，ARCH-INC-P2-03）** |
 
 ## Config system
 
@@ -303,7 +301,7 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 ## Key patterns
 
 - **Async-first**: All I/O is async. Backends manage their own `httpx.AsyncClient` or `openai.AsyncOpenAI`.
-- **Logger injection**: `Factory.create()` auto-detects caller's module via `inspect`.
+- **Logger injection**: 两种风格并存，都在 `Module/_common/registry_helpers.py`——① `inject_logger(__name__)`：**显式**传模块名，各 Module registry 在 `Factory.create()` 内用；② `get_caller_logger()`：经**单跳 `f_back`** 自动探测调用方模块，用于 `__init__` 这种拿不到显式名称的注入点（`Module/output/manager.py` / `websocket.py`）。**理由不是洁癖**：`core/utils/log_setup.py` 按 logger 名把日志分流到不同文件，名字错一层日志就进错文件。
 - **env var precedence**: API keys and base URLs from `os.getenv()`, not YAML.
 - **MongoDB**: motor async driver. `insert_one/insert_many` pass `dict()` copy to avoid motor mutating callers' dicts.
 - **Session state**: 批次 3 起由 `SessionManager`（`core/memory/session_manager.py`）管理会话缓存池 + 活动指针（`agent.session_manager`；`agent.session` 仍指活动会话）。多会话路由：`agent.resolve_session(conversation_id, protocol_version)`——v1 恒 `"default"`、v2 显式 conversationId → 该会话、v2 缺省 → 活动会话；`activate_session` WS 消息切 active + 重发回放。运行时状态用 SessionMemory 的**专用类型字段**（`character_state` / `service_state`；反射器状态非字段，由 `session.save()` 经 `save_state()` 派生），经 `session.save()` 同步、`load()` 恢复（MongoDB 持久化 + JSONL fallback；2026-08-10 后 `sessions` 不再建 Mongo TTL 索引，删除走显式级联删除）。无 `set_param/get_param` 通用接口——新增状态仿 `character_state` 加字段 + save/load 两侧同步。`service_state`（服务运行时状态：当前模型 + STT/TTS 启用模式，enabled 三态 `bool | None`，None 回退 config）由 `agent.set_service` / `switch_*` 写、启动时经 `_apply_service_state` 应用。

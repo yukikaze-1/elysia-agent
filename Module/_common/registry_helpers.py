@@ -1,4 +1,5 @@
 """Registry 共享工具：api_key 解析、base_url 解析、logger 注入。"""
+import inspect
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -71,3 +72,28 @@ def inject_logger(
     if explicit_logger is not None:
         return explicit_logger
     return logging.getLogger(module_name)
+
+
+def get_caller_logger() -> logging.Logger:
+    """返回**调用方模块**的 logger——模块名经调用栈自动探测，无需调用方传 `__name__`。
+
+    与 :func:`inject_logger` 的分工：那个要求调用方自己给出模块名；本函数用于
+    ``__init__`` 内部这种拿不到显式名称的注入点（``Module/output/manager.py`` /
+    ``websocket.py`` 的 ``logger or get_caller_logger()``）。
+
+    **单跳 ``f_back``，不要改成双跳。** 调用点都是直接调用、中间没有工厂层，
+    双跳会把 logger 名归属到调用方的调用者。这不是洁癖：``core/utils/log_setup.py``
+    按 **logger 名**把日志分流到不同文件（``core.storage.*`` → mongo.log、
+    ``core.memory.long_term`` → milvus.log、其余 → app.log），名字错一层，日志就进错文件。
+
+    （本函数原先住在 ``Module/logger/factory.py``；该模块的 ``LoggerFactory`` 类
+    经核实从未在生产激活，已于 2026-09-12 随整个 ``Module/logger/`` 包删除，
+    只留本函数迁到此处。）
+    """
+    frame = inspect.currentframe()
+    try:
+        caller = frame.f_back  # type: ignore[union-attr]
+        module_name = caller.f_globals.get("__name__", "__main__")  # type: ignore[union-attr]
+        return logging.getLogger(module_name)
+    finally:
+        del frame

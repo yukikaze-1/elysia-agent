@@ -234,7 +234,6 @@ _BACKENDS: dict[str, dict] = load_provider_defaults("llm")
 | `Module.database.graphdb` | stub | — | 预留 |
 | `Module.output` | `ConsoleChannel`, `WebSocketChannel` | — | 多通道广播 + capability 路由 |
 | `Module.config` | `ConfigLoader` | YAML + env | 分层配置 + 类型校验 |
-| `Module.logger` | `LoggerFactory` | — | caller-aware 日志工厂 |
 | `Module.system_prompt` | `PromptManager`, `SystemPromptManager`, `PromptSection` | Jinja2 | Section Provider 架构 + 通用模板渲染。注：`SystemPromptManager` 需通过 `Module.system_prompt.system_prompt_manager` 子模块导入（`__init__.py` 不导出） |
 
 ### 3.3 Config 系统
@@ -1151,7 +1150,6 @@ Agent/
 │   ├── embedding/           # Embedding: HuggingFace / OpenAI
 │   ├── output/              # Output: Console + WebSocket 多通道
 │   ├── config/              # Config: YAML + env 加载器 + preflight
-│   ├── logger/              # Logger: caller-aware 工厂
 │   ├── system_prompt/       # System Prompt 引擎 + Section Provider + 12 templates
 │   ├── database/            # Database: Milvus / MongoDB / GraphDB (stub)
 │   ├── tool/                # Tool: ToolPlugin框架 + SafetyPipeline + ToolManager
