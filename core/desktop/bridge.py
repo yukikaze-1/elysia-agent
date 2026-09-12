@@ -82,7 +82,7 @@ class DesktopToolBridge:
         self._connected: bool = False
         self._connection_id: str | None = None
         # 投递回调：agent 层注入（Task 6），按登记的 target_connection 精确定位
-        # electron channel → _send_json(tool.request)。目标可空仅为竞争窗口兜底；
+        # electron channel → send_json(tool.request)。目标可空仅为竞争窗口兜底；
         # 生产回调会明确失败，由 request_and_wait 收敛为 DESKTOP_UNAVAILABLE。
         self._deliver: Callable[[str | None, dict], Awaitable[None]] | None = None
 

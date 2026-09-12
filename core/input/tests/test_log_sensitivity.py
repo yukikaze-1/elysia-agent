@@ -68,8 +68,8 @@ class FakeAgent:
     def __init__(self):
         self.user_name = "测试用户"
         self.idle = FakeIdle()
-        # _find_channel 遍历 output._channels；空列表 → 判定非 v2 → 走 v1 文本路径
-        self.output = type("Out", (), {"_channels": []})()
+        # _find_channel 遍历 output.channels（公开枚举面）；空列表 → 判定非 v2 → 走 v1 文本路径
+        self.output = type("Out", (), {"channels": []})()
         self.calls = []
 
     async def process_message(self, text="", user_name="", content=None, **kwargs):

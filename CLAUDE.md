@@ -111,7 +111,7 @@ Module/<service>/
 ```
 core/
 ├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types + AgentStatus + FSM + 4 lifecycle mixins
-│   ├── agent.py           #   Agent.__init__ + event handling + process_message + 43 公开 @property + background tasks
+│   ├── agent.py           #   Agent.__init__ + event handling + process_message + 45 公开 @property + background tasks
 │   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + _STARTUP_STEPS + _SHUTDOWN_STEPS + 3 flush
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
 │   ├── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
@@ -308,7 +308,8 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
 - **Project paths**: `from paths import ProjectPath, get_project_root` — 所有项目文件系统路径的唯一定义点。`ProjectPath.X.resolve()` 返回基于 `ELYSIA_ROOT` 环境变量（fallback 为项目根目录）的绝对 `Path`。
 - **AgentStatus**: `agent.status`（`AgentStatus`）提供语义状态查询（`is_accepting_input` / `is_speaking` / `should_suppress_vad_interrupt` 等）；`agent.phases`（`CognitivePhaseController`）驱动阶段转换。底层 `AgentFSM` 不对外暴露。设计文档：[spec](docs/superpowers/specs/archive/2026-07/2026-07-30-agent-status-interface-design.md)。
-- **Agent 公开接口**: `Agent` 作为组合根，通过 43 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
+- **Agent 公开接口**: `Agent` 作为组合根，通过 45 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
+- **私有穿透的两种形态（R3 都看不见）**: ① 字符串形式 `getattr(obj, "_priv")`；② 点式深读 `obj.sub._priv`。`make check-arch` 的 R3 只管**跨包导入私有符号**，这两种都躲得过。因此每个已治理层配一个可执行守卫，`core/input` 见 `core/input/tests/test_layer_discipline.py`——规则是「每处私有穿透**要么改走公开 API，要么同行标注 `# noqa: SLF001` + 理由**」，未标注即红。已补的公开面：`OutputManager.channels`、`WebSocketChannel.ws`、`WebSocketChannel.send_json`（原私有 `_send_json`，`capabilities.py` 的 docstring 曾写着「无公开 send」）、`Agent.character_service` / `Agent.instance_repo`、`CognitiveLoop.process_lock`。
 
 ## Prompt files (`core/prompts/`)
 

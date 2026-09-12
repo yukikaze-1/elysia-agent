@@ -265,7 +265,7 @@ class TestWebSocketHandler:
 
         agent = _make_agent()
         await agent.start()
-        initial_count = len(agent.output._channels)
+        initial_count = len(agent.output.channels)
 
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
@@ -273,11 +273,11 @@ class TestWebSocketHandler:
         async with client.session.ws_connect(client.make_url('/ws')) as ws:
             await asyncio.sleep(0.1)
             # 应已添加 WebSocketChannel
-            assert len(agent.output._channels) == initial_count + 1
+            assert len(agent.output.channels) == initial_count + 1
 
         # 断开后应移除通道
         await asyncio.sleep(0.1)
-        assert len(agent.output._channels) == initial_count
+        assert len(agent.output.channels) == initial_count
 
         await agent.stop()
 

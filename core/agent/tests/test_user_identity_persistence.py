@@ -71,7 +71,7 @@ async def test_user_identity_survives_agent_restart():
     agent_a = _make_agent(db)
     await agent_a.start()
     try:
-        store_a = agent_a._user_identity_store  # noqa: SLF001
+        store_a = agent_a.user_identity_store
         assert store_a.get() is not None and store_a.get().revision == 1  # type: ignore[union-attr]
         updated = await store_a.update_if_revision(
             1, {"displayName": "妖梦", "preferredAddress": "主人",
@@ -84,7 +84,7 @@ async def test_user_identity_survives_agent_restart():
     agent_b = _make_agent(db)
     await agent_b.start()
     try:
-        loaded = agent_b._user_identity_store.get()  # noqa: SLF001
+        loaded = agent_b.user_identity_store.get()
         assert loaded is not None
         assert loaded.displayName == "妖梦"
         assert loaded.preferredAddress == "主人"
@@ -103,7 +103,7 @@ async def test_second_agent_does_not_reseed_bootstrap_over_existing_profile():
     agent_a = _make_agent(db)
     await agent_a.start()
     try:
-        await agent_a._user_identity_store.update_if_revision(  # noqa: SLF001
+        await agent_a.user_identity_store.update_if_revision(
             1, {"displayName": "妖梦", "initialized": True})
     finally:
         await agent_a.stop()
@@ -111,7 +111,7 @@ async def test_second_agent_does_not_reseed_bootstrap_over_existing_profile():
     agent_b = _make_agent(db)
     await agent_b.start()
     try:
-        loaded = agent_b._user_identity_store.get()  # noqa: SLF001
+        loaded = agent_b.user_identity_store.get()
         assert loaded is not None
         assert loaded.displayName == "妖梦"
         assert loaded.revision == 2
@@ -131,7 +131,7 @@ async def test_restarted_agent_uses_persisted_identity_in_turn_prompt():
     agent_a = _make_agent(db)
     await agent_a.start()
     try:
-        updated = await agent_a._user_identity_store.update_if_revision(  # noqa: SLF001
+        updated = await agent_a.user_identity_store.update_if_revision(
             1, {"displayName": "妖梦", "preferredAddress": "主人",
                 "pronouns": "她", "timezone": "Asia/Shanghai", "initialized": True})
         assert updated is not None and updated.revision == 2
@@ -200,7 +200,7 @@ async def test_identity_reloaded_after_mongo_recovery():
     seed = _make_agent(db)
     await seed.start()
     try:
-        await seed._user_identity_store.update_if_revision(  # noqa: SLF001
+        await seed.user_identity_store.update_if_revision(
             1, {"displayName": "妖梦", "preferredAddress": "主人",
                 "pronouns": "她", "initialized": True})
     finally:
@@ -241,7 +241,7 @@ async def test_identity_recovered_on_first_healthy_probe():
     seed = _make_agent(db)
     await seed.start()
     try:
-        await seed._user_identity_store.update_if_revision(  # noqa: SLF001
+        await seed.user_identity_store.update_if_revision(
             1, {"displayName": "妖梦", "preferredAddress": "主人",
                 "pronouns": "她", "initialized": True})
     finally:

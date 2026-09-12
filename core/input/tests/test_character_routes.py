@@ -102,7 +102,7 @@ async def test_character_mutation_guard_owns_turn_lock_and_rejects_busy() -> Non
     app = {
         "agent": SimpleNamespace(
             status=status,
-            cognitive=SimpleNamespace(_process_lock=process_lock),
+            cognitive=SimpleNamespace(process_lock=process_lock),
         )
     }
 
@@ -189,7 +189,7 @@ async def test_reset_evolution_route_rejects_busy_turn(aiohttp_client):
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
     try:
-        process_lock = agent.cognitive._process_lock  # noqa: SLF001
+        process_lock = agent.cognitive.process_lock
         await process_lock.acquire()
         try:
             resp = await client.post(

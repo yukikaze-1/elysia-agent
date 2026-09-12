@@ -555,7 +555,7 @@ async def test_broadcast_capabilities_skips_v2():
 
     v1 浏览器通道（无头）恒 protocol_version=1 → 保留重播；v2 Electron 建连收
     server_info 后不再收 capabilities（spec F15）。真实 Agent + 假 ws 通道——
-    WebSocketChannel._send_json 只调 self._ws.send_json，假 ws 可捕获。
+    WebSocketChannel.send_json 只调 self._ws.send_json，假 ws 可捕获。
     """
     from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
     from core.services.capabilities import broadcast_capabilities
@@ -571,7 +571,7 @@ async def test_broadcast_capabilities_skips_v2():
     agent = _make_agent_with(_UsageLLM())
     v1 = WebSocketChannel(_FakeWS(), protocol_version=1)
     v2 = WebSocketChannel(_FakeWS(), protocol_version=2)
-    agent.output._channels = [v1, v2]  # noqa: SLF001
+    agent.output._channels = [v1, v2]  # 真实 OutputManager：channels 属性读的就是这个列表
     await broadcast_capabilities(agent)
     assert len(v1._ws.sent) == 1   # v1 收到 capabilities
     assert len(v2._ws.sent) == 0   # v2 跳过

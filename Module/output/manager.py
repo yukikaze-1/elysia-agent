@@ -60,6 +60,16 @@ class OutputManager:
         """
         self._channels.remove(channel)
 
+    @property
+    def channels(self) -> list[OutputChannel]:
+        """已注册通道的只读快照。
+
+        返回副本而非内部列表：① 调用方遍历期间增删通道不会让迭代失效；
+        ② 调用方无法经返回值改动管理器状态。跨模块枚举通道（按连接定位、
+        能力重播、定向投递）一律走本属性，勿再直取 `_channels`。
+        """
+        return list(self._channels)
+
     # ---- Internal: filter channels ----
 
     def _filter(

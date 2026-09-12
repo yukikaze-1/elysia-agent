@@ -280,6 +280,17 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             return None
         return self._generation_ctx.user_message_id or None
 
+    @property
+    def process_lock(self) -> asyncio.Lock:
+        """回合执行锁 — `process()` 全程持有。
+
+        跨模块需要「与整个回合互斥」的变更（角色替换已用它串行化：路由侧先
+        `locked()` 快速拒绝 409，再 `async with` 取得独占）经本属性拿到同一把锁。
+        领域层的 runtime lease 仍独立守住不变量——本锁只是**快速路径，不是唯一防线**，
+        故取值方不得把它当作不变量的唯一依据（`core/character/runtime.py` 同此声明）。
+        """
+        return self._process_lock
+
     # ---- Public API ----
 
     def cancel_current(self, source: str | None = None) -> bool:

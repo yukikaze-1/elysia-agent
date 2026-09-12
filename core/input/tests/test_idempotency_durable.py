@@ -1248,7 +1248,7 @@ class _VoiceFakeAgent:
                  gen_registry: _FakeGenRegistry | None = None):
         from Module.output import WebSocketChannel
         self.output = type("O", (), {
-            "_channels": [WebSocketChannel(ws, protocol_version=2)]})()
+            "channels": [WebSocketChannel(ws, protocol_version=2)]})()
         self.user_name = "用户"
         self._rid = 0
         self.idle = type("Idle", (), {"touch": lambda self: None})()

@@ -7,7 +7,7 @@
   - definitions() D-j 过滤：bridge 未连接时 desktop 工具不出现在 LLM schema，
     连接后出现（filter_runtime 双态）
   - _start_tool_context：bridge.bind_deliver + start(extra_services 含 desktop_bridge)
-  - deliver 回调：按 target_connection 精确定位 electron 通道 → _send_json(frame)；
+  - deliver 回调：按 target_connection 精确定位 electron 通道 → send_json(frame)；
     无精确目标立即抛错，由 bridge 收敛为 DESKTOP_UNAVAILABLE
   - _start_persistence：await bridge.connect_db()
   - _stop_persistence：await bridge.save_all()
@@ -142,7 +142,7 @@ class TestStartToolContext:
         agent._cognitive = MagicMock()
         agent._cognitive.configure = MagicMock()
         agent._output = MagicMock()
-        agent._output._channels = []
+        agent._output.channels = []
         agent._desktop_bridge = None
 
         await _LifecycleTools._start_tool_context(agent)
@@ -161,21 +161,21 @@ class TestDeliverCallback:
         target = MagicMock()
         target.client_platform = "electron"
         target.connection_id = "conn_target"
-        target._send_json = AsyncMock()
+        target.send_json = AsyncMock()
         other = MagicMock()
         other.client_platform = "web"  # 非 electron 不收
         other.connection_id = "conn_target"
-        agent._output._channels = [other, target]
+        agent._output.channels = [other, target]
 
         # B-6-05：frame 含 sourceCallId/requestId（D6-07 贯通），deliver 原样转发不改写
         frame = {"type": "tool.request", "callId": "call_x",
                  "sourceCallId": "tc_desktop_1", "requestId": None}
         await _LifecycleTools._deliver_tool_request(agent, "conn_target", frame)
 
-        target._send_json.assert_awaited_once_with(frame)
-        other._send_json.assert_not_called()
-        assert target._send_json.await_args.args[0]["sourceCallId"] == "tc_desktop_1"
-        assert target._send_json.await_args.args[0]["requestId"] is None
+        target.send_json.assert_awaited_once_with(frame)
+        other.send_json.assert_not_called()
+        assert target.send_json.await_args.args[0]["sourceCallId"] == "tc_desktop_1"
+        assert target.send_json.await_args.args[0]["requestId"] is None
 
     @pytest.mark.asyncio
     async def test_reconnect_overlap_delivers_only_to_latest_target(self):
@@ -184,18 +184,18 @@ class TestDeliverCallback:
         old = MagicMock()
         old.client_platform = "electron"
         old.connection_id = "conn_old"
-        old._send_json = AsyncMock()
+        old.send_json = AsyncMock()
         new = MagicMock()
         new.client_platform = "electron"
         new.connection_id = "conn_new"
-        new._send_json = AsyncMock()
-        agent._output._channels = [old, new]
+        new.send_json = AsyncMock()
+        agent._output.channels = [old, new]
 
         frame = {"type": "tool.request", "callId": "call_reconnect"}
         await _LifecycleTools._deliver_tool_request(agent, "conn_new", frame)
 
-        old._send_json.assert_not_awaited()
-        new._send_json.assert_awaited_once_with(frame)
+        old.send_json.assert_not_awaited()
+        new.send_json.assert_awaited_once_with(frame)
 
     @pytest.mark.asyncio
     async def test_getattr_compatible_before_task7(self):
@@ -203,20 +203,20 @@ class TestDeliverCallback:
         agent = MagicMock()
         ch = MagicMock()
         del ch.client_platform  # 模拟无该属性的旧通道
-        ch._send_json = AsyncMock()
-        agent._output._channels = [ch]
+        ch.send_json = AsyncMock()
+        agent._output.channels = [ch]
 
         with pytest.raises(RuntimeError, match="目标连接不可用"):
             await _LifecycleTools._deliver_tool_request(
                 agent, "conn_missing", {"type": "tool.request"})
 
-        ch._send_json.assert_not_awaited()  # 无 electron 通道 → 不投递（兜底）
+        ch.send_json.assert_not_awaited()  # 无 electron 通道 → 不投递（兜底）
 
     @pytest.mark.asyncio
     async def test_no_electron_channel_raises_for_bridge_fast_failure(self):
         """无精确目标时抛错，让 bridge 立即返回 UNAVAILABLE 而非挂到超时。"""
         agent = MagicMock()
-        agent._output._channels = []
+        agent._output.channels = []
         with pytest.raises(RuntimeError, match="目标连接不可用"):
             await _LifecycleTools._deliver_tool_request(
                 agent, "conn_missing", {"type": "tool.request"})

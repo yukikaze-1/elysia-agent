@@ -261,7 +261,7 @@ def _collect_runtime_stats(agent: "Agent", info: DebugInfo) -> None:
     info.tts_ok = agent.tts is not None
     info.stt_ok = agent.stt_ok
     info.ws_clients = sum(
-        1 for ch in agent.output._channels  # noqa: SLF001
+        1 for ch in agent.output.channels
         if type(ch).__name__ == "WebSocketChannel"
     )
 

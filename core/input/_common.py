@@ -29,15 +29,14 @@ logger = logging.getLogger(__name__)
 def _find_channel(agent: "Agent", ws: "web.WebSocketResponse | None") -> "WebSocketChannel | None":
     """按 ws 找到对应 WebSocketChannel（用于读取 protocol_version）。
 
-    仿 switch_model 遍历 agent.output._channels；ws 为 None 或通道不可枚举时返回 None。
+    经 `OutputManager.channels` / `WebSocketChannel.ws` 公开枚举与比对
+    （2026-09-12 前直取 `agent.output._channels` 与 `channel._ws` 私有成员）；
+    ws 为 None 时返回 None。
     """
     if ws is None:
         return None
-    channels = getattr(agent.output, "_channels", None)
-    if not isinstance(channels, (list, tuple)):
-        return None
-    for ch in channels:
-        if isinstance(ch, WebSocketChannel) and getattr(ch, "_ws", None) is ws:
+    for ch in agent.output.channels:
+        if isinstance(ch, WebSocketChannel) and ch.ws is ws:
             return ch
     return None
 

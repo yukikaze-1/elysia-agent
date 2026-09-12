@@ -183,7 +183,8 @@ async def _character_mutation_guard(
     agent = app["agent"]
     _require_character_mutation_idle(app)
     cognitive = getattr(agent, "cognitive", None)
-    process_lock = getattr(cognitive, "_process_lock", None)
+    # 公开属性（2026-09-12 前直取 cognitive._process_lock 私有成员）
+    process_lock = getattr(cognitive, "process_lock", None)
     if process_lock is None:
         yield
         return
@@ -486,7 +487,7 @@ async def _instance_reset_evolution(request: web.Request) -> web.Response:
         # runtime lease 仍独立守住不变量——route 只是快速路径，不是唯一防线）。
         async with _character_mutation_guard(request.app):
             runtime = await _load_instance_runtime(agent, instance_id)
-            repo = getattr(agent, "_instance_repo", None)
+            repo = getattr(agent, "instance_repo", None)
             if repo is None:
                 raise CharacterStorageUnavailableError("CharacterInstanceRepository 未装配")
 

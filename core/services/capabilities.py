@@ -121,9 +121,10 @@ def build_server_info(agent: "Agent", connection_id: str | None = None) -> Serve
 async def broadcast_capabilities(agent: "Agent | AgentServer") -> None:
     """服务状态变化（switch_*/set_service 成功）后向 v1 WebSocketChannel 重播。
 
-    不复制 switch_model_result 仅回请求方的模式——遍历 ``agent.output._channels``，
-    过滤 ``WebSocketChannel``（agent 无条件注册 ConsoleChannel，无 ``_ws``），
-    对每个 WebSocketChannel 调 ``_send_json``（WebSocketChannel 无公开 send）。
+    不复制 switch_model_result 仅回请求方的模式——遍历 ``agent.output.channels``，
+    过滤 ``WebSocketChannel``（agent 无条件注册 ConsoleChannel，无 ws），
+    对每个 WebSocketChannel 调公开 ``send_json``（2026-09-12 前该方法为私有
+    `_send_json`，本函数当时只能标注 `# noqa: SLF001` 穿透）。
     **批次 8c（F15）版本门控**：仅重播 protocol_version < 2 的通道——v1 浏览器
     通道（无头）恒 1 → 保留重播；v2 Electron 建连已收 server_info（services 同形状
     取代 capabilities），跳过避免双轨下发。
@@ -133,10 +134,10 @@ async def broadcast_capabilities(agent: "Agent | AgentServer") -> None:
     """
     try:
         payload = build_capabilities(agent)
-        for ch in agent.output._channels:  # noqa: SLF001
+        for ch in agent.output.channels:
             if isinstance(ch, WebSocketChannel) and getattr(ch, "protocol_version", 1) < 2:
-                await ch._send_json(payload.wire_dict())  # noqa: SLF001
+                await ch.send_json(payload.wire_dict())
     except Exception:
-        # 与 per-channel 发送失败（_send_json 内部已记录）区分：这里捕获的是
+        # 与 per-channel 发送失败（send_json 内部已记录）区分：这里捕获的是
         # build_capabilities 回归或 list-change——需 warning 级别才可见
         logger.warning("capabilities 重播失败", exc_info=True)

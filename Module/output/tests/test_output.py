@@ -884,7 +884,7 @@ class TestWebSocketV2Methods:
 # ============================================================
 
 class _FakeWS:
-    """假 WebSocket：仅收集 send_json 载荷（_send_json 只调 self._ws.send_json）。"""
+    """假 WebSocket：仅收集 send_json 载荷（send_json 只调 self._ws.send_json）。"""
 
     def __init__(self):
         self.sent = []
@@ -1039,7 +1039,7 @@ def _character_state_kwargs():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_on_character_state_changed_v2_sends_wire_frame():
-    """v2 通道调 on_character_state_changed → _send_json 收到 character.state.changed wire 帧。"""
+    """v2 通道调 on_character_state_changed → send_json 收到 character.state.changed wire 帧。"""
     from Module.output import WebSocketChannel
     ws = _FakeWS()
     ch = WebSocketChannel(ws, protocol_version=2)

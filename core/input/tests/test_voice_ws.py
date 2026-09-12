@@ -24,6 +24,11 @@ class FakeOutput:
         from Module.output import WebSocketChannel
         self._channels = [WebSocketChannel(ws, protocol_version=2)]
 
+    @property
+    def channels(self):
+        """公开枚举面（生产 OutputManager.channels 的替身）。"""
+        return list(self._channels)
+
 
 class _FakeSessionManager:
     """session_manager stub：known 会话 set + 简易 resolve/ensure_loaded（9a3 has_session 校验）。"""
@@ -90,7 +95,7 @@ def make():
 @pytest.mark.asyncio
 async def test_v1_ignores_voice_messages():
     agent, ws, mgr = make()
-    agent.output._channels[0].protocol_version = 1
+    agent.output.channels[0].protocol_version = 1
     await handle_json_message({"type": "voice.record.start", "recordingId": "rec_1"},
                               agent, None, ws, voice_mgr=mgr)
     assert ws.sent == []  # v1 忽略，不发错误

@@ -579,7 +579,7 @@ class TestQueueFullAck:
             from Module.output import WebSocketChannel
             # 真实 WebSocketChannel——_route_v2_text 经 _find_channel 按 isinstance 匹配
             self.output = type("O", (), {
-                "_channels": [WebSocketChannel(ws, protocol_version=2)]})()
+                "channels": [WebSocketChannel(ws, protocol_version=2)]})()
             self.resolve_calls = 0
         async def resolve_session(self, conversation_id, protocol_version):
             self.resolve_calls += 1
@@ -1181,7 +1181,7 @@ class _FakeV2Agent:
     def __init__(self, ws, *, gen_registry=None, session_manager=None):
         from Module.output import WebSocketChannel
         self.output = type("O", (), {
-            "_channels": [WebSocketChannel(ws, protocol_version=2)]})()
+            "channels": [WebSocketChannel(ws, protocol_version=2)]})()
         self.user_name = "用户"
         self._rid = 0
         self.idle = type("Idle", (), {"touch": lambda self: None})()

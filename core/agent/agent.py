@@ -1234,6 +1234,26 @@ class Agent(AgentLifecycle, AgentServer):
         return self._character
 
     @property
+    def character_service(self) -> "CharacterService":
+        """角色服务（启动时创建，公开只读）。
+
+        REST 装配（`core/input/server.py` 的 `create_app`）**必须复用**本实例：
+        另建一个 `CharacterService()` 会让 `app["character_service"]` 与 Agent 运行时
+        加载器持有两套 repository 图，角色改动在两条路径上互相不可见。此前经
+        `getattr(agent, "_character_service")` 私有穿透获取。
+        """
+        return self._character_service
+
+    @property
+    def instance_repo(self) -> CharacterInstanceRepository:
+        """角色实例仓库（启动时创建，公开只读）。
+
+        同上——REST 角色实例端点与绑定服务须与 Agent 共用同一实例图；此前经
+        `getattr(agent, "_instance_repo")` 私有穿透获取。
+        """
+        return self._instance_repo
+
+    @property
     def token_tracker(self):
         """token 统计（启动时创建）。"""
         return self._token_tracker

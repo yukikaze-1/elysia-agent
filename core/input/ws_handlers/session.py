@@ -45,8 +45,8 @@ async def _dispatch_switch_model(
         result = {"ok": False, "error": f"未知 service: {service}"}
     from Module.output import WebSocketChannel
     if ctx.ws is not None:
-        for ch in ctx.agent.output._channels:  # noqa: SLF001
-            if isinstance(ch, WebSocketChannel) and ch._ws is ctx.ws:  # noqa: SLF001
+        for ch in ctx.agent.output.channels:
+            if isinstance(ch, WebSocketChannel) and ch.ws is ctx.ws:
                 try:
                     # 契约：error 仅失败带（成功缺省省略，非 null）
                     await ctx.ws.send_json(SwitchModelResultMessage(
@@ -99,8 +99,8 @@ async def _dispatch_set_tts_voice(
             result = {"ok": False, "error": "设置声音失败"}
     from Module.output import WebSocketChannel
     if ctx.ws is not None:
-        for ch in ctx.agent.output._channels:  # noqa: SLF001
-            if isinstance(ch, WebSocketChannel) and ch._ws is ctx.ws:  # noqa: SLF001
+        for ch in ctx.agent.output.channels:
+            if isinstance(ch, WebSocketChannel) and ch.ws is ctx.ws:
                 try:
                     await ctx.ws.send_json(SetTtsVoiceResultMessage(
                         ok=result.get("ok", False),
@@ -123,18 +123,20 @@ async def _dispatch_set_service(
     # 不复制 switch_model_result 模式（那只回给请求方）。capabilities 重播在 Task 7 接入。
     from Module.output import WebSocketChannel
     try:
-        for ch in ctx.agent.output._channels:  # noqa: SLF001
+        # channels 是快照副本（OutputManager.channels），并发 connect/disconnect
+        # 不会让本循环的迭代中途失效
+        for ch in ctx.agent.output.channels:
             if isinstance(ch, WebSocketChannel):
                 # 契约：error 键恒存在（成功为 null，ts_null 标记）
-                await ch._send_json(ServiceModeResultMessage(  # noqa: SLF001
+                await ch.send_json(ServiceModeResultMessage(
                     service=service,
                     enabled=result.get("enabled", enabled),
                     ok=result.get("ok", False),
                     error=result.get("error"),
                 ).wire_dict())
     except Exception:
-        # 并发 connect/disconnect 会改 _channels 列表长度——捕获记录，
-        # 不向请求方传播（per-channel 发送失败已由 _send_json 内部记录）
+        # 并发 connect/disconnect 会改通道集合——捕获记录，
+        # 不向请求方传播（per-channel 发送失败已由 send_json 内部记录）
         logger.warning("set_service 广播失败（连接并发变化？）", exc_info=True)
     logger.info("WS 设置服务开关: service=%s enabled=%s ok=%s", service, enabled, result.get("ok"))
     # 批次 6（spec §3.2 NEW-X/XA）：stt 关闭成功 → 通知本连接语音会话（RECORDING 除外）。

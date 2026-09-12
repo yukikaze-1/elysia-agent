@@ -94,9 +94,9 @@ class _LifecycleTools:
         """Desktop 工具请求定向投递（bridge._deliver 回调，spec §5.2）。
 
         bridge 已构造 `ToolRequestMessage(...).wire_dict()`（camelCase 帧），此处只负责
-        定位目标连接：遍历 `agent.output._channels`，只匹配
+        定位目标连接：遍历 `agent.output.channels`（公开只读快照），只匹配
         `client_platform == "electron" && connection_id == target_connection_id` 的
-        WebSocketChannel → `_send_json(frame)`（定向单连接，非广播）。找不到精确目标
+        WebSocketChannel → `send_json(frame)`（定向单连接，非广播）。找不到精确目标
         时抛错，让 bridge 立即收敛为 DESKTOP_UNAVAILABLE，而不是静默丢帧后等超时。
 
         Args:
@@ -109,7 +109,7 @@ class _LifecycleTools:
         if not target_connection_id:
             raise RuntimeError("DesktopToolBridge 投递缺少目标连接")
         target = None
-        for ch in self._output._channels:  # noqa: SLF001 — 组合根内深度遍历通道
+        for ch in self._output.channels:
             if (getattr(ch, "client_platform", "") == "electron"
                     and getattr(ch, "connection_id", None) == target_connection_id):
                 target = ch
@@ -117,9 +117,9 @@ class _LifecycleTools:
         if target is None:
             raise RuntimeError(
                 f"DesktopToolBridge 目标连接不可用: {target_connection_id}")
-        # _send_json 仅 WebSocketChannel 定义（OutputChannel ABC 无此方法），
+        # send_json 仅 WebSocketChannel 定义（OutputChannel ABC 无此方法），
         # 已按 electron + connection_id 精确过滤，运行时必为 WebSocketChannel
-        await cast(WebSocketChannel, target)._send_json(frame)  # noqa: SLF001 — 定向投递桌面帧
+        await cast(WebSocketChannel, target).send_json(frame)
 
     async def _start_worker_pool(self) -> None:
         """启动 Worker Pool + embedding 预加载后台任务。"""

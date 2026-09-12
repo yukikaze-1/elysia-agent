@@ -47,7 +47,8 @@ async def _list_character_versions(agent: "Agent", content_type: str,
     # 经 registry.get(binding.instance_id).ensure_engine() 解析；版本历史键 `sid`
     # 仍为 state.session_id（§5.1 保留作版本键）。
     engine = getattr(agent, "character_engine", None)
-    if not engine or not getattr(engine, "_version_repo", None):
+    # debug 层深层下钻：CLAUDE.md 显式豁免，须逐点标注 # noqa: SLF001
+    if not engine or not getattr(engine, "_version_repo", None):  # noqa: SLF001
         return None, "版本历史不可用", "STORAGE_UNAVAILABLE", 503
     sid = agent.session.session_id
     versions = await engine._version_repo.list_versions(  # noqa: SLF001
@@ -75,7 +76,8 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
         tuple: (RollbackResult | None, error_str | None, error_code | None, http_status_code)
     """
     engine = getattr(agent, "character_engine", None)
-    if not engine or not getattr(engine, "_version_repo", None):
+    # debug 层深层下钻：CLAUDE.md 显式豁免，须逐点标注 # noqa: SLF001
+    if not engine or not getattr(engine, "_version_repo", None):  # noqa: SLF001
         return None, "版本历史不可用", "STORAGE_UNAVAILABLE", 503
     sid = agent.session.session_id
     entry = await engine._version_repo.get_version(sid, target_version,  # noqa: SLF001

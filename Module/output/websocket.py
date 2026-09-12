@@ -90,8 +90,18 @@ class WebSocketChannel(OutputChannel):
             ChannelCapability.AUDIO,
         }
 
-    async def _send_json(self, data: dict) -> None:
-        """发送 JSON 到 WebSocket 客户端，发送失败仅记录警告。
+    @property
+    def ws(self) -> Any:
+        """底层 WebSocket 连接（只读）——调用方按连接身份定位通道时用。"""
+        return self._ws
+
+    async def send_json(self, data: dict) -> None:
+        """发送一个已序列化的 wire 帧（契约模型经 `wire_dict()` 后传入）。
+
+        发送失败仅记录 warning，不向上抛——单连接故障不应中断广播。
+        原为私有 `_send_json`；2026-09-12 公开：`core/input`、`core/services`、
+        `core/agent` 三处跨包调用此前都要写 `# noqa: SLF001`，而 `capabilities.py`
+        的 docstring 直接写着「WebSocketChannel 无公开 send」——是已知缺口而非设计。
 
         Args:
             data: 要发送的 JSON 可序列化字典。
@@ -107,7 +117,7 @@ class WebSocketChannel(OutputChannel):
         Args:
             typing: True 表示开始输入，False 表示输入结束。
         """
-        await self._send_json(TypingMessage(typing=typing).wire_dict())
+        await self.send_json(TypingMessage(typing=typing).wire_dict())
 
     async def on_text_delta(self, delta: str, *, stream_id: int | None = None) -> None:
         """发送流式文本增量。
@@ -117,7 +127,7 @@ class WebSocketChannel(OutputChannel):
             stream_id: 可选的流标识。
         """
         # 契约：stream_id None → 缺省省略（X?）
-        await self._send_json(DeltaMessage(content=delta, stream_id=stream_id).wire_dict())
+        await self.send_json(DeltaMessage(content=delta, stream_id=stream_id).wire_dict())
 
     async def on_expression(self, expression: str, intensity: float = 1.0, *,
                             conversation_id: str | None = None,
@@ -131,7 +141,7 @@ class WebSocketChannel(OutputChannel):
             expression: 表情/情绪标识。
             intensity: 强度，0.0~1.0。
         """
-        await self._send_json(ExpressionMessage(
+        await self.send_json(ExpressionMessage(
             expression=expression, intensity=intensity,
             conversationId=conversation_id, generationId=generation_id,
             characterId=character_id, characterInstanceId=character_instance_id,
@@ -151,7 +161,7 @@ class WebSocketChannel(OutputChannel):
         """发送 v2 Live2D 表现建议；v1 通道防御性忽略。"""
         if self.protocol_version < 2:
             return
-        await self._send_json(Live2DDirectiveMessage(
+        await self.send_json(Live2DDirectiveMessage(
             conversationId=conversation_id, generationId=generation_id,
             characterId=character_id, characterInstanceId=character_instance_id,
             characterRevision=character_revision,
@@ -168,14 +178,14 @@ class WebSocketChannel(OutputChannel):
             params: 可选的动作参数。
         """
         # 契约：params None → 缺省省略（X?）；ActionMessage.params 已 Optional（批次 8c F3）
-        await self._send_json(ActionMessage(action=action, params=params).wire_dict())
+        await self.send_json(ActionMessage(action=action, params=params).wire_dict())
 
     async def on_tool_started(self, *, call_id: str, tool_name: str, runtime: str,
                               input_summary: str | None = None,
                               generation_id: str | None = None,
                               conversation_id: str | None = None) -> None:
         """工具开始（v2 展示生命周期）：发 tool.started 帧。"""
-        await self._send_json(ToolStartedMessage(
+        await self.send_json(ToolStartedMessage(
             callId=call_id, toolName=tool_name, runtime=ToolRuntime(runtime),
             inputSummary=input_summary, generationId=generation_id,
             conversationId=conversation_id,
@@ -189,7 +199,7 @@ class WebSocketChannel(OutputChannel):
                                 generation_id: str | None = None,
                                 conversation_id: str | None = None) -> None:
         """工具完成（v2 展示生命周期）：发 tool.completed 帧。"""
-        await self._send_json(ToolCompletedMessage(
+        await self.send_json(ToolCompletedMessage(
             callId=call_id, toolName=tool_name, runtime=ToolRuntime(runtime),
             success=success, outputSummary=output_summary, error=error, errorType=error_type,
             durationMs=duration_ms, truncated=truncated, generationId=generation_id,
@@ -204,7 +214,7 @@ class WebSocketChannel(OutputChannel):
             params: 可选的指令参数。
         """
         # 契约：params None → 缺省省略（X?）
-        await self._send_json(CommandMessage(command=cmd, params=params).wire_dict())
+        await self.send_json(CommandMessage(command=cmd, params=params).wire_dict())
 
     async def on_audio_chunk(self, chunk: bytes, *, stream_id: int = 0) -> None:
         """发送音频流 chunk（base64 编码）。
@@ -218,7 +228,7 @@ class WebSocketChannel(OutputChannel):
         import base64
         seq = self._audio_seq.get(stream_id, 0)
         self._audio_seq[stream_id] = seq + 1
-        await self._send_json(AudioMessage(
+        await self.send_json(AudioMessage(
             stream_id=stream_id, seq=seq,
             data=base64.b64encode(chunk).decode("ascii"), is_final=False).wire_dict())
 
@@ -231,7 +241,7 @@ class WebSocketChannel(OutputChannel):
                              character_instance_id: str | None = None,
                              character_revision: int | None = None) -> None:
         """音频流开始（stream_id = playback ID）。"""
-        await self._send_json(AudioStartMessage(
+        await self.send_json(AudioStartMessage(
             stream_id=stream_id, format=AudioFormat(format), sampleRate=sample_rate,
             durationMs=duration_ms,
             conversationId=conversation_id, generationId=generation_id,
@@ -242,7 +252,7 @@ class WebSocketChannel(OutputChannel):
     async def on_audio_cancelled(self, stream_id: int) -> None:
         """音频流被取消——清理 _audio_seq 残留 + 通知前端清理孤儿 chunk。"""
         self._audio_seq.pop(stream_id, None)
-        await self._send_json(AudioCancelledMessage(stream_id=stream_id).wire_dict())
+        await self.send_json(AudioCancelledMessage(stream_id=stream_id).wire_dict())
 
     async def on_audio_end(self, stream_id: int = 0, *, format: str = "wav") -> None:
         """发送音频流结束标记。
@@ -252,7 +262,7 @@ class WebSocketChannel(OutputChannel):
             format: 音频格式，'wav' 或 'mp3'。
         """
         self._audio_seq.pop(stream_id, None)
-        await self._send_json(AudioEndMessage(
+        await self.send_json(AudioEndMessage(
             stream_id=stream_id, format=AudioFormat(format),
         ).wire_dict())
 
@@ -262,7 +272,7 @@ class WebSocketChannel(OutputChannel):
         Args:
             state: FSM 状态名。
         """
-        await self._send_json(StateMessage(state=state).wire_dict())
+        await self.send_json(StateMessage(state=state).wire_dict())
 
     async def on_token_usage(self, data: dict) -> None:
         """发送 token 消耗统计。
@@ -275,7 +285,7 @@ class WebSocketChannel(OutputChannel):
         # 契约字段名 byModel（内部 data 仍为 by_model，此处显式转换）。
         turn = data.get("turn") or {}
         session = data.get("session") or {}
-        await self._send_json(TokenUsageMessage(
+        await self.send_json(TokenUsageMessage(
             turn=TokenTurnStats(
                 rounds=[TokenRound.model_validate(r) for r in (turn.get("rounds") or [])],
                 turn_total=turn.get("turn_total"),
@@ -306,7 +316,7 @@ class WebSocketChannel(OutputChannel):
                 receivedAt=received_at, status="rejected",
                 error=AckError.model_validate(error) if error is not None
                 else AckError(code="INTERNAL", message="未知错误", retryable=False))
-        await self._send_json(ack.wire_dict())
+        await self.send_json(ack.wire_dict())
 
     async def on_generation_started(self, *, generation_id: str, message_id: str,
                                     conversation_id: str | None = None,
@@ -316,7 +326,7 @@ class WebSocketChannel(OutputChannel):
                                     character_instance_id: str | None = None,
                                     character_revision: int | None = None) -> None:
         """发送 v2 生成开始。"""
-        await self._send_json(GenerationStartedMessage(
+        await self.send_json(GenerationStartedMessage(
             generationId=generation_id, messageId=message_id,
             conversationId=conversation_id, requestId=request_id, model=model,
             characterId=character_id, characterInstanceId=character_instance_id,
@@ -327,7 +337,7 @@ class WebSocketChannel(OutputChannel):
                                             segment_index: int, channel: MessageChannel, kind: SegmentKind,
                                             conversation_id: str | None = None) -> None:
         """发送 v2 分段开始。"""
-        await self._send_json(GenerationSegmentStartedMessage(
+        await self.send_json(GenerationSegmentStartedMessage(
             generationId=generation_id, segmentId=segment_id,
             segmentIndex=segment_index, channel=channel, kind=kind,
             conversationId=conversation_id,
@@ -337,7 +347,7 @@ class WebSocketChannel(OutputChannel):
                                   segment_index: int, delta_sequence: int, delta: str,
                                   conversation_id: str | None = None) -> None:
         """发送 v2 分段增量。"""
-        await self._send_json(GenerationDeltaMessage(
+        await self.send_json(GenerationDeltaMessage(
             generationId=generation_id, segmentId=segment_id,
             segmentIndex=segment_index, deltaSequence=delta_sequence, delta=delta,
             conversationId=conversation_id,
@@ -348,7 +358,7 @@ class WebSocketChannel(OutputChannel):
                                               content: str | None = None,
                                               conversation_id: str | None = None) -> None:
         """发送 v2 分段完成。"""
-        await self._send_json(GenerationSegmentCompletedMessage(
+        await self.send_json(GenerationSegmentCompletedMessage(
             generationId=generation_id, segmentId=segment_id,
             segmentIndex=segment_index, channel=channel, kind=kind, content=content,
             conversationId=conversation_id,
@@ -375,7 +385,7 @@ class WebSocketChannel(OutputChannel):
                 total=conversation_usage.get("total", 0),
                 byModel=conversation_usage.get("by_model", {}),
             )
-        await self._send_json(GenerationCompletedMessage(
+        await self.send_json(GenerationCompletedMessage(
             generationId=generation_id, messageId=message_id, channel=channel,
             finishReason=FinishReason(finish_reason), usage=usage, model=model,
             mood=mood, completeness=completeness,
@@ -393,7 +403,7 @@ class WebSocketChannel(OutputChannel):
                                    character_instance_id: str | None = None,
                                    character_revision: int | None = None) -> None:
         """发送 v2 父失败。model 为 turn 启动快照（批次 5 D8），可缺省省略。"""
-        await self._send_json(GenerationFailedMessage(
+        await self.send_json(GenerationFailedMessage(
             generationId=generation_id, messageId=message_id, code=code,
             message=message, retryable=retryable, model=model,
             details=details or {},
@@ -414,7 +424,7 @@ class WebSocketChannel(OutputChannel):
         """
         if self.protocol_version < 2:
             return
-        await self._send_json(CharacterStateChangedMessage(
+        await self.send_json(CharacterStateChangedMessage(
             conversationId=conversation_id, characterId=character_id,
             characterInstanceId=character_instance_id,
             characterRevision=character_revision, stateVersion=state_version,
@@ -435,7 +445,7 @@ class WebSocketChannel(OutputChannel):
             data = vars(msg)
         # 契约：MessageMessage 仅 role/content/mood；其余键（如 content_type/
         # tool_calls）由广播方另行发送，不在此帧承载
-        await self._send_json(MessageMessage(
+        await self.send_json(MessageMessage(
             role=data.get("role"), content=data.get("content"), mood=data.get("mood"),
         ).wire_dict())
 
