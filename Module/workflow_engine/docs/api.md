@@ -336,7 +336,13 @@ class WorkflowStatus(StrEnum):
 
 ## 9. Push —— SSE 端点（Debug 专用）
 
-由 `WorkflowDebugAPI`（`debug_api.py`）管理：内部 500ms 轮询 WorkflowEngine → diff → SSE 推送。
+由 `WorkflowDebugAPI`（`debug_api.py`）管理：500ms 轮询 WorkflowEngine → diff → SSE 推送。
+
+**轮询懒启动（2026-09-12 起）**：`start()`（aiohttp on_startup 驱动）只标记就绪，**不**启动轮询；
+首个 SSE 订阅者到达才拉起 `_poll_loop`，最后一个订阅者离开即停止并复位 diff 基线。
+此前 `start()` 无条件拉起轮询，后端每次开机就开始 2Hz 空转——每 500ms 遍历全部
+task × node_states、抽 graph edges、做整表 diff——**哪怕没有任何订阅者**（纯开销、零收益）。
+`GET /debug/api/tasks`（一次性快照）不启动轮询。
 
 ```
 GET /debug/api/tasks          → JSON 全量快照（WorkflowDebugAPI.snapshot_handler）

@@ -2,7 +2,8 @@
 
 from unittest.mock import MagicMock
 import pytest
-from core.agent.server import AgentServer
+from aiohttp import web
+from core.agent.server import AgentServer, _route_registered
 
 pytestmark = pytest.mark.service
 
@@ -71,3 +72,49 @@ class TestRunServerAppFactory:
     async def test_missing_app_factory_fails_fast(self, fake_agent):
         with pytest.raises(RuntimeError, match="app_factory"):
             await AgentServer.run_server(fake_agent)
+
+
+class TestDebugBannerLine:
+    """启动横幅的 /debug 行必须反映**实际注册结果**。
+
+    历史缺陷（2026-09-12 修正）：该行无条件写「/debug 仪表盘可用」，而该路由只在
+    ``static/debug.html`` 存在时注册（Vite 构建产物，本机常年未构建）——于是横幅
+    在仪表盘恰好 404 的时候宣称它可用。
+    """
+
+    @staticmethod
+    async def _noop(_request):
+        return web.Response(text="ok")
+
+    def _app_without_debug(self) -> web.Application:
+        app = web.Application()
+        app.router.add_get("/health", self._noop)
+        return app
+
+    def _app_with_debug(self) -> web.Application:
+        app = self._app_without_debug()
+        app.router.add_get("/debug", self._noop)
+        return app
+
+    def test_route_registered_false_when_absent(self):
+        assert _route_registered(self._app_without_debug(), "/debug") is False
+
+    def test_route_registered_true_when_present(self):
+        assert _route_registered(self._app_with_debug(), "/debug") is True
+
+    def test_route_registered_ignores_prefix_match(self):
+        """/debug/api 存在不等于 /debug 页面存在（模糊匹配会重演原缺陷）。"""
+        app = web.Application()
+        app.router.add_get("/debug/api", self._noop)
+        assert _route_registered(app, "/debug") is False
+
+    def test_line_says_unbuilt_when_route_absent(self):
+        line = AgentServer._debug_banner_line(self._app_without_debug(), "127.0.0.1", 8765)
+        assert "未构建" in line
+        assert "8765" not in line          # 不得给出一个打不开的地址
+        assert "可用" not in line
+
+    def test_line_gives_url_when_route_present(self):
+        line = AgentServer._debug_banner_line(self._app_with_debug(), "127.0.0.1", 8765)
+        assert line.endswith("http://127.0.0.1:8765/debug")
+        assert "未构建" not in line

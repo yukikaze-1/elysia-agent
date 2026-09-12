@@ -161,8 +161,9 @@ _TASK_SPAWN_ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         (2, "_task_futures[task_id] 注册表；stop() wait→cancel→再 wait；逐任务 cancel 走 lifecycle"),
     ("Module/workflow_engine/workflow_engine.py", "WorkflowEngine.resume"):
         (1, "_task_futures[task_id]（快路径，同 _drain_queue）；spawn 失败显式回滚槽位"),
-    ("Module/workflow_engine/debug_api.py", "WorkflowDebugAPI.start"):
-        (1, "_poll_task 字段；stop() cancel + await（aiohttp on_shutdown 驱动）"),
+    # debug_api 的 _poll_loop 已于 2026-09-12 收口到 AsyncTaskScope（懒启动：首个
+    # SSE 订阅者才拉起）——不再是裸 create_task，故此处条目已删除。R6 会因条数漂移
+    # 报错正是提醒：收口后必须同步删掉 allowlist 条目。
     ("Module/workflow_engine/core/executor.py", "Executor.execute"):
         (1, "orphan_tools 集合 + 两个 done callback（discard / 取异常）；正常路径 shield await，stop() 兜底清扫"),
     ("Module/tts/gpt_sovits.py", "GPTSoVitsBackend._call_api"):

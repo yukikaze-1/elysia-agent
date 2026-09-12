@@ -74,8 +74,14 @@ if $WITH_FRONTEND; then
         echo "  ✗ --with-frontend 需要 npm——请先安装 Node.js/npm，或去掉该 flag 用 backend-only"
         exit 1
     fi
-elif [[ -f "static/index.html" ]]; then
-    echo "  ✓ 跳过前端构建（static/ 已存在，聊天界面默认停用，SERVE_CHAT=1 恢复；/debug 可用）"
+elif [[ -f "static/index.html" || -f "static/debug.html" ]]; then
+    # 两个页面是**各自独立**的构建产物：`serve_chat=False` 时只有 /debug 有用，
+    # 而 `/debug` 的路由仅在 static/debug.html 存在时注册（core/input/server.py）。
+    # 旧文案只看 index.html 就断言「/debug 可用」——与后端横幅同一种谎报（2026-09-12 修）。
+    _chat=$([[ -f "static/index.html" ]] && echo "有" || echo "无")
+    _dbg=$([[ -f "static/debug.html" ]] && echo "有" || echo "无")
+    echo "  ✓ 跳过前端构建（static/ 已存在）—— / 聊天页: ${_chat}，/debug 仪表盘: ${_dbg}"
+    echo "    （缺哪个用 --with-frontend 构建；聊天界面默认停用，SERVE_CHAT=1 恢复）"
 else
     echo "  ⚠ 跳过前端构建（backend-only，无 static/）——/ 与 /debug 均无 UI，仅 WS/REST/API 可用"
 fi

@@ -39,6 +39,12 @@
 
 **Debug 仪表盘的实际可达性（2026-09-12 核实）**：`/debug` 的 **HTML 壳**由 `_register_static_routes` 以「`static/debug.html` 存在」为条件注册，而该文件是 **Vite 构建产物**（`.gitignore:10-12`）——**未构建前端时该路由根本不注册，`/debug` 恒 404**。而 `/debug/api/*` 是**无条件注册**的（`register_debug_routes` 无守卫）——即 **UI 可缺、API 恒在**。这个不对称本身就是一处待收口项。
 
+同一核实修正了两处「运行时可见的虚假陈述」（2026-09-12 已修）：
+
+- **启动横幅曾无条件写「/debug 仪表盘可用」**，而该路由是条件注册的——于是它在页面恰好 404 的时候宣称页面可用。现改为读**路由表实际注册结果**（`AgentServer._debug_banner_line` + `_route_registered`），未构建时改印「未构建（缺 static/debug.html）—— cd frontend && npm run build」，不再给出打不开的地址。
+- **`WorkflowDebugAPI` 的 500ms 轮询曾由 on_startup 无条件拉起**，无人订阅也空转（遍历全部 task × node_states + 抽 graph edges + 整表 diff）。现为**懒启动**：首个 SSE 订阅者才拉起，最后一个离开即停止。安全含义：这个常驻循环此前是「无鉴权面之外的持续资源消耗」，现在只在有人真的订阅读取时才存在。
+
+
 - `/static/` 静态挂载（`server.py:119-120`）与 `/debug` 壳**均无鉴权**，构建产物存在时匿名可加载（**注意：文档 §1.1 表格曾写 `SERVER_AUTH_TOKEN` 护 `/debug/*`，实际只护 `/debug/api/*`**）；
 - `/debug/api/*` 全部 25 条路由经 `_check_auth`（中间件判据 `path.startswith("/debug/api")`，`debug_routes/__init__.py:33`）；
 - **前端不携带任何凭据**（`frontend/src/` 全目录 `Authorization` 零命中）→ 一旦配置 `SERVER_AUTH_TOKEN`，整个面板数据面 401（**S2-F3**）。任务流的 `EventSource` 协议上无法加请求头，故修 SSE 需另择载体（query token / 短签 / cookie）。

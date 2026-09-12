@@ -1,6 +1,7 @@
 """WorkflowDebugAPI — WorkflowEngine 调试数据收集 + SSE 实时推送。
 
-内部 500ms 轮询 WorkflowEngine 内部状态，diff 后通过 SSE 推送给前端。
+**按需**轮询 WorkflowEngine 内部状态（懒启动——首个 SSE 订阅者到达才收集，
+最后一个离开即停止），diff 后通过 SSE 推送给前端。
 """
 
 from __future__ import annotations
@@ -9,9 +10,11 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
+
+from Module._common.task_scope import AsyncTaskScope, cancel_and_drain
 
 if TYPE_CHECKING:
     from Module.workflow_engine.workflow_engine import WorkflowEngine
@@ -33,9 +36,16 @@ class WorkflowDebugAPI:
         app.router.add_get('/debug/api/tasks', api.snapshot_handler)
         app.router.add_get('/debug/api/tasks/stream', api.sse_handler)
 
-    生命周期：
-        start()  → 启动 _poll_loop 后台协程
-        stop()   → 取消 _poll_loop，清理 subscribers
+    生命周期（**轮询懒启动**，2026-09-12 起）：
+        start()       → 就绪；**不**启动轮询（见下）
+        subscribe()   → 首个订阅者到达时才启动 _poll_loop
+        unsubscribe() → 最后一个订阅者离开时停止 _poll_loop 并复位快照基线
+        stop()        → 停止轮询 + 通知订阅者断开；之后 subscribe() 不再拉起轮询
+
+    为什么懒启动：``_poll_loop`` 每 500ms 遍历全部 task × node_states、抽 graph
+    edges 并做整表 diff，**没有任何消费者时是纯开销**。此前 ``start()`` 在
+    aiohttp on_startup 无条件拉起它，于是后端每次开机就开始 2Hz 空转——哪怕
+    `/debug` 因为缺构建产物而 404、根本没人能打开这个面板。
     """
 
     def __init__(self, task_system: WorkflowEngine) -> None:
@@ -49,31 +59,58 @@ class WorkflowDebugAPI:
         self._last_snapshot: list[dict] | None = None
         self._last_task_ids: set[str] = set()
         self._last_event_time: float = time.monotonic()
-        self._poll_task: asyncio.Task[None] | None = None
+        self._poll_task: asyncio.Task[Any] | None = None
+        self._scope = AsyncTaskScope("workflow-debug-api")
+        self._started = False
 
     # ── 生命周期 ───────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """启动后台轮询循环（若尚未运行）。"""
-        if self._poll_task is not None:
-            return
-        self._poll_task = asyncio.create_task(self._poll_loop())
-        logger.info("WorkflowDebugAPI: 轮询已启动 (interval=%ss)", _POLL_INTERVAL)
+        """标记调试 API 就绪（幂等）。
+
+        **刻意不启动轮询**：没有订阅者时轮询只产生开销、不产生数据。轮询由
+        :meth:`subscribe` 按需拉起。
+        """
+        self._started = True
+        logger.info(
+            "WorkflowDebugAPI: 就绪（轮询懒启动：有订阅者才收集，interval=%ss）",
+            _POLL_INTERVAL)
 
     async def stop(self) -> None:
-        """停止轮询循环并通知所有订阅者断开。"""
-        if self._poll_task is not None:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
-            self._poll_task = None
+        """停止轮询循环并通知所有订阅者断开（幂等）。"""
+        self._started = False
+        await self._stop_polling()
         # 通知所有订阅者关闭连接
         for q in self._subscribers.values():
             await q.put(_SENTINEL)  # sentinel——通知 SSE handler 退出
         self._subscribers.clear()
         logger.info("WorkflowDebugAPI: 已停止")
+
+    def _ensure_polling(self) -> None:
+        """确保轮询循环在跑（幂等）。未 ``start()`` 时不做任何事。"""
+        if not self._started:
+            return
+        if self._poll_task is not None and not self._poll_task.done():
+            return
+        self._poll_task = self._scope.spawn(
+            self._poll_loop(), name="workflow-debug-poll")
+        logger.info(
+            "WorkflowDebugAPI: 轮询已启动 (interval=%ss, subscribers=%d)",
+            _POLL_INTERVAL, len(self._subscribers))
+
+    async def _stop_polling(self) -> None:
+        """停止轮询循环并复位快照基线（幂等）。"""
+        task, self._poll_task = self._poll_task, None
+        await cancel_and_drain(task, label="workflow-debug-poll")
+        if task is not None:
+            # 显式记一行——懒启动的另一半是懒停止，不落日志就无法验证它真的停了
+            logger.info(
+                "WorkflowDebugAPI: 轮询已停止（无订阅者，interval=%ss）", _POLL_INTERVAL)
+        # 复位基线：下一个订阅者应拿到全新全量快照，而不是与「停止前那一刻」做
+        # diff——否则无人观察期间消失的 task 会被补发一串 task_done。
+        self._last_snapshot = None
+        self._last_task_ids = set()
+        self._last_event_time = time.monotonic()
 
     # ── 数据收集 ───────────────────────────────────────────────────────
 
@@ -148,7 +185,9 @@ class WorkflowDebugAPI:
             list[dict]: SSE 事件列表，每项包含 event 和 data。
         """
         if old is None:
-            return []  # 首次轮询，等待 subscribe 触发全量 snapshot
+            # 基线未就位——理论不可达：subscribe() 先落基线再拉起轮询。留作防御，
+            # 顺带避免首轮把「全部现存任务」误报成 task_new。
+            return []
 
         events: list[dict] = []
         old_by_id = {t["task_id"]: t for t in old}
@@ -208,7 +247,11 @@ class WorkflowDebugAPI:
     # ── 轮询循环 ───────────────────────────────────────────────────────
 
     async def _poll_loop(self) -> None:
-        """后台轮询循环：500ms 间隔收集快照，diff 后 broadcast 给订阅者。"""
+        """后台轮询循环：500ms 间隔收集快照，diff 后 broadcast 给订阅者。
+
+        只在有订阅者期间存活（见类 docstring「生命周期」）——订阅者归零时由
+        :meth:`unsubscribe` 取消本协程。
+        """
         while True:
             try:
                 snapshot = self._collect_snapshot()
@@ -234,7 +277,7 @@ class WorkflowDebugAPI:
     # ── 订阅管理 ───────────────────────────────────────────────────────
 
     async def subscribe(self) -> tuple[str, asyncio.Queue[dict]]:
-        """新 SSE 客户端订阅。首条消息自动发送全量快照。
+        """新 SSE 客户端订阅。首条消息自动发送全量快照，并按需拉起轮询。
 
         Returns:
             tuple: (subscriber_id, queue)，队列用于接收 SSE 事件。
@@ -252,17 +295,27 @@ class WorkflowDebugAPI:
             self._last_task_ids = {t["task_id"] for t in self._last_snapshot}
             await q.put({"event": "snapshot", "data": self._last_snapshot})
 
+        # 基线就位**之后**才拉起轮询——否则 _poll_loop 可能先跑一轮拿到
+        # _last_snapshot is None 的早退分支。
+        if not self._started:
+            logger.warning(
+                "WorkflowDebugAPI: subscriber %s 在 start() 之前订阅"
+                "——只会收到首帧快照，不会有实时更新", sid)
+        self._ensure_polling()
+
         logger.info("WorkflowDebugAPI: subscriber %s 已连接 (total=%d)", sid, len(self._subscribers))
         return sid, q
 
     async def unsubscribe(self, sid: str) -> None:
-        """移除一个订阅者。
+        """移除一个订阅者；最后一个订阅者离开时停止轮询。
 
         Args:
             sid: 由 subscribe() 返回的订阅者 ID。
         """
         self._subscribers.pop(sid, None)
         logger.info("WorkflowDebugAPI: subscriber %s 已断开 (total=%d)", sid, len(self._subscribers))
+        if not self._subscribers:
+            await self._stop_polling()
 
     async def _broadcast(self, event: dict) -> None:
         """推送给所有 subscriber。满队列的跳过（前端太慢）。

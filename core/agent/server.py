@@ -36,6 +36,27 @@ logger = logging.getLogger(__name__)
 _RUNTIME_NOT_BACKEND_MSG = "PROFILE_RUNTIME_NOT_BACKEND: 该 Profile 由 Electron 执行"
 
 
+def _route_registered(app: web.Application, path: str) -> bool:
+    """/`path` 是否真的注册在 app 的路由表上（banner 的唯一事实来源）。
+
+    为什么查路由而不是查 ``static/debug.html``：一个页面可不可访问，由**注册结果**
+    决定——页面文件存在但 ``serve_static=False``、或将来换一种提供方式，文件判据都会
+    说错。查路由表则不可能与事实脱节。
+
+    典型误报场景（2026-09-12 修正）：banner 曾无条件宣称「/debug 仪表盘可用」，
+    而 ``/debug`` 仅在 ``static/debug.html`` 存在时才注册（Vite 构建产物，本机常年
+    未构建）——于是它在仪表盘恰好 404 的时候说它可用。
+
+    Agent 层不得 import core.input（架构规则 R2），故这里读的是 app 对象本身，
+    不做跨层导入。
+    """
+    for route in app.router.routes():
+        resource = getattr(route, "resource", None)
+        if resource is not None and getattr(resource, "canonical", None) == path:
+            return True
+    return False
+
+
 def _resolve_switch_params(
     svc: str, model_id: str,
 ) -> tuple[dict, str, Any]:
@@ -152,6 +173,19 @@ class AgentServer:
         if self._stt:
             return f"已连接 (model={self._stt.model})"
         return "未连接"
+
+    @staticmethod
+    def _debug_banner_line(app: web.Application, host: str, port: int) -> str:
+        """启动横幅的 /debug 行（可测）——按路由**实际注册结果**生成。
+
+        与 `_stt_banner_status` 同理：内联在 run_server 的 server_info 里无法直测。
+        该行曾无条件宣称「/debug 仪表盘可用」，而该路由只在 static/debug.html
+        存在时注册（Vite 构建产物）——于是它在仪表盘恰好 404 时说它可用。
+        """
+        if _route_registered(app, "/debug"):
+            return f"/debug 仪表盘: http://{host}:{port}/debug"
+        return ("/debug 仪表盘: 未构建（缺 static/debug.html）"
+                "—— cd frontend && npm run build")
 
     def next_request_id(self) -> RequestId:
         """生成并返回请求 ID，同时设置 ContextVar。供外部模块（STT 等）使用。
@@ -480,11 +514,13 @@ class AgentServer:
                     f"{'='*50}",
                 ])
             else:
-                # 聊天 UI 已停用：banner 补一行提示，避免 / 死链误导（SERVE_CHAT=1 可恢复）
+                # 聊天 UI 已停用：banner 补一行提示，避免 / 死链误导（SERVE_CHAT=1 可恢复）。
+                # debug 一行走 _debug_banner_line——它读的是路由表，不会宣称一个 404 的页面。
                 server_info = "\n".join([
                     f"  ---",
-                    f"  WebSocket: ws://{host}:{port}/ws  |  "
-                    f"聊天 UI 已停用（serve_chat=False），/debug 仪表盘可用；SERVE_CHAT=1 可恢复",
+                    f"  WebSocket: ws://{host}:{port}/ws",
+                    f"  聊天 UI 已停用（serve_chat=False），SERVE_CHAT=1 可恢复",
+                    f"  {self._debug_banner_line(app, host, port)}",
                     f"  STT: {self._stt_banner_status()}",
                     f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
                     f"  退出: Ctrl+C",   # 关闭服务按钮在 v1 聊天页（/ 404），不提示
