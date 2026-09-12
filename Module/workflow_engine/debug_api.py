@@ -21,9 +21,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_HEARTBEAT_INTERVAL = 30.0   # 30s 无事件则发心跳
-_POLL_INTERVAL = 0.5         # 500ms 内部轮询
-_SENTINEL: dict = {}          # shutdown 信号，替代 None（Queue[dict] 不接受 None）
+_HEARTBEAT_INTERVAL = 30.0      # 30s 无事件则发心跳（SSE 业务事件）
+_SSE_KEEPALIVE_INTERVAL = 10.0  # 10s 无事件则写一行注释（断连探测，非业务事件）
+_POLL_INTERVAL = 0.5            # 500ms 内部轮询
+_SENTINEL: dict = {}            # shutdown 信号，替代 None（Queue[dict] 不接受 None）
 
 
 class WorkflowDebugAPI:
@@ -354,6 +355,12 @@ class WorkflowDebugAPI:
 
         Returns:
             web.StreamResponse: SSE 流连接，持续推送任务状态变更。
+
+        每 ``_SSE_KEEPALIVE_INTERVAL`` 秒无业务事件时写一行 ``: keepalive`` 注释。
+        它**不是**心跳（业务心跳是 ``event: heartbeat``，30s 一次），唯一作用是
+        **强制一次写**：本协程停在 ``q.get()`` 上时无法感知对端已离开，只有写失败
+        才会走 ``finally`` → :meth:`unsubscribe` → 停轮询。没有它，一次正常关页
+        要等到 30s 后的业务心跳才被发现，闲置轮询就多跑 30s。
         """
         resp = web.StreamResponse(
             status=200,
@@ -370,7 +377,13 @@ class WorkflowDebugAPI:
         sid, q = await self.subscribe()
         try:
             while True:
-                event = await q.get()
+                try:
+                    event = await asyncio.wait_for(
+                        q.get(), timeout=_SSE_KEEPALIVE_INTERVAL)
+                except asyncio.TimeoutError:
+                    # 注释行——SSE 规范要求客户端忽略以 `:` 开头的行
+                    await resp.write(b": keepalive\n\n")
+                    continue
                 if event is _SENTINEL:  # sentinel——stop() 发送
                     break
                 data = json.dumps(event["data"], ensure_ascii=False, default=str)

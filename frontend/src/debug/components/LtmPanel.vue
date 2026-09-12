@@ -5,6 +5,7 @@ import { useAbortController } from '@/composables/useAbortController'
 import PaginationBar from './shared/PaginationBar.vue'
 import ConfirmModal from './shared/ConfirmModal.vue'
 import ExpandableText from './shared/ExpandableText.vue'
+import { debugFetch } from '../auth'
 
 interface LtmEntry { id: string; text: string; memory_type: string; poignancy: number; timestamp: string | number; metadata?: Record<string, unknown> }
 
@@ -57,7 +58,7 @@ async function load() {
     const params = new URLSearchParams({ limit: String(perPage.value), offset: String(store.ltmPage.offset) })
     if (search.value) params.set('search', search.value)
     if (typeFilter.value) params.set('type', typeFilter.value)
-    const res = await fetch(`/debug/api/ltm?${params}`, { signal: signal() })
+    const res = await debugFetch(`/debug/api/ltm?${params}`, { signal: signal() })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     entries.value = data.entries; total.value = data.total
@@ -83,14 +84,14 @@ function toggleAll() {
 
 async function deleteEntry(id: string) {
   try {
-    await fetch(`/debug/api/ltm/${id}`, { method: 'DELETE' })
+    await debugFetch(`/debug/api/ltm/${id}`, { method: 'DELETE' })
     load()
   } catch (e) { error.value = '删除失败: ' + (e as Error).message }
 }
 
 async function deleteSelected() {
   try {
-    for (const id of selectedIds.value) { await fetch(`/debug/api/ltm/${id}`, { method: 'DELETE' }) }
+    for (const id of selectedIds.value) { await debugFetch(`/debug/api/ltm/${id}`, { method: 'DELETE' }) }
     selectedIds.value = new Set()
     load()
   } catch (e) { error.value = '批量删除失败: ' + (e as Error).message }
@@ -99,7 +100,7 @@ async function deleteSelected() {
 async function clearAll() {
   try {
     // 破坏性操作：后端要求 ?confirm=<目标资源名> 类型化确认（core/storage/destructive_guard.py）
-    await fetch('/debug/api/ltm?confirm=ltm', { method: 'DELETE' })
+    await debugFetch('/debug/api/ltm?confirm=ltm', { method: 'DELETE' })
     load()
   } catch (e) { error.value = '清空失败: ' + (e as Error).message }
 }
@@ -108,7 +109,7 @@ function startEdit(entry: LtmEntry) { editingId.value = entry.id; editText.value
 
 async function saveEdit(id: string) {
   try {
-    await fetch(`/debug/api/ltm/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) })
+    await debugFetch(`/debug/api/ltm/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) })
     editingId.value = null
     load()
   } catch (e) { error.value = '保存失败: ' + (e as Error).message }
@@ -116,7 +117,7 @@ async function saveEdit(id: string) {
 
 async function createEntry() {
   try {
-    await fetch('/debug/api/ltm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: createText.value, memory_type: createType.value, poignancy: createPoignancy.value }) })
+    await debugFetch('/debug/api/ltm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: createText.value, memory_type: createType.value, poignancy: createPoignancy.value }) })
     createVisible.value = false; createText.value = ''; load()
   } catch (e) { error.value = '创建失败: ' + (e as Error).message }
 }

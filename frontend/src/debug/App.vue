@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, markRaw, type Component } from 'vue'
 import { useDebugStore } from '@/stores/debugStore'
+import { authRejected, clearToken, setToken } from './auth'
 import OverviewTab from './components/OverviewTab.vue'
 import DatabaseTab from './components/DatabaseTab.vue'
 import TasksTab from './components/TasksTab.vue'
+import TokenGate from './components/TokenGate.vue'
 
 const store = useDebugStore()
 
@@ -21,6 +23,18 @@ function switchTab(key: 'overview' | 'database' | 'tasks') {
 
 function togglePause() {
   store.paused = !store.paused
+}
+
+// 凭据闸门：只在后端 401 时出现（没配 SERVER_AUTH_TOKEN 的后端不会触发）
+function onToken(token: string) {
+  if (!setToken(token)) return
+  authRejected.value = false   // 乐观收起；下一次请求若仍 401 会重新弹出
+  store.retryNow()
+}
+
+function onClearToken() {
+  clearToken()
+  store.retryNow()
 }
 
 async function copyJson(indent: number) {
@@ -53,6 +67,13 @@ async function copyJson(indent: number) {
       <span v-if="store.error" class="poll-error">⚠ {{ store.error }}</span>
       <span v-if="store.paused" class="pause-indicator">已暂停</span>
     </header>
+
+    <!-- 凭据闸门：后端 401 时盖住整个面板——避免「全 0」被误读成真实状态 -->
+    <TokenGate
+      v-if="authRejected"
+      @submit="onToken"
+      @clear="onClearToken"
+    />
 
     <!-- Content -->
     <main class="debug-content">

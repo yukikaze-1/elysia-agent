@@ -70,15 +70,18 @@ frontend/
     │
     └── debug/                            # 独立 Debug 应用（Vite 多入口）
         ├── main.ts                       # 入口 + Pinia
-        ├── App.vue                       # Tab shell（概览 | 数据库 | 任务）
+        ├── App.vue                       # Tab shell（概览 | 数据库 | 任务）+ 凭据闸门
+        ├── auth.ts                       # 管理面凭据：sessionStorage + debugFetch（唯一允许裸 fetch 的地方）
+        ├── sse.ts                        # SSE over fetch（EventSource 设不了 Authorization 头）
         ├── types.ts                      # DebugData 等 TS 接口
         └── components/
+            ├── TokenGate.vue             # 凭据闸门（仅后端 401 时出现）
             ├── OverviewTab.vue           # 16 面板 2 列 grid
             ├── DatabaseTab.vue           # 容器，切换时加载子面板
             ├── LtmPanel.vue              # LTM CRUD（搜索防抖 + CRUD + 清空）
             ├── SessionPanel.vue          # 会话管理
             ├── ArchivePanel.vue          # 消息归档（搜索防抖 + 翻页）
-            ├── TasksTab.vue              # SSE EventSource + 自动重连
+            ├── TasksTab.vue              # SSE（fetch 流式）+ 指数退避重连
             ├── TaskCard.vue              # 任务卡片：vis-network DAG（实时更新）
             ├── shared/
             │   ├── PaginationBar.vue     # 分页导航（offset 语义）

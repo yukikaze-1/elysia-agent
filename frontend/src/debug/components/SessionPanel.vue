@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useAbortController } from '@/composables/useAbortController'
 import ConfirmModal from './shared/ConfirmModal.vue'
 import ExpandableText from './shared/ExpandableText.vue'
+import { debugFetch } from '../auth'
 
 interface SessionItem { session_id: string; message_count: number; updated_at: string; token_total: number }
 interface SessionDetail { session_id: string; messages: { role: string; timestamp: string; content: unknown; content_type?: Record<string, unknown>; parts: { content: string }[] }[]; params?: unknown; total?: number }
@@ -24,7 +25,7 @@ const pendingConfirm = ref<(() => Promise<void>) | null>(null)
 async function load() {
   loading.value = true; error.value = ''
   try {
-    const res = await fetch('/debug/api/sessions', { signal: signal() })
+    const res = await debugFetch('/debug/api/sessions', { signal: signal() })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     sessions.value = data.sessions || []
@@ -46,7 +47,7 @@ async function viewDetail(sessionId: string) {
   if (expandingId.value === sessionId) { expandingId.value = null; return }
   expandingId.value = sessionId; detailLoading.value = true
   try {
-    const res = await fetch(`/debug/api/sessions/${sessionId}`, { signal: signal() })
+    const res = await debugFetch(`/debug/api/sessions/${sessionId}`, { signal: signal() })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     detail.value = await res.json()
   } catch (e) { if ((e as Error).name === 'AbortError') return; detail.value = null }
@@ -54,12 +55,12 @@ async function viewDetail(sessionId: string) {
 }
 
 async function deleteSessions(ids: string[]) {
-  for (const id of ids) { await fetch(`/debug/api/sessions/${id}`, { method: 'DELETE' }) }
+  for (const id of ids) { await debugFetch(`/debug/api/sessions/${id}`, { method: 'DELETE' }) }
   selectedIds.value = new Set(); load()
 }
 
 async function clearAll() {
-  await fetch('/debug/api/sessions?confirm=sessions', { method: 'DELETE' }); load()
+  await debugFetch('/debug/api/sessions?confirm=sessions', { method: 'DELETE' }); load()
 }
 
 function confirmThen(fn: () => Promise<void>, msg: string) {

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import type { DebugData } from '@/debug/types'
+import { debugFetch } from '@/debug/auth'
 
 export const useDebugStore = defineStore('debug', () => {
   const data = ref<DebugData | null>(null)
@@ -19,7 +20,7 @@ export const useDebugStore = defineStore('debug', () => {
     try {
       _abortController?.abort()
       _abortController = new AbortController()
-      const res = await fetch('/debug/api', { signal: _abortController.signal })
+      const res = await debugFetch('/debug/api', { signal: _abortController.signal })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       data.value = await res.json()
       error.value = null
@@ -53,6 +54,13 @@ export const useDebugStore = defineStore('debug', () => {
     pollInterval = 2000
   }
 
+  /** 凭据变更后立刻重试一次，不用等退避计时（S2-F3 闸门「保存并重试」）。 */
+  function retryNow() {
+    stopPoll()   // 同时复位退避间隔并中止在途请求
+    if (activeTab.value === 'overview' && !paused.value) startPoll()
+    else fetchDebugData()   // 非概览页也要探一次，让 401 判定刷新
+  }
+
   // Tab 切换：切到 overview 开始轮询，切走停止
   watch(activeTab, (tab) => {
     if (tab === 'overview') startPoll()
@@ -68,5 +76,5 @@ export const useDebugStore = defineStore('debug', () => {
   // 初始化：默认在 overview tab，自动开始轮询
   startPoll()
 
-  return { data, activeTab, paused, error, ltmPage, archivePage, fetchDebugData, startPoll, stopPoll }
+  return { data, activeTab, paused, error, ltmPage, archivePage, fetchDebugData, startPoll, stopPoll, retryNow }
 })

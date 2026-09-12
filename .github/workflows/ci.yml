@@ -77,6 +77,10 @@ jobs:
         # 依赖方向（Module→core / 零依赖层 / 领域层→input）+ 跨包私有符号 + eager 环。
         # 纯 AST、无外部依赖；存量泄漏在脚本 allowlist 逐项登记理由，新增即红。
         run: python scripts/check_architecture.py
+      - name: Debug frontend auth guard (S2-F3)
+        # /debug/api/* 只认 SERVER_AUTH_TOKEN；所有请求必须经 debugFetch 带
+        # Authorization 头，EventSource 无法设头故禁用。纯静态扫描、无依赖。
+        run: python scripts/check_debug_auth.py
       - name: Run quick tests (unit + service, 无外部 key; F1 含 WorkflowEngine unit/service)
         # F1：不再 --ignore workflow——external marker 排除真实 LLM/DB E2E，
         # WorkflowEngine 确定性 unit/service 入合并门禁（破坏 cancel/submit 的提交会阻止合并）
@@ -130,6 +134,8 @@ jobs:
         run: make check-types
       - name: Architecture boundary check (ARCH-INC-P1-03)
         run: make check-arch
+      - name: Debug frontend auth guard (S2-F3)
+        run: make check-debug-auth
       - name: Run quick tests
         run: |
           set -a

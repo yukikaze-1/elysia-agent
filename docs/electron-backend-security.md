@@ -47,7 +47,14 @@
 
 - `/static/` 静态挂载（`server.py:119-120`）与 `/debug` 壳**均无鉴权**，构建产物存在时匿名可加载（**注意：文档 §1.1 表格曾写 `SERVER_AUTH_TOKEN` 护 `/debug/*`，实际只护 `/debug/api/*`**）；
 - `/debug/api/*` 全部 25 条路由经 `_check_auth`（中间件判据 `path.startswith("/debug/api")`，`debug_routes/__init__.py:33`）；
-- **前端不携带任何凭据**（`frontend/src/` 全目录 `Authorization` 零命中）→ 一旦配置 `SERVER_AUTH_TOKEN`，整个面板数据面 401（**S2-F3**）。任务流的 `EventSource` 协议上无法加请求头，故修 SSE 需另择载体（query token / 短签 / cookie）。
+- **前端凭据（S2-F3，2026-09-12 已修）**：此前 debug 前端**不携带任何凭据**（`Authorization` 零命中）→ 一旦配置 `SERVER_AUTH_TOKEN`，整个数据面 401、仪表盘退化成空壳。现在：
+  - 所有请求经 `frontend/src/debug/auth.ts::debugFetch` 补 `Authorization: Bearer <token>`；
+  - token 由页面弹出的**凭据闸门**输入，存 `sessionStorage`（关标签页即失效），**绝不进 URL、绝不落日志**——遵守 §1.3；
+  - 闸门**只在后端返回 401 时出现**，未配 `SERVER_AUTH_TOKEN` 的回环开发零打扰；
+  - 任务流的 `EventSource` 已换成 `frontend/src/debug/sse.ts` 的 `fetch` + `ReadableStream`（`EventSource` 协议上加不了请求头，这正是原先需要"另择载体"的原因——现无需 query token / 短签 / cookie）；
+  - 两道规则由 `make check-debug-auth`（`scripts/check_debug_auth.py`）静态守卫：debug 前端内除 `auth.ts` 外**不得出现裸 `fetch(`**，全目录**不得出现 `EventSource`**。漏改任一处调用即红。
+  - **不改变 CR-03 语义**：产品 token（`AGENT_ACCESS_TOKEN`）仍换不到管理面——实测带产品 token 请求 `/debug/api` 仍是 401 `AUTH_INVALID`。
+
 
 ### 1.3 凭据载体
 

@@ -66,7 +66,7 @@ bash scripts/start.sh --skip-preflight  # 显式跳过预检（降级，慎用�
 
 打开浏览器访问 **`http://localhost:8765`** —— v1 网页聊天默认停用（`/` 404），Debug 仪表盘 `/debug` 可用（需已构建前端，`static/debug.html` 存在）；`SERVE_CHAT=1`（env）可恢复浏览器聊天。日志输出到 `log/` 目录（主日志 `app.log`，全量 `app-debug.log`。详见 `log/README.md`）。停止：`Ctrl+C`。
 
-Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板，详见 [`static/debug.md`](static/debug.md)。
+Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板，详见 [`static/debug.md`](static/debug.md)。数据面 `/debug/api/*` 属管理面：配了 `SERVER_AUTH_TOKEN` 时页面会弹**凭据闸门**（填同一个值即可；存 `sessionStorage`、不进 URL、不落日志），未配则回环开发直接放行。
 
 ### 关键文件
 

@@ -344,6 +344,16 @@ class WorkflowStatus(StrEnum):
 task × node_states、抽 graph edges、做整表 diff——**哪怕没有任何订阅者**（纯开销、零收益）。
 `GET /debug/api/tasks`（一次性快照）不启动轮询。
 
+**keepalive 注释行**：业务事件之外，每 10s（`_SSE_KEEPALIVE_INTERVAL`）无事件时写入一行
+`: keepalive`。它是**注释**（`:` 开头，SSE 客户端按规范忽略），不是业务事件——唯一作用是
+**强制一次写**：handler 停在 `q.get()` 上时无法感知对端已离开，只有写失败才会走
+`finally` → `unsubscribe` → 停轮询。没有它，一次正常关页要等到 30s 后的业务心跳
+（`event: heartbeat`）才被发现，闲置轮询就白跑 30s。
+
+**鉴权（S2-F3）**：本端点属管理面，需 `Authorization: Bearer <SERVER_AUTH_TOKEN>`
+（产品 token 不算数，见 CR-03）。因此前端**不能**用 `EventSource`（协议上无法设置请求头），
+改用 `frontend/src/debug/sse.ts` 的 `fetch` + `ReadableStream` 消费。
+
 ```
 GET /debug/api/tasks          → JSON 全量快照（WorkflowDebugAPI.snapshot_handler）
 GET /debug/api/tasks/stream   → SSE 事件流（WorkflowDebugAPI.sse_handler）

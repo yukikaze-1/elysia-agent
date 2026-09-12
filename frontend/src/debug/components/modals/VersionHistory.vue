@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import ConfirmModal from '../shared/ConfirmModal.vue'
+import { debugFetch } from '../../auth'
 
 const props = defineProps<{ contentType: 'l2' | 'c6'; visible: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -18,7 +19,7 @@ async function load(before?: number) {
   try {
     const params = new URLSearchParams({ type: props.contentType, limit: '20' })
     if (before) params.set('before', String(before))
-    const res = await fetch(`/debug/api/character-versions?${params}`)
+    const res = await debugFetch(`/debug/api/character-versions?${params}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     versions.value = data.versions; total.value = data.total
@@ -32,7 +33,7 @@ watch(() => [props.visible, props.contentType], ([v]) => { if (v) load() })
 
 async function doRollback() {
   if (rollbackVersion.value === null) return
-  await fetch('/debug/api/character-rollback', {
+  await debugFetch('/debug/api/character-rollback', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type: props.contentType, version: rollbackVersion.value }),
   })

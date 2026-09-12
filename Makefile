@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -90,6 +90,12 @@ check-compose:
 # 存量泄漏在脚本内 allowlist 逐项登记理由，新增即红。
 check-arch:
 	python scripts/check_architecture.py
+
+# Debug 前端凭据守卫（S2-F3）：`/debug/api/*` 只认 SERVER_AUTH_TOKEN，
+# 所有请求必须经 debug/auth.ts::debugFetch 带 Authorization 头；
+# EventSource 协议上无法设置请求头，故一律禁用（SSE 走 debug/sse.ts）。
+check-debug-auth:
+	python scripts/check_debug_auth.py
 
 start:
 	bash scripts/start.sh

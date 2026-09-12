@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import TaskCard from './TaskCard.vue'
+import { readSseStream } from '../sse'
 
 interface TaskNode { node_id: string; status: string; attempt: number; summary: string; error?: string }
 interface Task { task_id: string; status: string; plan_version: number; created_at: string; error?: string; error_code?: string; phase: string; mailbox_depth: number; nodes: TaskNode[]; edges: [string, string][] }
@@ -10,70 +11,91 @@ const doneTasks = ref<Task[]>([])
 const connState = ref<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
 const connColor: Record<string, string> = { connected: 'var(--debug-green)', reconnecting: 'var(--debug-warn)', disconnected: 'var(--debug-red)' }
 
-let es: EventSource | null = null
+// 用 fetch+ReadableStream 而非 EventSource：后者无法带 Authorization 头，
+// 而管理面凭据必须走头（见 ../sse.ts 与 ../auth.ts）。
+let ctrl: AbortController | null = null
 let reconnectDelay = 1000
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let disposed = false
 
-function connect() {
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
-  if (es) { es.close(); es = null }
-  es = new EventSource('/debug/api/tasks/stream')
-  connState.value = 'connected'
-  // 注意：不在 connect() 内重置 reconnectDelay——
-  // onerror 重连会倍增，若在入口清零则指数退避失效，间隔恒 1000ms。
-  // 在 onopen（连接成功）时重置为初始值。
-  es.onopen = () => { reconnectDelay = 1000 }
+function parse<T>(event: string, raw: string): T | null {
+  try { return JSON.parse(raw) as T } catch (err) { console.warn(`SSE ${event} 解析失败:`, err); return null }
+}
 
-  es.addEventListener('snapshot', (e: MessageEvent) => {
-    try {
-      const data = JSON.parse(e.data)
-      tasks.value = Array.isArray(data) ? data : []
-    } catch (err) { console.warn('SSE snapshot 解析失败:', err) }
-  })
-  es.addEventListener('task_new', (e: MessageEvent) => {
-    try {
-      const t = JSON.parse(e.data)
-      if (!tasks.value.find(x => x.task_id === t.task_id)) tasks.value.unshift(t)
-    } catch (err) { console.warn('SSE task_new 解析失败:', err) }
-  })
-  es.addEventListener('task_update', (e: MessageEvent) => {
-    try {
-      const t = JSON.parse(e.data)
-      const idx = tasks.value.findIndex(x => x.task_id === t.task_id)
-      if (idx >= 0) tasks.value[idx] = { ...tasks.value[idx], ...t }
-    } catch (err) { console.warn('SSE task_update 解析失败:', err) }
-  })
-  es.addEventListener('task_done', (e: MessageEvent) => {
-    try {
-      const t = JSON.parse(e.data)
-      tasks.value = tasks.value.filter(x => x.task_id !== t.task_id)
-      if (!doneTasks.value.find(x => x.task_id === t.task_id)) {
-        doneTasks.value.unshift(t)
-        // 限制已完成任务列表最多 100 条，防止无限增长
-        if (doneTasks.value.length > 100) {
-          doneTasks.value = doneTasks.value.slice(0, 100)
-        }
-      }
-    } catch (err) { console.warn('SSE task_done 解析失败:', err) }
-  })
-  es.addEventListener('node_update', (e: MessageEvent) => {
-    try {
-      const { task_id, node_id, status, attempt } = JSON.parse(e.data)
-      const task = tasks.value.find(x => x.task_id === task_id)
-      if (task) { const node = task.nodes.find(n => n.node_id === node_id); if (node) { node.status = status; node.attempt = attempt } }
-    } catch (err) { console.warn('SSE node_update 解析失败:', err) }
-  })
+function onSnapshot(raw: string) {
+  const data = parse<unknown>('snapshot', raw)
+  if (data !== null) tasks.value = Array.isArray(data) ? (data as Task[]) : []
+}
 
-  es.onerror = () => {
-    es?.close(); es = null
-    connState.value = 'reconnecting'
-    reconnectTimer = setTimeout(() => { reconnectDelay = Math.min(reconnectDelay * 2, 30000); connect() }, reconnectDelay)
+function onTaskNew(raw: string) {
+  const t = parse<Task>('task_new', raw)
+  if (t && !tasks.value.find(x => x.task_id === t.task_id)) tasks.value.unshift(t)
+}
+
+function onTaskUpdate(raw: string) {
+  const t = parse<Task>('task_update', raw)
+  if (!t) return
+  const idx = tasks.value.findIndex(x => x.task_id === t.task_id)
+  if (idx >= 0) tasks.value[idx] = { ...tasks.value[idx], ...t }
+}
+
+function onTaskDone(raw: string) {
+  const t = parse<{ task_id: string; status: string; error?: string }>('task_done', raw)
+  if (!t) return
+  tasks.value = tasks.value.filter(x => x.task_id !== t.task_id)
+  if (!doneTasks.value.find(x => x.task_id === t.task_id)) {
+    doneTasks.value.unshift(t as unknown as Task)
+    // 限制已完成任务列表最多 100 条，防止无限增长
+    if (doneTasks.value.length > 100) doneTasks.value = doneTasks.value.slice(0, 100)
   }
+}
+
+function onNodeUpdate(raw: string) {
+  const d = parse<{ task_id: string; node_id: string; status: string; attempt: number }>('node_update', raw)
+  if (!d) return
+  const task = tasks.value.find(x => x.task_id === d.task_id)
+  const node = task?.nodes.find(n => n.node_id === d.node_id)
+  if (node) { node.status = d.status; node.attempt = d.attempt }
+}
+
+const handlers: Record<string, (raw: string) => void> = {
+  snapshot: onSnapshot,
+  task_new: onTaskNew,
+  task_update: onTaskUpdate,
+  task_done: onTaskDone,
+  node_update: onNodeUpdate,
+  // heartbeat / 未知事件静默忽略；`: keepalive` 注释行由解析器丢弃，不会到这
+}
+
+function dispatch(event: string, raw: string) { handlers[event]?.(raw) }
+
+async function connect() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+  ctrl?.abort()
+  ctrl = new AbortController()
+  const myCtrl = ctrl
+  try {
+    // 注意：不在 connect() 内重置 reconnectDelay——
+    // 重连会倍增，若在入口清零则指数退避失效，间隔恒 1000ms。
+    // 在 onOpen（连接成功）时重置为初始值。
+    await readSseStream('/debug/api/tasks/stream', dispatch, myCtrl.signal,
+      () => { connState.value = 'connected'; reconnectDelay = 1000 })
+  } catch (e) {
+    if (myCtrl.signal.aborted || disposed) return   // 主动断开（卸载/重连），不排重连
+    console.warn('SSE 连接中断:', (e as Error).message)
+  }
+  if (disposed || myCtrl.signal.aborted) return
+  connState.value = 'reconnecting'
+  reconnectTimer = setTimeout(() => {
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000)
+    connect()
+  }, reconnectDelay)
 }
 
 onMounted(connect)
 onUnmounted(() => {
-  es?.close()
+  disposed = true
+  ctrl?.abort()
   if (reconnectTimer) clearTimeout(reconnectTimer)
 })
 </script>

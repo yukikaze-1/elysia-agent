@@ -80,6 +80,10 @@
 | **CR-07** `clean_db.py` 默认 dry-run + 类型化确认 | ✅ 已修（**行为变更**）| `9b41beb8` |
 | **S2-E1** `remove_channel` 移入 `try/finally` | ✅ 已修 | `9b41beb8` |
 | 报告编号空间 / 计数口径 / 缺失章节 | ✅ 已修订 | `2b10bbe0` |
+| **S2-F3** `/debug` 无法携带 admin token（数据面 401） | ✅ 已修 | `8cba2feb` 后半 + 见下 |
+| 启动横幅 / `start.sh` 谎报 `/debug` 可用 | ✅ 已修 | `8cba2feb` |
+| `WorkflowDebugAPI` 500ms 轮询无条件常驻 | ✅ 已修（懒启动） | `8cba2feb` |
+| SSE 断连靠 30s 心跳才发现 | ✅ 已修（10s keepalive 注释行） | 见下 |
 | **CR-01** 轮换泄露凭据（步骤 1–2）| ⏳ **待 owner 执行** | 运维动作，非代码 |
 | **CR-02** 信号处理（部分：`except BaseException` + `try/finally`）| ⏳ 未开始 | 计划 P0 `#5` |
 | **CR-10** embedding 永久不可用 | ⏳ 未开始 | 计划 P0 `#6b` |
@@ -99,6 +103,34 @@
 
 > 上述每一项都用「临时回退修复 → 断言测试变红 → 恢复」验证过**守卫确实能抓到违规**，
 > 而非只看绿灯。
+
+**2026-09-12 第二批（`8cba2feb` 之后的 S2-F3 + 相关收口）新增的回归网**：
+
+| 文件 / 守卫 | 覆盖 | 项数 |
+|---|---|---:|
+| `Module/workflow_engine/tests/unit/test_debug_api_lazy_poll.py` | 轮询懒启动全生命周期 | 19 |
+| `Module/workflow_engine/tests/unit/test_debug_api_sse.py` | SSE keepalive 注释行 + 断连停轮询 | 5 |
+| `core/input/tests/test_debug_boot_path.py` | `/debug` 条件注册 + 横幅与路由表一致 | 7 |
+| `core/agent/tests/test_server_banner.py::TestDebugBannerLine` | 横幅不谎报 | 5 |
+| `scripts/check_debug_auth.py`（`make check-debug-auth`，已进 CI） | S2-F3：除 `auth.ts` 外禁裸 `fetch(`；全目录禁 `EventSource` | 静态 |
+
+同样的反证流程：横幅退回「无条件宣称可用」→ 2 红；`start()` 退回无条件拉起轮询 → 4 红；
+SSE 退回阻塞等事件 → keepalive 测试红；某面板退回裸 `fetch` → 守卫红；
+R6 allowlist 条目复辟 → `check-arch` 红（陈旧登记）。
+
+**S2-F3 的实测结论（2026-09-12，`bash ./start.sh` 真实路径）**：
+
+| 请求 | 结果 |
+|---|---|
+| `GET /debug`（构建后） | 200 |
+| `GET /debug/api` 无凭据 | 401 `AUTH_REQUIRED` |
+| `GET /debug/api` 带 `SERVER_AUTH_TOKEN` | **200** |
+| `GET /debug/api` 带产品 token（`AGENT_ACCESS_TOKEN`） | 401 `AUTH_INVALID`（**CR-03 语义未被削弱**） |
+| `GET /debug/api/tasks/stream` 带 `SERVER_AUTH_TOKEN` | 200（fetch 流式 SSE 实测） |
+
+浏览器端用 CDP 全流程验证：无凭据 → 弹闸门；填入 token → 闸门收起、16 面板显示真实数据；
+任务 Tab 显示「已连接」。服务端日志同时确认：带凭据的 SSE 建立订阅 →
+`轮询已启动 (subscribers=1)`，断开 → `轮询已停止（无订阅者）`。
 
 **⚠️ 遗留的行为变更影响（需运维动作）**：
 

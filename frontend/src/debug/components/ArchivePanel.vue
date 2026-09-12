@@ -5,6 +5,7 @@ import { useAbortController } from '@/composables/useAbortController'
 import PaginationBar from './shared/PaginationBar.vue'
 import ConfirmModal from './shared/ConfirmModal.vue'
 import ExpandableText from './shared/ExpandableText.vue'
+import { debugFetch } from '../auth'
 
 interface ArchiveEntry { _id: string; role: string; timestamp: string; parts: { content: string }[]; content: unknown }
 
@@ -36,7 +37,7 @@ async function load() {
     const params = new URLSearchParams({ limit: String(perPage.value), skip: String(store.archivePage.offset) })
     if (search.value) params.set('search', search.value)
     if (roleFilter.value) params.set('role', roleFilter.value)
-    const res = await fetch(`/debug/api/archive?${params}`, { signal: signal() })
+    const res = await debugFetch(`/debug/api/archive?${params}`, { signal: signal() })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json(); entries.value = data.messages; total.value = data.total
   } catch (e) { if ((e as Error).name === 'AbortError') return; error.value = (e as Error).message }
@@ -51,12 +52,12 @@ function onPageChange(newOffset: number) { store.archivePage.offset = newOffset;
 function toggleSelect(id: string) { const s = new Set(selectedIds.value); s.has(id) ? s.delete(id) : s.add(id); selectedIds.value = s }
 function toggleAll() { if (selectedIds.value.size === entries.value.length) selectedIds.value = new Set(); else selectedIds.value = new Set(entries.value.map(e => e._id)) }
 
-async function deleteEntry(id: string) { try { await fetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); load() } catch (e) { error.value = '删除失败: ' + (e as Error).message } }
-async function deleteSelected() { try { for (const id of selectedIds.value) await fetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); selectedIds.value = new Set(); load() } catch (e) { error.value = '批量删除失败: ' + (e as Error).message } }
-async function clearAll() { try { await fetch('/debug/api/archive?confirm=archive', { method: 'DELETE' }); load() } catch (e) { error.value = '清空失败: ' + (e as Error).message } }
+async function deleteEntry(id: string) { try { await debugFetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); load() } catch (e) { error.value = '删除失败: ' + (e as Error).message } }
+async function deleteSelected() { try { for (const id of selectedIds.value) await debugFetch(`/debug/api/archive/${id}`, { method: 'DELETE' }); selectedIds.value = new Set(); load() } catch (e) { error.value = '批量删除失败: ' + (e as Error).message } }
+async function clearAll() { try { await debugFetch('/debug/api/archive?confirm=archive', { method: 'DELETE' }); load() } catch (e) { error.value = '清空失败: ' + (e as Error).message } }
 
 function startEdit(e: ArchiveEntry) { editingId.value = e._id; editText.value = (e.parts || []).map(p => p.content).join(' ') }
-async function saveEdit(id: string) { try { await fetch(`/debug/api/archive/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) }); editingId.value = null; load() } catch (e) { error.value = '保存失败: ' + (e as Error).message } }
+async function saveEdit(id: string) { try { await debugFetch(`/debug/api/archive/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: editText.value }) }); editingId.value = null; load() } catch (e) { error.value = '保存失败: ' + (e as Error).message } }
 
 function roleColor(r: string) { const m: Record<string, string> = { user: '#6af', assistant: '#f6a', tool: '#fa6', system: '#888' }; return m[r] || '#888' }
 function confirmThen(fn: () => Promise<void>, msg: string) { confirmMsg.value = msg; confirmVisible.value = true; pendingConfirm.value = fn }
