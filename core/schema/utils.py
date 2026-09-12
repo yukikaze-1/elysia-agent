@@ -50,7 +50,22 @@ def now_iso() -> str:
 
 
 def _validate_src(v: str) -> str:
-    """校验 Part src 字段：不能为空，必须是合法 URL / data URI / 绝对路径 / 存在的本地文件。
+    """校验 Part src 字段：非空，且必须是 URL / data URI / 服务端绝对路径。
+
+    **不做任何文件系统访问**（CR-09，2026-09-12）。历史实现有一条
+    `Path(v).exists() → 放行` 的兜底，它有双重问题：
+
+    1. 构成**文件系统探测预言机**（校验期即产生可观测的 stat 副作用）；
+    2. 恰好放行 `.env` / `../../etc/passwd` 这类**服务端任意相对路径读**的载荷——
+       客户端可控的 `content` 里 `src` 会一路走到 `resolve_image_source`。
+
+    现改为**只按形态白名单放行**，相对路径一律拒绝，与
+    `core/schema/adapters/image_source.py` 的读取白名单保持同一套边界。
+
+    允许的形态（与 image_source 的解析分支一一对应）：
+        - `http://` / `https://`：远程 URL，交由模型服务端拉取
+        - `data:`：内联 data URI
+        - `/` 开头：服务端构造的绝对路径（`/api/attachments/{id}`、`/static/...`）
 
     Args:
         v: 待校验的 src 字符串。
@@ -59,17 +74,14 @@ def _validate_src(v: str) -> str:
         校验通过的原字符串。
 
     Raises:
-        ValueError: src 为空或无法解析为有效路径/URL。
+        ValueError: src 为空，或不属于上述任一白名单形态。
     """
-    from pathlib import Path
-
     if not v:
         raise ValueError("src 不能为空")
     if v.startswith(("http://", "https://", "data:", "/")):
         return v
-    if Path(v).exists():
-        return v
-    raise ValueError(f"无效的 src: {v!r}")
+    raise ValueError(
+        f"无效的 src: {v!r}（只接受 http(s):// / data: / 以 / 开头的服务端路径）")
 
 
 def _new_id(prefix: str) -> str:

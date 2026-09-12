@@ -99,7 +99,12 @@ async def _dispatch_text(
                          len(text_content.strip()),
                          data.get("clientMessageId", ""))
     elif isinstance(text_content, list):
-        # 多模态 content-as-parts 分支原样保留（不动）
+        # 多模态 content-as-parts 分支（v1 老路径）。
+        # CR-09（2026-09-12）：此处曾把客户端 src 原样透传，与 REST `/api/chat` 同根因
+        # （RC-13）。现由 `_validate_src` 形态白名单 + `resolve_image_source` 读取白名单
+        # 双层收口——非白名单 src 在 `parts_from_dicts` 即抛 ValidationError，由
+        # `ws_handler.py` 的分派边界（`except ValidationError`）回 CONTRACT_VALIDATION
+        # error 帧且连接存活。故本分支**无需**再做一次收口，也不应向 v1 连接发 v2 ack。
         from core.schema.adapters.message_adapter import content_text, parts_from_dicts
         await ctx.agent.process_message(text=content_text(parts_from_dicts(text_content)), user_name=ctx.agent.user_name, content=text_content)
         logger.debug("WS 收到多模态消息")

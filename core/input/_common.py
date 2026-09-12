@@ -6,7 +6,7 @@ _find_channel / _send_ack 原在 ws_handler.py，被 v2 深业务（ws_v2）与�
 
 import logging
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -94,6 +94,80 @@ def _tool_error(code: str, message: str, status: int) -> web.Response:
         requestId=f"req_{uuid.uuid4().hex[:24]}", error=message,
     ).wire_dict()
     return web.json_response(env, status=status)
+
+
+_ATTACHMENT_PART_TYPES = frozenset({"image", "file", "audio", "video"})
+
+
+def _safe_id(value: Any) -> str:
+    """取一个可安全参与路径拼接的 id（非空、无路径分隔符、无 `..`）。
+
+    Args:
+        value: 客户端提供的 id 字段（类型不可信）。
+
+    Returns:
+        合法 id 字符串；不合法时返回空串。
+    """
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if not value or ".." in value:
+        return ""
+    if "/" in value or "\\" in value:
+        return ""
+    return value
+
+
+def _sanitize_client_content(content: Any) -> tuple[list[dict] | None, str]:
+    """把客户端 content 收口为「服务端同源」形态（CR-09）。
+
+    客户端可控的 `content` 是 `list[dict]`，一路到达 prompt 组装。历史实现**原样透传**，
+    于是 `{"type":"image","src":".env"}` 会在 `resolve_image_source` 里被当作本地路径
+    读出并 base64 送往第三方 LLM + 落库可读回 —— 服务端任意相对路径读。
+
+    收口规则与 **v2 WS 同源**：`src` 一律由服务端按 id 构造，客户端提供的 `src` 不参与决策。
+
+        image / file / audio / video → 必须携带 attachment_id，src := /api/attachments/{id}
+        sticker                      → 必须携带 sticker_id，   src := /static/stickers/{id}.png
+        text                         → 原样保留
+        未知类型                      → 拒绝
+
+    两个入口（REST `/api/chat`、v1 WS content-as-parts）共用本函数，避免"同一语义
+    两条入口做法相反"（RC-13）。
+
+    Args:
+        content: 请求体里的 content 字段（类型不可信）。
+
+    Returns:
+        (收口后的 content, 错误消息)。错误消息非空表示调用方应拒绝该请求。
+        content 为 None 时原样返回 None（允许纯 text 请求）。
+    """
+    if content is None:
+        return None, ""
+    if not isinstance(content, list):
+        return None, "content 必须是数组"
+    out: list[dict] = []
+    for idx, item in enumerate(content):
+        if not isinstance(item, dict):
+            return None, f"content[{idx}] 必须是对象"
+        ptype = item.get("type")
+        if ptype in _ATTACHMENT_PART_TYPES:
+            aid = _safe_id(item.get("attachment_id"))
+            if not aid:
+                return None, (
+                    f"content[{idx}]: {ptype} 部件必须携带合法 attachment_id"
+                    "（不接受客户端自带的 src）")
+            out.append({**item, "src": f"/api/attachments/{aid}"})
+        elif ptype == "sticker":
+            sid = _safe_id(item.get("sticker_id"))
+            if not sid:
+                return None, f"content[{idx}]: sticker 部件必须携带合法 sticker_id"
+            out.append({**item, "src": f"/static/stickers/{sid}.png"})
+        elif ptype == "text":
+            out.append(item)
+        else:
+            return None, f"content[{idx}]: 未知部件类型 {ptype!r}"
+    return out, ""
 
 
 def _archive_to_client(msgs: list[Message]) -> list[dict]:

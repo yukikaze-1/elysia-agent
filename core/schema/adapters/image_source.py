@@ -19,10 +19,22 @@ data URI、远程 URL）。两者变更原因不同，故拆分。
 | `http(s)://localhost...` / `http(s)://127.0.0.1...` | 尝试在 uploads/static 目录找同名文件 → data URI；否则原样返回 |
 | `http(s)://其他` | 原样返回（交给模型服务端拉取） |
 | `/` 开头的本地绝对路径 | 在 uploads/static 目录找同名文件 → data URI；否则原样返回 |
-| 其他（相对路径） | 存在则 data URI，否则原样返回 |
+| 其他（相对路径等） | **原样返回，不做任何文件系统访问** |
 
 设计约定：**解析失败一律原样返回**，不抛异常、不返回空——调用方（prompt 组装）不应因
 某张图片定位不到而整体失败。
+
+## 安全边界（CR-09，2026-09-12）
+
+本模块**只允许从两处读取本地文件**，二者都是服务端可控位置：
+
+1. **附件注册表**（`/api/attachments/{id}` → `AttachmentFileResolver`）；
+2. **白名单目录内的裸文件名**（`_find_by_filename`，仅在 `data/uploads/images/` 与 `static/` 下按 basename 查找）。
+
+**绝不接受客户端提供的任意路径。** 历史实现有一条「相对路径 → `Path(src).exists()` → 读文件」的兜底分支，
+它构成**服务端任意相对路径读**：`POST /api/chat` / v1 WS 的 `content` 是客户端可控 `list[dict]`，
+`src=".env"` 即可读出进程权限内任意文件并作为 image data URI 送往第三方 LLM + 落库可读回。
+该分支已移除（见下方 `resolve_image_source`）。
 """
 
 from __future__ import annotations
@@ -107,7 +119,8 @@ def resolve_image_source(src: str) -> str:
             return _to_data_uri(found)
         return src
 
-    local_path = Path(src)
-    if local_path.exists():
-        return _to_data_uri(local_path)
+    # CR-09（2026-09-12）：此处原有「相对路径 → Path(src).exists() → 读文件」兜底分支，
+    # 构成服务端任意相对路径读（src=".env" / "../../etc/passwd" 均可）。客户端可控
+    # content 会一路走到这里，故**必须**保持「非白名单形态一律原样返回、不碰文件系统」。
+    # 需要读本地文件请走 /api/attachments/{id}（附件注册表）或白名单目录内的裸文件名。
     return src
