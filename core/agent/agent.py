@@ -84,6 +84,7 @@ from core.monitoring.idle_monitor import IdleMonitor
 from core.adapter.llm_adapter import LLMAdapter
 from core.memory.consolidator import MemoryConsolidator
 from core.personality import CharacterEngine
+from core.personality.protocol import CharacterEngineProtocol
 from core.memory.memory_reflector import MemoryReflector
 from core.character.registry import CharacterRuntimeRegistry
 from core.character.runtime import CharacterRuntime
@@ -447,7 +448,7 @@ class Agent(AgentLifecycle, AgentServer):
             fsm=self._fsm,
             bus=self._bus,
             output=self._output,
-            tts_mgr=self._cognitive._tts_mgr,
+            tts_mgr=self._cognitive.tts_manager,
             status=self.status,
         )
         self._cognitive.phases = self.phases
@@ -817,7 +818,7 @@ class Agent(AgentLifecycle, AgentServer):
         # C1/P1-06：前一条 cognitive task 若尚未真正开始（同 tick 第二条已 accepted 的
         # 消息，pre-start）——不得隐式取消它（否则已 ACK 消息静默丢失且 lease 泄漏），
         # 改为入队等待；只有任务真正在跑时才允许「新输入打断当前生成」。
-        prev = self._cognitive._current_task
+        prev = self._cognitive.current_task
         if prev is not None and not prev.done() and prev not in self._started_cognitive_tasks:
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
@@ -877,7 +878,7 @@ class Agent(AgentLifecycle, AgentServer):
                 data.conversation_id, data.session_work_reserved)
             raise
         task.add_done_callback(_lease_release_done)
-        self._cognitive._current_task = task
+        self._cognitive.current_task = task
 
     def _handle_system_tick(self, data: SystemTickData) -> None:
         """处理 SYSTEM_TICK 事件——silence_timeout 时主动开启话题。
@@ -903,7 +904,7 @@ class Agent(AgentLifecycle, AgentServer):
                 ),
                 name="cognitive-proactive"
             )
-            self._cognitive._current_task = task
+            self._cognitive.current_task = task
         else:
             logger.warning("SYSTEM_TICK 未知 proactive reason=%s（暂未消费）", data.reason)
 
@@ -924,7 +925,7 @@ class Agent(AgentLifecycle, AgentServer):
             ),
             name=f"task-result-{data.task_id}",
         )
-        self._cognitive._current_task = task
+        self._cognitive.current_task = task
 
     async def _handle_state_change(self, data: StateChangeData) -> None:
         """处理 STATE_CHANGE 事件——FSM 状态变更。
@@ -1083,7 +1084,7 @@ class Agent(AgentLifecycle, AgentServer):
     @property
     def tts_manager(self):
         """TTS 流管理器（播放控制，BE-063 audio.cancel 入口）。"""
-        return self._cognitive._tts_mgr
+        return self._cognitive.tts_manager
 
     @property
     def stt(self):
@@ -1182,8 +1183,12 @@ class Agent(AgentLifecycle, AgentServer):
         return rt.reflector if rt else None
 
     @property
-    def character_engine(self):
+    def character_engine(self) -> "CharacterEngineProtocol":
         """角色引擎（当前 instance）。Task 11（M3）：经 registry 解析，非全局单例。
+
+        返回类型是**接口**（`CharacterEngineProtocol`）而非具体类：Agent 是构造
+        `CharacterEngine` 的组合根，但对外只承诺契约——引擎可单独迭代或整体替换，
+        消费方（cognitive / character / prompt / debug）不受影响。
 
         当前活动会话的 binding → instance_id → registry.get(instance_id).engine。
         binding 缺失回退默认内置 Elysia instance。
@@ -1226,7 +1231,7 @@ class Agent(AgentLifecycle, AgentServer):
     @property
     def character_reflector(self):
         """角色反思器（当前 instance engine.reflector）。"""
-        return self.character_engine._reflector
+        return self.character_engine.reflector
 
     @property
     def character(self):

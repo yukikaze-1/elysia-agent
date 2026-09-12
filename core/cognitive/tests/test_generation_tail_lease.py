@@ -34,13 +34,6 @@ from core.status.agent_fsm import AgentFSM
 pytestmark = pytest.mark.service
 
 
-class _FreeLock:
-    """未持有的锁替身——evolution_locks_busy 只读 `locked()`。"""
-
-    def locked(self) -> bool:
-        return False
-
-
 def _rt() -> CharacterRuntime:
     rt = CharacterRuntime(
         instance=CharacterInstance(
@@ -50,10 +43,8 @@ def _rt() -> CharacterRuntime:
             characterId="chr_builtin_elysia", revision=1, displayName="Elysia"),
         user_identity=UserIdentity(userId="usr_local_default", displayName="妖梦"),
     )
-    rt.bind_engine(SimpleNamespace(
-        _reflector=SimpleNamespace(_reflect_lock=_FreeLock()),
-        _compression=SimpleNamespace(_compression_lock=_FreeLock()),
-    ))
+    # 引擎替身只实现协议面：busy 判定经 evolution_in_flight（不照抄私有锁结构）
+    rt.bind_engine(SimpleNamespace(evolution_in_flight=lambda: False))
     return rt
 
 
@@ -63,8 +54,7 @@ def _make_loop(rt: CharacterRuntime) -> CognitiveLoop:
     llm = MagicMock(spec=LLMAdapter)
     llm.model = "mock"
     prompt = MagicMock()
-    prompt._character = MagicMock()
-    prompt._character.name = "TestBot"
+    prompt.character_name = "TestBot"
     prompt.build_messages = AsyncMock(
         return_value=[{"role": "user", "content": "hi"}])
     default = SessionMemory(session_id="default")

@@ -254,6 +254,16 @@ class OpenAICompatBackend(LLMBackend):
             if content:
                 yield content
 
+    @property
+    def raw_client(self) -> Any:
+        """底层 AsyncOpenAI 客户端（`LLMBackend.raw_client` 的实现）。
+
+        供 `LLMAdapter.get_raw_client()` 取用（WorkflowEngine Planner/Executor
+        直接发起请求）。未初始化时返回 None——`_client` 由 `_create_clients()`
+        建立，此前消费方靠 `getattr(backend, "_client", None)` 私有穿透兜底。
+        """
+        return getattr(self, "_client", None)
+
     async def close(self) -> None:
         await self._client.close()
         if self._beta_client:

@@ -77,7 +77,7 @@ class TestCharacterM3Properties:
 
     def test_character_reflector_resolves_from_engine(self, agent):
         """character_reflector 返回当前 instance engine 的 reflector。"""
-        assert agent.character_reflector is agent.character_engine._reflector
+        assert agent.character_reflector is agent.character_engine.reflector
 
 
 class TestMemoryV2Properties:

@@ -111,6 +111,21 @@ class Jinja2Section(PromptSection):
         self._env.filters["datetime"] = _datetime_filter
         self._cached_template = None
 
+    def switch_template(self, template_path: str) -> None:
+        """切换模板路径并失效缓存（幂等：同路径不重复失效）。
+
+        消费方（`core/prompt/prompt_assembler.py::_switch_template`）按角色
+        切换到运行时模板；此前逐个戳 `_template_path` / `_cached_template`，
+        缓存失效逻辑因此散落在消费方——那是本类的内部不变式，收口在此。
+
+        Args:
+            template_path: 新的 .j2 模板绝对路径。
+        """
+        if self._template_path == template_path:
+            return
+        self._template_path = template_path
+        self._cached_template = None
+
     def _load_template(self) -> str:
         """从磁盘读取模板源文件。
 

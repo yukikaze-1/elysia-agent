@@ -25,6 +25,9 @@ from Module.output import OutputManager
 from core.personality.compression import CompressionManager
 from core.personality.emotion import EmotionDetector
 from core.personality.awareness import AwarenessJudge
+from core.personality.protocol import (
+    C1Data, C6Data, C9Data, CharacterReflectorProtocol,
+)
 from core.schema.compression import CompressionTrigger
 from core.personality._utils import _schedule, _extract_tag  # _extract_tag 保持向后兼容
 from core.schema.utils import now_iso
@@ -41,23 +44,9 @@ logger = logging.getLogger(__name__)
 AWARENESS_COOLDOWN_SECONDS = 3600  # 同一主题冷却 1 小时，避免频繁输出"我变了"
 AWARENESS_MAX_HISTORY = 10         # state_history 保留条数
 
-@dataclass
-class C1Data:
-    """C1 Personality section 渲染数据。"""
-    core_personality: str
-    self_personality: str
-
-
-@dataclass
-class C9Data:
-    """C9 SelfPerception section 渲染数据。"""
-    awareness_text: str
-
-
-@dataclass
-class C6Data:
-    """C6 SpeakingStyle section 渲染数据。"""
-    speaking_style_c6: str  # "" 表示使用默认模板
+# C1Data / C9Data / C6Data 定义在 core/personality/protocol.py（接口层），
+# 此处 re-export 保持 `from core.personality.engine import C1Data` 向后兼容。
+__all__ = ["CharacterEngine", "C1Data", "C9Data", "C6Data"]
 
 
 class CharacterEngine:
@@ -185,8 +174,8 @@ class CharacterEngine:
         if not self._awareness.is_allowed():
             return C9Data(awareness_text="")
 
-        self._awareness._last_awareness_time = time.time()
-        self.state.last_awareness_time = self._awareness._last_awareness_time
+        self.last_awareness_time = time.time()
+        self.state.last_awareness_time = self.last_awareness_time
         self.state.awareness_show_count += 1
         return C9Data(awareness_text=self.state.approved_awareness_text)
 
@@ -233,12 +222,75 @@ class CharacterEngine:
     # ---- awareness 属性与方法（代理到 AwarenessJudge）----
 
     @property
-    def _last_awareness_time(self) -> float:
-        return self._awareness._last_awareness_time
+    def last_awareness_time(self) -> float:
+        """上次 C9 觉察展示的时间戳（0.0 = 从未展示）。
 
-    @_last_awareness_time.setter
-    def _last_awareness_time(self, value: float) -> None:
-        self._awareness._last_awareness_time = value
+        公开面：冷却计时的读写口。`state.last_awareness_time` 是它的持久化投影，
+        由 `render_c9` 写、`restore_evolution_state()` 读回。
+        """
+        return self._awareness.last_awareness_time
+
+    @last_awareness_time.setter
+    def last_awareness_time(self, value: float | None) -> None:
+        self._awareness.last_awareness_time = value
+
+    # ---- 演化状态生命周期（CharacterEngineProtocol 的消费方契约）----
+    #
+    # 这一组替代了消费方此前的私有穿透：
+    #   `engine._reflector` / `engine._compression._compression_lock` /
+    #   `engine._last_awareness_time` / `engine._awareness._last_awareness_time` /
+    #   `engine._version_repo`
+    # 语义归属在引擎内部（哪些子组件算「演化」、复位要清哪些东西），
+    # 消费方只说「现在是忙的吗」「复位」「恢复」，不感知子组件构成——
+    # 这也是 CharacterEngine 可被整体替换的前提。
+
+    @property
+    def reflector(self) -> "CharacterReflector | None":
+        """当前反思组件（公开只读）。
+
+        消费方用途有二：① 固化引用后传给 `buffer_message(reflector=...)`——
+        `buffer` 是异步的，不固化会在 session switch 后写到新会话的 reflector；
+        ② debug 面板读反思遥测。
+        """
+        return self._reflector
+
+    @property
+    def version_repo(self) -> "CharacterVersionRepository | None":
+        """L2/C6 版本历史仓库；未装配时为 None（公开只读）。"""
+        return self._version_repo
+
+    def evolution_in_flight(self) -> bool:
+        """是否有任何演化动作在途（反思 / L3→L2 压缩）。
+
+        角色替换等破坏性变更用它做快速拒绝。**这是快速路径，不是唯一防线**——
+        领域层的 runtime lease 独立守住不变量（见 `core/character/runtime.py`）。
+        """
+        return bool(
+            (self._reflector is not None and self._reflector.in_flight)
+            or self._compression.in_flight
+        )
+
+    def reset_evolution_state(self) -> None:
+        """复位演化状态：反思缓冲/上下文/遥测 + 觉察冷却。
+
+        与 `CharacterRuntimeState` 的字段复位配套（角色重置流程）——
+        state 归零后，子组件里同样持有这些值的副本也必须一起归零。
+        """
+        if self._reflector is not None:
+            self._reflector.reset_state()
+        self._awareness.last_awareness_time = None
+
+    def restore_evolution_state(self, *, last_awareness_time: float | None = None) -> None:
+        """从共享 state 恢复演化状态（实例/session 切换后调用）。
+
+        Args:
+            last_awareness_time: 持久化的上次觉察时间戳；None/0 表示从未展示过，
+                此时保持冷却计时归零（首次不受冷却限制）。
+        """
+        if last_awareness_time:
+            self._awareness.last_awareness_time = last_awareness_time
+        if self._reflector is not None:
+            self._reflector.restore_from_state()
 
     def _awareness_allowed(self) -> bool:
         """检查当前是否允许 C9 渲染。
@@ -286,10 +338,6 @@ class CharacterEngine:
 
     async def _refresh_c6(self) -> None:
         await self._compression._refresh_c6()
-
-    @property
-    def _compression_lock(self):
-        return self._compression._compression_lock
 
     async def flush_compression(self) -> None:
         await self._compression.flush()
@@ -344,7 +392,7 @@ class CharacterEngine:
     # ---- Reflector 代理 ----
 
     async def _safe_buffer(self, user_msg: str, assistant_msg: str,
-                           reflector: "CharacterReflector | None" = None) -> None:
+                           reflector: "CharacterReflectorProtocol | None" = None) -> None:
         """安全缓冲：捕获 reflector.buffer 异常，避免 fire-and-forget task 异常丢失。
 
         C3/P1-10：target 在调用时固化（发起会话的 reflector）——session switch
@@ -364,7 +412,7 @@ class CharacterEngine:
             logger.warning("buffer_message: reflector.buffer 失败", exc_info=True)
 
     def buffer_message(self, user_msg: str, assistant_msg: str,
-                       reflector: "CharacterReflector | None" = None
+                       reflector: "CharacterReflectorProtocol | None" = None
                        ) -> "asyncio.Task | None":
         """缓冲一轮对话到 CharacterReflector。
 
@@ -458,9 +506,14 @@ class CharacterEngine:
         self._emotion._push_expression(mood_text, intensity)
 
     @property
-    def _idle_expressions(self):
+    def idle_expressions(self) -> list[str]:
+        """空闲随机表情候选列表（公开可写，默认取角色配置）。
+
+        每角色差异经 `character_config.emotion.idle_expressions` 注入；
+        测试/调试需要更换候选池时经此属性，不再戳 `_emotion._idle_expressions`。
+        """
         return self._emotion._idle_expressions
 
-    @_idle_expressions.setter
-    def _idle_expressions(self, value: list[str]):
+    @idle_expressions.setter
+    def idle_expressions(self, value: list[str]) -> None:
         self._emotion._idle_expressions = value

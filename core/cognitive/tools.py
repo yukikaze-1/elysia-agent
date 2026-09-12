@@ -274,7 +274,7 @@ class CognitiveTools:
             user_profile=self._user_profile or _default_user_profile(),
             tools=tool_list,
             global_constraints=task_system.constraints,
-            session_id=_SessionId(getattr(self._session, "_session_id", "default")),
+            session_id=_SessionId(self._session.session_id),
         )
 
         if prep_result.status.value == "no_matching_tools":

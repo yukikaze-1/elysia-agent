@@ -646,7 +646,7 @@ class TestEmotionEngineEdges:
         assert mood == "happy"
 
     def test_push_idle_empty_list(self, engine):
-        engine._idle_expressions = []
+        engine.idle_expressions = []
         engine._push_idle()
         # 不应抛异常
 
@@ -672,7 +672,7 @@ class TestEmotionEngineEdges:
     @pytest.mark.asyncio
     async def test_push_idle_uses_list(self, engine):
         """push_idle_expression 从 idle_expressions 中选取。"""
-        engine._idle_expressions = ["neutral", "blink"]
+        engine.idle_expressions = ["neutral", "blink"]
         # 不应抛异常 —— 从列表随机选取
         await engine.push_idle_expression()
 

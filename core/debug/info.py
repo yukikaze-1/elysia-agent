@@ -225,9 +225,9 @@ async def _collect_character_and_reflector(agent: "Agent", info: DebugInfo) -> N
     try:
         info.l2_version_count = 0
         engine = getattr(agent, "character_engine", None)
-        if engine and getattr(engine, "_version_repo", None):
+        if engine and engine.version_repo:
             sid = agent.session.session_id
-            info.l2_version_count = await engine._version_repo.count_versions(  # noqa: SLF001
+            info.l2_version_count = await engine.version_repo.count_versions(
                 sid, content_type="l2")
     except Exception:
         info.l2_version_count = 0
@@ -235,22 +235,25 @@ async def _collect_character_and_reflector(agent: "Agent", info: DebugInfo) -> N
     try:
         info.c6_version_count = 0
         engine = getattr(agent, "character_engine", None)
-        if engine and getattr(engine, "_version_repo", None):
-            info.c6_version_count = await engine._version_repo.count_versions(  # noqa: SLF001
+        if engine and engine.version_repo:
+            info.c6_version_count = await engine.version_repo.count_versions(
                 agent.session.session_id, content_type="c6")
     except Exception:
         info.c6_version_count = 0
 
     ref = agent.character_reflector
-    info.reflector_exists = True
-    info.reflector_buffer_size = ref.buffer_size
-    info.reflector_last_reflection_at = ref.last_reflection_at
-    info.reflector_locked = ref.locked
-    info.reflector_last_prompt_system = ref.last_prompt_system[:1000]
-    info.reflector_last_prompt_user = ref.last_prompt_user[:1000]
-    info.reflector_last_success = ref.last_success
-    info.reflector_last_duration_ms = ref.last_duration_ms
-    info.reflector_last_text_len = ref.last_text_len
+    # `character_reflector` 的类型是 `CharacterReflectorProtocol | None`（引擎缺失时
+    # 为 None）。面板宁可展示「不存在」也不该 500——探针降级原则同 health。
+    info.reflector_exists = ref is not None
+    if ref is not None:
+        info.reflector_buffer_size = ref.buffer_size
+        info.reflector_last_reflection_at = ref.last_reflection_at
+        info.reflector_locked = ref.locked
+        info.reflector_last_prompt_system = ref.last_prompt_system[:1000]
+        info.reflector_last_prompt_user = ref.last_prompt_user[:1000]
+        info.reflector_last_success = ref.last_success
+        info.reflector_last_duration_ms = ref.last_duration_ms
+        info.reflector_last_text_len = ref.last_text_len
 
     history = pe.state.self_perception_history
     info.self_perception_history = list(history[-5:])

@@ -216,11 +216,16 @@ class LLMAdapter:
     def get_raw_client(self) -> "object | None":
         """返回底层异步 HTTP 客户端，供 WorkflowEngine Planner/Executor 使用。
 
+        经 `LLMBackend.raw_client` 公开属性读取（2026-09-12 前为
+        `getattr(backend, "_client", None)` 私有穿透）。
+
         Returns:
             openai.AsyncOpenAI | httpx.AsyncClient | None
             如果后端不支持或客户端未初始化，返回 None。
         """
         backend = getattr(self, '_backend', None)
         if backend is not None:
-            return getattr(backend, '_client', None)
+            # getattr 保形：契约含「后端不支持 → None」，硬取属性会让不实现
+            # `raw_client` 的鸭子类型后端从「返回 None」变成抛 AttributeError。
+            return getattr(backend, "raw_client", None)
         return None

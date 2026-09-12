@@ -44,17 +44,17 @@ _ATTR_FUNCS = ("getattr", "hasattr", "setattr", "delattr")
 _NOQA = "noqa: SLF001"
 
 
-def _root_ident(node: ast.expr) -> str | None:
-    """属性链最左端标识符（`self._a._b` → `self`）。
+def _is_own_state(node: ast.expr) -> bool:
+    """是否为「直接访问自己的私有成员」（`self._x` / `cls._x`）。
 
-    根不是 `Name` 时返回 None——**必须按「未知根」处理并计入穿透**，不能当成
-    `self` 放行：`getattr(getattr(agent, "tool_adapter", None), "_manager", None)`
-    的根是内层 `Call`，放行它正是当初这处漂移躲过所有检查的原因。
+    只放过**一跳**。两点都重要：
+
+    - 根**未知**（如 `getattr(getattr(agent, "tool_adapter", None), "_manager")`
+      的内层是 `Call`）不能放行——放行它正是当初那处漂移躲过所有检查的原因；
+    - `self._engine._reflector` 的宿主是 `self._engine`（别的对象），同属穿透，
+      早期按「属性链最左端是 self」放行，`self._output._channels` 这类全部漏网。
     """
-    cur = node
-    while isinstance(cur, ast.Attribute):
-        cur = cur.value
-    return cur.id if isinstance(cur, ast.Name) else None
+    return isinstance(node, ast.Name) and node.id in ("self", "cls")
 
 
 def _penetration(node: ast.AST) -> str | None:
@@ -65,11 +65,11 @@ def _penetration(node: ast.AST) -> str | None:
             and isinstance(node.args[1].value, str)):
         name = node.args[1].value
         if name.startswith("_") and not name.startswith("__") \
-                and _root_ident(node.args[0]) not in ("self", "cls"):
+                and not _is_own_state(node.args[0]):
             return name
     if isinstance(node, ast.Attribute) and node.attr.startswith("_") \
             and not node.attr.startswith("__") \
-            and _root_ident(node) not in ("self", "cls"):
+            and not _is_own_state(node.value):
         return node.attr
     return None
 

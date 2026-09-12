@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from core.monitoring.token_tracker import TokenTracker
     from core.debug.prompt_recorder import PromptRecorder
     from core.debug.response_recorder import ResponseRecorder
-    from core.personality.engine import CharacterEngine
+    from core.personality.protocol import CharacterEngineProtocol
     from core.character.registry import CharacterRuntimeRegistry
     from core.character.runtime import CharacterRuntime
     from core.profile.profile_store import UserIdentityStore
@@ -144,7 +144,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         prompt: PromptAssembler,
         session_resolver: Callable[[SessionId | None, int], Awaitable[SessionMemory]],
         tool_adapter: ToolAdapter | None = None,
-        character_engine: "CharacterEngine | None" = None,
+        character_engine: "CharacterEngineProtocol | None" = None,
         consolidator: MemoryConsolidator | None = None,
         tts: TTSBackend | None = None,
         token_tracker: "TokenTracker | None" = None,
@@ -152,7 +152,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         generation_registry: "GenerationRegistry | None" = None,
         runtime_registry: "CharacterRuntimeRegistry | None" = None,
         runtime_factory: "Callable[[str], Awaitable[CharacterRuntime]] | None" = None,
-        engine_factory: "Callable[[CharacterRuntime], CharacterEngine] | None" = None,
+        engine_factory: "Callable[[CharacterRuntime], CharacterEngineProtocol] | None" = None,
     ):
         """初始化认知循环。
 
@@ -228,7 +228,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # TTS 流管理器——抽取出来的子系统
         self._tts_mgr = TTSStreamManager(
             tts, output,
-            prompt._character.name if prompt and hasattr(prompt, '_character') else "unknown",
+            getattr(prompt, "character_name", None) or "unknown",
         )
         self._executing_tools: list[str] = []  # 当前正在执行中的工具名 (供 debug 面板)
         self._timing_history: list[dict] = []  # 最近 100 轮请求的计时数据 (供 debug 面板)
@@ -279,6 +279,29 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         if self._generation_ctx is None:
             return None
         return self._generation_ctx.user_message_id or None
+
+    @property
+    def tts_manager(self) -> TTSStreamManager:
+        """TTS 流管理器（公开只读）。
+
+        跨模块消费面：Agent 的生命周期步骤需要 `set_backend(None)` /
+        `cancel_all()`；此前经 `cognitive._tts_mgr` 私有穿透。
+        """
+        return self._tts_mgr
+
+    @property
+    def current_task(self) -> "asyncio.Task | None":
+        """当前在途的认知任务（None = 空闲）。
+
+        消费面是 Agent 的事件处理：读它判断「前一条任务是否真的开始跑」
+        （pre-start 的同 tick 第二条消息不得被隐式取消），写入则是 spawn 之后
+        登记任务句柄。取消经 `cancel_current()`，不要直接用本句柄 cancel。
+        """
+        return self._current_task
+
+    @current_task.setter
+    def current_task(self, task: "asyncio.Task | None") -> None:
+        self._current_task = task
 
     @property
     def process_lock(self) -> asyncio.Lock:
@@ -391,7 +414,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             )
         return await self._runtime_factory(instance_id)
 
-    def _require_engine_factory(self, runtime: CharacterRuntime) -> CharacterEngine:
+    def _require_engine_factory(
+        self, runtime: CharacterRuntime,
+    ) -> CharacterEngineProtocol:
         """runtime 无 engine 时构造；engine_factory 未注入 → 清晰 RuntimeError。"""
         if self._engine_factory is None:
             raise RuntimeError(
@@ -888,7 +913,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
 
     async def _after_response(self, user_message: str, assistant_response: str, *,
                               session: SessionMemory | None = None,
-                              engine: "CharacterEngine | None" = None,
+                              engine: "CharacterEngineProtocol | None" = None,
                               consolidator: MemoryConsolidator | None = None,
                               memory_reflector: MemoryReflector | None = None,
                               ) -> "asyncio.Task[None] | None":
@@ -927,8 +952,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         target_session = session if session is not None else self._session
         target_engine = engine if engine is not None else self._engine
         # C3/P1-10：在首个 await 前固化发起会话的 reflector——consolidate await 期间
-        # session switch 会 rebind engine._reflector，晚读会写到新会话的 reflector。
-        target_reflector = getattr(target_engine, "_reflector", None) if target_engine else None
+        # session switch 会 rebind engine.reflector，晚读会写到新会话的 reflector。
+        target_reflector = target_engine.reflector if target_engine else None
         # Task 7（记忆 v2 隔离）：per-runtime consolidator/reflector 局部捕获（anti-race，
         # 与 session/engine 同构）。self._consolidator/_memory_reflector 恒 None（已删单例），
         # 仅作直接构造 loop 的测试路径 fallback。

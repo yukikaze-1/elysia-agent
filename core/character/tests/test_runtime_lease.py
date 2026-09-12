@@ -28,21 +28,23 @@ def _rt() -> CharacterRuntime:
     )
 
 
-class _FakeLock:
-    """只实现 `locked()` 的锁替身——evolution_locks_busy 只读这一个方法。"""
+class _FakeEngine:
+    """`CharacterEngineProtocol.evolution_in_flight()` 的最小替身。
+
+    2026-09-12 前这里造的是 `SimpleNamespace(_reflector=..., _compression=...)`
+    + 自造 `_FakeLock`——替身照抄了引擎的私有结构，把「引擎内部怎么组合锁」
+    固化进了 core/character 的测试。现在替身只实现协议里被消费的那一项。
+    """
 
     def __init__(self) -> None:
-        self.held = False
+        self.busy = False
 
-    def locked(self) -> bool:
-        return self.held
+    def evolution_in_flight(self) -> bool:
+        return self.busy
 
 
-def _engine_with_locks() -> SimpleNamespace:
-    return SimpleNamespace(
-        _reflector=SimpleNamespace(_reflect_lock=_FakeLock()),
-        _compression=SimpleNamespace(_compression_lock=_FakeLock()),
-    )
+def _engine_with_locks() -> _FakeEngine:
+    return _FakeEngine()
 
 
 def test_generation_lease_counts_nested_turns():
@@ -98,11 +100,11 @@ def test_destructive_mutation_rejected_while_evolution_lock_held():
     rt = _rt()
     engine = _engine_with_locks()
     rt.bind_engine(engine)  # type: ignore[arg-type]
-    engine._reflector._reflect_lock.held = True
+    engine.busy = True
     try:
         assert rt.try_begin_destructive_mutation() is False
     finally:
-        engine._reflector._reflect_lock.held = False
+        engine.busy = False
     assert rt.try_begin_destructive_mutation() is True
     rt.end_destructive_mutation()
 

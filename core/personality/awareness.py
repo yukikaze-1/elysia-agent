@@ -53,6 +53,20 @@ class AwarenessJudge:
 
     # ---- 公共接口 ----
 
+    @property
+    def last_awareness_time(self) -> float:
+        """上次 C9 渲染时间戳（0.0 = 尚未渲染过）。"""
+        return self._last_awareness_time
+
+    @last_awareness_time.setter
+    def last_awareness_time(self, value: float | None) -> None:
+        """恢复/复位冷却计时（`None` 归零）。
+
+        公开面：`CharacterEngine.restore_evolution_state()` 与
+        `reset_evolution_state()` 经此读写，消费方不再直接戳 `_last_awareness_time`。
+        """
+        self._last_awareness_time = value or 0.0
+
     def is_allowed(self) -> bool:
         """判断当前是否允许 C9 渲染（缓存 + 展示次数 + 冷却三重门控）。
 

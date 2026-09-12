@@ -373,6 +373,21 @@ class MemoryReflector:
         self._round_count = 0
         self._new_memory_count = 0
 
+    def reset_state(self) -> None:
+        """复位计数器与上次摘要——`restore_state()` 的逆操作（角色重置流程）。
+
+        公开面：与 `save_state`/`restore_state` 读写同一组字段，消费方
+        （`core/character/service.py`）不必再逐个戳 `_round_count` /
+        `_new_memory_count` / `_last_summary`。
+        """
+        self._reset_counters()
+        self._last_summary = {}
+
+    @property
+    def in_flight(self) -> bool:
+        """是否有去重反思在途（busy 判定用）。"""
+        return self._lock.locked()
+
     def save_state(self) -> MemoryReflectorState:
         """返回当前计数器状态，供 SessionMemory.save() 持久化。
 

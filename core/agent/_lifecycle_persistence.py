@@ -207,9 +207,10 @@ class _LifecyclePersistence:
                     runtime.instance.state = runtime.state
                     runtime.instance.stateVersion = inst.stateVersion
                     runtime.instance.updatedAt = inst.updatedAt
-                    if runtime.state.last_awareness_time:
-                        engine._last_awareness_time = runtime.state.last_awareness_time
-                    engine._reflector._restore_from_state()
+                    # 演化状态恢复经公开契约（哪些子组件要恢复属引擎内部知识）：
+                    # 觉察冷却回填 + 反思缓冲/上下文自共享 state 重建。
+                    engine.restore_evolution_state(
+                        last_awareness_time=runtime.state.last_awareness_time)
                     # 阶段 F（§2.6/架构稿 §8.5）：MemoryReflector 计数器恢复——state 加载后
                     # 从 runtime.state.MemoryReflector 字段 restore 进 runtime.reflector，
                     # 避免 dedupe 阈值重启后重置（reflector per-runtime 后 session 不再承载）。
@@ -236,11 +237,8 @@ class _LifecyclePersistence:
                         lambda: self._make_engine(active_runtime)
                     )
                     if active_runtime.instance.state is not None:
-                        if active_runtime.state.last_awareness_time:
-                            active_engine._last_awareness_time = (
-                                active_runtime.state.last_awareness_time
-                            )
-                        active_engine._reflector._restore_from_state()
+                        active_engine.restore_evolution_state(
+                            last_awareness_time=active_runtime.state.last_awareness_time)
                         if active_runtime.reflector is not None and (
                             active_runtime.state.mr_round_count
                             or active_runtime.state.mr_new_memory_count

@@ -27,6 +27,20 @@ class PersonalitySection(Jinja2Section):
         self._authored = False
         self._examples: tuple[tuple[str, str], ...] = ()
 
+    @property
+    def character_name(self) -> str:
+        """本 section 渲染用的角色名（公开可写）。
+
+        回合换绑时由 `core/prompt/prompt_assembler.py` 写入——此前直接赋值
+        `section._name`，把「角色名存在哪个字段」这一内部细节泄漏给了消费方。
+        注意与基类 `name`（section 自身标识，如 "Personality"）不是一回事。
+        """
+        return self._name
+
+    @character_name.setter
+    def character_name(self, value: str) -> None:
+        self._name = value
+
     def set_context(self, **kwargs: Any) -> None:
         self._user_name = kwargs.get("user_name", "")
         self._user_pronoun = kwargs.get("user_pronoun", "她")

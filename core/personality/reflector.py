@@ -74,7 +74,7 @@ class CharacterReflector:
             self._pm = None
 
         # 从 engine.state 恢复 buffer/context（如果有持久化数据）
-        self._restore_from_state()
+        self.restore_from_state()
 
         # ---- debug 状态 ----
         self._last_reflection_at: float | None = None
@@ -89,16 +89,41 @@ class CharacterReflector:
         if user_name:
             self._user_name = user_name
 
-    # ---- 状态恢复 ----
+    # ---- 状态恢复 / 复位 ----
 
-    def _restore_from_state(self) -> None:
-        """从 engine.state 恢复 buffer 和 context。"""
+    def restore_from_state(self) -> None:
+        """从 engine.state 恢复 buffer 和 context。
+
+        公开面（`CharacterReflectorProtocol`）：实例/session 切换后由
+        `CharacterEngine.restore_evolution_state()` 调用，消费方不需要直接触达。
+        """
         state = self._engine.state
         if state.reflector_buffer:
             self._buffer = [(u, a) for u, a in state.reflector_buffer]
             logger.debug("CharacterReflector: 恢复 buffer (%d 对)", len(self._buffer))
         if state.reflector_context:
             self._context = list(state.reflector_context)
+
+    def reset_state(self) -> None:
+        """复位缓冲、上下文与遥测（角色重置流程）。
+
+        公开面（`CharacterReflectorProtocol`）：与 `restore_from_state` 互为逆操作。
+        此前由 `core/character/service.py` 逐个戳 `_buffer`/`_context`/`_last_*`
+        七个私有字段完成——那些字段的读侧本来就有公开属性，写侧这里补齐。
+        """
+        self._buffer.clear()
+        self._context.clear()
+        self._last_reflection_at = None
+        self._last_success = False
+        self._last_duration_ms = 0.0
+        self._last_text_len = 0
+        self._last_prompt_system = ""
+        self._last_prompt_user = ""
+
+    @property
+    def in_flight(self) -> bool:
+        """是否有反思在途（busy 判定用）。"""
+        return self._reflect_lock.locked()
 
     # ---- buffer / flush ----
 

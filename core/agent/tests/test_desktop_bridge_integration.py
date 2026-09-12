@@ -240,7 +240,7 @@ class TestStartPersistenceHook:
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine.state = MagicMock()
         agent._character_engine.state.last_awareness_time = None
-        agent._character_engine._reflector._restore_from_state = MagicMock()
+        agent._character_engine.restore_evolution_state = MagicMock()
         bridge = MagicMock()
         bridge.connect_db = AsyncMock(return_value=True)
         agent._desktop_bridge = bridge

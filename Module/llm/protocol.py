@@ -78,3 +78,14 @@ class LLMBackend(ABC):
     async def close(self) -> None:
         """关闭底层连接。"""
         ...
+
+    @property
+    def raw_client(self) -> Any:
+        """底层异步 HTTP 客户端；后端未初始化或不支持时为 None。
+
+        消费方是 `core/adapter/llm_adapter.py::get_raw_client()`
+        （供 WorkflowEngine Planner/Executor 直接发起请求）。此前经
+        `getattr(backend, "_client")` 私有穿透读取。默认 None，由持有客户端的
+        后端（`OpenAICompatBackend`）覆盖。
+        """
+        return None

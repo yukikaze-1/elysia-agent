@@ -4,6 +4,42 @@
 
 合并原 PersonalityEngine + EmotionEngine，四层性格模型 (Core→Self→State→Mood)，让 AI 角色能从对话经历中演化性格。
 
+## 接口层（`protocol.py`）
+
+**消费方依赖的是契约，不是 `engine.py` 的具体类。**
+
+```python
+from core.personality.protocol import CharacterEngineProtocol, CharacterReflectorProtocol
+```
+
+| 协议 | 覆盖 | 实现 |
+|---|---|---|
+| `CharacterEngineProtocol` | 渲染（C1/C6/C9）、事件（`consume_trigger`）、消息缓冲、情绪分析、演化状态生命周期 | `CharacterEngine` |
+| `CharacterReflectorProtocol` | 反思缓冲/固化引用/复位/恢复 + 遥测 | `CharacterReflector` |
+
+**为什么是 `typing.Protocol` 而不是 ABC**：ABC 要求替换实现继承本模块，而「引擎可能被
+单独迭代或整体替换」正是这层的理由——替换方不该反向依赖 `core.personality`。
+结构性契约让任何形状相符的实现直接接入。
+
+代价是**没有实例化期强制**（ABC 少实现一个方法会 `TypeError`，Protocol 不会），由两道补上：
+
+1. `make pyright` 在「具体实现 → 接口类型」的赋值点做结构校验（`Agent.character_engine`
+   的返回类型就是接口；建立本层时它当场抓出 `buffer_message` 的 `reflector` 参数比契约更窄）；
+2. `core/tests/test_character_engine_protocol.py` 逐项断言成员齐备 + 方法签名一致，
+   并守住「引擎**不得继承**协议」——继承会让协议里 `...` 的空方法体变成静默 no-op，
+   漏实现反而不再报错。
+
+**演化状态生命周期**是这层收口的核心：消费方此前必须分别戳 `_reflector._reflect_lock`、
+`_compression._compression_lock`、`_last_awareness_time`、`_awareness._last_awareness_time`
+才能完成「busy 判定 / 复位 / 恢复」三件事，现在各自是一个语义方法：
+
+| 方法 | 语义 |
+|---|---|
+| `evolution_in_flight()` | 是否有反思/压缩在途（角色替换的快速拒绝路径） |
+| `reset_evolution_state()` | 复位反思缓冲/上下文/遥测 + 觉察冷却 |
+| `restore_evolution_state(last_awareness_time=...)` | 实例/会话切换后恢复 |
+| `reflector` / `version_repo` | 只读访问面 |
+
 ## 架构
 
 ```
@@ -132,6 +168,7 @@ Phase 2: LLM-judge 语义判定。Reflector 产出 L3 后，异步 judge 比较 
 ```
 core/personality/
 ├── __init__.py        — 重导出 CharacterEngine, CharacterReflector
+├── protocol.py        — **接口层**：CharacterEngineProtocol / CharacterReflectorProtocol
 ├── engine.py          — CharacterEngine 类（合并 PersonalityEngine + EmotionEngine）
 ├── reflector.py       — CharacterReflector 类（子组件）
 ├── awareness.py       — AwarenessJudge: C9 觉察判定 + cooldown 管理

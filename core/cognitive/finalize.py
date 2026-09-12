@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from core.debug.response_recorder import ResponseRecorder
     from core.memory.session import SessionMemory
     from core.monitoring.token_tracker import TokenTracker
-    from core.personality.engine import CharacterEngine
+    from core.personality.protocol import CharacterEngineProtocol
     from core.prompt.prompt_assembler import PromptAssembler
     from core.character.runtime import CharacterRuntime
 
@@ -61,7 +61,7 @@ class CognitiveFinalize:
     """轮次收尾阶段 mixin。"""
 
     # 类型占位：运行时由 CognitiveLoop.__init__ / configure() 初始化
-    _engine: "CharacterEngine | None"
+    _engine: "CharacterEngineProtocol | None"
     _mood_applied: bool
     _tts_mgr: "TTSStreamManager"
     _output: "OutputManager"
@@ -182,10 +182,10 @@ class CognitiveFinalize:
                 round_num=round_num,
             )
 
-        log_conversation("assistant", self._prompt._character.name, public_text)
+        log_conversation("assistant", self._prompt.character_name, public_text)
         if iv_think_buf.strip():
             logger.debug("💭 %s", iv_think_buf.strip())
-            log_conversation("inner_voice", self._prompt._character.name,
+            log_conversation("inner_voice", self._prompt.character_name,
                              iv_think_buf.strip())
 
         background_reserved = False

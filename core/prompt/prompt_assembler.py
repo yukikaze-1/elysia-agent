@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from core.personality.engine import CharacterEngine
+    from core.personality.protocol import CharacterEngineProtocol
     from core.cognitive.turn_context import TurnCharacterContext
     from core.character.runtime_profile import RuntimeCharacterProfile
 
@@ -52,7 +52,7 @@ class PromptAssembler:
         character: CharacterConfig,
         session: SessionMemory | None,
         long_term: LongTermMemory | None,
-        personality_engine: "CharacterEngine | None" = None,
+        personality_engine: "CharacterEngineProtocol | None" = None,
     ):
         """初始化 PromptAssembler，创建所有 system prompt section 和管理器。
 
@@ -112,6 +112,15 @@ class PromptAssembler:
         self._manager = SystemPromptManager(sections)
         self._builder = MessageBuilder()
 
+    @property
+    def character_name(self) -> str:
+        """当前角色名（公开只读）。
+
+        跨模块消费面：`CognitiveLoop` 构造 TTS 流管理器时需要角色名做
+        per-character 配置。此前经 `prompt._character.name` 私有穿透读取。
+        """
+        return self._character.name if self._character else "unknown"
+
     def _resolve_template(self, name: str) -> str:
         """按角色名解析模板路径：角色目录存在则用，否则回退共享。"""
         role_dir = f"{_SECTION}/{self._character.name.lower()}/{name}"
@@ -119,7 +128,7 @@ class PromptAssembler:
             return role_dir
         return f"{_SECTION}/{name}"
 
-    def set_personality_engine(self, engine: "CharacterEngine") -> None:
+    def set_personality_engine(self, engine: "CharacterEngineProtocol") -> None:
         """更换人格引擎实例（会话切换后 C1/C6/C9 数据来源随角色更新）。"""
         self._personality_engine = engine
 
@@ -133,10 +142,12 @@ class PromptAssembler:
 
     @staticmethod
     def _switch_template(section: Any, template_path: str) -> None:
-        """Switch one trusted local template and invalidate its source cache."""
-        if section._template_path != template_path:
-            section._template_path = template_path
-            section._cached_template = None
+        """Switch one trusted local template and invalidate its source cache.
+
+        缓存失效是 `Jinja2Section` 的内部不变式，经其公开 `switch_template()`
+        完成——消费方不再戳 `_template_path` / `_cached_template`。
+        """
+        section.switch_template(template_path)
 
     @staticmethod
     def _runtime_template(role: str | None, name: str) -> str:
@@ -157,7 +168,7 @@ class PromptAssembler:
         ``profile=None`` preserves the legacy name-only call for older tests and
         adapters.  Runtime turns always provide a compiled profile.
         """
-        self._personality_section._name = display_name
+        self._personality_section.character_name = display_name
         if profile is None:
             return
 

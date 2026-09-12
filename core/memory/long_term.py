@@ -838,6 +838,15 @@ class LongTermMemory:
 
     # ---- Read ----
 
+    @property
+    def embedding_provider(self) -> EmbeddingProvider:
+        """嵌入后端（公开只读）。
+
+        消费面：Agent 启动预热（`ensure()`）——此前经
+        `long_term._embedding_provider` 私有穿透。
+        """
+        return self._embedding_provider
+
     async def search(
         self,
         query_text: str = "",

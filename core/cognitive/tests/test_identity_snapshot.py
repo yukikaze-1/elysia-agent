@@ -119,7 +119,7 @@ async def test_identity_address_projected_to_runtime_memory_components():
 
     rt.consolidator.set_user_name.assert_called_once_with("主人")
     rt.reflector.set_user_name.assert_called_once_with("主人")
-    rt.engine._reflector.set_user_name.assert_called_once_with("主人")
+    rt.engine.reflector.set_user_name.assert_called_once_with("主人")
     await loop._output.close()
 
 

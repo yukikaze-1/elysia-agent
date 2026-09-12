@@ -27,13 +27,13 @@ if TYPE_CHECKING:
     from core.debug.prompt_recorder import PromptRecorder
     from core.memory.session import SessionMemory
     from core.monitoring.token_tracker import TokenTracker
-    from core.personality.engine import CharacterEngine
+    from core.personality.protocol import CharacterEngineProtocol
     from core.status.fsm import FSMBackedPhaseController
 
 logger = logging.getLogger(__name__)
 
 
-async def _apply_mood(raw: str, engine: "CharacterEngine", tts_mgr: TTSStreamManager,
+async def _apply_mood(raw: str, engine: "CharacterEngineProtocol", tts_mgr: TTSStreamManager,
                       output: OutputManager, target_session: "SessionMemory | None" = None,
                       ctx: GenerationContext | None = None) -> None:
     """解析 <mood> 标签内容，更新 CharacterState + 统一心情发射 + TTS emotion。
@@ -83,7 +83,7 @@ class CognitiveStreaming:
     _token_tracker: "TokenTracker | None"
     _mood_applied: bool
     _ttft_start: float
-    _engine: "CharacterEngine | None"
+    _engine: "CharacterEngineProtocol | None"
     _tts_mgr: TTSStreamManager
     _output: OutputManager
     _generation_ctx: GenerationContext | None

@@ -72,6 +72,15 @@ class CompressionManager:
 
     # ---- 公共接口 ----
 
+    @property
+    def in_flight(self) -> bool:
+        """是否有 L3→L2 压缩在途（busy 判定用）。
+
+        公开面：`CharacterEngine.evolution_in_flight()` 经此汇总；消费方
+        （角色替换的快速拒绝路径）不再直取 `_compression_lock`。
+        """
+        return self._compression_lock.locked()
+
     async def check_and_compress(
         self, *, _refresh_cb: "Callable[[], Coroutine[Any, Any, None]] | None" = None,
     ) -> None:

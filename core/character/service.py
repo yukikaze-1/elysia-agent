@@ -1323,26 +1323,18 @@ def _clear_evolution(state: "CharacterRuntimeState") -> None:
 
 
 def _clear_runtime_components(runtime: "CharacterRuntime") -> None:
+    """复位实例内演化组件（经公开契约，不戳子组件私有字段）。
+
+    引擎侧经 `CharacterEngineProtocol.reset_evolution_state()`——哪些子组件算
+    「演化」、各自要清什么，由引擎自己回答；记忆侧经
+    `MemoryReflector.reset_state()`（`restore_state()` 的逆操作）。
+    """
     engine = runtime.engine
     if engine is not None:
-        reflector = getattr(engine, "_reflector", None)
-        if reflector is not None:
-            reflector._buffer.clear()
-            reflector._context.clear()
-            reflector._last_reflection_at = None
-            reflector._last_success = False
-            reflector._last_duration_ms = 0.0
-            reflector._last_text_len = 0
-            reflector._last_prompt_system = ""
-            reflector._last_prompt_user = ""
-        awareness = getattr(engine, "_awareness", None)
-        if awareness is not None:
-            awareness._last_awareness_time = None
+        engine.reset_evolution_state()
     memory_reflector = runtime.reflector
     if memory_reflector is not None:
-        memory_reflector._round_count = 0
-        memory_reflector._new_memory_count = 0
-        memory_reflector._last_summary = {}
+        memory_reflector.reset_state()
 
 
 def _semantic_issues(text: str, path: str) -> list[CharacterValidationIssue]:

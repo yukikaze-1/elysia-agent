@@ -163,7 +163,7 @@ class _LifecycleServices:
                 logger.warning("TTS close timed out")
             self._tts = None
             # 同步 CognitiveLoop 中的 TTS 引用——shutdown 后残留流式任务不再触碰旧后端
-            self._cognitive._tts_mgr.set_backend(None)
+            self._cognitive.tts_manager.set_backend(None)
 
         if self._stt:
             logger.debug("Closing STT backend...")

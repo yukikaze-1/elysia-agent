@@ -300,7 +300,7 @@ class TestStartPersistence:
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine.state = MagicMock()
         agent._character_engine.state.last_awareness_time = None
-        agent._character_engine._reflector._restore_from_state = MagicMock()
+        agent._character_engine.restore_evolution_state = MagicMock()
 
         mongo_ok, milvus_ok = await _LifecyclePersistence._start_persistence(agent)
 
@@ -345,7 +345,7 @@ class TestStartPersistence:
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine.state = MagicMock()
         agent._character_engine.state.last_awareness_time = None
-        agent._character_engine._reflector._restore_from_state = MagicMock()
+        agent._character_engine.restore_evolution_state = MagicMock()
         gen_reg = MagicMock()
         gen_reg.connect = AsyncMock(return_value=True)
         gen_reg.mark_stale_interrupted = AsyncMock(return_value=0)
@@ -401,7 +401,7 @@ class TestStartPersistenceTokenRepo:
         agent._version_repo.connect = AsyncMock(return_value=True)
         agent._character_engine.state = MagicMock()
         agent._character_engine.state.last_awareness_time = None
-        agent._character_engine._reflector._restore_from_state = MagicMock()
+        agent._character_engine.restore_evolution_state = MagicMock()
         # 无关挂点置空，避免 MagicMock 触发的噪音 warning
         agent._desktop_bridge = None
         agent._generation_registry = None

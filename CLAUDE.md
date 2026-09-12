@@ -155,6 +155,7 @@ core/
 │   ├── prompt_recorder.py #   PromptRecorder: ring buffer (20) for LLM prompts
 │   └── response_recorder.py # ResponseRecorder: ring buffer (20) for LLM responses
 ├── personality/           # CharacterEngine: 4-layer personality model (L1→L2→L3→L4)
+│   ├── protocol.py        #   **接口层**：CharacterEngineProtocol / CharacterReflectorProtocol（结构化契约，消费方不依赖具体类）
 │   ├── engine.py          #   CharacterEngine: L1 Core (file, immutable) → L2 Self (session, slow evolution) → L3 State (session, Reflector-driven) → L4 Mood
 │   ├── reflector.py       #   CharacterReflector: buffers 50 pairs → LLM reflection → submit to engine
 │   ├── awareness.py       #   AwarenessTrigger: C9 觉察判定 + cooldown 管理
@@ -309,7 +310,12 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **Project paths**: `from paths import ProjectPath, get_project_root` — 所有项目文件系统路径的唯一定义点。`ProjectPath.X.resolve()` 返回基于 `ELYSIA_ROOT` 环境变量（fallback 为项目根目录）的绝对 `Path`。
 - **AgentStatus**: `agent.status`（`AgentStatus`）提供语义状态查询（`is_accepting_input` / `is_speaking` / `should_suppress_vad_interrupt` 等）；`agent.phases`（`CognitivePhaseController`）驱动阶段转换。底层 `AgentFSM` 不对外暴露。设计文档：[spec](docs/superpowers/specs/archive/2026-07/2026-07-30-agent-status-interface-design.md)。
 - **Agent 公开接口**: `Agent` 作为组合根，通过 45 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
-- **私有穿透的两种形态（R3 都看不见）**: ① 字符串形式 `getattr(obj, "_priv")`；② 点式深读 `obj.sub._priv`。`make check-arch` 的 R3 只管**跨包导入私有符号**，这两种都躲得过。因此每个已治理层配一个可执行守卫，`core/input` 见 `core/input/tests/test_layer_discipline.py`——规则是「每处私有穿透**要么改走公开 API，要么同行标注 `# noqa: SLF001` + 理由**」，未标注即红。已补的公开面：`OutputManager.channels`、`WebSocketChannel.ws`、`WebSocketChannel.send_json`（原私有 `_send_json`，`capabilities.py` 的 docstring 曾写着「无公开 send」）、`Agent.character_service` / `Agent.instance_repo`、`CognitiveLoop.process_lock`。
+- **私有穿透的两种形态（R3 都看不见）**: ① 字符串形式 `getattr(obj, "_priv")`；② 点式深读 `obj.sub._priv`。`make check-arch` 的 R3 只管**跨包导入私有符号**，这两种都躲得过。规则是「每处私有穿透**要么改走公开 API，要么同行标注 `# noqa: SLF001` + 理由**」，由两道可执行守卫兜底：
+  - `core/tests/test_cross_package_privacy.py` —— **全仓跨包守卫**。按「属性名归属包」近似判定跨包（同包内部私有访问是正常封装，不判违规）。**已知局限**：同名属性会漏报，故是回归网而非完备审计工具。
+  - `core/input/tests/test_layer_discipline.py` —— 输入层守卫，比全仓规则更严（该层任何未标注穿透即红）。
+  **判定的关键细节**：只看被访问属性的**直接宿主**——`self._engine._reflector` 的宿主是 `self._engine`（别的对象），属穿透；把它当成「根是 self 的自访问」放行，会让 `self._output._channels` 这类整批漏网（实测如此）。
+- **子系统接口层**: 会被跨模块消费、且可能被单独迭代/替换的子系统，把消费方契约抽成 `typing.Protocol`（`core/personality/protocol.py` 是首个）。**刻意不用 ABC**：替换实现不该反向依赖原包。补偿是「pyright 结构校验 + `core/tests/test_character_engine_protocol.py` 逐项断言成员与签名」，并守住「实现**不得继承**协议」——继承会让协议里 `...` 的空方法体变成静默 no-op。
+  > ⚠️ Protocol 无实例化期强制：新增接口成员后必须同步跑 `make pyright` 与契约测试；只加成员不加实现，静态检查会红，但运行期不会。
 
 ## Prompt files (`core/prompts/`)
 

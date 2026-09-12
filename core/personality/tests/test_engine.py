@@ -229,7 +229,7 @@ class TestCharacterEngineCompression:
         engine._pm = mock_pm
 
         # 手动抢占 lock
-        held = asyncio.run(self._acquire_lock(engine._compression_lock))
+        held = asyncio.run(self._acquire_lock(engine._compression._compression_lock))
         assert held
 
         # 此时 _maybe_compress 应跳过
@@ -237,7 +237,7 @@ class TestCharacterEngineCompression:
         assert s.compression_last_count == 0  # 未被压缩
 
         # 释放后再次 trigger 应成功
-        engine._compression_lock.release()
+        engine._compression._compression_lock.release()
         engine._refresh_c6 = AsyncMock()  # 隔离 _refresh_c6 测试
         asyncio.run(engine._maybe_compress())
         assert s.compression_last_count == 5
@@ -498,7 +498,7 @@ class TestAwarenessJudge:
             awareness_show_count=0,
         )
         engine = _make_engine(state=s)
-        engine._last_awareness_time = time.time()  # 刚刚展示过
+        engine.last_awareness_time = time.time()  # 刚刚展示过
         assert not engine._awareness_allowed()
 
     def test_allowed_first_call_no_cooldown(self):
@@ -509,7 +509,7 @@ class TestAwarenessJudge:
         )
         engine = _make_engine(state=s)
         # _last_awareness_time == 0.0（默认），首次调用
-        engine._last_awareness_time = 0.0
+        engine.last_awareness_time = 0.0
         assert engine._awareness_allowed()
 
     def test_allowed_cooldown_passed(self):
@@ -519,7 +519,7 @@ class TestAwarenessJudge:
             awareness_show_count=0,
         )
         engine = _make_engine(state=s)
-        engine._last_awareness_time = time.time() - 301  # 5 分钟前
+        engine.last_awareness_time = time.time() - 301  # 5 分钟前
         assert engine._awareness_allowed()
 
     # ---- render_c9 ----
@@ -531,7 +531,7 @@ class TestAwarenessJudge:
             awareness_show_count=0,
         )
         engine = _make_engine(state=s)
-        engine._last_awareness_time = time.time() - 301
+        engine.last_awareness_time = time.time() - 301
 
         result = engine.render_c9()
 
@@ -563,7 +563,7 @@ class TestAwarenessJudge:
             awareness_show_count=0,
         )
         engine = _make_engine(state=s)
-        engine._last_awareness_time = time.time()  # 刚刚展示
+        engine.last_awareness_time = time.time()  # 刚刚展示
         result = engine.render_c9()
         assert result.awareness_text == ""
 

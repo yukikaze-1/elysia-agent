@@ -22,7 +22,7 @@ from core.schema.types import SessionId
 if TYPE_CHECKING:
     from frontend_contract.rest import CharacterPublicStateView
     from core.character.runtime_profile import RuntimeCharacterProfile
-    from core.personality.engine import CharacterEngine
+    from core.personality.protocol import CharacterEngineProtocol
     from core.memory.scoped_long_term import ScopedLongTermMemory
     from core.memory.consolidator import MemoryConsolidator
     from core.memory.memory_reflector import MemoryReflector
@@ -50,7 +50,7 @@ class CharacterRuntime:
         self.consolidator = consolidator
         self.reflector = reflector
         self.profile = profile
-        self._engine: "CharacterEngine | None" = None
+        self._engine: "CharacterEngineProtocol | None" = None
         self.lock = asyncio.Lock()
         self.dirty = False
         # BE-STAGEH-01：generation 与破坏性变更（reset-evolution）的互斥 lease。
@@ -70,17 +70,19 @@ class CharacterRuntime:
         self._last_public_state: "CharacterPublicStateView | None" = None
 
     @property
-    def engine(self) -> "CharacterEngine | None":
+    def engine(self) -> "CharacterEngineProtocol | None":
         return self._engine
 
-    def ensure_engine(self, factory: Callable[[], "CharacterEngine"]) -> "CharacterEngine":
+    def ensure_engine(
+        self, factory: Callable[[], "CharacterEngineProtocol"],
+    ) -> "CharacterEngineProtocol":
         if self._engine is None:
             self._engine = factory()
         engine = self._engine
         assert engine is not None
         return engine
 
-    def bind_engine(self, engine: "CharacterEngine") -> None:
+    def bind_engine(self, engine: "CharacterEngineProtocol") -> None:
         self._engine = engine
 
     # ---- BE-STAGEH-01：generation / 破坏性变更 lease ----
@@ -154,14 +156,14 @@ class CharacterRuntime:
             self._busy = self._generation_ops > 0 or self._destructive_ops > 0
 
     def evolution_locks_busy(self) -> bool:
-        """反思/压缩锁是否被持有——reset 的第二个 busy 来源。"""
-        engine = self._engine
-        locks = [
-            getattr(getattr(engine, "_reflector", None), "_reflect_lock", None),
-            getattr(getattr(engine, "_compression", None), "_compression_lock", None),
-            getattr(getattr(self, "reflector", None), "_lock", None),
-        ]
-        return any(lock is not None and lock.locked() for lock in locks)
+        """是否有演化动作在途——反思/压缩（引擎）+ 记忆去重（MemoryReflector）。
+
+        经 `CharacterEngineProtocol.evolution_in_flight()` 汇总，不直取
+        子组件的锁：哪些子组件算「演化」属引擎内部知识。
+        """
+        engine_busy = self._engine is not None and self._engine.evolution_in_flight()
+        reflector_busy = self.reflector is not None and self.reflector.in_flight
+        return engine_busy or reflector_busy
 
     def apply_user_address(self, address: str) -> None:
         """把本轮身份的有效称呼投影到记忆组件（P0-2）。
@@ -175,7 +177,7 @@ class CharacterRuntime:
         components = (
             self.consolidator,
             self.reflector,
-            getattr(self._engine, "_reflector", None),
+            getattr(self._engine, "reflector", None),
         )
         for component in components:
             setter = getattr(component, "set_user_name", None)
