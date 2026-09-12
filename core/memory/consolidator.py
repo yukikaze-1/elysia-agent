@@ -10,6 +10,9 @@ import asyncio
 import json
 import logging
 import re
+import time
+from typing import Any
+
 from pydantic import TypeAdapter, ValidationError
 
 from core.schema.memory import (
@@ -194,6 +197,13 @@ class MemoryConsolidator:
         self._buffer: list[tuple[str, str]] = []  # (user_msg, assistant_msg) 缓冲
         self._threshold = buffer_threshold if buffer_threshold is not None else self.BUFFER_THRESHOLD
         self._consolidate_lock = asyncio.Lock()
+        # 最近一次运行的状态（debug 面板 / 日志）——区分「没跑」/「在跑」/「跑了提取 0 条」/「跑失败」
+        self._running: bool = False
+        self._last_run_at: float | None = None
+        self._last_turns: int = 0
+        self._last_extracted: int = 0
+        self._last_inserted: int = 0
+        self._last_error: str = ""
 
     def set_user_name(self, user_name: str) -> None:
         """投影本轮身份的有效称呼（P0-2：preferredAddress 优先，否则 displayName）。
@@ -265,6 +275,12 @@ class MemoryConsolidator:
     async def _do_consolidate(self, batch: list[tuple[str, str]]) -> list[ExtractedMemory]:
         """执行实际的 LLM 提取和存储（需持有 consolidate_lock；batch 已 detach）。
 
+        无论结果如何都会留下**一条 INFO** 说明「跑了、几轮、提取几条、入库几条」。
+        此前提取到 0 条时全程零日志（`compared` 行在 `if items:` 内且是 DEBUG），
+        面板上「Buffer 0/6 + 历史空」与「根本没跑」「跑挂了」完全无法区分——
+        实测有人发了 6 轮陪聊消息（"嘿嘿"/"❤️"），提取 0 条是**正确答案**，
+        却因为毫无痕迹而被合理怀疑成故障（2026-09-12）。
+
         Args:
             batch: 本批待整合的 (user_msg, assistant_msg) 列表。
 
@@ -278,8 +294,6 @@ class MemoryConsolidator:
             turns.append(f"{self._character_name}: {a[:500]}")
         conversation_text = "\n".join(turns)
 
-        logger.debug("Consolidation: 开始提取 (%d turns)", len(turns))
-
         prompt = _get_extraction_prompt().replace(
             "{character_name}", self._character_name,
         ).replace(
@@ -288,28 +302,39 @@ class MemoryConsolidator:
             "{conversation}", conversation_text[-2000:],
         )
 
+        # `_running` 的置位放在所有可能抛异常的**纯准备**代码之后——
+        # 这样置位与 `_finish_run` 之间只剩下面两段各自 except 兜底的代码，
+        # 不会出现"标志位卡在 True"的状态。
+        logger.debug("Consolidation: 开始提取 (%d turns)", len(turns))
+        self._running = True
+        self._last_turns = len(turns)
+
         try:
             result = await self._llm.think([{"role": "user", "content": prompt}],
                 extra_body={"thinking": {"type": "disabled"}})
             items = _parse_extraction(result.text)
-        except Exception:
+        except Exception as e:
             # 解析失败（含 _JsonArrayParseError）→ batch 重新入队待下轮重试，
             # 整合机会不静默丢失（S9）。warning 可见 LLM 输出异常。
             logger.warning("Consolidation extraction failed（requeue batch 待重试）",
                            exc_info=True)
             self._buffer = batch + self._buffer
+            self._finish_run(extracted=0, inserted=0, error=f"提取失败: {e}")
             return []
 
         # batch 已在锁内 detach——不再 clear self._buffer（B5/P1-11：不清掉并发新消息）
+        inserted = 0
         if items:
             try:
                 inserted = await self._compare_and_resolve(items)
                 logger.debug("Consolidation compared: %d items → %d inserted",
                              len(items), inserted)
-            except Exception:
+            except Exception as e:
                 # 存储失败（含 compare 回退 insert 仍失败）→ batch 重新入队待重试
                 logger.warning("Consolidation 存储失败（requeue batch 待重试）", exc_info=True)
                 self._buffer = batch + self._buffer
+                self._finish_run(extracted=len(items), inserted=0,
+                                 error=f"存储失败: {e}")
                 return []
 
         for item in items:
@@ -317,7 +342,37 @@ class MemoryConsolidator:
         if len(self._history) > 20:
             self._history = self._history[-20:]
 
+        self._finish_run(extracted=len(items), inserted=inserted)
+        # **无条件** INFO：提取 0 条也是有效结果，必须与「没跑」「跑挂了」可区分
+        logger.info("Consolidation: %d turns → 提取 %d 条，入库 %d 条",
+                    self._last_turns, len(items), inserted)
         return items
+
+    def _finish_run(self, *, extracted: int, inserted: int, error: str = "") -> None:
+        """记录本次运行结果（debug 面板 / 日志用）。"""
+        self._running = False
+        self._last_run_at = time.time()
+        self._last_extracted = extracted
+        self._last_inserted = inserted
+        self._last_error = error
+
+    def stats(self) -> dict[str, Any]:
+        """运行状态快照——供 debug 面板消费，避免消费方穿透 ``_buffer``/``_history``。
+
+        Returns:
+            dict: 缓冲/阈值/历史 + 最近一次运行的轮数、提取数、入库数、错误与时间戳。
+        """
+        return {
+            "buffer_size": len(self._buffer),
+            "threshold": self._threshold,
+            "history": [dict(h) for h in self._history[-5:]],
+            "running": self._running,
+            "last_run_at": self._last_run_at,
+            "last_turns": self._last_turns,
+            "last_extracted": self._last_extracted,
+            "last_inserted": self._last_inserted,
+            "last_error": self._last_error,
+        }
 
     async def _compare_and_resolve(self, new_items: list[ExtractedMemory]) -> int:
         """将新提取的记忆与已有记忆比对，执行 insert/update/merge/skip。

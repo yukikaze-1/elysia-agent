@@ -38,7 +38,30 @@ function awarenessCooldown(lastTime?: number): string {
 // Grouped props for panels 13-16
 const consolidationProps = computed<ConsolidationInfo | null>(() => {
   if (!d.value) return null
-  return { buffer_size: d.value.consolidator_buffer_size, threshold: d.value.consolidator_threshold, history: d.value.consolidation_history }
+  const v = d.value
+  return {
+    buffer_size: v.consolidator_buffer_size,
+    threshold: v.consolidator_threshold,
+    history: v.consolidation_history,
+    running: v.consolidator_running,
+    last_run_at: v.consolidator_last_run_at ?? undefined,
+    last_turns: v.consolidator_last_turns,
+    last_extracted: v.consolidator_last_extracted,
+    last_inserted: v.consolidator_last_inserted,
+    last_error: v.consolidator_last_error,
+  }
+})
+
+/** 「上次运行」一行——把「没跑」「在跑」「跑了提取 0 条」「跑失败」四种状态分开。 */
+const consolidationLastLine = computed<string>(() => {
+  const c = consolidationProps.value
+  if (!c) return '—'
+  if (c.running) return '正在提取…'
+  if (!c.last_run_at) return '从未运行'
+  const ago = Math.max(0, Math.round(Date.now() / 1000 - c.last_run_at))
+  const when = ago < 60 ? `${ago}s 前` : `${Math.round(ago / 60)}min 前`
+  if (c.last_error) return `${when} · 失败：${c.last_error.slice(0, 60)}`
+  return `${when} · ${c.last_turns} turns → 提取 ${c.last_extracted} 条，入库 ${c.last_inserted} 条`
 })
 const memReflectorProps = computed<MemoryReflectorInfo | null>(() => {
   if (!d.value) return null
@@ -88,7 +111,15 @@ function shortModel(name: string) { return name.split('/').pop() || name }
     <div class="card">
       <h2>Memory</h2>
       <div class="row"><span class="label">Session</span><span>{{ d.session_messages }} msgs</span></div>
-      <div class="row"><span class="label">LTM</span><span>{{ d.lt_count }}</span></div>
+      <!-- lt_count 是进程内条数，lt_count_milvus 是 Milvus 真实行数：
+           两者不一致 = 写了但没落库（-1 表示 Milvus 不可用、未取到） -->
+      <div class="row">
+        <span class="label">LTM</span>
+        <span :class="d.lt_count_milvus >= 0 && d.lt_count_milvus !== d.lt_count ? 'fail' : ''">
+          {{ d.lt_count }}<template v-if="d.lt_count_milvus >= 0"> / Milvus {{ d.lt_count_milvus }}</template>
+        </span>
+      </div>
+      <div v-if="d.lt_pending_sync_count" class="warn">⚠ {{ d.lt_pending_sync_count }} 条待同步（未落库）</div>
       <div class="row"><span class="label">MongoDB</span><span :class="d.mongodb_ok ? 'ok' : 'fail'">{{ d.mongodb_ok ? '✓' : '✗' }}</span></div>
       <div class="row"><span class="label">Milvus</span><span :class="d.milvus_ok ? 'ok' : 'fail'">{{ d.milvus_ok ? '✓' : '✗' }}</span></div>
       <div class="row"><span class="label">Embedding</span><span :class="d.embedding_ok ? 'ok' : 'fail'">{{ d.embedding_ok ? '✓' : '✗' }}</span></div>
@@ -221,6 +252,13 @@ function shortModel(name: string) { return name.split('/').pop() || name }
       <h2>Consolidation</h2>
       <div class="row"><span class="label">Buffer</span><span>{{ consolidationProps.buffer_size }} / {{ consolidationProps.threshold }}</span></div>
       <div v-if="consolidationProps.buffer_size >= consolidationProps.threshold" class="warn">⚠ Triggering</div>
+      <div class="row">
+        <span class="label">Last Run</span>
+        <span :class="consolidationProps.last_error ? 'fail' : (consolidationProps.last_run_at ? 'ok' : '')">
+          {{ consolidationLastLine }}
+        </span>
+      </div>
+      <div v-if="consolidationProps.last_error" class="warn">⚠ {{ consolidationProps.last_error.slice(0, 120) }}</div>
       <div v-for="(h, i) in consolidationProps.history" :key="i" class="list-item">
         <span class="ltm-tag" :style="{ background: memoryColor(h.type) }">{{ h.type }}</span>
         <span>{{ h.content?.slice(0, 80) }}</span>

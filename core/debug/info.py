@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass, field, asdict
@@ -17,6 +18,8 @@ from paths import ProjectPath
 
 if TYPE_CHECKING:
     from core.agent import Agent
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,6 +44,11 @@ class DebugInfo:
 
     # 长期记忆
     lt_count: int = 0
+    #: Milvus 集合真实行数；-1 = 未取到（Milvus 不可用）。`lt_count` 是进程内
+    #: `_entries` 长度——两者不一致即「写了但没落库」（CR-10 的「指标在说谎」）。
+    lt_count_milvus: int = -1
+    #: 拿到内存条目却没拿到 Milvus durable PK 的「待同步」条数（pending journal 里那些）。
+    lt_pending_sync_count: int = 0
     lt_recent: list[dict] = field(default_factory=list)
     milvus_ok: bool = False
     embedding_ok: bool = False
@@ -109,9 +117,15 @@ class DebugInfo:
     mreflector_locked: bool = False
     mreflector_last_summary: dict = field(default_factory=dict)
 
-    # 沉淀器缓冲
+    # 沉淀器缓冲 + 最近一次运行状态
     consolidator_buffer_size: int = 0
     consolidator_threshold: int = 0
+    consolidator_running: bool = False
+    consolidator_last_run_at: float | None = None
+    consolidator_last_turns: int = 0
+    consolidator_last_extracted: int = 0
+    consolidator_last_inserted: int = 0
+    consolidator_last_error: str = ""
 
     # 心情（L4 情绪）
     mood: str = ""
@@ -189,6 +203,17 @@ async def _collect_session_and_memory(agent: "Agent", info: DebugInfo) -> None:
         for e in agent.long_term._entries[-5:]  # noqa: SLF001
     ]
     info.milvus_ok = await agent.memory_repo.health_check()
+    # `lt_count` 是**进程内** `_entries` 的长度，不是 Milvus 行数——Milvus 写入静默
+    # 失败时它照样有条目（评审 CR-10 的「指标在说谎」）。这里额外取 Milvus 真实行数
+    # 与「待同步」条数，让两个数并列可见：不一致即是「写了但没落库」的信号。
+    # count() 实测 ~1.2ms，2s 轮询无压力。
+    info.lt_count_milvus = -1          # -1 = 未取到（Milvus 不可用）
+    try:
+        if info.milvus_ok:
+            info.lt_count_milvus = await agent.memory_repo.count()
+    except Exception:
+        logger.debug("DebugInfo: Milvus count 失败", exc_info=True)
+    info.lt_pending_sync_count = len(getattr(agent.long_term, "_dirty_ids", ()))  # noqa: SLF001
     info.embedding_ok = agent.long_term._embedding_provider._backend is not None  # noqa: SLF001
     info.mongodb_ok = await agent.session_repo.health_check()
 
@@ -201,10 +226,9 @@ def _collect_tools_and_consolidation(agent: "Agent", info: DebugInfo) -> None:
     info.tool_history = list(tm.history)[-5:]
 
     # Task 7（记忆 v2 隔离）：agent.consolidator 现经 registry 解析（可能 None——无 default
-    # runtime 或未预置时）。None 时清空历史（不抛）。
-    cons = agent.consolidator
-    info.consolidation_history = (
-        list(cons._history)[-5:] if cons else [])  # noqa: SLF001
+    # runtime 或未预置时）。2026-09-12 起 consolidator 的**全部**字段（缓冲/阈值/历史/
+    # 最近一次运行）统一在 `_collect_session_and_memory` 里经 `consolidator.stats()`
+    # 一次取齐，此处不再重复读它的私有字段。
 
 
 async def _collect_character_and_reflector(agent: "Agent", info: DebugInfo) -> None:
@@ -307,8 +331,19 @@ def _collect_runtime_stats(agent: "Agent", info: DebugInfo) -> None:
     info.mreflector_last_summary = (dict(mr._last_summary) if (mr and mr._last_summary) else {})  # noqa: SLF001
 
     cons = agent.consolidator
-    info.consolidator_buffer_size = len(cons._buffer) if cons else 0  # noqa: SLF001
-    info.consolidator_threshold = cons._threshold if cons else 0  # noqa: SLF001
+    # 一次性取运行状态快照——避免消费方逐字段穿透 _buffer/_threshold/_history
+    # （2026-09-12：新增「上次运行」维度，用来区分「没跑」/「在跑」/「跑了提取 0 条」）
+    if cons:
+        cs = cons.stats()
+        info.consolidator_buffer_size = cs["buffer_size"]
+        info.consolidator_threshold = cs["threshold"]
+        info.consolidation_history = cs["history"]
+        info.consolidator_running = cs["running"]
+        info.consolidator_last_run_at = cs["last_run_at"]
+        info.consolidator_last_turns = cs["last_turns"]
+        info.consolidator_last_extracted = cs["last_extracted"]
+        info.consolidator_last_inserted = cs["last_inserted"]
+        info.consolidator_last_error = cs["last_error"]
 
     try:
         # Task 12（§6.5 读端迁移）：mood 读当前 instance engine.state（实例权威）。

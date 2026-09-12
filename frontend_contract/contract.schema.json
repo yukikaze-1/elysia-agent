@@ -6906,7 +6906,7 @@
           "type": "object"
         }
       },
-      "description": "Consolidator 面板 props（面板 13）。",
+      "description": "Consolidator 面板 props（面板 13）。\n\n`last_*` 四个字段是 2026-09-12 新增：此前提取到 0 条时面板只显示\n「Buffer 0/6 + 历史空」，与「根本没跑」「跑挂了」无法区分。",
       "properties": {
         "buffer_size": {
           "description": "缓冲消息对数",
@@ -6920,6 +6920,49 @@
           },
           "title": "History",
           "type": "array"
+        },
+        "last_error": {
+          "default": "",
+          "description": "最近一次失败原因；空串 = 成功",
+          "title": "Last Error",
+          "type": "string"
+        },
+        "last_extracted": {
+          "default": 0,
+          "description": "最近一次提取到的记忆条数",
+          "title": "Last Extracted",
+          "type": "integer"
+        },
+        "last_inserted": {
+          "default": 0,
+          "description": "最近一次实际入库条数",
+          "title": "Last Inserted",
+          "type": "integer"
+        },
+        "last_run_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "最近一次提取完成时间（epoch 秒）；None = 从未运行",
+          "title": "Last Run At"
+        },
+        "last_turns": {
+          "default": 0,
+          "description": "最近一次提取的对话轮数",
+          "title": "Last Turns",
+          "type": "integer"
+        },
+        "running": {
+          "default": false,
+          "description": "是否正在提取",
+          "title": "Running",
+          "type": "boolean"
         },
         "threshold": {
           "description": "触发合并阈值",
@@ -8346,6 +8389,49 @@
           "title": "Consolidator Buffer Size",
           "type": "integer"
         },
+        "consolidator_last_error": {
+          "default": "",
+          "description": "最近一次失败原因；空串 = 成功。用于区分「提取 0 条」与「提取失败」",
+          "title": "Consolidator Last Error",
+          "type": "string"
+        },
+        "consolidator_last_extracted": {
+          "default": 0,
+          "description": "最近一次提取到的记忆条数",
+          "title": "Consolidator Last Extracted",
+          "type": "integer"
+        },
+        "consolidator_last_inserted": {
+          "default": 0,
+          "description": "最近一次实际入库条数",
+          "title": "Consolidator Last Inserted",
+          "type": "integer"
+        },
+        "consolidator_last_run_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "最近一次提取完成时间（epoch 秒）；None = 从未运行",
+          "title": "Consolidator Last Run At"
+        },
+        "consolidator_last_turns": {
+          "default": 0,
+          "description": "最近一次提取的对话轮数",
+          "title": "Consolidator Last Turns",
+          "type": "integer"
+        },
+        "consolidator_running": {
+          "default": false,
+          "description": "Consolidator 是否正在提取",
+          "title": "Consolidator Running",
+          "type": "boolean"
+        },
         "consolidator_threshold": {
           "default": 0,
           "description": "Consolidator 触发阈值",
@@ -8425,8 +8511,20 @@
         },
         "lt_count": {
           "default": 0,
-          "description": "长期记忆总数",
+          "description": "长期记忆总数（进程内 _entries）",
           "title": "Lt Count",
+          "type": "integer"
+        },
+        "lt_count_milvus": {
+          "default": -1,
+          "description": "Milvus 集合真实行数；-1 = 未取到。与 lt_count 不一致即「写了但没落库」",
+          "title": "Lt Count Milvus",
+          "type": "integer"
+        },
+        "lt_pending_sync_count": {
+          "default": 0,
+          "description": "拿到内存条目但未拿到 Milvus durable PK 的待同步条数",
+          "title": "Lt Pending Sync Count",
           "type": "integer"
         },
         "lt_recent": {
@@ -25305,6 +25403,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "3a2a29cc7bdb52b9",
+  "schemaHash": "b9b93dda66b34b9c",
   "transportVersion": "2"
 }

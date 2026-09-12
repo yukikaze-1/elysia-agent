@@ -622,7 +622,10 @@ export interface ConsolidationHistoryItem {
   poignancy?: number
 }
 
-/** Consolidator 面板 props（面板 13）。 */
+/** Consolidator 面板 props（面板 13）。
+
+`last_*` 四个字段是 2026-09-12 新增：此前提取到 0 条时面板只显示
+「Buffer 0/6 + 历史空」，与「根本没跑」「跑挂了」无法区分。 */
 export interface ConsolidationInfo {
   /** 缓冲消息对数 */
   buffer_size: number
@@ -630,6 +633,18 @@ export interface ConsolidationInfo {
   threshold: number
   /** 最近合并结果 */
   history: ConsolidationHistoryItem[]
+  /** 是否正在提取 */
+  running: boolean
+  /** 最近一次提取完成时间（epoch 秒）；None = 从未运行 */
+  last_run_at?: number
+  /** 最近一次提取的对话轮数 */
+  last_turns: number
+  /** 最近一次提取到的记忆条数 */
+  last_extracted: number
+  /** 最近一次实际入库条数 */
+  last_inserted: number
+  /** 最近一次失败原因；空串 = 成功 */
+  last_error: string
 }
 
 /** 会话级 token 累计（generation.completed 可选字段；形状对齐 TokenStats，wire 用 byModel）。 */
@@ -913,8 +928,12 @@ export interface DebugData {
   base_personality_summary: string
   /** 归档消息总数 */
   archive_msg_count: number
-  /** 长期记忆总数 */
+  /** 长期记忆总数（进程内 _entries） */
   lt_count: number
+  /** Milvus 集合真实行数；-1 = 未取到。与 lt_count 不一致即「写了但没落库」 */
+  lt_count_milvus: number
+  /** 拿到内存条目但未拿到 Milvus durable PK 的待同步条数 */
+  lt_pending_sync_count: number
   /** 最近长期记忆 */
   lt_recent: LtmRecentItem[]
   /** Milvus 可用 */
@@ -933,6 +952,18 @@ export interface DebugData {
   consolidator_buffer_size: number
   /** Consolidator 触发阈值 */
   consolidator_threshold: number
+  /** Consolidator 是否正在提取 */
+  consolidator_running: boolean
+  /** 最近一次提取完成时间（epoch 秒）；None = 从未运行 */
+  consolidator_last_run_at?: number
+  /** 最近一次提取的对话轮数 */
+  consolidator_last_turns: number
+  /** 最近一次提取到的记忆条数 */
+  consolidator_last_extracted: number
+  /** 最近一次实际入库条数 */
+  consolidator_last_inserted: number
+  /** 最近一次失败原因；空串 = 成功。用于区分「提取 0 条」与「提取失败」 */
+  consolidator_last_error: string
   /** 最近合并结果 */
   consolidation_history: ConsolidationHistoryItem[]
   /** 记忆反射器是否存在 */

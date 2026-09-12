@@ -147,11 +147,22 @@ class ConsolidationHistoryItem(ContractModel):
 
 
 class ConsolidationInfo(ContractModel):
-    """Consolidator 面板 props（面板 13）。"""
+    """Consolidator 面板 props（面板 13）。
+
+    `last_*` 四个字段是 2026-09-12 新增：此前提取到 0 条时面板只显示
+    「Buffer 0/6 + 历史空」，与「根本没跑」「跑挂了」无法区分。
+    """
 
     buffer_size: int = Field(description="缓冲消息对数")
     threshold: int = Field(description="触发合并阈值")
     history: list[ConsolidationHistoryItem] = Field(default_factory=list, description="最近合并结果")
+    running: bool = Field(default=False, description="是否正在提取")
+    last_run_at: Optional[float] = Field(
+        default=None, description="最近一次提取完成时间（epoch 秒）；None = 从未运行")
+    last_turns: int = Field(default=0, description="最近一次提取的对话轮数")
+    last_extracted: int = Field(default=0, description="最近一次提取到的记忆条数")
+    last_inserted: int = Field(default=0, description="最近一次实际入库条数")
+    last_error: str = Field(default="", description="最近一次失败原因；空串 = 成功")
 
 
 class MemoryReflectorInfo(ContractModel):
@@ -239,7 +250,12 @@ class DebugData(ContractModel):
     base_personality_summary: str = Field(default="", description="L1 基础人格摘要")
     archive_msg_count: int = Field(default=0, description="归档消息总数")
     # Long-term memory（长期记忆）
-    lt_count: int = Field(default=0, description="长期记忆总数")
+    lt_count: int = Field(default=0, description="长期记忆总数（进程内 _entries）")
+    lt_count_milvus: int = Field(
+        default=-1,
+        description="Milvus 集合真实行数；-1 = 未取到。与 lt_count 不一致即「写了但没落库」")
+    lt_pending_sync_count: int = Field(
+        default=0, description="拿到内存条目但未拿到 Milvus durable PK 的待同步条数")
     lt_recent: list[LtmRecentItem] = Field(default_factory=list, description="最近长期记忆")
     milvus_ok: bool = Field(default=False, description="Milvus 可用")
     embedding_ok: bool = Field(default=False, description="Embedding 可用")
@@ -251,6 +267,14 @@ class DebugData(ContractModel):
     # Consolidation（面板 13）
     consolidator_buffer_size: int = Field(default=0, description="Consolidator 缓冲对数")
     consolidator_threshold: int = Field(default=0, description="Consolidator 触发阈值")
+    consolidator_running: bool = Field(default=False, description="Consolidator 是否正在提取")
+    consolidator_last_run_at: Optional[float] = Field(
+        default=None, description="最近一次提取完成时间（epoch 秒）；None = 从未运行")
+    consolidator_last_turns: int = Field(default=0, description="最近一次提取的对话轮数")
+    consolidator_last_extracted: int = Field(default=0, description="最近一次提取到的记忆条数")
+    consolidator_last_inserted: int = Field(default=0, description="最近一次实际入库条数")
+    consolidator_last_error: str = Field(
+        default="", description="最近一次失败原因；空串 = 成功。用于区分「提取 0 条」与「提取失败」")
     consolidation_history: list[ConsolidationHistoryItem] = Field(
         default_factory=list, description="最近合并结果")
     # MemoryReflector（面板 14）

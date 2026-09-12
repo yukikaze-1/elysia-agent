@@ -84,6 +84,8 @@
 | 启动横幅 / `start.sh` 谎报 `/debug` 可用 | ✅ 已修 | `8cba2feb` |
 | `WorkflowDebugAPI` 500ms 轮询无条件常驻 | ✅ 已修（懒启动） | `8cba2feb` |
 | SSE 断连靠 30s 心跳才发现 | ✅ 已修（10s keepalive 注释行） | 见下 |
+| **E-1~E-4** embedding 找不到本地模型（CR-10 之外的三条根因） | ✅ 已修 | `2a4146b7` |
+| **Consolidator 运行状态不可观测**（提取 0 条零痕迹） | ✅ 已修 | 见 §0.4.2 |
 | **CR-01** 轮换泄露凭据（步骤 1–2）| ⏳ **待 owner 执行** | 运维动作，非代码 |
 | **CR-02** 信号处理（部分：`except BaseException` + `try/finally`）| ⏳ 未开始 | 计划 P0 `#5` |
 | **CR-10** embedding 永久不可用 | ✅ 已修（**但根因不止一条，见下**）| 见 §0.4 末 |
@@ -183,6 +185,62 @@ DEBUG → 2 红。另修 `test_preflight.py::test_run_returns_true_when_all_ok`�
 > **教训**：CR-10 是"失败被当成终态"，E-1/E-2 是"根本没走到失败判定"。同一症状下
 > 叠着多条根因时，**照报告逐条修**会漏掉报告没写到的那条。这次是靠**接上真实运行实例
 > 的观测面板**发现的——正是 debug 面板存在的意义。
+
+### 0.4.2 面板观测面补全：Consolidator 运行状态 + LTM 双计数（2026-09-12）
+
+修完 E-1~E-4 后，用户在 default 会话发了 6 轮消息，发现 `CONSOLIDATION` 面板没有
+history。**查证结论：不是 bug**——同一套 prompt/LLM/解析器，只换对话内容：
+
+| 对话 | LLM 原始输出 | 解析条目 |
+|---|---|---|
+| 用户的 6 轮（"陪陪你~"/"嘿嘿"/"❤️❤️❤️"） | `[]` | **0** |
+| 对照组（"我养了只猫叫橘子"/"下周三是我的生日"/"我在学吉他"） | JSON 数组 | **4** |
+
+`app-debug.log` 里 `[006] Consolidation: 开始提取 (12 turns)` 证明它确实跑了；
+`ExtractMemory.j2` 明令禁止从玩笑/安慰/角色单方面陈述提取，`[]` 是**正确答案**。
+
+**但用户的困惑完全成立**——这是个真的观测面缺口（本报告反复出现的同一家族）：
+
+| 观测面 | 它说什么 | 事实 |
+|---|---|---|
+| 启动横幅（已修） | `/debug 可用` | 路由没注册，404 |
+| preflight（已修） | `✓ 嵌入模型已缓存` | 加载器说缺失 |
+| 嵌入失败日志（已修） | 沉默（DEBUG） | 每次启动都在失败 |
+| **CONSOLIDATION 面板** | **Buffer 0/6、历史空** | **跑过了，提取 0 条** |
+
+根因：提取 0 条时 `_do_consolidate` **一行日志都不留**（`compared` 行在 `if items:`
+内且是 DEBUG），面板也只暴露「缓冲 + 已提取条目」——四种状态（没跑 / 在跑 / 跑了提取
+0 条 / 跑失败）在面板上完全同形。
+
+**修复（A+B）**：
+
+| 改动 | 内容 |
+|---|---|
+| **A** 无条件留痕 | `_do_consolidate` 结尾恒定 `logger.info("Consolidation: %d turns → 提取 %d 条，入库 %d 条")`——提取 0 条也记 |
+| **B** 运行状态入契约 | `MemoryConsolidator.stats()` 公开快照（`running` / `last_run_at` / `last_turns` / `last_extracted` / `last_inserted` / `last_error`）；`DebugData` + `ConsolidationInfo` 各加对应字段；面板新增 `Last Run` 行 |
+| **B** 修「指标说谎」 | `lt_count` 是**进程内 `_entries` 长度**（`long_term.py:932`），Milvus 写入失败照样显示有条目。新增 `lt_count_milvus`（真实行数，实测 `count()` ~1.2ms 可随 2s 轮询）与 `lt_pending_sync_count`，面板显示 `LTM 内存 N / Milvus M`，不一致即标红 |
+| 顺带 | debug 层不再穿透 `cons._buffer/_threshold/_history`，统一走 `stats()` |
+
+**真实实例验证**（独立探针实例：8766 + 一次性 Mongo 库 `elysia_debug_probe`，
+Milvus 只读——发了 6 轮**无事实**消息，提取 0 条故零写入；主实例与用户数据全程未动）：
+
+```
+app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取 0 条，入库 0 条
+面板:     Buffer 1/6
+          Last Run  1min 前 · 12 turns → 提取 0 条，入库 0 条     ← 新增，绿色
+          MEMORY → LTM 0 / Milvus 0                              ← 新增双计数
+```
+「跑了、提取 0 条」与「没跑」「跑挂了」从此可区分。
+
+**回归网 +19**（4517 → **4536 passed**）：
+
+| 文件 | 覆盖 | 项数 |
+|---|---|---:|
+| `core/memory/tests/test_consolidator_observability.py` | 0 条留痕 / 四态可区分 / 失败记因 / stats 不泄露内部引用 | 10 |
+| `frontend_contract/tests/test_debug_run_state.py` | 契约字段 + `DebugInfo↔DebugData` 同名守卫 + handler 真实映射往返 | 9 |
+
+反证：提掉无条件 INFO → 1 红；不记 `last_run_at` → 2 红；`DebugInfo` 字段改名 → 2 红
+（这类漂移**无运行时错误**，字段会静默变默认值，故必须有同名守卫）。
 
 **⚠️ 遗留的行为变更影响（需运维动作）**：
 
