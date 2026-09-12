@@ -25,7 +25,9 @@ from core.storage.attachment_release import (
     release_session_attachments,
 )
 from core.storage.base import StorageUnavailableError
-from core.storage.destructive_guard import DestructiveConfirmRequired
+from core.storage.destructive_guard import DestructiveConfirmRequired, require_confirm
+from core.storage.message_repo import CONFIRM_TOKEN as MESSAGE_CONFIRM_TOKEN
+from core.storage.session_repo import CONFIRM_TOKEN as SESSION_CONFIRM_TOKEN
 from frontend_contract import debug as contract
 
 logger = logging.getLogger(__name__)
@@ -151,6 +153,15 @@ async def archive_clear_handler(request: web.Request) -> web.Response:
             "清空归档是破坏性且不可逆的操作，需 ?confirm=<目标资源名> 显式确认",
             400,
         )
+    # CR-04：类型化确认必须在**任何副作用之前**完成。
+    # 此前只在 clear_all() 内校验，而 release_all_attachments()（不可逆的附件软删）
+    # 排在它之前 —— confirm 写错时先软删全部附件、再返回 400，即"防误删守卫触发了
+    # 不可逆删除"。存储层仍会再校验一次（权威），此处是**顺序**修复。
+    try:
+        require_confirm(target=MESSAGE_CONFIRM_TOKEN,
+                        confirm=confirm, operation="清空归档")
+    except DestructiveConfirmRequired as e:
+        return _protocol_error_response("CONTRACT_VALIDATION", str(e), 400)
     # 批次 7：清空前列出全部消息释放附件 refs（附件软删联动）
     await release_all_attachments(agent)
     try:
@@ -328,6 +339,13 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
     if not await agent.session_repo.health_check():
         return _protocol_error_response(
             "STORAGE_UNAVAILABLE", "MongoDB 不可用", 503, retryable=True)
+    # CR-04：类型化确认先于副作用（同 archive_clear_handler——此前
+    # release_all_attachments 排在 clear_all 的 confirm 校验之前）。
+    try:
+        require_confirm(target=SESSION_CONFIRM_TOKEN,
+                        confirm=confirm, operation="清空会话")
+    except DestructiveConfirmRequired as e:
+        return _protocol_error_response("CONTRACT_VALIDATION", str(e), 400)
     try:
         # 批次 7：清空前释放全部归档消息的附件 refs（附件软删联动）
         try:

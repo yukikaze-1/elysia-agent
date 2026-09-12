@@ -1,13 +1,18 @@
 #!/usr/bin/env python
 """清理 Elysia Agent 数据库内容。
 
+**CR-07（2026-09-12）行为变更：默认 dry-run，真清需类型化确认。**
+
 用法:
-    python scripts/clean_db.py                      # 全部清理（需确认）
-    python scripts/clean_db.py -f                   # 全部清理（跳过确认）
-    python scripts/clean_db.py --conversation-only  # 只清对话数据（保留角色/身份）
-    python scripts/clean_db.py --mongo-only         # 只清理 MongoDB（全量范围）
-    python scripts/clean_db.py --conversation-only --milvus-only  # 可组合
-    python scripts/clean_db.py --dry-run            # 仅检查连接
+    python scripts/clean_db.py                      # 默认：只打印计划 + 检查连接（不删数据）
+    python scripts/clean_db.py --apply --confirm=full            # 真正全量清理
+    python scripts/clean_db.py --apply --conversation-only --confirm=conversation
+    python scripts/clean_db.py --mongo-only --apply --confirm=full
+    python scripts/clean_db.py --conversation-only --milvus-only --apply --confirm=conversation
+
+`--confirm` 必须等于清理范围（`conversation` 或 `full`）——复用
+`core/storage/destructive_guard.require_confirm`，与三个 debug 清空端点同一套语义。
+`-f/--force` 仍被接受（`--apply` 的废弃别名），但**不再**能跳过确认。
 
 清理范围（两个 mongo 范围，集合清单见 CONVERSATION_COLLECTIONS /
 FULL_ONLY_COLLECTIONS 单源表）:
@@ -44,6 +49,10 @@ from core.storage.character_repo import COLLECTION as CHARACTER_COLLECTION
 from core.storage.character_revision_repo import COLLECTION as CHARACTER_REVISION_COLLECTION
 from core.storage.character_version_repo import COLLECTION as CHARS_VERSION_COLLECTION
 from core.storage.desktop_call_repo import COLLECTION as DESKTOP_CALL_COLLECTION
+from core.storage.destructive_guard import (
+    DestructiveConfirmRequired,
+    require_confirm,
+)
 from core.storage.generation_repo import COLLECTION as GENERATION_COLLECTION
 from core.storage.idempotency_repo import COLLECTION as IDEMPOTENCY_COLLECTION
 from core.storage.memory_repo import COLLECTION as MEM_COLLECTION
@@ -110,9 +119,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="清理 Elysia Agent 数据库内容",
     )
     parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="真正执行清理（**默认只做 dry-run**，不删除任何数据）",
+    )
+    parser.add_argument(
+        "--confirm",
+        default="",
+        metavar="<scope>",
+        help="类型化确认（CR-07）：必须等于清理范围（conversation 或 full）。--apply 时必填",
+    )
+    parser.add_argument(
         "-f", "--force",
         action="store_true",
-        help="跳过确认提示，直接执行",
+        help="[已废弃] --apply 的别名；仍须 --confirm=<scope>",
     )
     # --mongo-only 与 --conversation-only 对 mongo 的范围诉求冲突，互斥而非静默取其一。
     mongo_group = parser.add_mutually_exclusive_group()
@@ -308,7 +328,13 @@ def describe_targets(targets: set[str], scope: str) -> list[str]:
 
 
 async def confirm(targets: set[str], scope: str) -> bool:
-    """打印清理目标并请求用户确认。返回 True 表示继续。"""
+    """打印清理目标并请求用户确认。返回 True 表示继续。
+
+    .. deprecated:: CR-07（2026-09-12）
+       交互式 `yes` 确认**不足以**保护删库脚本——它可被 `-f` 跳过、不是类型化令牌、
+       且与 debug 端点的守卫语义不一致。保留本函数仅为兼容外部调用；
+       `main()` 已改用 `destructive_guard.require_confirm`（`--confirm=<scope>`）。
+    """
     print("将要清理以下内容:")
     for line in describe_targets(targets, scope):
         print(line)
@@ -416,20 +442,51 @@ def report(results: list, *, exit_on_failure: bool = True) -> None:
 # ── Main ─────────────────────────────────────────────────
 
 async def main() -> None:
+    """清理入口。
+
+    CR-07（2026-09-12）**行为变更**：
+
+    * **默认是 dry-run** —— 打印清理计划 + 检查连接，**不删除任何数据**；
+    * 真正执行需显式 `--apply`（`-f/--force` 作为已废弃别名仍接受）；
+    * 执行时**必须**给出类型化确认 `--confirm=<scope>`，且 `scope` 必须是
+      `conversation` 或 `full` —— 复用项目自己的
+      `core/storage/destructive_guard.require_confirm`，与三个 debug 清空端点同一套语义。
+
+    原因：本脚本此前既不用 `destructive_guard`，`--dry-run` 又非默认，一次
+    `yes`（或一个 `-f`）即不可逆删除 `characters` / `character_revisions` /
+    `character_instances` / `character_versions` / `attachments` ——
+    这些**无法从对话重建**（RC-5 / RC-9）。
+    """
     args = parse_args()
     targets = build_targets(args)
     scope = mongo_scope(args)
 
-    # dry-run: 仅检查连接
-    if args.dry_run:
+    apply = args.apply or args.force
+    if apply and args.dry_run:
+        print("拒绝执行：--apply 与 --dry-run 互斥", file=sys.stderr)
+        sys.exit(2)
+
+    # 计划先行（默认路径也打印，便于确认范围与提示一致）
+    print("将要在以下范围清理:")
+    for line in describe_targets(targets, scope):
+        print(line)
+    print()
+
+    if not apply:
+        print("（dry-run 默认开启——仅检查连接，不删除任何数据。"
+              f"真正执行请加 --apply --confirm={scope}）")
         ok = await dry_run_check(targets)
         sys.exit(0 if ok else 1)
 
-    # 确认
-    if not args.force:
-        if not await confirm(targets, scope):
-            print("已取消")
-            return
+    # CR-07：类型化确认，复用项目自己的破坏性守卫
+    try:
+        require_confirm(target=scope, confirm=args.confirm,
+                        operation="清理数据库")
+    except DestructiveConfirmRequired as e:
+        print(f"拒绝执行：{e}", file=sys.stderr)
+        print(f"用法：python scripts/clean_db.py --apply --confirm={scope} "
+              f"[范围选项]", file=sys.stderr)
+        sys.exit(2)
 
     # 并发执行清理
     tasks = []

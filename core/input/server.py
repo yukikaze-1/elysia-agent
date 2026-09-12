@@ -249,12 +249,34 @@ def create_app(
     if task_system is not None:
         app["task_system"] = task_system
 
+    # CR-03（2026-09-12）：管理面鉴权**不得回退产品 token**。
+    # 此前只配 AGENT_ACCESS_TOKEN 时产品 token 即管理 token，任何拿到前端 token 的
+    # 客户端都能触达 /shutdown /restart /tools/* 与全部 /debug/api/*（含 3 个不可逆
+    # 清空端点）——授权域塌缩（RC-3），且与 CR-09/CR-04 叠加成"客户端 token →
+    # 不可逆销毁"。现语义：管理面**只认 SERVER_AUTH_TOKEN**；未配置即视为未启用，
+    # fail-closed 拒绝。`warn_if_unsecured` 对回环绑定提前返回，故此处必须显式告知。
+    if not auth_token and access_token:
+        logger.warning(
+            "\n"
+            "==================================================================\n"
+            "  管理面已禁用：检测到 AGENT_ACCESS_TOKEN 但未配置 SERVER_AUTH_TOKEN。\n"
+            "  为防止产品 token 提权（CR-03），/shutdown、/restart、/tools/* 与\n"
+            "  /debug/api/* 现已一律 401（含 /debug 仪表盘）。\n"
+            "  需要管理面请设置环境变量 SERVER_AUTH_TOKEN。\n"
+            "==================================================================")
+
     def _check_auth(request: web.Request) -> bool:
-        """管理端点认证（/shutdown /restart /tools /debug/api/*）。"""
+        """管理端点认证（/shutdown /restart /tools /debug/api/*）。
+
+        CR-03：**只认 `SERVER_AUTH_TOKEN`**——产品 token（`AGENT_ACCESS_TOKEN`）
+        不授予管理面。二者均未配置（纯回环本地开发）时放行，非回环绑定由
+        `assert_secure_bind` 在启动期 fail-closed 拦截；**仅配产品 token 时拒绝**，
+        不静默回退（那正是原缺陷）。
+        """
         if auth_token:
             expected = f"Bearer {auth_token}"
         elif access_token:
-            expected = f"Bearer {access_token}"
+            return False  # 产品 token ≠ 管理 token（CR-03）
         else:
             return True
         return hmac.compare_digest(

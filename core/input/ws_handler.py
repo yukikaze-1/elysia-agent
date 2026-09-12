@@ -448,15 +448,33 @@ async def _run_ws_message_loop(
 
 
 async def _close_ws_connection(conn: _WsConnection, agent: "Agent") -> None:
-    """连接清理：monitor/audio/voice 关闭、channel 移除、desktop 下线、断线取消。"""
+    """连接清理：monitor/audio/voice 关闭、channel 移除、desktop 下线、断线取消。
+
+    S2-E1（2026-09-12）：**纯注册表清理 `remove_channel` 必须在 `finally` 里**。
+    此前它排在 `audio_buf.flush()` / `voice_mgr.close()` 两个可失败 await **之后**
+    且全程无 `try/finally`——任一次抛错就让该连接**永久留在**
+    `agent.output.channels`；此后每次广播都对这条死连接 `send_json`
+    （`Module/output/websocket.py` 每帧一条 warning + 完整 traceback，日志随消息量
+    线性爆炸），desktop 状态也永久失真，v2 断线取消 generation 一并失效。
+    """
     if conn.monitor_task and not conn.monitor_task.done():
         conn.monitor_task.cancel()
-    if conn.audio_buf:
-        await conn.audio_buf.flush()
+    # 纯内存更新，不可能失败——放在可失败块之前，保证断线取消用的集合完整
     if conn.voice_mgr is not None:
         conn.sent_message_ids.update(conn.voice_mgr.emitted_message_ids)
-        await conn.voice_mgr.close()
-    agent.output.remove_channel(conn.channel)
+
+    try:
+        if conn.audio_buf:
+            await conn.audio_buf.flush()
+        if conn.voice_mgr is not None:
+            await conn.voice_mgr.close()
+    except Exception:
+        logger.warning("WS 连接关闭：音频/语音清理失败——仍继续注册表清理",
+                       exc_info=True)
+    finally:
+        agent.output.remove_channel(conn.channel)
+
+    # 以下两段各自已有 try/except，互不阻断
     if conn.desktop_conn_id is not None:
         try:
             await agent.desktop_bridge.on_client_disconnect(conn.desktop_conn_id)

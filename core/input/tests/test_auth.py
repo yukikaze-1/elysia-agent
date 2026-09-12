@@ -241,25 +241,33 @@ class TestStartupGuard:
 
 
 @pytest.mark.service
-class TestAdminAuthFallback:
-    """批次 8a D1：auth_token 空 + access_token 非空 → 管理端点 fallback 用 access_token。"""
+class TestAdminAuthStrictSeparation:
+    """CR-03（2026-09-12）：管理面**只认 `SERVER_AUTH_TOKEN`**，不再回退产品 token。
+
+    本类原名 `TestAdminAuthFallback`，断言的是「批次 8a D1：auth_token 空 +
+    access_token 非空 → 管理端点 fallback 用 access_token」。评测报告 CR-03 判定
+    该行为是**授权域塌缩**：任何持有前端产品 token 的客户端都能触达 `/shutdown`
+    `/restart` `/tools/*` 与全部 `/debug/api/*`（含三个不可逆清空端点），与
+    CR-09/CR-04 叠加即"客户端 token → 不可逆销毁"。故改为 fail-closed。
+
+    注意这是**行为变更**而非纯 bugfix——原行为是有意为之且有测试锁定。
+    """
 
     @pytest.mark.asyncio
     async def test_admin_anonymous_401_when_only_access_token(self, make_auth_app, aiohttp_client):
-        """仅配 access_token：匿名访问 /debug/api → 401（fallback 生效）。"""
+        """仅配 access_token：匿名访问 /debug/api → 401。"""
         app = make_auth_app(access_token="secret")
         client = await aiohttp_client(app)
         resp = await client.get("/debug/api")
         assert resp.status == 401
 
     @pytest.mark.asyncio
-    async def test_admin_with_access_token_ok(self, make_auth_app, aiohttp_client):
-        """仅配 access_token：access_token 访问 /debug/api → 放行（非 401 即通过）。"""
+    async def test_admin_with_access_token_rejected(self, make_auth_app, aiohttp_client):
+        """仅配 access_token：**产品 token 不得进入管理面**（CR-03 核心断言）。"""
         app = make_auth_app(access_token="secret")
         client = await aiohttp_client(app)
         resp = await client.get("/debug/api", headers={"Authorization": "Bearer secret"})
-        # 断言 200 而非 != 401（MagicMock agent 无 task_system 可能 500，M5）
-        assert resp.status == 200
+        assert resp.status == 401, "产品 token 不授予管理面（原 fallback 行为已废止）"
 
     @pytest.mark.asyncio
     async def test_admin_wrong_token_401(self, make_auth_app, aiohttp_client):
@@ -270,11 +278,37 @@ class TestAdminAuthFallback:
         assert resp.status == 401
 
     @pytest.mark.asyncio
-    async def test_shutdown_with_access_token_not_401(self, make_auth_app, aiohttp_client):
-        """/shutdown 由 _check_auth 护——仅验认证通过后可到达 handler（handler 本身 mock）。"""
+    async def test_shutdown_with_access_token_rejected(self, make_auth_app, aiohttp_client):
+        """仅配 access_token：产品 token 不得触发 /shutdown（不可逆破坏端点）。"""
         app = make_auth_app(access_token="secret")
         client = await aiohttp_client(app)
         resp = await client.post("/shutdown", headers={"Authorization": "Bearer secret"})
+        assert resp.status == 401
+
+    @pytest.mark.asyncio
+    async def test_restart_with_access_token_rejected(self, make_auth_app, aiohttp_client):
+        """仅配 access_token：产品 token 不得触发 /restart。"""
+        app = make_auth_app(access_token="secret")
+        client = await aiohttp_client(app)
+        resp = await client.post("/restart", headers={"Authorization": "Bearer secret"})
+        assert resp.status == 401
+
+    @pytest.mark.asyncio
+    async def test_destructive_debug_endpoint_rejected(self, make_auth_app, aiohttp_client):
+        """仅配 access_token：产品 token 不得触达不可逆清空端点（CR-04 的放大器）。"""
+        app = make_auth_app(access_token="secret")
+        client = await aiohttp_client(app)
+        resp = await client.delete(
+            "/debug/api/archive?confirm=archive",
+            headers={"Authorization": "Bearer secret"})
+        assert resp.status == 401
+
+    @pytest.mark.asyncio
+    async def test_admin_open_when_no_token_configured(self, make_auth_app, aiohttp_client):
+        """两个 token 都未配置 → 管理面放行（纯回环本地开发，由 assert_secure_bind 守非回环）。"""
+        app = make_auth_app()
+        client = await aiohttp_client(app)
+        resp = await client.get("/debug/api")
         assert resp.status != 401
 
     @pytest.mark.asyncio

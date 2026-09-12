@@ -1,6 +1,6 @@
 """scripts/clean_db.py 测试。"""
 import pytest
-from unittest.mock import AsyncMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch, call
 from pathlib import Path
 import sys
 
@@ -408,3 +408,112 @@ class TestDryRun:
             ok = await dry_run_check({"mongo"})
 
         assert ok is False
+
+
+class TestCLIApplyGuard:
+    """CR-07（2026-09-12）：默认 dry-run + 执行需类型化确认。
+
+    原行为：裸执行（或 `-f`）即删除 `characters` / `character_revisions` /
+    `character_instances` / `character_versions` / `attachments`——这些**无法从对话
+    重建**（评测报告 CR-07 / RC-5 / RC-9）。现为：默认只打印计划与检查连接，
+    真正执行需 `--apply` **且** `--confirm=<scope>`。
+    """
+
+    def _run(self, argv, cleaners=None):
+        """跑 main()，返回 (SystemExit code 或 None, 各 cleaner 的调用计数)。"""
+        import asyncio
+        from clean_db import main  # type: ignore[reportMissingImports]
+
+        calls = {"mongo": 0, "milvus": 0, "files": 0}
+
+        def _mk(name):
+            def _factory(*_a, **_k):
+                calls[name] += 1
+                inst = MagicMock()
+                # FileCleaner.clean 是**同步**方法（经 run_in_executor 调用），其余是
+                # async —— 替身必须同形，否则产生未 await 的协程告警（噪音掩盖真问题）。
+                inst.clean = (MagicMock(return_value=[]) if name == "files"
+                              else AsyncMock(return_value=[]))
+                return inst
+            return _factory
+
+        with patch("sys.argv", ["clean_db.py", *argv]), \
+             patch("clean_db.dry_run_check", AsyncMock(return_value=True)), \
+             patch("clean_db.MongoCleaner", side_effect=_mk("mongo")), \
+             patch("clean_db.MilvusCleaner", side_effect=_mk("milvus")), \
+             patch("clean_db.FileCleaner", side_effect=_mk("files")), \
+             patch("clean_db.report"):
+            try:
+                asyncio.run(main())
+                code = None
+            except SystemExit as e:
+                code = e.code
+        return code, calls
+
+    def test_default_is_dry_run_and_deletes_nothing(self):
+        """裸执行 = dry-run：零 cleaner 实例化（原行为：真删）。"""
+        code, calls = self._run([])
+        assert code == 0
+        assert calls == {"mongo": 0, "milvus": 0, "files": 0}
+
+    def test_apply_without_confirm_refused(self):
+        """--apply 缺 --confirm → 退出码 2，且不执行任何清理。"""
+        code, calls = self._run(["--apply"])
+        assert code == 2
+        assert calls == {"mongo": 0, "milvus": 0, "files": 0}
+
+    def test_apply_with_wrong_confirm_refused(self):
+        """--confirm 与 scope 不符 → 退出码 2，且不执行。"""
+        code, calls = self._run(["--apply", "--confirm=typo"])
+        assert code == 2
+        assert calls == {"mongo": 0, "milvus": 0, "files": 0}
+
+    def test_apply_with_conversation_confirm_on_full_scope_refused(self):
+        """scope=full 时只给 conversation 令牌 → 拒绝（必须报出真正要删的范围）。"""
+        code, calls = self._run(["--apply", "--confirm=conversation"])
+        assert code == 2
+        assert calls == {"mongo": 0, "milvus": 0, "files": 0}
+
+    def test_apply_with_matching_confirm_executes(self):
+        """--apply --confirm=full → 执行（收口不得误伤正常用法）。"""
+        code, calls = self._run(["--apply", "--confirm=full"])
+        assert code is None
+        assert calls == {"mongo": 1, "milvus": 1, "files": 1}
+
+    def test_conversation_scope_uses_conversation_token(self):
+        """--conversation-only 的 scope 是 conversation，令牌须相应匹配。"""
+        code, calls = self._run(
+            ["--apply", "--conversation-only", "--confirm=conversation"])
+        assert code is None
+        assert calls["mongo"] == 1
+
+    def test_force_is_alias_for_apply_but_still_needs_confirm(self):
+        """已废弃的 -f 仍是 apply 别名，但**不再**能跳过确认。"""
+        code, calls = self._run(["-f"])
+        assert code == 2, "-f 不得再绕过类型化确认"
+        assert calls == {"mongo": 0, "milvus": 0, "files": 0}
+
+        code, calls = self._run(["-f", "--confirm=full"])
+        assert code is None
+        assert calls["mongo"] == 1
+
+    def test_apply_conflicts_with_dry_run(self):
+        """--apply 与 --dry-run 互斥 → 退出码 2。"""
+        code, calls = self._run(["--apply", "--dry-run", "--confirm=full"])
+        assert code == 2
+        assert calls == {"mongo": 0, "milvus": 0, "files": 0}
+
+
+class TestParseArgsCR07:
+    def test_new_flags_parse(self):
+        from clean_db import parse_args  # type: ignore[reportMissingImports]
+        args = parse_args(["--apply", "--confirm=full"])
+        assert args.apply is True
+        assert args.confirm == "full"
+
+    def test_defaults_are_safe(self):
+        from clean_db import parse_args  # type: ignore[reportMissingImports]
+        args = parse_args([])
+        assert args.apply is False
+        assert args.confirm == ""
+        assert args.force is False
