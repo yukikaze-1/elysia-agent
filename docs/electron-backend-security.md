@@ -14,11 +14,15 @@
 | Token | 配置 | 保护范围 | 权限域 |
 |---|---|---|---|
 | `AGENT_ACCESS_TOKEN` | `ServerConfig.access_token`（env） | `/ws`、业务 `/api/*`、`/uploads/*` | **产品用户** |
-| `SERVER_AUTH_TOKEN` | `ServerConfig.auth_token`（env） | `/shutdown` `/restart` `/tools` `/tools/reload` `/debug/*` | **管理/运维** |
+| `SERVER_AUTH_TOKEN` | `ServerConfig.auth_token`（env） | `/shutdown` `/restart` `/tools` `/tools/reload` **`/debug/api/*`** | **管理/运维** |
 
 两者独立配置、权限域分离——产品 token 不能访问管理端点，管理 token 不能用于产品 API。`AGENT_ACCESS_TOKEN` 标 `secret=True`（不落盘 YAML）。
 
-**管理面认证 fallback（批次 8a，`2c5a293`）**：`_check_auth` 闭包捕获 `auth_token` + `access_token`——两者都空 → 匿名本地开发；仅配置 `AGENT_ACCESS_TOKEN`（未配 `SERVER_AUTH_TOKEN`）→ 管理端点（`/shutdown` `/restart` `/tools` `/tools/reload` `/debug/api/*`）**回退用 access_token 校验**（Demo 单 token 语义，docs/14 §6「Demo 推荐：单用户访问 Token」）；两者都配 → 严格分离。双 token 下产品 token 不能访问管理端点、管理 token 不能用于产品 API（不变）。
+**管理面认证（CR-03，2026-09-12，`9b41beb8` 起 fail-closed）**：`_check_auth` 闭包捕获 `auth_token` + `access_token`——`SERVER_AUTH_TOKEN` 已配 → 只认 `Bearer <auth_token>`；**仅配 `AGENT_ACCESS_TOKEN` → 管理端点一律 401（不再回退产品 token）**；两者都空 → 匿名本地开发（非回环绑定由 `assert_secure_bind` 在启动期 fail-closed 拦截；`ALLOW_INSECURE_REMOTE=1` 为显式豁免）。双 token 下产品 token 不能访问管理端点、管理 token 不能用于产品 API（不变）。
+
+> ⚠️ **本段已于 2026-09-12 修正。** 此前语义为「仅配 `AGENT_ACCESS_TOKEN` → 管理端点**回退用 access_token 校验**」（批次 8a `2c5a293` 引入，自称「Demo 单 token 语义」）。该语义**不是修复，而是把一个授权漏洞换了个形状**：从「无需任何凭据」变成「任何持产品 token 的客户端即可」——而产品 token 是分发给前端（浏览器 / Electron）的，授权域仍然塌缩（评测报告 CR-03）。历史审计曾把 `2c5a293` 标注为「✅ 已修复」（`docs/archive/electron-backend-audit-batches0-7.md:52`），属**误判**；详见评测报告 §0.4。
+>
+> **影响（BREAKING）**：只配 `AGENT_ACCESS_TOKEN` 的部署，管理面现在不可用，需补配 `SERVER_AUTH_TOKEN`。注意 debug 面板前端**当前无法携带该 token**（`frontend/src/` 全目录 `Authorization` 零命中；且任务流用 `EventSource`，浏览器协议上无法设置请求头）——即评测报告 **S2-F3，尚未修**。在此之前该变更的实际影响接近零：面板 HTML 是构建产物，未构建前端时 `/debug` 本就 404。
 
 ### 1.2 认证语义
 
@@ -31,7 +35,13 @@
 - **唯一免 Bearer 的业务路径**：`/api/attachments/{attachment_id}`（**非 /sign**）——附件**签名下载**。短时 HMAC 签名（`?sig=&exp=`）即授权，属**短期下载授权、非账号凭据**（签名 URL 24h 过期、仅能下载该附件，见 §3.5）；`/api/attachments/{attachment_id}/sign`（签发端点）**保持 Bearer**。
 - 未带凭据 → 401 `AUTH_REQUIRED`；凭据错误 → 401 `AUTH_INVALID`；均返回统一错误信封。**批次 8c（F2）**：admin/debug 端点（/shutdown、/restart、/tools、/tools/reload、/debug/api/*）认证失败与业务错误同样走统一信封（`error` = message 兼容别名），不再裸 `{"error":...}`。
 
-**v1 网页聊天（2026-08-11）**：默认停用（`serve_chat=False`，env `SERVE_CHAT=1` 恢复），`/` 404。Debug 仪表盘：**HTML 页（`/debug`）匿名可加载**，`/debug/api/*` 与 SSE 经 `SERVER_AUTH_TOKEN` 鉴权（页面匿名、数据鉴权）。Electron 走 `Authorization` header 鉴权不受影响。
+**v1 网页聊天（2026-08-11）**：默认停用（`serve_chat=False`，env `SERVE_CHAT=1` 恢复），`/` 404。
+
+**Debug 仪表盘的实际可达性（2026-09-12 核实）**：`/debug` 的 **HTML 壳**由 `_register_static_routes` 以「`static/debug.html` 存在」为条件注册，而该文件是 **Vite 构建产物**（`.gitignore:10-12`）——**未构建前端时该路由根本不注册，`/debug` 恒 404**。而 `/debug/api/*` 是**无条件注册**的（`register_debug_routes` 无守卫）——即 **UI 可缺、API 恒在**。这个不对称本身就是一处待收口项。
+
+- `/static/` 静态挂载（`server.py:119-120`）与 `/debug` 壳**均无鉴权**，构建产物存在时匿名可加载（**注意：文档 §1.1 表格曾写 `SERVER_AUTH_TOKEN` 护 `/debug/*`，实际只护 `/debug/api/*`**）；
+- `/debug/api/*` 全部 25 条路由经 `_check_auth`（中间件判据 `path.startswith("/debug/api")`，`debug_routes/__init__.py:33`）；
+- **前端不携带任何凭据**（`frontend/src/` 全目录 `Authorization` 零命中）→ 一旦配置 `SERVER_AUTH_TOKEN`，整个面板数据面 401（**S2-F3**）。任务流的 `EventSource` 协议上无法加请求头，故修 SSE 需另择载体（query token / 短签 / cookie）。
 
 ### 1.3 凭据载体
 

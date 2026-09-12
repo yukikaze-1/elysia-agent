@@ -102,13 +102,32 @@
 
 **⚠️ 遗留的行为变更影响（需运维动作）**：
 
-1. **CR-03 使 `/debug` 仪表盘在"只配 `AGENT_ACCESS_TOKEN`"的部署下 401** ——
-   需要设置 `SERVER_AUTH_TOKEN`；而 `/debug` 前端当前**无法携带**该 token
-   （`fetch` 不带 Authorization、`EventSource` 协议上加不了 header），即 **S2-F3**。
-   **两者需一起处理**才能恢复排障面。
+1. **CR-03 的实际影响面 ≈ 0（2026-09-12 补充实测）** —— 初版此处写「CR-03 使 `/debug`
+   仪表盘 401，需设 `SERVER_AUTH_TOKEN`」，**该判断有误**：`/debug` **本来就打不开**。
+   `/debug` 的 HTML 路由由 `_register_static_routes` 以「`static/debug.html` 存在」
+   为条件注册，而该文件是 **Vite 构建产物**（`94a90222` 起 gitignore），本工作树
+   `frontend/node_modules` 不存在、从未构建 → **该路由压根没注册，`/debug` 恒 404**。
+   故 CR-03 并未"弄坏"任何正在使用的东西。
+   **但它仍然值得修**，原因恰恰相反：`register_debug_routes(app, _check_auth)` 是
+   **无条件**注册的（不像 HTML 页有 404 守卫）——**UI 不在、API 全在**，攻击面不依赖
+   前端是否构建。其余受 `_check_auth` 保护的端点（`/shutdown` `/restart` `/tools`
+   `/tools/reload`）在**仓库内与 Electron 前端（`../elysia-frontend`）均零调用者**
+   （grep 实测）。→ 修的是"无人使用但一直敞开"的面，不是"正在使用的功能"。
+   > **遗留不对称（建议后续收口）**：HTML 页按构建产物门控、API 却无条件注册。
+   > 二者应当对称——或都门控、或都不门控。
 2. **CR-07 使 `python scripts/clean_db.py` 默认不再删除任何数据** ——
    原用法（裸执行 / `-f`）需改为 `--apply --confirm=<scope>`。
 3. `POST /api/chat` 的 `content` 不再接受客户端自带的 `src`（见 CR-09）。
+
+> **CR-03 的历史值得记录（"修了个看起来像修的"）**：该缺陷**报过两次**。
+> 原状 `_check_auth` 是 `if not auth_token: return True`——未配 `SERVER_AUTH_TOKEN`
+> 时管理面**完全匿名**，早期审计（`docs/archive/electron-backend-audit-batches0-7.md:52`）
+> 已 CONFIRMED。批次 8a D1（`2c5a293`，2026-08-06）的"修复"是**加 `access_token` 回退**，
+> 审计文档随即标注「✅ 已修复」；但那是把"无需凭据"改成"任意产品 token 即可"，
+> **授权域仍然塌缩**，且 `TestAdminAuthFallback` 把它锁死为预期行为。
+> 两个月后复查再次发现（即本条 CR-03）。
+> → **教训**：审计项的"已修复"标注必须给出**可验证的判定**，否则"修了个像修复的东西"
+> 会被记为已闭合，并以测试形式固化。
 
 ---
 
