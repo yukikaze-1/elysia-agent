@@ -9,6 +9,23 @@
 - 审查方式：主 Agent 侦察 → 10 个 Subsystem Subagent（Round 1）→ 6 个 Cross-Cutting Subagent（Round 2）
   → 主 Agent 逐项验证 → 去重 → 分级 → 综合报告
 
+> ## ⚠️ 编号空间：本台账的 `CR-xx` 与报告的 `CR-xx` **不是同一套**
+>
+> | 来源 | 范围 | 含义 |
+> |---|---|---|
+> | **`CODE_REVIEW_REPORT.md`** | `CR-01` … `CR-13` | **最终确定的 S0/S1 关键问题**（Roadmap 引用这套）|
+> | **本台账** | `CR-01` … `CR-49`、`MG-01` | **Round 1/1-G 的候选发现**（含后被推翻、降级、合并者）|
+>
+> **同号不同义**，例：报告 `CR-04` =「`confirm` 校验在副作用之后」，
+> 本台账 `CR-04` =「产品 token 即管理 token」（= 报告 `CR-03`）。
+>
+> **引用规则**：引用报告写作 `CR-04`；引用本台账写作「台账 CR-04」。
+> 报告正文凡引用本台账 ID 处均已加「台账」前缀（见报告 §R2-5 复杂度映射表）。
+>
+> **本台账的状态**：**仅完整覆盖 Round 1 与 Round 1-G**；Round 2 的 6 个专项分工见 §4，
+> 但其**发现未回填本文件**（其结论直接写入报告）。故「本台账查不到某问题」≠「该问题没有证据」——
+> 报告 `CR-05`/`CR-06`/`CR-09` 三个 S1 即属此类。
+
 ---
 
 ## 1. 规模与代码量实测
@@ -116,7 +133,7 @@
 | HTTP Server（裸） | `core/input/server.py::create_app`（被 `scripts/stage4_smoke.py` 进程内使用） |
 | CLI（交互终端）| `app.py::run_interactive`（`--cli`） |
 | CLI（预检）| `app.py::main` `--check` / `--full` → `Module/config/preflight.py::run` |
-| 进程信号 | `SIGTERM` / `SIGINT`（`core/agent/server.py::run_server` 侧） |
+| 进程信号 | **不存在** —— 全仓 `import signal` / `SIGTERM` / `SIGINT` / `add_signal_handler` **0 命中**（见本台账 CR-03）。`run_server` 只 catch `KeyboardInterrupt`（且仅在最外层 idle 循环）|
 | Startup Hook | `core/agent/lifecycle.py::AgentLifecycle.start()` + `_STARTUP_STEPS` |
 | Shutdown Hook | `core/agent/lifecycle.py::AgentLifecycle.stop()` + `_SHUTDOWN_STEPS` + 3 个 flush |
 | Worker（后台任务引擎）| `Module/workflow_engine/workflow_engine.py::WorkflowEngine`（由 `core/agent/_lifecycle_task_system.py` 启停） |
@@ -236,7 +253,11 @@ Status 取值：`Candidate` / `Confirmed` / `Rejected` / `Merged` / `Needs Verif
 
 ### 主 Agent 独立发现（Lead 复核）
 
-#### CR-01 — WorkflowEngine HITL 审批链路三处断裂，且两处静默丢事件
+#### MG-01 — WorkflowEngine HITL 审批链路三处断裂，且两处静默丢事件
+
+> **编号说明（2026-09-12 修订）**：本条原编号为 `CR-01`，与下方「Round 1 回收」表的
+> `CR-01`（DeepSeek key 泄露）**撞号**——两者是完全不同的问题。现改用 `MG-` 前缀
+> （Main-agent Generated）以消除歧义。本条在最终报告中对应 **`S3-23`**。
 
 | 字段 | 值 |
 |---|---|
@@ -428,7 +449,38 @@ mailbox 重复投递/乱序（SPSC + 同步 push + 终态唯一守卫）；重�
 ## 6. Unresolved Questions（待验证清单）
 
 <!-- UNRESOLVED_START -->
-（Round 1 结果回收后填充）
+> **2026-09-12 修订**：本节初版为占位符「（Round 1 结果回收后填充）」，从未回填。
+> 现补齐：Round 1 提出的待验证项，逐条标注 **Round 2 是否已结案**。
+> **仍未结案者**汇总在报告 §「仍需产品/运维确认的决策」（10 项），此处只记流转。
+
+### 6.1 Round 1 提出、Round 2 已结案（**不要再查**）
+
+| # | 原问题 | 结论 | 依据 |
+|---|---|---|---|
+| 1 | `start.sh` 经 `conda run` 启动，SIGTERM 是否透传到 python？ | **不透传** —— `scripts/start.sh:13,108` 无 `exec`，中间隔着 `conda run` 进程 | R2-5 handler 探针实测 → 故 CR-02 修复**必须同时给 `start.sh` 补 `exec`**，仅注册 handler 不够 |
+| 2 | `permessage-deflate` 是否影响**浏览器**客户端？ | **仍未结案**（见 6.2 #1）| 已有 Node `ws` 客户端 A/B 实证 |
+| 3 | 是否严格单进程部署？ | **仍未结案**（见 6.2 #3）| 关系 `desktop_call_repo.mark()` 迁移守卫 |
+| 4 | 多客户端并存是否受支持？ | **仍未结案**（见 6.2 #5）；但有**新证据**：`activate_session` 改**全局** active 指针 | R2-2 |
+| 5 | 后台任务终态是否要求跨重启不丢？ | **仍未结案**（见 6.2 #6）| — |
+| 6 | 打断后不归档半截回复是否为产品有意取舍？ | **仍未结案**（见 6.2 #7）| 关系 S3-16 修法 |
+| 7 | 生产库现存索引的 `unique`/`expireAfterSeconds` 实况？ | **仍未结案** —— 需 `MONGODB_URI`；与 `sessions.updated_at_1` 旧 TTL 孤儿索引是否已 drop 合并为一处 | R2-2 确认为**剩余唯一无法证伪项** |
+
+**R1-G 的 4 项 Unresolved**：
+
+| # | 原问题 | 结论 |
+|---|---|---|
+| 8 | `_stop_task_system` 的 5s 是刻意还是参数漂移？ | **已定性**：是**参数漂移** —— 外层 5s < 内层 `stop(timeout=10.0)`，代码注释自承风险但低估为"可能"（CR-41 / S2-A3）|
+| 9 | `AgentInfra.llm` 是否与被 `stop()` 关闭的 LLM client 同一实例？ | **仍未结案**（见 6.2 #11）—— 若同一实例，S2-A3 后果升级为"在途 LLM 打到已关闭 client" |
+| 10 | `ToolManager` 侧是否有任务级去重？ | **未结案**，但不阻塞（决定 S2-D3 盲重跑的爆炸半径）|
+| 11 | `parse_plan_from_dict` 的 `pydantic.ValidationError` 现实频率？ | **已定性**：规划期异常**无 try/except**，冒泡后统一报 `internal_error`（S2-D6）|
+
+### 6.2 仍未结案（已汇总至报告，此处仅登记台账侧来源）
+
+报告 §「仍需产品/运维确认的决策」列出 10 项阻塞修复的决策，与本节的对应关系：
+#1 ↔ 6.1-#2；#2 ↔ 报告 S3-21（生产库 `character_versions.session_id` 形态）；
+#3 ↔ 6.1-#3；#4 ↔ 6.1-#1（**已答**）；#5 ↔ 6.1-#4；#6 ↔ 6.1-#5；#7 ↔ 6.1-#6；
+#8 ↔ 存储层 fail-closed 语义取值；#9 ↔ `retryable=True` 的契约语义；#10 ↔ S2-A1 的预算取舍。
+**新增**：#11 = 6.1-#9（`AgentInfra.llm` 实例同一性）。
 <!-- UNRESOLVED_END -->
 
 ## 7. 基线验证记录
@@ -442,7 +494,6 @@ mailbox 重复投递/乱序（SPSC + 同步 push + 终态唯一守卫）；重�
 | 单元+服务测试 | `conda run -n Elysia python -m pytest -m "unit or service" -q` | 见 §7.1 |
 | 契约漂移 | `python -m frontend_contract --check` 等 | 见 §7.1 |
 
-### 7.1 待填
 ### 7.1 实测结果（2026-09-12，基线 `4aa3f8ef`）
 
 | 检查 | 命令 | 结果 |
