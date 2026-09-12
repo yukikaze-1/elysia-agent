@@ -2,6 +2,12 @@
 
 TaskScheduler Worker Pool 消费这些 task。
 认知循环产出工具调用规划时，每个 tool_call 封装为一个 Task 提交到 Worker Pool。
+
+**扩展储备（`P3-01-RESERVED`）**：`TaskType.BACKGROUND`、`depends_on`、`children_ids`、
+`run_in_background`、`progress`、`new_background()` 与 checkpoint 序列化
+（`to_dict`/`from_dict`）当前均无生产消费者，但 2026-09-12 决策**保留作扩展储备**
+（非死代码）——勿按引用审计删除。详见 `docs/review/2026-08-30-后端架构分层与模块化
+增量评估.md` §ARCH-INC-P1-01「收窄范围」与 §ARCH-INC-P3-01 处置记录。
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from core.utils import new_task_id
 
 class TaskType(Enum):
     TOOL_CALL = "tool_call"       # AI 规划的工具调用
-    BACKGROUND = "background"     # 脱离对话流的长时后台任务 (预留)
+    BACKGROUND = "background"     # P3-01-RESERVED: 脱离对话流的长时后台任务（预留）
 
 
 class TaskStatus(Enum):
@@ -54,15 +60,15 @@ class Task:
     status: TaskStatus = TaskStatus.PENDING
     priority: int = 5               # 0=最高, 5=默认, 9=后台
     parent_id: str | None = None    # 实收 RequestId，本批不裁决（TaskId 贯通范围外）
-    depends_on: list[TaskId] = field(default_factory=list)   # 预留: DAG 依赖
-    children_ids: list[TaskId] = field(default_factory=list)
+    depends_on: list[TaskId] = field(default_factory=list)   # P3-01-RESERVED: DAG 依赖预留
+    children_ids: list[TaskId] = field(default_factory=list)  # P3-01-RESERVED: 任务树预留
     payload: ToolCallPayload | dict[str, Any] = field(default_factory=dict)  # dict = BACKGROUND/other
     result: Any = None
     error: str | None = None
     retry_count: int = 0
     max_retries: int = 2
-    run_in_background: bool = False  # 预留: 脱离对话流
-    progress: float = 0.0            # 预留: 0~1 进度
+    run_in_background: bool = False  # P3-01-RESERVED: 脱离对话流预留
+    progress: float = 0.0            # P3-01-RESERVED: 0~1 进度预留（生产恒 0.0）
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -157,7 +163,7 @@ class Task:
         payload: dict[str, Any],
         priority: int = 9,
     ) -> "Task":
-        """创建后台任务。
+        """创建后台任务（P3-01-RESERVED：无生产调用方，保留作扩展储备）。
 
         Args:
             payload: 任务负载数据
@@ -175,7 +181,7 @@ class Task:
             payload=payload,
         )
 
-    # ---- 序列化 (checkpoint) ----
+    # ---- 序列化 (checkpoint) — P3-01-RESERVED：无生产持久化闭环，保留作扩展储备 ----
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为字典，用于 checkpoint 持久化。

@@ -48,9 +48,10 @@ def _runtime_info(agent: "Agent") -> dict:
             "session_count": len(agent.session.messages),
             "long_term_count": agent.long_term.count,
         },
-        # 双跳守卫：startup 早期 _manager 可能未就绪，getattr 兜底 "<loading>"
-        "tools": getattr(getattr(agent.tool_adapter, "_manager", None),  # noqa: SLF001
-                          "tool_names", ["<loading>"]),
+        # 守卫：startup 早期工具子系统可能未就绪，getattr 兜底 "<loading>"
+        # （批次 A 门面：原为 getattr(getattr(adapter, "_manager"), ...) 双跳私有穿透，
+        #   2026-09-12 收口为公开属性 tool_names）
+        "tools": getattr(agent.tool_adapter, "tool_names", ["<loading>"]),
         "version": build_server_version(),
         "build_sha": get_build_sha(),
         "uptime": round(time.monotonic() - _PROCESS_START, 1),

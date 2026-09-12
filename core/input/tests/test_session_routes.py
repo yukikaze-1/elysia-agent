@@ -53,8 +53,17 @@ class _FakeToolManager:
 
 
 class _FakeToolAdapter:
+    """ToolAdapter 门面替身：只暴露路由实际消费的公开方法。
+
+    路由原本穿透 `._manager` 取待审批（P1-02 残留），改用门面后替身同步收窄——
+    否则替身会比真实对象更宽，测试将无法反映生产调用路径。
+    """
+
     def __init__(self, manager) -> None:
         self._manager = manager
+
+    def get_pending_approvals(self) -> list:
+        return self._manager.get_pending_approvals()
 
 
 class _FakeStatus:

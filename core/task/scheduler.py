@@ -2,6 +2,12 @@
 
 被 CognitiveLoop 调用。管理 N 个 worker 消费工具子任务和后台任务。
 Future 双向绑定确保 INTERRUPT 取消时精准传播到 Worker。
+
+**扩展储备（`P3-01-RESERVED`）**：`dispatch_background()`、`submit(Task)`、`get_task()`、
+`get_tree()` 与 checkpoint 持久化（`_save_checkpoint`/`_restore_checkpoint`）当前均无
+生产消费者（生产主路径是 `dispatch_tool_calls()`），但 2026-09-12 决策**保留作扩展
+储备**（非死代码）——勿按引用审计删除。详见 `docs/review/2026-08-30-后端架构分层与
+模块化增量评估.md` §ARCH-INC-P1-01「收窄范围」。
 """
 
 from __future__ import annotations
@@ -195,7 +201,7 @@ class TaskScheduler:
         return out
 
     async def dispatch_background(self, coro: Any) -> TaskId:
-        """提交一个后台协程，返回 task_id。
+        """提交一个后台协程，返回 task_id（P3-01-RESERVED：无生产调用方，保留作扩展储备）。
 
         Args:
             coro: 要作为后台任务执行的协程
@@ -459,7 +465,7 @@ class TaskScheduler:
     # ---- Checkpoint ----
 
     def _save_checkpoint(self) -> None:
-        """保存 checkpoint：将待处理的后台任务持久化到文件。
+        """保存 checkpoint：将待处理的后台任务持久化到文件（P3-01-RESERVED）。
 
         C5/P2-09：
         - 无 pending 时删除旧文件（防陈旧 checkpoint 重启重放已执行任务）；

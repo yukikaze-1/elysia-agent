@@ -221,12 +221,12 @@ class ToolAdapter:
         return self._manager.submit_approval(request_id, approved)
 
     def execute_now(self) -> list[str]:
-        """返回可立即执行的工具名列表。
+        """返回可立即执行的工具名列表（`ToolRegistryProtocol` 的历史命名）。
 
         Returns:
             list[str]: 已注册工具的名称列表。
         """
-        return list(self._manager.tool_names)
+        return self.tool_names
 
     def resolve_llm_name(self, llm_name: str) -> str | None:
         """LLM 返回函数名 → 运行时工具名（desktop_file_select → desktop.file.select）。
@@ -263,6 +263,17 @@ class ToolAdapter:
     #
     # 门面**不做转发之外的加工**，以保证行为逐字节不变（评估 §5 批次 A 第 5 条：
     # 不改变任何 wire 或运行时行为）。
+
+    @property
+    def tool_names(self) -> list[str]:
+        """已注册工具名列表。
+
+        `ToolManager.tool_names` 的 docstring 写明该属性是「保留旧接口兼容性 —
+        server.py health endpoint 使用」，但 health 探针此前经 `_manager` 私有
+        穿透读取（P1-02 残留之一）。此处收口为公开门面，与 `execute_now()`
+        同源（后者是 `ToolRegistryProtocol` 的历史命名）。
+        """
+        return list(self._manager.tool_names)
 
     @property
     def plugin_list(self) -> list[dict]:

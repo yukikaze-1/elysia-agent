@@ -12,6 +12,16 @@
 > 暂缓期内不把普通工具调用并入 WorkflowEngine，不创建产品 TaskRecord，不动现有 wire 契约，不实现任务中心 REST/WS API。
 > 恢复激励点：需要可查询/可控/可恢复展示的任务历史时，从批次 A（公共契约 + 持久读模型）启动。
 
+> **`core/task` 预留能力保留（2026-09-12）**：评估稿 §ARCH-INC-P1-01 批次 B 原计划
+> 「删除无消费者的 background/DAG/progress/checkpoint 预留」——**作废**。与下节 §代码清理
+> 的桩代码决策同源：`depends_on` / `children_ids` / `run_in_background` / `progress` /
+> checkpoint 持久化 / `dispatch_background()` / `new_background()` 全部保留。
+> P1-01 剩余范围因此收窄为**仅命名与概念**（`core/task` → `core/tool_runtime`、
+> `TaskScheduler` → `ToolCallDispatcher`、`Task` → `QueuedToolCall`、
+> `parent_id` → `request_id`）；改名本身**尚未执行**，待单独排期。
+> 因 `TaskType.BACKGROUND` 保留，`TaskType` 维持双成员，不做枚举消除。
+> 代码侧标记见 `core/task/task.py` 与 `core/task/scheduler.py` 的模块 docstring。
+
 ## 已知 Bug
 
 | 优先级 | 问题 | 说明 |
@@ -257,6 +267,7 @@
 | 保留 | **FilePart/AudioPart/VideoPart 预留代码** | `P3-01-RESERVED`——`part.py` 130 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2 |
 | 保留 | `core/hitl.py`（85 行）与 `ToolEmitter` 流式上报面 | `P3-01-RESERVED`——HITL 通知器已端到端接好、插件侧 `emit.progress/is_cancelled` 已定义，但两侧都尚未接线。**半接线状态已如实标注在代码注释里**（原先两处注释与代码不符，本次已改正），不再每轮重新发现 |
 | 保留 | `WorkflowEngine.resume()`（91 行，13 项测试） | `P3-01-RESERVED`——暂停/恢复闭环尚未接线，先备好能力与测试 |
+| 保留 | **`core/task` 的 background/DAG/progress/checkpoint 预留** | `P3-01-RESERVED`——评估稿 §ARCH-INC-P1-01 批次 B 原计划「删除无消费者的 background/DAG/progress/checkpoint 预留」，2026-09-12 决策**作废**。`TaskType.BACKGROUND` / `depends_on` / `children_ids` / `run_in_background` / `progress` / checkpoint 持久化 / `dispatch_background()` / `new_background()` 全部保留 |
 | ~~低~~ ✅ | **衍生 ID 未类型化** | 2026-08-09 已修：AttachmentId/MemoryId/TaskId 立项 + 贯通（part/repo/long_term/schema/memory_reflector/task/scheduler/input）。spec/plan 见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-09-derived-id-newtype-design.md) / [plan](docs/superpowers/plans/archive/2026-08/2026-08-09-derived-id-newtype-plan.md)。已知权衡：Task.parent_id 语义混乱留待未来、scheduler:159 死代码 ignore |
 
 ## 模块化改进

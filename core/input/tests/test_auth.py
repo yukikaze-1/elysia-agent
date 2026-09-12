@@ -29,7 +29,9 @@ def make_auth_app():
         agent.session.health_check = AsyncMock(return_value=True)
         agent.long_term.count = 0
         agent.long_term.health_check = AsyncMock(return_value=True)
-        agent.tool_adapter._manager.tool_names = ["t1"]
+        # 走 ToolAdapter 公开门面（批次 A）：路由/探针/DebugInfo 都从门面读，
+        # 故 stub 必须挂在 adapter 上而非其内部 _manager（2026-09-12）
+        agent.tool_adapter.tool_names = ["t1"]
         # /debug/api handler（collect → DebugData 契约）需要的属性 stub——批次 8a D1
         # 测试断言管理端点带 token 时 200，MagicMock agent 需满足 DebugInfo.collect
         # 全部读取路径（缺省则 async 字段 TypeError / 契约 MagicMock 校验失败 → 500）。
@@ -49,9 +51,9 @@ def make_auth_app():
         agent.long_term._embedding_provider._backend = None
         agent.memory_repo.health_check = AsyncMock(return_value=True)
         agent.session_repo.health_check = AsyncMock(return_value=True)
-        agent.tool_adapter._manager.plugin_list = []
-        agent.tool_adapter._manager.executing_now = []
-        agent.tool_adapter._manager.history = []
+        agent.tool_adapter.plugin_list = []
+        agent.tool_adapter.executing_now = []
+        agent.tool_adapter.history = []
         agent.consolidator._history = []
         agent.consolidator._buffer = []
         agent.consolidator._threshold = 6

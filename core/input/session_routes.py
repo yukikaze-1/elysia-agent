@@ -923,10 +923,11 @@ async def sessions_pending_handler(request: web.Request) -> web.Response:
         ))
 
     approvals = []
-    tool_manager = getattr(getattr(agent, "tool_adapter", None), "_manager", None)  # noqa: SLF001
-    if tool_manager is not None and hasattr(tool_manager, "get_pending_approvals"):
+    # 批次 A 门面：走 ToolAdapter 公开 API（原直取 ._manager 私有成员，2026-09-12 清除）
+    tool_adapter = getattr(agent, "tool_adapter", None)
+    if tool_adapter is not None and hasattr(tool_adapter, "get_pending_approvals"):
         try:
-            for request_id, tool, params in tool_manager.get_pending_approvals():
+            for request_id, tool, params in tool_adapter.get_pending_approvals():
                 approvals.append(rest_contract.PendingApprovalItem(
                     requestId=str(request_id), tool=str(tool),
                     params=dict(params) if isinstance(params, dict) else {}))
