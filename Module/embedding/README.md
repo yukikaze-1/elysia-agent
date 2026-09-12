@@ -91,7 +91,18 @@ await EmbeddingFactory.shutdown()  # 释放所有缓存的模型 + CUDA cache �
 ## HuggingFace 后端细节
 
 - 本地模型推理（CPU/CUDA），自动检测设备
-- 模型缓存于 `~/.cache/huggingface/`
+- **模型缓存查找顺序**（`find_local_model()`，与 `Module.config.preflight` 的嵌入检查
+  **同一实现**——两边各抄一份候选表曾导致「预检说已缓存 / 加载器说缺失」）：
+
+  1. `MODEL_CACHE_DIR`（env，缺省 `.model_cache/`）——每个根下先试直接布局
+     `Org/Name/`，再试 hub 布局 `models--Org--Name/snapshots/<revision>/`
+  2. `$HF_HOME`（缺省 `~/.cache/huggingface`）——同样两种布局
+  3. `$HF_HOME/hub` ——同样两种布局
+
+  两种布局都要求目录里有 `config.json` 才算命中；**同名但残缺的目录（下载中断留下的
+  空壳）会被跳过并继续试后面的候选**，不得一票否决——`~/.cache/huggingface/hub/` 下
+  一个 12 KB 空壳曾让 `.model_cache/` 里完整的 1.3 GB 副本永远没机会被看到
+  （2026-09-12）。
 - 同步推理通过 `asyncio.to_thread()` 包装为异步
 - 默认启用 L2 归一化（`normalize_embeddings=True`）
 

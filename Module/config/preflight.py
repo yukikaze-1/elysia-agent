@@ -223,20 +223,26 @@ def _check_stt_env(config: Any) -> None:
 
 
 def _check_embedding_model() -> None:
-    """检查嵌入模型是否已缓存。兼容三种目录布局。"""
-    # HF hub 快照格式: models--BAAI--bge-large-zh-v1.5/snapshots/{hash}/config.json
-    # 直接格式: BAAI/bge-large-zh-v1.5/config.json
-    candidates = [
-        ProjectPath.MODEL_CACHE.resolve() / "models--BAAI--bge-large-zh-v1.5" / "snapshots",
-        ProjectPath.MODEL_CACHE.resolve() / "BAAI" / "bge-large-zh-v1.5",
-        Path.home() / ".cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5/snapshots",
-        Path.home() / ".cache/huggingface/hub/BAAI/bge-large-zh-v1.5",
-    ]
-    for d in candidates:
-        if d.exists() and any(d.iterdir()):
-            _pass("嵌入模型已缓存 (BAAI/bge-large-zh-v1.5)")
-            return
-    _fail("嵌入模型未缓存 — 运行 scripts/download_model.py 下载（约 1.3GB）")
+    """检查嵌入模型是否已缓存。
+
+    **判据与加载器同一个实现**（`Module.embedding.huggingface.find_local_model`）——
+    此前这里自己维护一份候选表，判据是「目录存在且非空」，而加载器要求「快照里有
+    config.json」，两者永不相等：实测 preflight 报「✓ 已缓存」而加载器报
+    「本地缓存缺失，拒绝加载」，agent 全程跑在无长期记忆的降级态、且只在
+    `app-debug.log` 留一行 DEBUG（2026-09-12）。
+
+    只做路径定位，不做 sha256 校验（1.3GB 约 9s，不适合每次预检）；哈希校验仍在
+    加载前由 `_verified_local_path` 执行，失败会以 WARNING 落 app.log。
+    """
+    from Module.embedding.huggingface import find_local_model
+    from Module.embedding.model_manifest import DEFAULT_MODEL_ID
+
+    local = find_local_model(DEFAULT_MODEL_ID)
+    if local:
+        _pass(f"嵌入模型已缓存 ({DEFAULT_MODEL_ID}) → {local}")
+        return
+    _fail(f"嵌入模型未缓存 ({DEFAULT_MODEL_ID}) — "
+          f"运行 scripts/download_model.py 下载（约 1.3GB）")
 
 
 def _check_writable_dirs() -> None:

@@ -255,10 +255,14 @@ class TestRun:
         char_dir = tmp_path / "character" / "elysia"
         char_dir.mkdir(parents=True)
         (char_dir / "config.yaml").write_text("name: Elysia")
-        # 创建虚拟嵌入模型缓存
-        model_cache = tmp_path / ".model_cache/models--BAAI--bge-large-zh-v1.5/snapshots"
-        model_cache.mkdir(parents=True)
-        (model_cache / "config.json").write_text("{}")
+        # 创建虚拟嵌入模型缓存 —— 必须是**真实 HF hub 布局**：
+        # `models--Org--Name/snapshots/<revision>/config.json`。
+        # 此前这里把 config.json 直接放在 snapshots/ 下（现实中不存在的布局），只因旧判据
+        # 是「snapshots 目录非空」才通过——测试把这个分岔固化了（2026-09-12）。
+        snapshot = (tmp_path / ".model_cache/models--BAAI--bge-large-zh-v1.5"
+                    / "snapshots" / "79e7739b6ab944e86d6171e44d24c997fc1e0116")
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}")
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_URL", "https://api.deepseek.com")

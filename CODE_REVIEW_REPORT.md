@@ -86,7 +86,7 @@
 | SSE 断连靠 30s 心跳才发现 | ✅ 已修（10s keepalive 注释行） | 见下 |
 | **CR-01** 轮换泄露凭据（步骤 1–2）| ⏳ **待 owner 执行** | 运维动作，非代码 |
 | **CR-02** 信号处理（部分：`except BaseException` + `try/finally`）| ⏳ 未开始 | 计划 P0 `#5` |
-| **CR-10** embedding 永久不可用 | ⏳ 未开始 | 计划 P0 `#6b` |
+| **CR-10** embedding 永久不可用 | ✅ 已修（**但根因不止一条，见下**）| 见 §0.4 末 |
 | **CR-05 / CR-06 / CR-08 / CR-11 / CR-12 / CR-13** | ⏳ 未开始 | 见各条目 |
 | 4 条 P0 级回归测试（P0 `#6d`）| ⏳ 部分已补 | 见下 |
 
@@ -131,6 +131,58 @@ R6 allowlist 条目复辟 → `check-arch` 红（陈旧登记）。
 浏览器端用 CDP 全流程验证：无凭据 → 弹闸门；填入 token → 闸门收起、16 面板显示真实数据；
 任务 Tab 显示「已连接」。服务端日志同时确认：带凭据的 SSE 建立订阅 →
 `轮询已启动 (subscribers=1)`，断开 → `轮询已停止（无订阅者）`。
+
+### 0.4.1 CR-10 复查：**发现两条本报告未记录的独立根因**（2026-09-12，看真实面板时发现）
+
+把修好的 `/debug` 面板连上**真实运行中的后端**后，面板上 `Embedding ✗` 是唯一说真话的
+观测面（预检 13/13 全绿、主日志零痕迹）。顺着它查下去，发现 CR-10 描述的
+「`_tried` 一次超时即永久锁死」**不是这台机器当时的原因**——这里根本没走到超时，
+`_try_load_sync` 在 ~0ms 内就抛了。**只修 CR-10 修不好这台机器。**
+
+三条独立缺陷，均已修：
+
+| # | 缺陷 | 后果 |
+|---|---|---|
+| **E-1** | `huggingface._find_local_model` **从没查过 `ProjectPath.MODEL_CACHE` 的 hub 布局**——它只用 `cache_folder` 试 `<cache>/Org/Name`（非 hub），而 `download_model.py` 的产出与 `preflight` 检查的都是 `<cache>/models--Org--Name/` | **根 README 一直写着正确顺序**（`MODEL_CACHE_DIR` → `.model_cache/` → `~/.cache/huggingface/hub/`），**代码没实现**；preflight 与加载器判据永不相等 |
+| **E-2** | 命中同名目录**即放弃且不校验完整性**——`~/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5` 是 12 KB 空壳（只有 `refs/`，6月22 中断下载残留），`isdir` 为真 → 进分支 → `snapshots/` 不存在 → **直接 `return None`** | 完整的 1.3 GB 副本在 `.model_cache/` 里躺着，永远没机会被看到 |
+| **E-3** | 失败日志是 **DEBUG**（`HuggingFace embedding unavailable` / `OpenAI embedding unavailable`），且措辞 `text-only mode` 把「**不持久化**」说成「文本降级」 | 主日志、stderr、`bash ./start.sh` 屏幕上**一个字都没有**；每次启动都在失败（当日 6 次启动 6 次命中） |
+
+**外加一条与 P1-18 直接冲突的预算错误**：
+
+| # | 缺陷 | 后果 |
+|---|---|---|
+| **E-4** | 冷加载与调用方等待**共用一个 `timeout=10s`**，而加载线程要做：重依赖 import + **manifest 全量 sha256 校验（1.3GB，实测冷盘 9.4s / 热盘 3.5s）** + 权重载入——实测 8–20s。且 `run_in_executor` 的 future 被 `wait_for` 取消后**线程仍在跑但结果被丢弃** | 供应链保护（P1-18）加上去之后，10s 预算**必然不够**；超时不是"少等一下"，是**白干** |
+
+修法：`load_timeout`（默认 120s，容得下 hash + 权重）与 `embed_timeout`（默认 10s，
+调用方等待预算）拆开；`_find_local_model` 改为候选表**全部试完**才放弃、两种布局都要求
+`config.json`；preflight 改为**直接调用** `find_local_model`（单源）；三条失败日志提到
+WARNING 并写明后果（"长期记忆**不会**写入 Milvus，重启即丢"）。
+
+**实测**（全新进程，走真实启动路径 `ensure()`）：
+```
+[  0.0s] ensure() 立即返回
+[ 11.0s] ✅ backend 就绪: HuggingFaceBackend，向量维度 = 1024
+真实 preflight: [PASS] 嵌入模型已缓存 → /home/yomu/elysia-agent/.model_cache/
+                models--BAAI--bge-large-zh-v1.5/snapshots/79e7739b...
+```
+
+**新增回归网**（+34，`make test-quick` 4483 → **4517 passed**）：
+
+| 文件 | 覆盖 | 项数 |
+|---|---|---:|
+| `Module/embedding/tests/test_local_model_lookup.py` | E-1/E-2：候选全试、hub 布局、空壳不否决、缺 config 不算命中 | 17 |
+| `core/memory/tests/test_embedding_provider_retry.py` | CR-10 重试 + E-4 预算分离 + 失败必须 WARNING | 11 |
+| `Module/config/tests/test_preflight_embedding_consistency.py` | preflight 与加载器**判据一致**（单源守卫） | 6 |
+
+反证（逐条先证明能抓到违规）：退回旧 `find_local_model` → **12 红**；preflight 抄回自己
+那份候选表 → **4 红**；退回 `_tried` 锁死 → 1 红；加载预算退回共用 → 1 红；日志退回
+DEBUG → 2 红。另修 `test_preflight.py::test_run_returns_true_when_all_ok`——它的假缓存
+目录把 `config.json` 直接放在 `snapshots/` 下（**现实中不存在的布局**），只因旧判据是
+「目录非空」才通过；**测试把这个分岔固化了**。
+
+> **教训**：CR-10 是"失败被当成终态"，E-1/E-2 是"根本没走到失败判定"。同一症状下
+> 叠着多条根因时，**照报告逐条修**会漏掉报告没写到的那条。这次是靠**接上真实运行实例
+> 的观测面板**发现的——正是 debug 面板存在的意义。
 
 **⚠️ 遗留的行为变更影响（需运维动作）**：
 

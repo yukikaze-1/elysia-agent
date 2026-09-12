@@ -35,40 +35,75 @@ _KNOWN_DIMS: dict[str, int] = {
 }
 
 
-def _find_local_model(model_name: str, cache_folder: str | None) -> str | None:
-    """在本地缓存中查找模型，返回路径或 None。
+def resolve_cache_folder(cache_folder: str | None = None) -> str:
+    """解析模型缓存根目录：显式参数 > ``MODEL_CACHE_DIR`` env > ``ProjectPath.MODEL_CACHE``。
 
-    依次检查：
-    1. 显式缓存目录（如 {cache_folder}/BAAI/bge-large-zh-v1.5）
-    2. HuggingFace hub 缓存（~/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5）
+    单源：`HuggingFaceEmbedding` 与 `Module.config.preflight` 的嵌入检查都必须走这里，
+    否则「下载到哪 / 预检查哪 / 加载查哪」三者会各说各话（2026-09-12 实测踩到：
+    preflight 报「已缓存」而 loader 报「本地缓存缺失」）。
+    """
+    if cache_folder is not None:
+        return cache_folder
+    return os.environ.get("MODEL_CACHE_DIR", str(ProjectPath.MODEL_CACHE.resolve()))
+
+
+def _snapshot_with_config(hub_path: str) -> str | None:
+    """在 HF hub 布局目录（``models--Org--Name/``）下找可用快照，没有则 None。
+
+    快照目录名是 commit revision；字典序倒序只为取一个稳定顺序，不代表"最新"。
+
+    **必须校验 ``config.json`` 存在**：下载中断会留下只有 ``refs/`` 的同名空壳
+    （实测 ``~/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5`` 仅 12 KB），
+    空目录若被当成命中，会让后面候选里的完整副本永远没机会。
+    """
+    snapshots = os.path.join(hub_path, "snapshots")
+    if not os.path.isdir(snapshots):
+        return None
+    for snap in sorted(os.listdir(snapshots), reverse=True):
+        snap_path = os.path.join(snapshots, snap)
+        if os.path.isfile(os.path.join(snap_path, "config.json")):
+            return snap_path
+    return None
+
+
+def find_local_model(model_name: str, cache_folder: str | None = None) -> str | None:
+    """在本地缓存中查找模型，返回路径或 None（``cache_folder=None`` 时按默认根解析）。
+
+    候选**按序全部试完**才放弃——命中一个同名但残缺的目录**不是**终止条件。
+    顺序（项目缓存优先于家目录缓存）：
+
+    1. ``{cache}/Org/Name``                  直接布局
+    2. ``{cache}/models--Org--Name``         hub 布局（``scripts/download_model.py`` 的产出）
+    3. ``$HF_HOME/Org/Name``                 直接布局
+    4. ``$HF_HOME/models--Org--Name``        hub 布局
+    5. ``$HF_HOME/hub/Org/Name``             直接布局
+    6. ``$HF_HOME/hub/models--Org--Name``    hub 布局
+
+    两种布局都要求目录里有 ``config.json`` 才算命中（缺它的目录在
+    ``local_files_only=True`` 下 transformers 也加载不了，报"命中"只把失败推到更晚）。
 
     Args:
-        model_name: HuggingFace 模型名（如 "BAAI/bge-large-zh-v1.5"）。
-        cache_folder: 显式缓存根目录，可为 None。
-
-    Returns:
-        本地模型路径字符串，未找到时返回 None。
+        model_name: HuggingFace 模型名（如 ``"BAAI/bge-large-zh-v1.5"``）。
+        cache_folder: 缓存根目录；None 时经 :func:`resolve_cache_folder` 解析。
     """
-    cache_folder = cache_folder or ""
-    # 1. Explicit cache folder (e.g. /home/yomu/Elysia/model_cache/BAAI/bge-large-zh-v1.5)
-    explicit = os.path.join(cache_folder, model_name)
-    if os.path.isdir(explicit):
-        return explicit
-
-    # 2. HuggingFace hub cache (~/.cache/huggingface/hub/models--BAAI--bge-large-zh-v1.5)
     hub_name = "models--" + model_name.replace("/", "--")
-    hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
-    for base in (hf_home, os.path.join(hf_home, "hub")):
-        hub_path = os.path.join(base, hub_name)
-        if os.path.isdir(hub_path):
-            # 查找最新 snapshot
-            snapshots = os.path.join(hub_path, "snapshots")
-            if os.path.isdir(snapshots):
-                for snap in sorted(os.listdir(snapshots), reverse=True):
-                    snap_path = os.path.join(snapshots, snap)
-                    if os.path.isfile(os.path.join(snap_path, "config.json")):
-                        return snap_path
+    hf_home = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
+
+    roots: list[str] = [resolve_cache_folder(cache_folder),
+                        hf_home, os.path.join(hf_home, "hub")]
+    for root in roots:
+        direct = os.path.join(root, model_name)
+        if os.path.isfile(os.path.join(direct, "config.json")):
+            return direct
+        snapshot = _snapshot_with_config(os.path.join(root, hub_name))
+        if snapshot:
+            return snapshot
     return None
+
+
+def _find_local_model(model_name: str, cache_folder: str | None) -> str | None:
+    """旧名保留（既有调用点与测试引用）。语义同 :func:`find_local_model`。"""
+    return find_local_model(model_name, cache_folder)
 
 
 def _verified_local_path(model_name: str, local_path: str | None) -> str | None:
@@ -160,10 +195,7 @@ class HuggingFaceBackend(EmbeddingBackend):
                 device = "cpu"
 
         if cache_folder is None:
-            cache_folder = os.environ.get(
-                "MODEL_CACHE_DIR",
-                str(ProjectPath.MODEL_CACHE.resolve()),
-            )
+            cache_folder = resolve_cache_folder()
 
         self._model_name = model_name
         self._dimension = dimension or _KNOWN_DIMS.get(model_name, 0)
