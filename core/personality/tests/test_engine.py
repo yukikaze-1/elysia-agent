@@ -642,3 +642,117 @@ def test_sync_reflector_to_runtime_state():
     eng._reflector._buffer = [("u", "a")]
     eng.sync_reflector_to_runtime_state()
     assert eng.state.reflector_buffer == [("u", "a")]
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-18：self_perception_history 必须真的有写入者
+# ══════════════════════════════════════════════════════════════════
+
+class TestSelfPerceptionHistoryIsWritten:
+    """该字段此前**全仓无写入者**（只有 `service.py` 的清空与三处读）：
+
+    ① 反思 prompt 的 `last_perception` 恒为空串；
+    ② `CharacterReflector._should_trigger` 的"从 history 读上次反思时间"分支
+       **不可达**（history 恒空）；
+    ③ `reflector.MAX_HISTORY = 50  # self_perception_history 上限` 这个常量
+       **从未被读过**——正是"写入者没写"留下的化石。
+    """
+
+    def _engine(self):
+        from core.personality.engine import CharacterEngine
+        from core.schema.character import CharacterState
+
+        engine = CharacterEngine.__new__(CharacterEngine)
+        engine.state = CharacterState(session_id="test-sid")
+        engine._awareness = MagicMock()
+        engine._awareness.maybe_judge = MagicMock()
+        engine._maybe_compress = AsyncMock()
+        engine._set_state_l3 = MagicMock()
+        engine._append_state_l3 = MagicMock()
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_reflector_trigger_records_history(self):
+        """**核心**：reflector 产出必须落进 history（内容 + 时间戳）。"""
+        engine = self._engine()
+
+        await engine.consume_trigger("reflector", {"content": "我似乎更在意妖梦了"})
+
+        history = engine.state.self_perception_history
+        assert len(history) == 1, "reflector 产出未记入 self_perception_history"
+        assert history[0]["content"] == "我似乎更在意妖梦了"
+        assert isinstance(history[0]["timestamp"], float), (
+            f"时间戳必须是浮点（_should_trigger 直接做减法），实得 "
+            f"{type(history[0]['timestamp']).__name__}")
+
+    @pytest.mark.asyncio
+    async def test_history_is_bounded(self):
+        """上限生效（对应原先从未被使用的 MAX_HISTORY 常量）。"""
+        from core.personality.engine import CharacterEngine
+
+        engine = self._engine()
+        cap = CharacterEngine.SELF_PERCEPTION_HISTORY_MAX
+
+        for i in range(cap + 10):
+            await engine.consume_trigger("reflector", {"content": f"反思 {i}"})
+
+        history = engine.state.self_perception_history
+        assert len(history) == cap, f"未受限：{len(history)} > {cap}"
+        # 保留最近的
+        assert history[-1]["content"] == f"反思 {cap + 9}"
+        assert history[0]["content"] == "反思 10"
+
+    @pytest.mark.asyncio
+    async def test_non_reflector_sources_do_not_record(self):
+        """event/idle/feedback 走 L3 更新，**不**进 self_perception_history。"""
+        engine = self._engine()
+
+        await engine.consume_trigger("event", {"content": "用户出差了"})
+        await engine.consume_trigger("idle", {"content": "有点无聊"})
+
+        assert engine.state.self_perception_history == []
+
+
+class TestReflectorTimestampCoercion:
+    """`_should_trigger` 直接 `time.time() - last_ts`；旧数据可能是 ISO 字符串 →
+    `TypeError`。`_reflect` 内有兼容、`_should_trigger` 没有——**同一份数据两处解析
+    口径不一致**。"""
+
+    @pytest.mark.parametrize("value,expect_positive", [
+        (1700000000.0, True),
+        (1700000000, True),
+        ("2026-01-01T00:00:00+00:00", True),
+        ("垃圾数据", False),
+        (None, False),
+        ("", False),
+    ])
+    def test_coerce_timestamp(self, value, expect_positive):
+        from core.personality.reflector import _coerce_timestamp
+
+        out = _coerce_timestamp(value)
+        assert isinstance(out, float)
+        if expect_positive:
+            assert out > 0
+        else:
+            # 解析不出来 → 0（很久以前）→ 倾向于触发，而不是把反思永久卡住
+            assert out == 0.0
+
+    def test_should_trigger_survives_iso_timestamp(self):
+        """端到端：history 里是 ISO 字符串时不得抛 TypeError。"""
+        import time as _time
+        from unittest.mock import MagicMock
+
+        from core.personality.reflector import CharacterReflector
+
+        ref = CharacterReflector.__new__(CharacterReflector)
+        ref._buffer = []                                  # noqa: SLF001
+        ref._last_reflection_at = None                    # noqa: SLF001
+        ref._buffer = [("u", "a")] * 3                    # noqa: SLF001
+        engine = MagicMock()
+        engine.state.self_perception_history = [
+            {"timestamp": "2020-01-01T00:00:00+00:00", "content": "旧的反思"}]
+        ref._engine = engine                              # noqa: SLF001
+
+        # 不抛即通过（旧实现会 TypeError）；2020 年的时间戳 → 早该反思
+        assert ref._should_trigger() is True              # noqa: SLF001
+        assert _time.time() > 0

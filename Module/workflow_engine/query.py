@@ -434,12 +434,35 @@ def get_token_stats(
     )
 
 
+def snapshot_one(sub_agent: "SubAgent", mailbox: "WorkflowMailbox | None") -> dict | None:
+    """单个任务的 debug 快照条目（S3-17：debug 面板与终态归档共用同一套字段）。
+
+    Args:
+        sub_agent: 目标 SubAgent。
+        mailbox: 其邮箱（None 时 depth 记 0——已清理的路径不该因此丢快照）。
+
+    Returns:
+        快照条目 dict；`_task_state` 缺失（半初始化）时返回 None。
+    """
+    task_state = getattr(sub_agent, "_task_state", None)
+    if task_state is None:
+        return None
+    orchestrator = getattr(sub_agent, "_orchestrator", None)
+    return {
+        "task_state": task_state,
+        "graph": getattr(sub_agent, "_graph", None),
+        "exec_state": orchestrator._exec_state if orchestrator else None,
+        "mailbox_depth": mailbox.count() if mailbox is not None else 0,
+    }
+
+
 def get_debug_snapshot(
     tasks: dict[WorkflowId, SubAgent],
     mailboxes: dict[WorkflowId, WorkflowMailbox],
     max_sub_agents: int,
     active: set[WorkflowId] | None = None,
     queue: asyncio.Queue | None = None,
+    recent_terminal: "list[dict] | None" = None,
 ) -> dict:
     """供 WorkflowDebugAPI 内部轮询使用。
 
@@ -464,12 +487,12 @@ def get_debug_snapshot(
     """
     task_list = []
     for task_id, sub_agent in tasks.items():
-        task_list.append({
-            "task_state": sub_agent._task_state,
-            "graph": sub_agent._graph,
-            "exec_state": sub_agent._orchestrator._exec_state if sub_agent._orchestrator else None,
-            "mailbox_depth": mailboxes[task_id].count(),
-        })
+        entry = snapshot_one(sub_agent, mailboxes.get(task_id))
+        if entry is not None:
+            task_list.append(entry)
+    # S3-17：把最近结束的任务也带上——否则 debug SSE（500ms 轮询）**永远看不到短任务**
+    if recent_terminal:
+        task_list.extend(recent_terminal)
     return {
         "tasks": task_list,
         "slots_total": max_sub_agents,

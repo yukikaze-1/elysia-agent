@@ -22,6 +22,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _coerce_timestamp(value: object) -> float:
+    """时间戳归一化为 Unix 浮点（S3-18）：兼容 ISO 8601 字符串与数字。
+
+    解析不出来时返回 0（= 很久以前），让时间阈值判定**倾向于触发**——
+    宁可多反思一次，也不要因为一条脏数据把反思永久卡住。
+
+    Args:
+        value: 时间戳（float/int/ISO 字符串/其它）。
+
+    Returns:
+        Unix 秒（float）；无法解析返回 0.0。
+    """
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value:
+        try:
+            from datetime import datetime
+
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 class CharacterReflector:
     """周期性格自我反思。
 
@@ -30,7 +54,9 @@ class CharacterReflector:
 
     BUFFER_THRESHOLD = 50       # 攒够 50 对对话触发
     TIME_THRESHOLD_SEC = 86400  # 距上次反思超过 24h 也触发
-    MAX_HISTORY = 50            # self_perception_history 上限
+    #: `self_perception_history` 上限——**写入方在 engine**（S3-18 前该字段没有写入者，
+    #: 这个常量因此从未被读过）。保留同名常量以免调用方硬编码数字。
+    MAX_HISTORY = 50
     CONTEXT_ROUNDS = 30         # 反思时取最近 N 轮对话上下文
 
     def __init__(
@@ -241,11 +267,15 @@ class CharacterReflector:
         # 获取上次触发时间
         last_ts = self._last_reflection_at
         if last_ts is None:
-            # 兼容旧路径：从 self_perception_history 读时间戳
+            # 兼容旧路径：从 self_perception_history 读时间戳。
+            # S3-18 起写入方用 `time.time()` 浮点（与 `_last_reflection_at` 同基准），
+            # 但**旧数据可能是 ISO 字符串**——这里必须能解析，否则
+            # `time.time() - "2026-..."` 直接抛 TypeError（`_reflect` 有兼容，
+            # 本函数原先没有：同一份数据两处解析口径不一致）。
             history = self._engine.state.self_perception_history
             if not history:
                 return len(self._buffer) >= 10
-            last_ts = history[-1].get("timestamp", 0)
+            last_ts = _coerce_timestamp(history[-1].get("timestamp", 0))
 
         return (time.time() - last_ts) > self.TIME_THRESHOLD_SEC
 

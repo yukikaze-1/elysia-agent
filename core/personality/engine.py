@@ -209,6 +209,27 @@ class CharacterEngine:
 
     # ---- 触发事件 ----
 
+    #: `self_perception_history` 的保留条数（S3-18）。与
+    #: `CharacterReflector.MAX_HISTORY` 同值——上限属于**状态**，由 engine 拥有。
+    SELF_PERCEPTION_HISTORY_MAX = 50
+
+    def _record_self_perception(self, content: str) -> None:
+        """把一次反思结果记入 `self_perception_history`（S3-18）。
+
+        **时间戳用 `time.time()` 浮点**，与 `_last_reflection_at` 同一基准：
+        `_should_trigger` 里是 `time.time() - last_ts`；若写 ISO 字符串会在那里抛
+        `TypeError`（`_reflect` 内做了两种格式的兼容，`_should_trigger` 没有——
+        写侧选浮点即从源头消除这个分叉）。
+
+        Args:
+            content: 本次反思文本。
+        """
+        history = self.state.self_perception_history
+        history.append({"timestamp": time.time(), "content": content})
+        # 保留最近 N 条（超出部分丢弃最旧）
+        if len(history) > self.SELF_PERCEPTION_HISTORY_MAX:
+            del history[:len(history) - self.SELF_PERCEPTION_HISTORY_MAX]
+
     async def consume_trigger(self, source: str, data: dict) -> None:
         """接收外部触发事件，更新 L3 State。
 
@@ -225,6 +246,13 @@ class CharacterEngine:
         if source == "reflector":
             # Reflector 产出 → 直接设为 L3 State
             self._set_state_l3(content)
+            # S3-18：**记入 self_perception_history**。这个字段此前**全仓无写入者**
+            # （只有 `service.py` 的清空与三处读），于是：
+            #   ① 反思 prompt 的 `last_perception` 恒为空串；
+            #   ② `_should_trigger` 的"从 history 读上次反思时间"分支**不可达**；
+            #   ③ `reflector.MAX_HISTORY = 50  # self_perception_history 上限`
+            #      这个常量从未被使用——正是"写入者没写"留下的化石。
+            self._record_self_perception(content)
             # 触发异步 awareness 判定
             self._awareness.maybe_judge()
 

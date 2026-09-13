@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import logging
 import uuid
 from dataclasses import dataclass
@@ -118,6 +119,9 @@ class WorkflowEngine:
         self._tasks: dict[WorkflowId, SubAgent] = {}
         self._mailboxes: dict[WorkflowId, WorkflowMailbox] = {}
         self._task_futures: dict[WorkflowId, asyncio.Task[None]] = {}  # 追踪 fire-and-forget 协程，供 stop() 等待/取消
+        #: 最近结束任务的终态快照（S3-17）——debug SSE 轮询 500ms，而任务可能
+        #: 在这个窗口内走完全程：只从 `_tasks` 摘除而不留档，短任务就**从未被观测**。
+        self._recent_terminal: deque[dict] = deque(maxlen=20)
         self._contexts: dict[WorkflowId, DelegationContext] = {}  # E2：委派上下文注册表（run 包装取参）
 
         # ── E2 有界排队（start() 时激活）──
@@ -480,6 +484,9 @@ class WorkflowEngine:
         return query.get_debug_snapshot(
             self._tasks, self._mailboxes, self._max_sub_agents,
             active=self._active, queue=self._queue,
+            # S3-17：带上最近结束的任务——debug SSE 轮询 500ms，短任务会在一个窗口内
+            # 走完全程；不带上它们就**从未被观测**（补发的 task_done 还会带旧状态）。
+            recent_terminal=list(self._recent_terminal),
         )
 
     # ── 任务控制 ─────────────────────────────────────────────────────────
@@ -791,14 +798,46 @@ class WorkflowEngine:
 
     # ── 内部方法 ─────────────────────────────────────────────────────────
 
+    def _remember_terminal(self, task_id: WorkflowId) -> None:
+        """把即将被清理的任务的终态快照存入环形缓冲（S3-17）。
+
+        快照取自 `query.get_debug_snapshot` 的同一套裁剪逻辑（单任务），保证 debug
+        面板看到的字段与活跃任务一致；`status` 是**真实终态**（completed/failed/
+        cancelled），不是摘除前最后一次轮询看到的中间态。
+
+        Args:
+            task_id: 即将清理的任务 ID。
+        """
+        sub_agent = self._tasks.get(task_id)
+        mailbox = self._mailboxes.get(task_id)
+        if sub_agent is None:
+            return
+        try:
+            entry = query.snapshot_one(sub_agent, mailbox)
+        except Exception:
+            logger.debug("WorkflowEngine: 终态快照采集失败 task_id=%s", task_id,
+                         exc_info=True)
+            return
+        if entry is None:
+            return
+        self._recent_terminal.append(entry)
+        logger.debug("WorkflowEngine: 终态快照已保留 task_id=%s status=%s",
+                     task_id, entry.get("status"))
+
     def _cleanup_task(self, task_id: WorkflowId) -> None:
         """任务终态后清理注册表。
 
         调用方：_run_and_cleanup() finally 块、stop() 兜底。
 
+        S3-17：清理前先把**终态快照**存进环形缓冲。原先任务一从 `_tasks` 摘掉就从
+        debug 快照里消失，而 SSE 轮询是 500ms —— **短任务从未被观测到**；即便观测到
+        一次，摘除时补发的 `task_done` 带的是**上一轮的旧状态**（前端把 running 的
+        任务归入"已完成"，`error` 一并丢失）。
+
         Args:
             task_id: 要清理的任务 ID。
         """
+        self._remember_terminal(task_id)
         self._tasks.pop(task_id, None)
         self._mailboxes.pop(task_id, None)
         self._contexts.pop(task_id, None)
