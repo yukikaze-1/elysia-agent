@@ -442,6 +442,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         message_id: MessageId | None,
         conversation_id: SessionId | None,
         protocol_version: int,
+        origin_connection_id: str = "",
     ) -> _TurnSetup | None:
         """process 的同步准备阶段：会话解析、context 换绑、日志、generation 建档。"""
         self._generation_ctx = None
@@ -514,6 +515,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             # 按本回合 instance scope 过滤）——取代 _lifecycle_tools 的全局裸 _long_term 单例。
             svc["memory"] = runtime.memory_view
             svc["_session_msg_count"] = len(target.messages)
+            # CR-13：本回合发起连接（v2 握手分配；v1/REST 为空串）。工具安全管道
+            # 据此把 HITL 审批绑定到发起连接——多客户端下别人的广播帧不能代批。
+            svc["_origin_connection_id"] = origin_connection_id
 
         rid = get_request_id()
         if rid == "-":
@@ -648,6 +652,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                        message_id: MessageId | None = None,
                        conversation_id: SessionId | None = None,
                        protocol_version: int = 1,
+                       origin_connection_id: str = "",
                        ) -> None:
         """处理用户消息，驱动一轮完整的 ReAct 认知循环。"""
         async with self._process_lock:
@@ -664,7 +669,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             try:
                 setup = await self._prepare_turn(
                     user_message, user_name, stt_emotion, content,
-                    message_id, conversation_id, protocol_version)
+                    message_id, conversation_id, protocol_version,
+                    origin_connection_id)
             except (CharacterBusyError, StorageUnavailableError) as exc:
                 await self._handle_turn_exception(exc)
                 return

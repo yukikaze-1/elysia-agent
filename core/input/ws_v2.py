@@ -65,6 +65,19 @@ def _in_progress_error() -> dict:
             "retryable": True, "retryAfterMs": IN_PROGRESS_RETRY_AFTER_MS}
 
 
+def _origin_conn_id(ws: Any, agent: "Agent") -> str:
+    """发送本次消息的 WS 连接 ID（CR-13 审批绑定用）。
+
+    v2 连接由握手分配稳定 `conn_<hex>`；v1 连接与 REST 来源恒为 ""（安全管道据此
+    走"无绑定"分支并告警，不假装有归属）。
+    """
+    if ws is None:
+        return ""
+    channel = _find_channel(agent, ws)
+    conn_id = getattr(channel, "connection_id", None) if channel is not None else None
+    return conn_id if isinstance(conn_id, str) else ""
+
+
 def _not_accepted_error(agent: "Agent") -> dict:
     """``process_message`` 返回 False 时的错误信封——两个成因必须报对（CR-08）。
 
@@ -488,7 +501,8 @@ async def _finish_v2_text(
         try:
             accepted = await agent.process_message(
                 text=ctx.text, content=content, message_id=message_id,
-                protocol_version=2, conversation_id=ctx.ack_conversation_id)
+                protocol_version=2, conversation_id=ctx.ack_conversation_id,
+                origin_connection_id=_origin_conn_id(ws, agent))
         except SessionNotFoundError:
             await _release_attachment_reservations(agent, reserved, message_id)
             await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
@@ -526,7 +540,8 @@ async def _finish_v2_text(
     try:
         accepted = await agent.process_message(
             text=ctx.text, message_id=message_id, protocol_version=2,
-            conversation_id=ctx.ack_conversation_id)
+            conversation_id=ctx.ack_conversation_id,
+            origin_connection_id=_origin_conn_id(ws, agent))
     except SessionNotFoundError:
         await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
                              ctx.client_message_id,

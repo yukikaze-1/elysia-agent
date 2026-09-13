@@ -313,6 +313,20 @@ def _validate_path(
 # SafetyPipeline — 执行中间件
 # ============================================================================
 
+def _origin_connection_id(ctx: Any) -> str:
+    """从 ToolContext 取本次调用的发起 WS 连接 ID（CR-13）。
+
+    `ToolContext.services["_origin_connection_id"]` 由 CognitiveLoop._prepare_turn
+    每回合换绑（与 `services["session"]` 同构）。取不到（直接构造 ctx 的测试路径、
+    v1/REST 来源）返回 ""——安全管道据此走"无绑定"分支并告警，不假装有归属。
+    """
+    services = getattr(ctx, "services", None)
+    if not isinstance(services, dict):
+        return ""
+    value = services.get("_origin_connection_id", "")
+    return value if isinstance(value, str) else ""
+
+
 class SafetyPipeline:
     """工具执行中间件管道：validate → safety → hitl → execute → truncate。"""
 
@@ -321,7 +335,11 @@ class SafetyPipeline:
 
         初始化 HITL 审批请求/结果字典、审批超时（默认 60s）、执行统计计数器。
         """
-        self._hitl_requests: dict[str, tuple[asyncio.Event, str, dict]] = {}  # request_id → (event, tool_name, params)
+        # request_id → (event, tool_name, params, origin_connection_id)
+        # CR-13：第 4 项是**发起该工具调用的 WS 连接 ID**（v2 握手分配；v1/REST 为
+        # ""）。审批必须来自同一连接，否则多客户端下别人能从广播帧里拿到 request_id
+        # 直接批准高危调用（对照：孪生路径 tool.status 早已有 sender 绑定）。
+        self._hitl_requests: dict[str, tuple[asyncio.Event, str, dict, str]] = {}
         self._hitl_results: dict[str, tuple[bool, str]] = {}
         self._hitl_timeout: float = 60.0
         self._stats: dict[str, int] = {
@@ -330,22 +348,39 @@ class SafetyPipeline:
 
     # ---- HITL public API ----
 
-    def submit_approval(self, request_id: str, approved: bool) -> bool:
-        """前端提交审批结果。
+    def submit_approval(self, request_id: str, approved: bool,
+                        approver_connection_id: str | None = None) -> bool:
+        """前端提交审批结果（CR-13：绑定发起连接）。
 
         Args:
             request_id: 审批请求 ID。
             approved: True 表示批准，False 表示拒绝。
+            approver_connection_id: 提交审批的连接 ID。与请求登记的发起连接不一致
+                时**拒绝**（返回 False，不写入结果、不唤醒等待方）。发起连接未知
+                （v1/REST 发起，登记为 ""）时不做连接校验——此时无法判定归属，
+                记 warning 留痕而不是假装安全。
 
         Returns:
-            True 如果找到了对应的审批请求并已处理。
+            True 如果找到了对应的审批请求且提交方有权处理。
         """
-        if request_id not in self._hitl_requests:
+        entry = self._hitl_requests.get(request_id)
+        if entry is None:
             return False
+        origin = entry[3]
+        if origin:
+            if approver_connection_id != origin:
+                logger.warning(
+                    "HITL 审批被拒：request=%s 来自连接 %s，但发起连接是 %s",
+                    request_id, approver_connection_id or "<未知>", origin)
+                return False
+        else:
+            logger.warning(
+                "HITL 审批无连接绑定（request=%s，发起方未提供连接 ID）——"
+                "多客户端下无法判定审批归属", request_id)
         self._hitl_results[request_id] = (
             approved, "confirmed" if approved else "denied",
         )
-        self._hitl_requests[request_id][0].set()
+        entry[0].set()
         return True
 
     def request_exists(self, request_id: str) -> bool:
@@ -369,7 +404,7 @@ class SafetyPipeline:
         """
         return [
             (rid, tool_name, params)
-            for rid, (event, tool_name, params) in self._hitl_requests.items()
+            for rid, (event, tool_name, params, _origin) in self._hitl_requests.items()
             if not event.is_set()
         ]
 
@@ -446,7 +481,8 @@ class SafetyPipeline:
 
         # 3. HITL approval
         if plugin.safety and plugin.safety.requires_human_approval:
-            hitl_ok, hitl_status = await self._run_hitl(plugin, name, raw_params)
+            hitl_ok, hitl_status = await self._run_hitl(
+                plugin, name, raw_params, _origin_connection_id(ctx))
             if not hitl_ok:
                 return _finish(ToolResult.fail(
                     name=name,
@@ -543,7 +579,8 @@ class SafetyPipeline:
             return
 
         if plugin.safety and plugin.safety.requires_human_approval:
-            hitl_ok, _ = await self._run_hitl(plugin, name, raw_params)
+            hitl_ok, _ = await self._run_hitl(
+                plugin, name, raw_params, _origin_connection_id(ctx))
             if not hitl_ok:
                 yield ToolResult.fail(
                     name=name, error="操作被拒绝/超时",
@@ -652,7 +689,7 @@ class SafetyPipeline:
         return None
 
     async def _run_hitl(
-        self, plugin: Any, name: str, params: dict,
+        self, plugin: Any, name: str, params: dict, origin_connection_id: str = "",
     ) -> tuple[bool, str]:
         """执行 HITL 审批流程。
 
@@ -660,17 +697,21 @@ class SafetyPipeline:
             plugin: ToolPlugin 实例。
             name: 工具名称。
             params: 工具参数。
+            origin_connection_id: 发起本次工具调用的 WS 连接 ID（CR-13）。登记后
+                审批只接受同一连接提交；"" 表示发起方无连接身份（v1/REST）。
 
         Returns:
             (是否批准, 状态字符串)，状态为 "confirmed" / "denied" / "timeout" / "expired"。
         """
         request_id = f"msg_{uuid.uuid4().hex[:26]}"
         event = asyncio.Event()
-        self._hitl_requests[request_id] = (event, name, params)
+        self._hitl_requests[request_id] = (event, name, params, origin_connection_id)
 
-        # 广播审批请求 — 由 ToolManager 通过 callback 注入
+        # 广播审批请求 — 由 ToolManager 通过 callback 注入。发起连接已知时**只发给
+        # 它**：审批弹窗不该出现在无关客户端上（信息面与操作面同时收窄）。
         if hasattr(self, "_broadcast_hitl"):
-            await self._broadcast_hitl(request_id, name, params)
+            await self._broadcast_hitl(
+                request_id, name, params, origin_connection_id)
 
         try:
             await asyncio.wait_for(event.wait(), timeout=self._hitl_timeout)

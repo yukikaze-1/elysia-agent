@@ -532,7 +532,8 @@ class ToolManager:
                 leftover += 1
         return leftover
 
-    def submit_approval(self, request_id: str, approved: bool) -> bool:
+    def submit_approval(self, request_id: str, approved: bool,
+                        approver_connection_id: str | None = None) -> bool:
         """提交 HITL 审批结果。
 
         由 server 层在收到前端审批响应后调用。
@@ -540,11 +541,14 @@ class ToolManager:
         Args:
             request_id: 审批请求 ID。
             approved: True 表示批准，False 表示拒绝。
+            approver_connection_id: 提交审批的连接 ID（CR-13：必须与发起连接一致，
+                否则拒绝——多客户端下 B 能从广播帧里拿到 request_id 批准 A 的高危调用）。
 
         Returns:
-            True 如果找到了对应的审批请求。
+            True 如果找到了对应的审批请求且提交方有权处理。
         """
-        return self._pipeline.submit_approval(request_id, approved)
+        return self._pipeline.submit_approval(
+            request_id, approved, approver_connection_id)
 
     def get_pending_approvals(self) -> list[tuple[str, str, dict]]:
         """返回待审批请求列表。
@@ -569,7 +573,8 @@ class ToolManager:
         """
         if output_manager is not None:
             async def _broadcast(request_id: str, tool_name: str,
-                                 params: dict) -> None:
+                                 params: dict,
+                                 origin_connection_id: str = "") -> None:
                 try:
                     # 基础字段（v1 wire 逐字节不变）
                     base = {
@@ -579,11 +584,30 @@ class ToolManager:
                     }
                     plugin = self._plugins.get(tool_name)
                     split_versions = getattr(output_manager, "_split_versions", None)
-                    if plugin is None or split_versions is None:
-                        # 未知工具或 output_manager 无版本拆分能力：兜底广播基础字段到全部通道
+                    if split_versions is None:
+                        # 无版本拆分能力：无法按协议版本分流，退回全通道基础字段
                         await output_manager.command("tool_approval", params=base)
                         return
-                    v1, v2 = split_versions()
+                    # CR-13：发起连接已知时**只发给它**——审批弹窗与 request_id 都
+                    # 不该出现在无关客户端上（原先全通道广播，B 拿到 ID 就能批准 A
+                    # 的高危调用）。未知则退回广播并告警，不假装有归属。
+                    all_v1, all_v2 = split_versions()
+                    directed = self._channels_for_origin((all_v1, all_v2), origin_connection_id)
+                    if directed is not None:
+                        v1, v2 = directed
+                    else:
+                        v1, v2 = all_v1, all_v2
+                        if origin_connection_id:
+                            logger.warning(
+                                "HITL 审批：发起连接 %s 已不在线，审批无法定向投递",
+                                origin_connection_id)
+                    if plugin is None:
+                        # 未知工具：基础字段（受众同样受定向约束——不能因为不认识
+                        # 这个工具就把 request_id 广播出去）
+                        if v1 or v2:
+                            await output_manager.command(
+                                "tool_approval", params=base, channels=[*v1, *v2])
+                        return
                     if v1:
                         await output_manager.command(
                             "tool_approval", params=base, channels=v1,
@@ -605,6 +629,29 @@ class ToolManager:
                     logger.warning(
                         "HITL 审批广播失败（审批弹窗可能不出现）", exc_info=True)
             self._pipeline.set_hitl_broadcast(_broadcast)
+
+    def _channels_for_origin(
+        self, split: tuple[list[Any], list[Any]], origin_connection_id: str,
+    ) -> tuple[list[Any], list[Any]] | None:
+        """按发起连接过滤 v1/v2 通道（CR-13）。
+
+        Args:
+            split: 已拆分的 `(v1, v2)` 通道列表。
+            origin_connection_id: 发起本次工具调用的连接 ID；空串表示未知。
+
+        Returns:
+            过滤后的 (v1, v2)；无法定向（无连接 ID / 该连接已断开 / 通道无
+            connection_id）时返回 None，由调用方退回广播并告警。
+        """
+        if not origin_connection_id:
+            return None
+        v1, v2 = split
+        matched = [ch for ch in [*v1, *v2]
+                   if getattr(ch, "connection_id", None) == origin_connection_id]
+        if not matched:
+            return None
+        return ([ch for ch in matched if getattr(ch, "protocol_version", 1) < 2],
+                [ch for ch in matched if getattr(ch, "protocol_version", 1) >= 2])
 
     @staticmethod
     def _build_param_summary(params: dict) -> dict:

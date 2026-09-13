@@ -24,8 +24,14 @@ async def _dispatch_tool_approval(
     request_id = msg.request_id if msg is not None else data.get("request_id", "")
     approved = msg.approved if msg is not None else data.get("approved", False)
     if request_id:
+        # CR-13：审批绑定发起连接——`channel.connection_id` 是服务端在握手时分配的
+        # 稳定身份（v2），提交方与发起方不一致时由安全管道拒绝。原先该 handler
+        # 拿到 `channel` 却不用，只校验 request_id 是否存在，而该 ID 被广播到所有
+        # 通道：多客户端共享产品 token 时，B 可直接批准 A 的高危工具调用。
+        approver = getattr(channel, "connection_id", None) if channel is not None else None
         # P1-6：走 ToolAdapter 公开 API（原先直取 ._manager，违反跨模块私有访问纪律）。
-        ok = ctx.agent.tool_adapter.submit_approval(request_id, approved)
+        ok = ctx.agent.tool_adapter.submit_approval(
+            request_id, approved, approver)
         if ok:
             logger.info("WS 审批结果: request=%s approved=%s", request_id, approved)
         else:

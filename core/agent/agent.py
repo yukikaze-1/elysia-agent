@@ -546,7 +546,8 @@ class Agent(AgentLifecycle, AgentServer):
                                protocol_version: int = 1,
                                conversation_id: str | None = None,
                                emotion: str = "",
-                               events: list[str] | None = None) -> bool:
+                               events: list[str] | None = None,
+                               origin_connection_id: str = "") -> bool:
         """处理单条用户消息，通过管道送入 CognitiveLoop。
 
         Agent 忙碌时消息入队（FIFO），IDLE 时出队处理。
@@ -562,6 +563,8 @@ class Agent(AgentLifecycle, AgentServer):
                 accepted 前解析并固化为当时活动会话，v1 仍由 loop 解析到 default。
             emotion: 语音 STT 情绪标签；文本消息为空。
             events: 语音 STT 事件标签；文本消息为空。
+            origin_connection_id: CR-13 发起连接 ID（v2 握手分配）。透传到工具安全
+                管道，使 HITL 高危工具审批只认发起连接；v1/REST 为空串（不绑定）。
 
         Returns:
             bool: True = 消息已接受（已入队或直发）；False = 消息为空或队列满被丢弃。
@@ -617,6 +620,7 @@ class Agent(AgentLifecycle, AgentServer):
                 conversation_id=conversation_id_nt,
                 protocol_version=protocol_version,
                 session_work_reserved=session_work_reserved,
+                origin_connection_id=origin_connection_id,
             ))
             return True
 
@@ -624,6 +628,7 @@ class Agent(AgentLifecycle, AgentServer):
             self._bus.post(UserInputData(
                 text=text, user_name=user_name, request_id=rid, content=content,
                 emotion=emotion, events=list(events or []), message_id=message_id_nt,
+                origin_connection_id=origin_connection_id,
                 protocol_version=protocol_version, conversation_id=conversation_id_nt,
                 session_work_reserved=session_work_reserved))
         except Exception:
@@ -844,6 +849,7 @@ class Agent(AgentLifecycle, AgentServer):
                 conversation_id=data.conversation_id,
                 protocol_version=data.protocol_version,
                 session_work_reserved=data.session_work_reserved,
+                origin_connection_id=data.origin_connection_id,
             ))
             return
         # 取消上一个未完成的 task（仅真正在跑时），防止快速连续事件造成孤儿
@@ -866,6 +872,7 @@ class Agent(AgentLifecycle, AgentServer):
                 message_id=message_id,
                 protocol_version=protocol_version,
                 conversation_id=data.conversation_id,
+                origin_connection_id=data.origin_connection_id,
             )
 
         def _lease_release_done(task: asyncio.Task) -> None:
@@ -968,6 +975,7 @@ class Agent(AgentLifecycle, AgentServer):
                         conversation_id=pending.conversation_id,
                         protocol_version=pending.protocol_version,
                         session_work_reserved=pending.session_work_reserved,
+                        origin_connection_id=pending.origin_connection_id,
                     ))
                 except Exception:
                     self._release_session_work(

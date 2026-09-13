@@ -29,6 +29,10 @@ class _PendingMessage:
     protocol_version: int = 1
     # v2 accepted work 已预占目标会话；出队后透传给 UserInputData，终态释放。
     session_work_reserved: bool = False
+    # CR-13：发起本次消息的 WS 连接 ID（v2 握手分配；v1/REST 为 ""）。HITL 高危
+    # 工具审批据此绑定"只有发起连接能批准"——否则多客户端下 B 可从广播帧里直接
+    # 拿到 request_id 批准 A 的高危调用。
+    origin_connection_id: str = ""
 
 
 @dataclass

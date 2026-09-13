@@ -201,7 +201,8 @@ class ToolAdapter:
         """
         return await self._manager.cancel_all(drain_timeout=drain_timeout)
 
-    def submit_approval(self, request_id: str, approved: bool) -> bool:
+    def submit_approval(self, request_id: str, approved: bool,
+                        approver_connection_id: str | None = None) -> bool:
         """回传 HITL 审批结果（公开 API，委托 ToolManager → SafetyPipeline）。
 
         P1-6：`Module/workflow_engine/lifecycle.py::submit_approval` 经
@@ -214,11 +215,13 @@ class ToolAdapter:
         Args:
             request_id: 审批请求 ID（即 HITL 广播的 request_id）。
             approved: True 批准，False 拒绝。
+            approver_connection_id: 提交审批的连接 ID（CR-13 绑定发起连接）。
 
         Returns:
             bool: True 找到并处理；False 请求不存在（可能已超时或从未创建）。
         """
-        return self._manager.submit_approval(request_id, approved)
+        return self._manager.submit_approval(
+            request_id, approved, approver_connection_id)
 
     def execute_now(self) -> list[str]:
         """返回可立即执行的工具名列表（`ToolRegistryProtocol` 的历史命名）。

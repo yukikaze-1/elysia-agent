@@ -46,6 +46,11 @@ class UserInputData(BaseModel):
     # 内部生命周期标记：True 表示 Agent/voice 已在 SessionManager.reserve_work()
     # 登记 accepted work；消费终态、丢弃或中断时必须成对 release_work()。
     session_work_reserved: bool = False
+    # CR-13：发起本次消息的 WS 连接 ID（v2 握手分配；v1/REST 为 ""）。经
+    # ToolContext.services["_origin_connection_id"] 传到工具安全管道，使 HITL
+    # 高危工具审批**只认发起连接**——原先审批只查 request_id 是否存在，而该 ID
+    # 被广播到所有通道，多客户端下任意一方都能批准别人的高危调用。
+    origin_connection_id: str = ""
 
 
 class SystemTickData(BaseModel):
