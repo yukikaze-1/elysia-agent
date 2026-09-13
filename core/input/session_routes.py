@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 from typing import TYPE_CHECKING
 
 from aiohttp import web
+
+from core.input.errors import _json_object
 from bson import ObjectId
 from bson.errors import InvalidId
 from pydantic import ValidationError
@@ -510,7 +512,7 @@ async def sessions_create_handler(request: web.Request) -> web.Response:
     """POST /api/sessions — 创建空会话（conv_<uuid4 hex[:12]>，title 可空）。"""
     agent = request.app["agent"]
     try:
-        body = await request.json()
+        body = await _json_object(request)
     except web.HTTPRequestEntityTooLarge:
         raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except Exception:
@@ -578,7 +580,7 @@ async def sessions_rename_handler(request: web.Request) -> web.Response:
     if not await _session_exists(agent, sid):
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
     try:
-        body = await request.json()
+        body = await _json_object(request)
     except web.HTTPRequestEntityTooLarge:
         raise  # chunked 超限放行——交中间件统一 413 信封（F13）
     except Exception:

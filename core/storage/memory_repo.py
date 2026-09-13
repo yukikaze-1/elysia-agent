@@ -51,6 +51,16 @@ class MemoryRepository(Repository):
         Returns:
             True 表示连接成功，False 表示连接失败。
         """
+        # S2-B5：全部 Mongo 仓储都有这道守卫，唯独本仓储此前没有——于是
+        # `_health_check` 里 `_mark_unavailable()` 之后的 `connect()` 会**无条件
+        # 新建客户端**，与"已连接就别再建"的意图相悖。已连接时先探活，活着就复用。
+        if self._db is not None and not self._injected_db:
+            try:
+                if await self._db.collection_exists(self.COLLECTION):
+                    return True
+            except Exception:
+                pass
+            # 探活失败：走下面的重建路径（旧引用已由 _mark_unavailable 或本处释放）
         try:
             self._db = VectorDBFactory.create(
                 "milvus/memory",

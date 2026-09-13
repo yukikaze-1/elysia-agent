@@ -369,7 +369,10 @@ class WorkflowDebugAPI:
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
+                # S2-4：**不要**加 `Access-Control-Allow-Origin: *`。SSE 走
+                # fetch + 自定义头（debugFetch 带 Authorization），浏览器不允许
+                # 通配来源携带凭据；这一行既不起作用，又让"这个端点对任意站点开放"
+                # 成为读者（与将来的维护者）的错误前提。debug 页面与后端同源。
             },
         )
         await resp.prepare(request)

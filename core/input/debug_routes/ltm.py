@@ -9,6 +9,8 @@ import logging
 
 from aiohttp import web
 
+from core.input.errors import _json_object
+
 from core.input.debug_routes._shared import _protocol_error_response
 from core.schema.memory import MemoryType
 from core.schema.types import MemoryId
@@ -86,7 +88,7 @@ async def ltm_insert_handler(request: web.Request) -> web.Response:
     """
     agent = request.app["agent"]
     try:
-        body = await request.json()
+        body = await _json_object(request)
         text = body.get("text", "").strip()
         if not text:
             return _protocol_error_response("CONTRACT_VALIDATION", "text 不能为空", 400)
@@ -133,7 +135,7 @@ async def ltm_update_handler(request: web.Request) -> web.Response:
     entry_id = request.match_info.get("entry_id", "")
     if not entry_id:
         return _protocol_error_response("CONTRACT_VALIDATION", "缺少 entry_id", 400)
-    body = await request.json()
+    body = await _json_object(request)
     new_text = (body.get("text") or "").strip()
     if not new_text:
         return _protocol_error_response("CONTRACT_VALIDATION", "text 不能为空", 400)

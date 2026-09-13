@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from core.input.errors import _json_object
+
 from core.input.debug_routes._shared import _protocol_error_response
 from core.schema.utils import now_iso
 from core.schema.compression import CompressionTrigger
@@ -145,7 +147,7 @@ async def l2_rollback_handler(request: web.Request) -> web.Response:
     """
     agent = request.app["agent"]
     try:
-        body = await request.json()
+        body = await _json_object(request)
         target_version = int(body["version"])
     except web.HTTPRequestEntityTooLarge:
         raise  # chunked 超限放行——交中间件统一 413 信封（F13）
@@ -203,7 +205,7 @@ async def character_rollback_handler(request: web.Request) -> web.Response:
     """
     agent = request.app["agent"]
     try:
-        body = await request.json()
+        body = await _json_object(request)
         content_type = body["type"]
         target_version = int(body["version"])
     except web.HTTPRequestEntityTooLarge:

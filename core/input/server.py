@@ -30,7 +30,7 @@ from core.input.chat_routes import register_chat_routes
 from core.input.attachment_routes import register_attachment_routes
 from core.input.session_routes import register_session_routes
 from core.input.debug_routes import register_debug_routes
-from core.input.errors import _protocol_error_response
+from core.input.errors import _error_envelope_middleware, _protocol_error_response
 from core.input.health import health_handler, ready_handler
 from core.input.middleware import (
     _make_access_auth_middleware, _make_payload_middleware, _make_rate_limit_middleware,
@@ -222,6 +222,9 @@ def create_app(
     """
     cms = max_request_bytes if max_request_bytes is not None else 64 * 1024 * 1024
     app = web.Application(client_max_size=cms)
+    # S2-F4：**最外层**兜底信封——必须在所有其它中间件之前，才能覆盖它们的
+    # 漏网异常（此前完全没有这层，任何 `AttributeError` 都变成纯文本 500）。
+    app.middlewares.append(_error_envelope_middleware)
     app.middlewares.append(_make_payload_middleware(cms))
     app.middlewares.append(_nosniff_uploads)
 

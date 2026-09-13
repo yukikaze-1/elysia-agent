@@ -12,7 +12,7 @@ from aiohttp import web
 
 from core.input._common import _tool_error
 from core.providers.custom_providers import add_provider, load as load_custom
-from core.input.errors import _protocol_error_response
+from core.input.errors import _json_object, _protocol_error_response
 from core.providers.provider_registry import build_providers_response
 from frontend_contract import rest as rest_contract
 
@@ -142,7 +142,7 @@ async def providers_save_handler(request: web.Request) -> web.Response:
     from core.providers.custom_providers import add_provider
     from Module._common.ssrf import SSRFError, validate_endpoint
     try:
-        body = await request.json()
+        body = await _json_object(request)
         service = body.get("service", "")
         entry = body.get("entry", {})
     except web.HTTPRequestEntityTooLarge:
@@ -321,7 +321,7 @@ async def providers_test_handler(request: web.Request) -> web.Response:
     body: {service, provider, model, level, base_url?, api_key?, character?}
     """
     try:
-        body = await request.json()
+        body = await _json_object(request)
     except web.HTTPRequestEntityTooLarge:
         raise
     except Exception:

@@ -11,6 +11,8 @@ import logging
 
 from aiohttp import web
 
+from core.input.errors import _json_object
+
 from core.schema.message import MessageRole
 from core.schema.types import SessionId
 from core.input.debug_routes._shared import (
@@ -126,7 +128,7 @@ async def archive_update_handler(request: web.Request) -> web.Response:
     msg_id = request.match_info.get("msg_id", "")
     if not msg_id:
         return _protocol_error_response("CONTRACT_VALIDATION", "缺少 msg_id", 400)
-    body = await request.json()
+    body = await _json_object(request)
     new_text = (body.get("text") or "").strip()
     if not new_text:
         return _protocol_error_response("CONTRACT_VALIDATION", "text 不能为空", 400)

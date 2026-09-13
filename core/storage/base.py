@@ -119,15 +119,40 @@ class Repository(ABC):
             if self._injected_db:
                 # 测试注入 fake：判定 down，保留引用供恢复，不重连真实 Mongo
                 return False
-            self._mark_unavailable("健康检查 ping 失败")
+            await self._mark_unavailable("健康检查 ping 失败")
         try:
             return await self.connect()
         except Exception:
             return False
 
-    def _mark_unavailable(self, reason: str) -> None:
-        """使后端状态失效（P1-05）：下次健康检查/操作触发真正重连。"""
-        self._db = None
+    async def _mark_unavailable(self, reason: str) -> None:
+        """使后端状态失效（P1-05）：先释放旧句柄，再让下次调用真正重连。
+
+        S2-B5：**先 close 再置 None**。原先只做 `self._db = None`，旧客户端失去
+        唯一引用却从未 `close()`——Mongo 侧 motor/pymongo 有 `__del__` 兜底，
+        **Milvus 侧 pymilvus 3.0.1 的 `MilvusClient` 整条 MRO 都没有 `__del__`**，
+        于是 gRPC channel 与线程池永不释放：Milvus 持续不可达时每次健康检查
+        （默认 60s 一轮）泄漏一个客户端，8 小时宕机 ≈ 480 个孤儿。
+        `MilvusBackend.close()` 的 docstring 早就写明这个风险，只是这条路径没走它。
+
+        **是 async 方法**（两个调用点都在协程里）：释放客户端天然是异步的，
+        做成同步就只能 `create_task` 火忘——那正是 R6 门禁禁止的裸后台任务，
+        且失败无人观察、关停时无处 drain。
+        """
+        db, self._db = self._db, None
+        if db is None:
+            return
+        close = getattr(db, "close", None)
+        if close is None:
+            return
+        try:
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+        except Exception:
+            # 释放失败不改变"已判定不可用"这一事实，但也不能静默——
+            # 这正是 S2-B5 要修的资源泄漏面。
+            logger.warning("释放不可用后端失败（%s）", reason, exc_info=True)
 
     @property
     def is_connected(self) -> bool:
@@ -178,5 +203,5 @@ class Repository(ABC):
                 raise
             logger.warning("%s: %s", reason, e)
             if not self._injected_db:
-                self._mark_unavailable(reason)
+                await self._mark_unavailable(reason)
             raise StorageUnavailableError(reason) from e
