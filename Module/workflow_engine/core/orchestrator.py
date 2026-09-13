@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 from Module.workflow_engine.core import execution, finalize
@@ -45,6 +46,7 @@ from Module.workflow_engine.schema import (
 
 if TYPE_CHECKING:
     from Module.workflow_engine.artifact_store import ArtifactStore
+    from Module.workflow_engine.token_ledger import TokenLedger
     from Module.workflow_engine.checkpoint import CheckpointManager
     from Module.workflow_engine.core.evaluator import Evaluator
     from Module.workflow_engine.core.executor import Executor
@@ -54,6 +56,16 @@ if TYPE_CHECKING:
     from Module.workflow_contract import HITLNotifier
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_error_code(raw: str) -> "WorkflowErrorCode":
+    """字符串 → WorkflowErrorCode；未知值兜底 INTERNAL_ERROR（不抛）。"""
+    from Module.workflow_engine.schema import WorkflowErrorCode
+
+    try:
+        return WorkflowErrorCode(raw)
+    except ValueError:
+        return WorkflowErrorCode.INTERNAL_ERROR
 
 
 class Orchestrator:
@@ -87,6 +99,7 @@ class Orchestrator:
         evaluator: Evaluator,
         checkpoint_manager: CheckpointManager,
         artifact_store: ArtifactStore,
+        token_ledger: "TokenLedger | None" = None,
     ) -> None:
         """初始化 Orchestrator。
 
@@ -97,6 +110,8 @@ class Orchestrator:
             evaluator: 节点评估器（Evaluator），负责校验节点输出。
             checkpoint_manager: 检查点管理器，负责读写快照。
             artifact_store: 产物存储，用于保存节点产出。
+            token_ledger: Token 记账器（S2-D4）——每轮预算检查要读它；None 时跳过
+                token 维度（与 `check_meltdown` 同约定）。
         """
         self._infra = infra
         self._hitl = hitl_notifier
@@ -104,6 +119,7 @@ class Orchestrator:
         self._evaluator = evaluator
         self._checkpoint_mgr = checkpoint_manager
         self._artifact_store = artifact_store
+        self._token_ledger = token_ledger
 
         # 运行时状态——run() 入口创建，循环中原地更新。
         # None = Orchestrator 尚未启动（或已结束），非 None = 执行中。
@@ -114,6 +130,54 @@ class Orchestrator:
         # self._event_log: EventLog | None = None  # 预留
 
     # ── 主循环 ─────────────────────────────────────────────────────────────────
+
+    def _budget_exceeded(self, task_state: WorkflowState) -> tuple[str, str] | None:
+        """每轮检查硬预算（S2-D4）。超限时返回 (原因, WorkflowErrorCode 值)。
+
+        **为什么需要**：`ConstraintConfig` 的头注释写着"引擎内所有执行路径强制遵守"，
+        但实测 `max_task_duration_s` / `max_total_tokens` **只在 NEEDS_REPLAN 时**由
+        `check_meltdown` 检查——不发生结构性失败则永不触发。于是最坏放大路径
+        （`max_dag_nodes` 20 × 每节点 4 次执行 × ≤5 次 REPLAN ≈ **480 次节点执行**，
+        每次 ≤30s 工具 + 2 次 LLM）可以跑到远超声明的 600s / 100k token，
+        **没有任何看门狗会触发**；用户侧也没有"任务超时"终态——任务一直 RUNNING，
+        `WorkflowErrorCode.TIMEOUT` / `TOKEN_BUDGET_EXCEEDED` 同样不可达。
+
+        这里把两条硬约束变成**每轮都查**（每轮 = 一批就绪节点）。单节点内部的长耗时
+        由 `DAGNode.max_duration_s` 与工具自身的超时约束。
+
+        Args:
+            task_state: 任务状态（提供 created_at）。
+
+        Returns:
+            None 表示未超限；否则 (人类可读原因, 错误码值)。
+        """
+        from Module.workflow_engine.core.sub_agent.replan import _elapsed_seconds
+        from Module.workflow_engine.schema import WorkflowErrorCode
+
+        constraints = self._infra.constraints
+        elapsed = _elapsed_seconds(task_state.created_at)
+        if elapsed > constraints.max_task_duration_s:
+            if math.isinf(elapsed):
+                return (
+                    f"任务耗时无法确定（创建时间解析失败），按超时熔断"
+                    f"（上限 {constraints.max_task_duration_s:.0f} 秒）",
+                    WorkflowErrorCode.TIMEOUT.value,
+                )
+            return (
+                f"任务耗时 {elapsed:.0f} 秒已超过上限 "
+                f"{constraints.max_task_duration_s:.0f} 秒",
+                WorkflowErrorCode.TIMEOUT.value,
+            )
+
+        if self._token_ledger is not None:
+            used = self._token_ledger.total_tokens
+            if used > constraints.max_total_tokens:
+                return (
+                    f"任务已消耗 {used} tokens，超过上限 "
+                    f"{constraints.max_total_tokens}",
+                    WorkflowErrorCode.TOKEN_BUDGET_EXCEEDED.value,
+                )
+        return None
 
     async def run(
         self,
@@ -164,6 +228,19 @@ class Orchestrator:
                 # 0. 中断信号检查（pause / cancel）
                 if result := await self._check_interrupts(task_state, exec_state, task_id):
                     return result
+
+                # 0b. 硬预算检查（S2-D4）——原先只在 NEEDS_REPLAN 时查，无结构性失败
+                #     则永不触发；现在每轮都查，超限即终态 FAILED（用户能看到"超时"，
+                #     `TIMEOUT` / `TOKEN_BUDGET_EXCEEDED` 两个码自此可达）。
+                if budget := self._budget_exceeded(task_state):
+                    reason, code = budget
+                    logger.error("Orchestrator: task_id=%s 预算超限: %s", task_id, reason)
+                    task_state.fail(reason, _coerce_error_code(code))
+                    return OrchestratorResult(
+                        status=OrchestratorRunStatus.FAILED,
+                        error_context={"reason": reason, "error_type": code},
+                        checkpoint_state=self._build_checkpoint(task_state, exec_state),
+                    )
 
                 # 1. 找就绪节点
                 ready_ids = graph.get_ready_nodes(exec_state.node_states)

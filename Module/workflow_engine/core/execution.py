@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,7 @@ from Module.workflow_engine.schema import (
     EvaluatorAction,
     ExecutionState,
     ExecutionStatus,
+    NodeErrorCode,
     NodeState,
     NodeResult,
     NodeResultEvaluation,
@@ -79,8 +81,32 @@ async def execute_nodes(
         # LLM 只能原样重选同一工具同一参数（盲重跑），对"副作用已产生但返回失败"
         # 的工具会造成重复执行。
         previous_error = ns.error if ns.attempt > 1 else None
-        result = await executor.execute(node, task_id, tools, session_id, ts,
-                                        previous_error=previous_error)
+        if node.max_duration_s is not None:
+            # S2-D4④：`DAGNode.max_duration_s` 此前**只声明、无人读**（parser 不解析、
+            # 引擎不读取）——与 `ConstraintConfig` 的"硬约束"同一类"声明与实现相反"。
+            # 现在它是真的：单节点超过自身上限即判 TOOL_TIMEOUT。
+            # 工具调用在 Executor 内被 asyncio.shield 保护（"副作用不打断"），
+            # 故这里取消的只是**等待**，已开始的工具会作为孤儿被 stop() 采集收尾。
+            try:
+                result = await asyncio.wait_for(
+                    executor.execute(node, task_id, tools, session_id, ts,
+                                     previous_error=previous_error),
+                    timeout=node.max_duration_s,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Orchestrator: node=%s 单节点超时（>%.0fs），判 TOOL_TIMEOUT",
+                    node.node_id, node.max_duration_s)
+                result = NodeResult(
+                    node_id=node.node_id,
+                    artifact_refs=[],
+                    error=NodeErrorCode.TOOL_TIMEOUT,
+                    attempt=0,
+                    duration_ms=int(node.max_duration_s * 1000),
+                )
+        else:
+            result = await executor.execute(node, task_id, tools, session_id, ts,
+                                            previous_error=previous_error)
         # Executor 返回的 attempt=0，用 Orchestrator 追踪的实际 attempt 覆盖
         result.attempt = ns.attempt
         results.append(result)

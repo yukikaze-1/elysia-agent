@@ -199,6 +199,7 @@ class SubAgent:
             evaluator=self._evaluator,
             checkpoint_manager=self._checkpoint_mgr,
             artifact_store=self._artifact_store,
+            token_ledger=self._token_ledger,   # S2-D4：每轮预算检查要读它
         )
 
         # 1. 规划 + 校验 → PlanGraph

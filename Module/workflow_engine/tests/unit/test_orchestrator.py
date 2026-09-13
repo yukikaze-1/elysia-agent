@@ -19,6 +19,7 @@ from Module.workflow_contract import (
 )
 from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.schema import (
+    now_iso,
     ArtifactId,
     DAGNode,
     EvaluatorAction,
@@ -146,8 +147,11 @@ def _task_state(task_id: str = "t1", graph: PlanGraph | None = None) -> Workflow
         task_id=WorkflowId(task_id),
         status=WorkflowStatus.RUNNING,
         plan=plan,
-        created_at="2026-01-01T00:00:00",
-        updated_at="2026-01-01T00:00:00",
+        # S2-D4 起 Orchestrator 每轮检查 `max_task_duration_s`（相对于 created_at）——
+        # 固定成过去某天会让"任务已跑了几个月"，被预算看门狗如实判超时。
+        # fixture 必须用一个"刚刚创建"的时间。
+        created_at=now_iso(),
+        updated_at=now_iso(),
     )
 
 

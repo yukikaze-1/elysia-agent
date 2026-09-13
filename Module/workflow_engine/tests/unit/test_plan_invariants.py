@@ -21,6 +21,7 @@ from Module.workflow_contract import ConstraintConfig, NodeId, WorkflowStatus
 from Module.workflow_engine.core.graph import PlanGraph
 from Module.workflow_engine.core.plan_validator import PlanValidator
 from Module.workflow_engine.schema import (
+    NodeResult,
     ArtifactId,
     DAG,
     DAGNode,
@@ -472,3 +473,187 @@ class TestExecuteNodesThreadsPreviousError:
         assert ns.attempt == 2, "attempt 已自增到第二轮"
         assert seen == ["上次超时"], (
             "第二轮必须把上一轮记录的 error 传下去——否则重试与首次逐字节相同（盲重跑）")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# S2-D4：声明为"硬约束"的上限必须有执行点
+# ═══════════════════════════════════════════════════════════════════
+
+class TestHardBudgetsHaveWatchdogs:
+    """`ConstraintConfig` 的头注释写着"引擎内所有执行路径强制遵守"，实测
+    `max_task_duration_s` / `max_total_tokens` **只在 NEEDS_REPLAN 时**由
+    `check_meltdown` 检查——不发生结构性失败则永不触发。最坏放大路径
+    （20 节点 × 每节点 4 次执行 × ≤5 次 REPLAN ≈ **480 次节点执行**）可以跑到远超
+    声明的 600s / 100k token，**没有任何看门狗会触发**；用户侧也没有"任务超时"终态，
+    `WorkflowErrorCode.TIMEOUT` / `TOKEN_BUDGET_EXCEEDED` 同样不可达。
+    """
+
+    def _orchestrator(self, *, duration_s: float = 600.0, tokens: int = 100_000,
+                      ledger=None):
+        from Module.workflow_engine.core.orchestrator import Orchestrator
+
+        infra = MagicMock()
+        infra.constraints = ConstraintConfig(
+            max_task_duration_s=duration_s, max_total_tokens=tokens)
+        return Orchestrator(
+            infra=infra, hitl_notifier=MagicMock(), executor=MagicMock(),
+            evaluator=MagicMock(), checkpoint_manager=MagicMock(),
+            artifact_store=MagicMock(), token_ledger=ledger,
+        )
+
+    def test_elapsed_over_deadline_is_detected(self):
+        from datetime import datetime, timedelta, timezone
+
+        from Module.workflow_engine.schema import WorkflowErrorCode, WorkflowState
+
+        orch = self._orchestrator(duration_s=60.0)
+        old = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1", created_at=old)
+
+        budget = orch._budget_exceeded(ts)                       # noqa: SLF001
+        assert budget is not None, "超过 max_task_duration_s 必须被判超时"
+        reason, code = budget
+        assert code == WorkflowErrorCode.TIMEOUT.value
+        assert "60" in reason
+
+    def test_token_budget_is_detected(self):
+        from Module.workflow_engine.schema import WorkflowErrorCode, WorkflowState
+
+        ledger = MagicMock()
+        ledger.total_tokens = 200_000
+        orch = self._orchestrator(tokens=100_000, ledger=ledger)
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+
+        budget = orch._budget_exceeded(ts)                       # noqa: SLF001
+        assert budget is not None
+        assert budget[1] == WorkflowErrorCode.TOKEN_BUDGET_EXCEEDED.value
+
+    def test_fresh_task_is_within_budget(self):
+        """回归网：刚创建、token 未超的任务不得被误判。"""
+        from Module.workflow_engine.schema import WorkflowState
+
+        ledger = MagicMock()
+        ledger.total_tokens = 10
+        orch = self._orchestrator(ledger=ledger)
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+        assert orch._budget_exceeded(ts) is None                  # noqa: SLF001
+
+    def test_unparseable_created_at_fails_closed(self):
+        """创建时间解析失败 → 按超时处理（fail-closed，不静默放行）。
+
+        注：`WorkflowState.created_at` 在构造时就会拒绝非法 ISO 串，故这个分支在
+        正常路径上不可达——它防的是**绕过校验的构造**（`model_construct` / 直接改
+        属性 / 反序列化旧数据）。这里直接测 `_elapsed_seconds` 的契约。
+        """
+        import math
+
+        from Module.workflow_engine.core.sub_agent.replan import _elapsed_seconds
+
+        assert math.isinf(_elapsed_seconds("not-a-timestamp"))
+
+        # 且预算检查确实会因此判超时（把 inf 喂进同一条判据）
+        from Module.workflow_engine.schema import WorkflowErrorCode, WorkflowState
+
+        orch = self._orchestrator()
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+        ts.created_at = "not-a-timestamp"          # 绕过构造校验，模拟旧数据
+        budget = orch._budget_exceeded(ts)                        # noqa: SLF001
+        assert budget is not None and budget[1] == WorkflowErrorCode.TIMEOUT.value
+
+    @pytest.mark.asyncio
+    async def test_run_terminates_with_timeout_status(self):
+        """端到端：超预算的任务必须以 FAILED+`timeout` 收尾，而不是一直 RUNNING。"""
+        from datetime import datetime, timedelta, timezone
+
+        from Module.workflow_contract import WorkflowStatus
+        from Module.workflow_engine.schema import WorkflowState
+
+        orch = self._orchestrator(duration_s=1.0)
+        old = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
+        graph = PlanGraph.from_plan(_plan([_node("a", output_as="output:a")]))
+        ts = WorkflowState(task_id="t1", status=WorkflowStatus.RUNNING, tools=[],
+                           session_id="s1", created_at=old,
+                           plan=graph.to_plan())
+
+        result = await orch.run(ts, graph, MagicMock())
+
+        assert result.status.value == "failed"
+        assert result.error_context.get("error_type") == "timeout"
+        assert ts.error_code is not None and ts.error_code.value == "timeout"
+
+
+class TestNodeLevelDeadlineIsEnforced:
+    """`DAGNode.max_duration_s` 此前**只声明、无人读**（parser 不解析、引擎不读取）
+    ——与 `ConstraintConfig` 的"硬约束"同一类"声明与实现相反"。现在它是真的。
+    """
+
+    @pytest.mark.asyncio
+    async def test_node_timeout_yields_tool_timeout(self):
+        import asyncio as _asyncio
+
+        from Module.workflow_engine.core.execution import execute_nodes
+        from Module.workflow_engine.schema import (
+            ArtifactId,
+            ExecutionPhase,
+            ExecutionState,
+            NodeErrorCode,
+            NodeState,
+            NodeStatus,
+            OutputContract,
+        )
+
+        node = DAGNode(
+            node_id=NodeId("slow"), description="慢节点",
+            output_contract=OutputContract(description="产出"),
+            output_as=ArtifactId("output:slow"),
+            max_duration_s=0.05,
+        )
+        exec_state = ExecutionState(
+            node_states={NodeId("slow"): NodeState(node_id=NodeId("slow"))},
+            current_phase=ExecutionPhase.EXECUTING,
+        )
+
+        async def _hang(node, task_id, tools, session_id, ts, previous_error=None):
+            await _asyncio.sleep(30)
+
+        executor = MagicMock()
+        executor.execute = AsyncMock(side_effect=_hang)
+
+        results = await execute_nodes(executor, exec_state, [node], "t1", [], "s1",
+                                      MagicMock())
+
+        assert results[0].error == NodeErrorCode.TOOL_TIMEOUT, results
+        assert exec_state.node_states[NodeId("slow")].status != NodeStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_unset_deadline_is_unlimited(self):
+        """回归网：不设 `max_duration_s` 的节点行为不变（None = 无限制）。"""
+        from Module.workflow_engine.core.execution import execute_nodes
+        from Module.workflow_engine.schema import (
+            ArtifactId,
+            ExecutionPhase,
+            ExecutionState,
+            NodeState,
+            OutputContract,
+        )
+
+        node = DAGNode(
+            node_id=NodeId("fast"), description="快节点",
+            output_contract=OutputContract(description="产出"),
+            output_as=ArtifactId("output:fast"),
+        )
+        assert node.max_duration_s is None
+        exec_state = ExecutionState(
+            node_states={NodeId("fast"): NodeState(node_id=NodeId("fast"))},
+            current_phase=ExecutionPhase.EXECUTING,
+        )
+
+        async def _ok(node, task_id, tools, session_id, ts, previous_error=None):
+            return NodeResult(node_id=node.node_id, artifact_refs=[], attempt=0,
+                              duration_ms=1)
+
+        executor = MagicMock()
+        executor.execute = AsyncMock(side_effect=_ok)
+        results = await execute_nodes(executor, exec_state, [node], "t1", [], "s1",
+                                      MagicMock())
+        assert results[0].error is None
