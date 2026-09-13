@@ -51,10 +51,19 @@ async def handle_failed(
         "SubAgent: task_id=%s 失败: %s",
         task_state.task_id, error_reason,
     )
+    # S2-D6：`error` / `error_code` 原先**没有任何生产代码写过**（只活在邮箱事件里），
+    # 而它们是 WorkflowSummary / debug 快照 / 前端 TaskCard 的字段——于是用户与调试面
+    # 无法区分规划失败/工具失败/内部 bug。这里把编排层给出的 error_type 落到任务状态上。
+    raw_code = result.error_context.get("error_type") or WorkflowErrorCode.INTERNAL_ERROR.value
+    try:
+        code = WorkflowErrorCode(raw_code)
+    except ValueError:
+        code = WorkflowErrorCode.INTERNAL_ERROR
+    task_state.fail(error_reason, code)
     await push_mailbox_fn(mailbox, WorkflowEventType.FAILED, {
         "task_id": str(task_state.task_id),
         "error": error_reason,
-        "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
+        "error_type": code.value,
     })
 
 

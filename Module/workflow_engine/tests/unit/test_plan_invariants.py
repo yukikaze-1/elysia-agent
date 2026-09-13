@@ -13,7 +13,7 @@ D8 那条尤其值得记：`validate_structure` 的第 2 项遍历 `nx.predecess
 （设计上认为它会导致 ABORT），**却没有生产者**：有兜底、无来源。
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -201,3 +201,151 @@ async def test_orchestrator_refuses_empty_graph():
 
     assert result.status.value == "failed", result
     assert "空" in result.error_context.get("reason", "")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# S2-D6：任务级失败原因必须落到 WorkflowState（而不是只活在邮箱事件里）
+# ═══════════════════════════════════════════════════════════════════
+
+class TestTaskLevelErrorIsRecorded:
+    """`WorkflowState.error` / `error_code` 是 `WorkflowSummary`、debug 快照、前端
+    TaskCard 的字段，而**没有任何生产代码写过它们**——所有任务级失败原因只活在邮箱
+    事件的 `data["error"]` 里。于是用户/调试面无法区分"规划失败/工具失败/内部 bug"，
+    `WorkflowErrorCode` 的 10 项里实际只有 3 项有生产者。
+    """
+
+    def test_fail_records_reason_and_code(self):
+        from Module.workflow_engine.schema import WorkflowErrorCode, WorkflowState
+
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+        ts.fail("规划失败：LLM 返回非 JSON", WorkflowErrorCode.PLANNING_FAILED)
+
+        assert ts.status.value == "failed"
+        assert ts.error == "规划失败：LLM 返回非 JSON"
+        assert ts.error_code == WorkflowErrorCode.PLANNING_FAILED
+
+    def test_cancel_records_reason_and_code(self):
+        from Module.workflow_engine.schema import WorkflowErrorCode, WorkflowState
+
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+        ts.cancel("用户取消")
+        assert ts.status.value == "cancelled"
+        assert ts.error == "用户取消"
+        assert ts.error_code == WorkflowErrorCode.CANCELLED_BY_USER
+
+    def test_fail_without_code_keeps_existing(self):
+        """不传 code 时保留既有值——不把已定位的原因覆盖成 None。"""
+        from Module.workflow_engine.schema import WorkflowErrorCode, WorkflowState
+
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+        ts.fail("第一次", WorkflowErrorCode.TIMEOUT)
+        ts.fail("第二次")
+        assert ts.error == "第二次"
+        assert ts.error_code == WorkflowErrorCode.TIMEOUT
+
+    @pytest.mark.asyncio
+    async def test_handle_failed_writes_task_state(self):
+        """三个失败处理器之一：`handle_failed` 必须把 error/code 落到任务状态。"""
+        from Module.workflow_engine.core.sub_agent.result_handlers import handle_failed
+        from Module.workflow_engine.schema import (
+            OrchestratorResult,
+            OrchestratorRunStatus,
+            WorkflowErrorCode,
+            WorkflowState,
+        )
+
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+        result = OrchestratorResult(
+            status=OrchestratorRunStatus.FAILED,
+            error_context={"reason": "工具连续失败", "error_type": "timeout"},
+        )
+        pushed: list[tuple] = []
+
+        async def _push(mailbox, etype, data):
+            pushed.append((etype, data))
+
+        await handle_failed(result, ts, MagicMock(), _push)
+
+        assert ts.error == "工具连续失败"
+        assert ts.error_code == WorkflowErrorCode.TIMEOUT, "编排层给的码要如实落库"
+        assert pushed and pushed[0][1]["error_type"] == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_handle_failed_unknown_code_falls_back(self):
+        """编排层给了未登记的码 → 兜底 INTERNAL_ERROR，不抛。"""
+        from Module.workflow_engine.core.sub_agent.result_handlers import handle_failed
+        from Module.workflow_engine.schema import (
+            OrchestratorResult,
+            OrchestratorRunStatus,
+            WorkflowErrorCode,
+            WorkflowState,
+        )
+
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+        result = OrchestratorResult(
+            status=OrchestratorRunStatus.FAILED,
+            error_context={"reason": "x", "error_type": "not_a_real_code"},
+        )
+
+        async def _push(mailbox, etype, data):
+            return None
+
+        await handle_failed(result, ts, MagicMock(), _push)
+        assert ts.error_code == WorkflowErrorCode.INTERNAL_ERROR
+
+
+class TestPlanningFailureIsNotInternalError:
+    """规划阶段的 `PlanParseError` 原先**没有 try/except**：冒泡到 `_run_and_cleanup`
+    的兜底分支被统一报成"任务执行异常" + `internal_error`。而 `DAGNode(**...)` 非法
+    字段抛的是 `pydantic.ValidationError`，会**穿透** `PlanParseError` 的捕获。
+    不对称容错：Evaluator 有重试、Planner 没有 → 一次 LLM 抖动判死整个任务。
+    """
+
+    @pytest.mark.asyncio
+    async def test_plan_parse_error_retries_then_reports_planning_failed(self):
+        from Module.workflow_engine.core.sub_agent.planning import _plan_with_retry
+        from Module.workflow_engine.core.planner.parser import PlanParseError
+        from Module.workflow_engine.schema import WorkflowErrorCode, WorkflowState
+
+        planner = MagicMock()
+        planner.plan = AsyncMock(side_effect=PlanParseError("LLM 返回非 JSON"))
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+
+        result = await _plan_with_retry(planner, MagicMock(), MagicMock(), ts, "t1")
+
+        assert result is None
+        assert planner.plan.await_count == 2, "规划必须有重试（与 Evaluator 对称）"
+        assert ts.error_code == WorkflowErrorCode.PLANNING_FAILED, (
+            f"必须是 PLANNING_FAILED 而不是 INTERNAL_ERROR：{ts.error_code}")
+        assert "规划失败" in (ts.error or "")
+
+    @pytest.mark.asyncio
+    async def test_validation_error_is_also_caught(self):
+        """`pydantic.ValidationError`（DAGNode 非法字段）不能被漏掉。"""
+        from pydantic import ValidationError
+
+        from Module.workflow_engine.core.sub_agent.planning import _plan_with_retry
+        from Module.workflow_engine.schema import WorkflowErrorCode, WorkflowState
+
+        planner = MagicMock()
+        planner.plan = AsyncMock(side_effect=ValidationError.from_exception_data(
+            "DAGNode", [{"type": "missing", "loc": ("node_id",), "input": {}}]))
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+
+        assert await _plan_with_retry(planner, MagicMock(), MagicMock(), ts, "t1") is None
+        assert ts.error_code == WorkflowErrorCode.PLANNING_FAILED
+
+    @pytest.mark.asyncio
+    async def test_success_after_retry_returns_plan(self):
+        """回归网：第一次抖动、第二次成功 → 返回 Plan，不写失败。"""
+        from Module.workflow_engine.core.sub_agent.planning import _plan_with_retry
+        from Module.workflow_engine.core.planner.parser import PlanParseError
+        from Module.workflow_engine.schema import WorkflowState
+
+        good = MagicMock()
+        planner = MagicMock()
+        planner.plan = AsyncMock(side_effect=[PlanParseError("抖动"), good])
+        ts = WorkflowState(task_id="t1", tools=[], session_id="s1")
+
+        assert await _plan_with_retry(planner, MagicMock(), MagicMock(), ts, "t1") is good
+        assert ts.error_code is None

@@ -208,14 +208,12 @@ class Orchestrator:
 
         except asyncio.CancelledError:
             logger.warning("Orchestrator: task_id=%s 被取消", task_id)
-            task_state.status = WorkflowStatus.CANCELLED
-            task_state.updated_at = now_iso()
+            task_state.cancel("任务被取消（CancelledError）")
             await self._save_checkpoint(task_state, exec_state)
             raise
         except Exception:
             logger.exception("Orchestrator 异常终止: task_id=%s", task_id)
-            task_state.status = WorkflowStatus.FAILED
-            task_state.updated_at = now_iso()
+            task_state.fail("编排层内部异常", WorkflowErrorCode.INTERNAL_ERROR)
             await self._push_mailbox(mailbox, WorkflowEventType.FAILED, {
                 "error": "Orchestrator 内部异常",
                 "error_type": WorkflowErrorCode.INTERNAL_ERROR.value,
@@ -286,8 +284,7 @@ class Orchestrator:
             )
         if exec_state.cancel_requested:
             logger.info("Orchestrator: task_id=%s 收到取消请求", task_id)
-            task_state.status = WorkflowStatus.CANCELLED
-            task_state.updated_at = now_iso()
+            task_state.cancel("用户请求取消")
             await self._save_checkpoint(task_state, exec_state)
             return OrchestratorResult(
                 status=OrchestratorRunStatus.CANCELED,
@@ -332,11 +329,12 @@ class Orchestrator:
                 checkpoint_state=self._build_checkpoint(task_state, exec_state),
             )
         logger.error("Orchestrator 死锁: task_id=%s", task_id)
-        task_state.status = WorkflowStatus.FAILED
-        task_state.updated_at = now_iso()
+        reason = "检测到死锁——无可执行节点但任务未完成"
+        task_state.fail(reason, WorkflowErrorCode.FAILURE_MELTDOWN)
         return OrchestratorResult(
             status=OrchestratorRunStatus.FAILED,
-            error_context={"reason": "检测到死锁——无可执行节点但任务未完成"},
+            error_context={"reason": reason,
+                           "error_type": WorkflowErrorCode.FAILURE_MELTDOWN.value},
         )
 
     def _filter_approval(
@@ -411,7 +409,7 @@ class Orchestrator:
                     checkpoint_state=self._build_checkpoint(task_state, exec_state),
                 )
             elif action == EvaluatorAction.ABORT:
-                task_state.status = WorkflowStatus.FAILED
+                task_state.fail("编排层内部异常", WorkflowErrorCode.INTERNAL_ERROR)
                 task_state.updated_at = now_iso()
                 await self._save_checkpoint(task_state, exec_state)
                 return OrchestratorResult(

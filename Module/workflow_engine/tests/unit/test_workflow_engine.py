@@ -842,6 +842,14 @@ class TestCancelStrong:
         ts = MagicMock()
         ts.status = WorkflowStatus.PLANNING          # 未终态
         ts.is_terminal.return_value = False
+        # S2-D6：终态转换现在是 `WorkflowState.cancel(reason)` / `.fail(reason, code)`
+        # ——"设状态"与"记原因"绑成一个动作，避免又漏掉 error/error_code（它们此前
+        # **全仓零写入**，而 WorkflowSummary/debug/前端 TaskCard 都在读）。
+        # MagicMock 不会执行真实方法，故替身必须自己建模这个副作用。
+        ts.cancel.side_effect = lambda *a, **k: setattr(
+            ts, "status", WorkflowStatus.CANCELLED)
+        ts.fail.side_effect = lambda *a, **k: setattr(
+            ts, "status", WorkflowStatus.FAILED)
         sa._task_state = ts
         sa._orchestrator = None                       # PLANNING，orchestrator 未入 run
         tid = WorkflowId("t1")

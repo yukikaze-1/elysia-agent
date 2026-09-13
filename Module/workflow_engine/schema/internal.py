@@ -130,6 +130,32 @@ class WorkflowState(BaseModel):
     token_usage: dict[str, int] = Field(default_factory=dict)  # 按组件汇总 {"planner": N, "executor": N, ...}
     resume_pending: bool = False                       # E2：resume 排队/直接恢复进行中标记（幂等去重）
 
+    def fail(self, reason: str, code: "WorkflowErrorCode | None" = None) -> None:
+        """置失败终态并**同时记录原因**（S2-D6）。
+
+        为什么必须是方法：原先十几处终态转换各自写 `task_state.status = FAILED`，
+        而 `error` / `error_code` **全仓零写入**——它们是 `WorkflowSummary`、debug
+        快照、前端 TaskCard 的字段，于是"用户/调试面无法区分规划失败/工具失败/内部
+        bug"，"部分成功"在对外契约上不可表达。把"设状态"和"记原因"绑成一个动作，
+        才不会又漏掉一半。
+
+        Args:
+            reason: 人类可读的失败原因。
+            code: 机器可读的任务级错误码；None 时保留既有值（若有）。
+        """
+        self.status = WorkflowStatus.FAILED
+        self.error = reason
+        if code is not None:
+            self.error_code = code
+        self.updated_at = now_iso()
+
+    def cancel(self, reason: str = "用户取消") -> None:
+        """置取消终态并记录原因（S2-D6）。"""
+        self.status = WorkflowStatus.CANCELLED
+        self.error = reason
+        self.error_code = WorkflowErrorCode.CANCELLED_BY_USER
+        self.updated_at = now_iso()
+
     def is_terminal(self) -> bool:
         """任务是否已到达终态。
 

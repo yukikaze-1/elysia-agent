@@ -143,7 +143,7 @@ async def cancel(
 
     # ── 分支 0: QUEUED → 直接 CANCELLED（排队中取消，从未 acquire 槽位）──
     if ts.status == WorkflowStatus.QUEUED:
-        ts.status = WorkflowStatus.CANCELLED
+        ts.cancel("任务被取消")
         ts.updated_at = now_iso()
         mailbox = mailboxes.get(task_id)
         if mailbox:
@@ -162,7 +162,7 @@ async def cancel(
 
     # ── 分支 1: PAUSED → 直接 CANCELLED ──
     if ts.status == WorkflowStatus.PAUSED:
-        ts.status = WorkflowStatus.CANCELLED
+        ts.cancel("任务被取消")
         ts.updated_at = now_iso()
         mailbox = mailboxes.get(task_id)
         if mailbox:
@@ -188,7 +188,8 @@ async def cancel(
     # 「终态写入已原子发生则不覆盖」由 is_terminal 短路保证（§3.5 顺序不变量）。
     if ts.is_terminal():
         return True                            # 已终态 = 已取消（幂等）
-    ts.status = WorkflowStatus.CANCELLED       # ① 同步置权威终态（PLANNING/RUNNING 恒可达）
+    # ① 同步置权威终态（PLANNING/RUNNING 恒可达）+ 记录原因（S2-D6）
+    ts.cancel("用户取消")
     ts.updated_at = now_iso()
     if sub_agent._orchestrator is not None:
         exec_state = sub_agent._orchestrator._exec_state
