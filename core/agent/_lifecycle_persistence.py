@@ -490,12 +490,21 @@ class _LifecyclePersistence:
         """
         try:
             if name == "ltm":
-                # Milvus 恢复：同步此前仅在内存（_milvus_pk=None）的脏记忆
+                # CR-05：Milvus 恢复后**必须先重载内存条目**。`_load_from_milvus()`
+                # 原先只在 `connect()` 成功分支调用，而恢复路径走的是
+                # `repo.health_check()`（repo 内部重连），绕过了 `connect()` ——
+                # 于是 `_entries` 永远为空、search() 恒返回 []（候选只能由内存条目
+                # 产生），角色静默失忆到进程重启。重载幂等（按 entry_id 去重）。
+                reloaded = await self._long_term.reload_from_milvus()
+                if reloaded:
+                    logger.info("Milvus 恢复，重载 %d 条记忆到内存", reloaded)
+                # 再同步此前仅在内存（_milvus_pk=None）的脏记忆
                 synced = await self._long_term.sync_dirty_entries()
                 if synced:
                     logger.info("Milvus 恢复，同步 %d 条脏记忆", synced)
             elif name == "session":
-                # Session/Mongo 恢复：加载活动会话（pending JSONL 导入由 B2 加强）
+                # Session/Mongo 恢复：加载活动会话（离线期 JSONL 的合并由
+                # CR-06 收口到 SessionMemory.load() 内部——见那里的 docstring）
                 await self._session_manager.load_active()
                 # review 复核 #5 D2：重试「删除已提交但 refs/归档未清」的待清理会话
                 await self._session_manager.retry_pending_cleanup()

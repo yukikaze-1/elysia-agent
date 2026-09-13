@@ -201,6 +201,9 @@ class LongTermMemory:
             expected_dimension=self._repo_dimension(repo),
         )
         self._dirty_ids: set[MemoryId] = set()  # 未同步到 Milvus 的条目 ID
+        # CR-05：「内存空 + repo 存在」这一异常状态每段只告警一次，避免每轮
+        # prompt 组装都刷屏（恢复重载成功或被清空后重新武装）。
+        self._empty_recall_warned = False
         self._max_entries = max_entries
         self._max_age_days = max_age_days
         self._absorbed_ids: set[MemoryId] = set()  # 被 merge 吸收但尚未 delete 的条目 ID
@@ -472,6 +475,30 @@ class LongTermMemory:
         if self._repo is not None:
             return await self._repo.health_check()
         return False
+
+    async def reload_from_milvus(self) -> int:
+        """把 Milvus 中的条目重新装载进内存（CR-05）。
+
+        为什么需要这个公开入口：``_load_from_milvus()`` 原先**只在 ``connect()``
+        成功分支**被调用。Milvus 启动时不可用 → ``_entries`` 为空 → 运行中 Milvus
+        恢复时走的是 ``repo.health_check()``（repo 内部重连），**绕过了
+        ``connect()``**，于是内存条目永远为空；而候选召回只能由内存条目产生
+        （``_search_milvus_candidates`` 按 ``_milvus_pk`` 回连内存条目），ANN 命中的
+        行被整体丢弃 → ``search()`` **恒返回 ``[]``**，C4 记忆区被 LLM 当成"没有
+        相关记忆"，直到进程重启。附带后果：``consolidator`` 的"新记忆 vs 已有记忆"
+        比对因 ``get_all()`` 为空而全部走直接 insert → 重复记忆堆积。
+
+        幂等：``_load_from_milvus`` 按 entry_id 去重，重复调用不会重复 append。
+
+        Returns:
+            本次新装载的条目数（0 表示无新增或加载失败）。
+        """
+        loaded = await self._load_from_milvus()
+        if loaded:
+            # 重连后同样要清离线删除的 tombstone（防已删条目复活），与 connect() 一致
+            await self._apply_pending_deletes()
+            self._empty_recall_warned = False
+        return loaded
 
     # ---- Write ----
 
@@ -871,6 +898,19 @@ class LongTermMemory:
 
         if not self._entries and self._repo is None:
             return []
+
+        # CR-05：内存条目为空而 repo 存在 → 召回**必然**为空（候选只能由内存条目
+        # 产生，见 `_search_milvus_candidates` 的 `_milvus_pk` 回连）。这是"启动时
+        # Milvus 离线、之后恢复但没重载"的特征状态，必须留痕——否则它与"确实没有
+        # 相关记忆"在观测面上完全同形，角色会静默失忆。
+        if not self._entries and self._repo is not None:
+            if not self._empty_recall_warned:
+                self._empty_recall_warned = True
+                logger.warning(
+                    "LTM 内存条目为空但 Milvus 已配置——本次及后续召回将恒为空。"
+                    "若 Milvus 是启动后才恢复的，说明条目从未重载（需 reload_from_milvus）")
+        else:
+            self._empty_recall_warned = False
 
         candidates, distances = await _search_milvus_candidates(
             self._repo, self._entries, backend, query_embedding, query_text, top_k,

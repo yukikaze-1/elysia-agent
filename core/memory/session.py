@@ -317,15 +317,25 @@ class SessionMemory:
                     service_state=self.service_state,
                     character_binding=normalize_character_binding(self.character_binding),
                 )
-                # Mongo durable → 本地 pending JSONL 冗余，删除（只有 durable success 才删）
+                # Mongo durable → 本地 pending JSONL 冗余，删除（只有 durable success 才删）。
+                # CR-06：删除前先确认**文件里的每条消息都已在内存中**。否则这次 save
+                # 写的是"丢掉离线期消息之后"的状态，而删文件是最后一步不可逆动作——
+                # 消息会在 sessions / message_archive / JSONL 三处同时消失。
                 if os.path.exists(self._pending_file):
-                    try:
-                        os.remove(self._pending_file)
-                        logger.debug("session Mongo durable，删除 pending %s",
-                                     self._pending_file)
-                    except OSError:
-                        logger.warning("session 删除 pending 文件失败（无害）：%s",
-                                       self._pending_file)
+                    missing = self._pending_ids_missing_from_memory()
+                    if missing:
+                        logger.warning(
+                            "session Mongo durable，但 pending JSONL 仍有 %d 条消息不在"
+                            "内存中——**保留文件**（下次 load 会合并）: %s",
+                            len(missing), sorted(missing)[:3])
+                    else:
+                        try:
+                            os.remove(self._pending_file)
+                            logger.debug("session Mongo durable，删除 pending %s",
+                                         self._pending_file)
+                        except OSError:
+                            logger.warning("session 删除 pending 文件失败（无害）：%s",
+                                           self._pending_file)
                 logger.debug("Session save to MongoDB OK: %d messages", len(self._messages))
                 return True
             except Exception:
@@ -354,6 +364,29 @@ class SessionMemory:
         except Exception:
             logger.warning("session JSON 写入失败", exc_info=True)
             return False
+
+    def _pending_ids_missing_from_memory(self) -> set[str]:
+        """pending JSONL 里**不在当前内存消息中**的 message_id 集合（CR-06）。
+
+        用于 `save()` 删除本地副本前的最后一道校验：Mongo durable 只证明"内存里的
+        这份"写成功了，不证明"文件里的那份"没丢。
+
+        读取失败（文件损坏 / 格式异常）返回空集 = 不阻断删除——文件本身已不可用，
+        留着只会让下一次 load 再失败一次；此路径记 warning 留痕。
+        """
+        try:
+            with open(self._pending_file, encoding="utf-8") as f:
+                doc = json.loads(f.readline())
+        except Exception:
+            logger.warning("读取 %s 校验失败（跳过校验，允许清理）",
+                           self._pending_file, exc_info=True)
+            return set()
+        saved = {m.message_id for m in self._messages if m.message_id}
+        return {
+            str(m.get("message_id"))
+            for m in doc.get("messages", [])
+            if m.get("message_id") and m.get("message_id") not in saved
+        }
 
     async def load_from_jsonl(self, merge: bool = False) -> bool:
         """从本地 JSONL 文件恢复 session。
@@ -458,6 +491,21 @@ class SessionMemory:
                 if ss is not None:
                     for field in type(ss).model_fields:
                         setattr(self.service_state, field, getattr(ss, field))
+                # CR-06：命中文档 ≠ 内存可以整体替换。若存在 pending JSONL，说明
+                # **本进程**曾有一段"Mongo 不可写"的时期，那期间的消息只落在文件里
+                # （`message_repo.append` 同样跳过 → 归档里也没有）。直接替换会当场
+                # 丢掉这段对话，紧接着一次成功 save() 又删除文件——sessions /
+                # message_archive / JSONL **三处同时消失**，用户可见的整段历史被改成
+                # "不存在"。按 message_id 去重合并（远端在前、本地新增在后），
+                # 复用 `_load_from_jsonl(merge=True)` 的既有语义。
+                if os.path.exists(self._pending_file):
+                    before = len(self._messages)
+                    if await self._load_from_jsonl(merge=True):
+                        merged = len(self._messages) - before
+                        if merged:
+                            logger.warning(
+                                "SessionMemory: %s 命中文档但存在离线期 JSONL——"
+                                "合并 %d 条未落库消息（CR-06）", sid, merged)
                 logger.info("SessionMemory: loaded session %s (%d messages)", sid, len(messages))
                 return True
             return await self._load_from_jsonl()
