@@ -349,6 +349,39 @@
 故该仓储先 `list_indexes()` 比对，冲突则保留现状 + 告警。恢复唯一性需：
 清理重复 → `drop_index()` → 重启。
 
+**推论（#27 的修法）**：既然"索引已降级"是**受支持的运维状态**，那么版本号的并发唯一性
+就**不能**只靠自建唯一索引来仲裁。`append_version` 因此把版本槽位写进文档 `_id`
+（`cv|<session_id>|<content_type>|<version>`）——Mongo 内建 `_id` 唯一索引恒存在，
+与 `ensure_index` 健康与否无关；冲突则重算 `max+1` 重试。
+
+### 读路径 fail-closed 约定表（#31）
+
+存储不可用时，"我不知道答案" **不等于** "答案是空"。每个读路径必须显式选择其一：
+
+| 约定 | 含义 | 现有路径 |
+|---|---|---|
+| `READ_FAIL_CLOSED` | 后端不可用 → **必须**抛 `StorageUnavailableError`（→ 503） | 全部 `AttachmentRepository` 读；全部 `CharacterInstanceRepository` / `CharacterRepository` / `CharacterRevisionRepository` 读；`UserIdentityRepository.get`；`IdempotencyRepository.get`；`SessionRepository.load`、`count_incomplete_character_binding`；`MessageRepository` 的 `query_page` / `query_after` / `count_by_session` / `count_assistant_without_character`；`GenerationRepository.find_by_user_message` |
+| `READ_EMPTY_OK` | 后端不可用 → **允许**返回空（`[]`/`None`/`0`/空元组） | 全部 `CharacterVersionRepository` 读；全部 `TokenRepository` 读；全部 `MemoryRepository`（Milvus）读；全部 `DesktopCallRepository` 读（**进程内缓存是唯一读权威**，刻意如此）；`SessionRepository.list_all`；`MessageRepository` 的 `query_by_session` / `query` / `query_offset` / `count` / `get_by_id` / `get_by_mongo_id` / `query_search` / `find_context`；`GenerationRepository` 的 `find_one` / `find_by_message` / `find_by_session` |
+
+**表在代码里的单源**：`core/storage/tests/test_fail_closed_convention.py` 的
+`_CONVENTION`。同一文件的门禁遍历 `core/storage/` 下**全部** `Repository` 子类的
+**全部**公开异步方法，断言：
+
+1. 每个方法都被分类（新增读路径不分类 → 红）；
+2. 声明 `READ_FAIL_CLOSED` 的路径在 `_db=None` 下**真的**抛异常，声明
+   `READ_EMPTY_OK` 的**真的**返回空（表与实现漂移 → 红）；
+3. **同仓读路径必须同向**；混向的仓储必须在 `_ASYMMETRIC_JUSTIFIED` 给出理由
+   （新出现的不对称 → 红）。当前混向的有三个：`MessageRepository`、
+   `SessionRepository`、`GenerationRepository`——它们都是批次 6/7（`#25`）按
+   **调用方**逐个修的，剩下的一半等下面这条决策。
+
+**待决策（报告决策项 #8）**：整仓统一到哪种约定，取决于产品定义——"用户看到空历史"
+与"用户看到 503"哪个更可接受。逐条待决路径列在测试的 `_PENDING_DECISION`
+（含三条读路径与五条**写**路径：`MemoryRepository.insert`/`delete`、
+`SessionRepository.rename`、`TokenRepository.flush`/`clear_all` 目前离线时静默返回
+空值，与同仓其余写路径的 raise 不一致）。定案后把这些条目移出 `_PENDING_DECISION`
+并改分类。
+
 ---
 
 ## 六、数据流
