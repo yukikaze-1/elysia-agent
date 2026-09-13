@@ -11,6 +11,7 @@ from typing import Any
 from aiohttp import web
 from paths import ProjectPath
 
+from core.application import AttachmentSigningService
 from core.input.errors import _protocol_error_response
 from core.schema.adapters import attachment_resolver
 from core.schema.utils import normalize_attachment_mime, now_iso
@@ -487,14 +488,13 @@ _TEXT_EXT_TO_MIME = {
 }
 
 def _sign_url(secret: str, attachment_id: str) -> tuple[str, int]:
-    """HMAC 签名 URL（spec §3.3）。返回 (url, expires_unix)。"""
-    import hmac
+    """HMAC 签名 URL（spec §3.3）。返回 (url, expires_unix)。
 
-    expires_unix = int(time.time()) + 86400  # 24h
-    sig = hmac.new(secret.encode(), f"{attachment_id}:{expires_unix}".encode(),
-                   hashlib.sha256).hexdigest()
-    url = f"/api/attachments/{attachment_id}?sig={sig}&exp={expires_unix}"
-    return url, expires_unix
+    薄壳：规则单源在 `core.application.AttachmentSigningService`（TTL / 算法 /
+    URL 形状），签发与验证共用同一常量——避免了"签发用 24h、验证用另一个数"
+    这类只在生产暴露的错配。保留本函数名是因为上传路径与既有测试都以它为准。
+    """
+    return AttachmentSigningService(sig_secret=secret).sign(attachment_id)
 
 _IMAGES_DIR = ProjectPath.DATA_UPLOADS_IMAGES.resolve()
 

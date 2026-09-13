@@ -12,6 +12,10 @@ from Module.output import WebSocketChannel
 
 if TYPE_CHECKING:
     from core.agent import Agent
+from core.application import (
+    SessionUseCaseError,
+    session_service_for_agent,
+)
 from core.input.ws_handlers.context import WsRequestContext
 
 # 复用父模块 logger 名（保持日志可追溯性：日志过滤/告警规则按
@@ -193,35 +197,19 @@ async def _handle_activate_session(agent: "Agent", ws: "web.WebSocketResponse", 
         ).wire_dict())
         return
     try:
-        if not getattr(agent.status, "is_accepting_input", True):
-            logger.info("activate_session: agent 忙（is_accepting_input=False），拒绝切换 %s", sid)
-            await ws.send_json(ErrorMessage(
-                message="Agent 忙（生成/TTS 中），无法切换会话",
-                code="AGENT_BUSY",
-                requestId=_current_request_id(),
-            ).wire_dict())
-            return
-        if not await agent.session_manager.has_session(sid):
-            logger.debug("activate_session: 未知会话 %s → SESSION_NOT_FOUND", sid)
-            await ws.send_json(ErrorMessage(
-                message=f"会话不存在: {sid}",
-                code="SESSION_NOT_FOUND",
-                requestId=_current_request_id(),
-            ).wire_dict())
-            return
-        target = await agent.switch_session(SessionId(sid))
+        # 用例层单源（core/application/sessions.py）：存在性 → 忙门禁 → 切换。
+        # 此前本处顺序是「忙门禁 → 存在性」，未知会话会被报成 AGENT_BUSY——
+        # 而 REST 同功能报 SESSION_NOT_FOUND，同一事实两套答案。
+        target = await session_service_for_agent(agent).activate(sid)
         await _send_session_replay(ws, agent, target)
         # 阶段 G(§7.1):v2 + character_state_stream=true 时发角色状态快照(强制,不看 last)
         if getattr(agent, "character_state_stream", False):
             await _emit_state_snapshot(agent, ws)
         logger.info("WS activate_session: 已切到会话 %s", sid)
-    except SessionBusyError:
-        # review 修复（批次 C）：switch() 双保险 busy check 抛 SessionBusyError——
-        # 此前被通用 except Exception 吞成 INTERNAL。单独捕获 → AGENT_BUSY（可重试）。
-        logger.info("activate_session: 双保险 busy check 命中（SessionBusyError），拒绝切换 %s", sid)
+    except SessionUseCaseError as exc:
         await ws.send_json(ErrorMessage(
-            message="Agent 忙（生成/TTS 中），无法切换会话",
-            code="AGENT_BUSY",
+            message=exc.message,
+            code=exc.code,
             requestId=_current_request_id(),
         ).wire_dict())
     except Exception:

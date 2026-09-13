@@ -22,6 +22,10 @@ from pydantic import ValidationError
 if TYPE_CHECKING:
     from core.agent import Agent
 
+from core.application import (
+    SessionUseCaseError,
+    session_service_for_agent,
+)
 from core.input._common import _archive_to_client, _archive_msg_to_contract
 from core.character.service import (
     CharacterArchivedError,
@@ -643,13 +647,17 @@ async def sessions_activate_handler(request: web.Request) -> web.Response:
     """
     agent = request.app["agent"]
     sid = request.match_info["conversationId"]
-    if not await _session_exists(agent, sid):
-        return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
-    status = getattr(agent, "status", None)
-    if status is not None and not status.is_accepting_input:
-        return _error_response("AGENT_BUSY", "Agent 忙（生成/TTS 中），无法切换会话",
-                               409, retryable=True)
-    await agent.switch_session(SessionId(sid))
+    # 用例层单源：存在性 → 忙门禁 → 切换（与 WS activate_session 共用，
+    # 见 core/application/sessions.py 的对照表——此前两处顺序不同、错误码也不同）。
+    try:
+        # 返回值（激活后的 SessionMemory）只有 WS 侧需要做回放；REST 只需要
+        # "切成功了"这一事实，回显请求里的 conversationId 即可。
+        await session_service_for_agent(agent).activate(sid)
+    except SessionUseCaseError as exc:
+        status_code = 404 if exc.code == "SESSION_NOT_FOUND" else (
+            409 if exc.retryable else 400)
+        return _error_response(exc.code, exc.message, status_code,
+                               retryable=exc.retryable)
     resp = rest_contract.SessionActivateResult(activeConversationId=str(sid))
     return web.json_response(resp.wire_dict())
 
