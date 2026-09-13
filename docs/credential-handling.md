@@ -93,7 +93,7 @@ sk-d6cdb4==>sk-****REDACTED****
 EOF
 git filter-repo --replace-text /tmp/replacements.txt
 
-# 2) 验收：必须为 0 命中
+# 2) 验收：必须为 0 命中（须**完整 clone**——浅克隆下脚本退出 2「无法判定」，不报绿）
 python scripts/check_secrets.py --all-refs     # 或 make check-secrets-history
 
 # 3) 强推（会改写全部 commit hash）
@@ -111,7 +111,8 @@ git push --force --tags
 - `make check-secrets` / CI pr-gate 的 `Secret scanning (CR-01)` 步骤：扫**被跟踪文件**
   里的凭据形态（含本次事故的 key 指纹）
 - `make check-secrets-history`：**全历史**判据。清历史完成前**预期为红**——它不是
-  PR 门禁，是"步骤 3 是否做完"的验收器
+  PR 门禁，是"步骤 3 是否做完"的验收器（浅克隆下退出 2 拒答；清完 `git filter-repo`
+  后转绿，测试的期望值由 `git log -S` 现算，不写死"预期为红"）
 - 本次同时修正 `bandit.yaml` 里 B105/B106/B107 的豁免**理由**：原文写"测试密钥占位符"
   不准确（bandit 本就排除 tests/），实测解除后 27 项全是误报（按标识符名猜，命中的是
   参数名 `_config_secret`、枚举值 `token_budget_exceeded`、集合名 `sessions` 等）。
@@ -142,6 +143,11 @@ PEM 私钥 0 命中）。
   更强的方案是 `gitleaks detect --log-opts="--all"` 或 `trufflehog git --only-verified`，
   需要引入外部二进制（本仓门禁偏好零依赖 + 可在 PR job 跑的纯 stdlib 脚本）
 - 它**不扫** `data/`、`log/`、`node_modules/`、`static/assets/`
+- `--all-refs`（全历史）在**浅克隆下拒答**：退出码 2、不打印通过标记。CI 的 checkout
+  就是 `--depth 1`（self-hosted `git fetch --depth 1`、GitHub-hosted
+  `actions/checkout@v4` 默认亦然），那里 `rev-list --all` 只看得到最后一个提交，
+  "无命中"只说明没扫到。旧版正是在这种环境里对 2026-06 那次泄露报了"✓ 通过"
+  （2026-09-14 CI 红暴露；同一条测试还写死了"预期为红"，清历史后会反过来永远红）
 - 占位符判定是启发式：新写占位符若"看起来像真值"会被拦下——**这是有意为之**，
   修法是改占位符而不是加白名单
 

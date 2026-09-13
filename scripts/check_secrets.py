@@ -19,11 +19,17 @@
 `<...>` / `${...}` / 纯星号掩码 / 全同字符 …）。占位符一律放行——门禁的第一要求
 是**不误报**，否则会被加白到失效。
 
+**浅克隆下一票否决（退出码 2）**：CI 的 checkout 是 `--depth 1`——self-hosted job 用
+`git fetch --depth 1`，GitHub-hosted 的 `actions/checkout@v4` 默认也是。那里
+`git rev-list --all` 只看得到最后一个提交，"无命中"不是结论、而是**没扫**：实测在
+depth-1 克隆里本脚本对 2026-06 那次泄露报"✓ 通过"。这与开头说的假绿是同一件事，
+所以 `--all-refs` 在历史不完整时**拒绝给结论**，而不是给一个看起来干净的绿灯。
+
 用法：
     python scripts/check_secrets.py            # 扫工作树（被跟踪文件）
-    python scripts/check_secrets.py --all-refs # 扫全历史（本地用，CI 上较慢）
+    python scripts/check_secrets.py --all-refs # 扫全历史（须完整 clone，本机约 30s）
     python scripts/check_secrets.py --list     # 打印规则清单
-退出码：0 通过 / 1 命中。
+退出码：0 通过 / 1 命中 / 2 **无法判定**（浅克隆等历史不完整的情形）。
 """
 
 from __future__ import annotations
@@ -101,6 +107,22 @@ _SKIP_DIR_PARTS = ("/.git/", "node_modules/", "__pycache__/", "/data/", "/log/",
                    "/.model_cache/", "/static/assets/")
 
 
+def _history_state() -> str:
+    """历史完整度：`complete` / `shallow` / `unknown`。
+
+    `--all-refs` 的绿灯只在前者可信——浅克隆里 `rev-list --all` 只覆盖最后一个
+    提交，扫描器"什么都没找到"与"什么都没扫"不可区分。
+    """
+    try:
+        proc = subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
+                              capture_output=True, text=True)
+    except OSError:
+        return "unknown"
+    if proc.returncode != 0:          # 不是 git 仓库 / git 不可用
+        return "unknown"
+    return "shallow" if proc.stdout.strip() == "true" else "complete"
+
+
 def _tracked_files(all_refs: bool) -> list[tuple[str, str]]:
     """待扫清单 `[(读取标识, 路径)]`。
 
@@ -162,6 +184,16 @@ def main(argv: list[str]) -> int:
             print(f"{name}: {desc}")
         return 0
     all_refs = "--all-refs" in argv
+
+    if all_refs:
+        state = _history_state()
+        if state != "complete":
+            why = ("当前是浅克隆（shallow）" if state == "shallow"
+                   else "无法确定历史是否完整（git rev-parse 失败，非 git 仓库？）")
+            print(f"✗ 无法判定：{why}——`--all-refs` 只看得到部分历史，"
+                  "「无命中」不代表干净。\n"
+                  "  处理：先 `git fetch --unshallow`（或改用完整 clone）再重跑。")
+            return 2
 
     findings: list[tuple[str, int, str]] = []
     seen: set[tuple[str, str]] = set()

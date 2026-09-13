@@ -117,6 +117,8 @@ check-secrets:
 # 全历史 secret scanning（CR-01 步骤 3 的验收器）：**在清历史完成前预期为红** ——
 # 2026-06 的 `docs/review-2026-06-01.md` 在 commit f1dcc803 里抄录了真 key。
 # 这条不是门禁、是"历史是否已清理"的判据：清完 `git filter-repo` 后应转绿。
+# **须完整 clone**：浅克隆（CI 的 checkout 是 `--depth 1`）里只看得到最后一个提交，
+# 脚本退出 2 拒答而不是报绿——"没扫到"与"干净"不是一回事。
 check-secrets-history:
 	python scripts/check_secrets.py --all-refs
 

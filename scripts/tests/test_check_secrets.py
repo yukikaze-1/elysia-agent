@@ -4,6 +4,14 @@
 门禁类脚本最大的风险不是"漏"而是"**假绿**"：本次实现过程中就出现过一次——
 `--all-refs` 把 blob sha 当路径喂给后缀过滤，于是"历史模式"扫了 0 个文件却报通过。
 `test_history_mode_actually_reads_blobs` 就是那条缺陷的回归网。
+
+**第二次假绿（2026-09-14，CI 报错暴露）**：CI 的 checkout 是 `--depth 1`，
+历史模式只扫得到最后一个提交却照样打印"✓ 通过"。旧测试把"本仓全历史必须命中"
+写成断言，在浅克隆里**不可能成立**（且清历史后还会反过来永远红）。现在三层收口：
+
+1. 脚本对浅克隆**拒答**（退出码 2，不报绿）——`test_shallow_checkout_refuses_to_report_green`
+2. 合成仓库给出与环境无关的端到端证据——`test_end_to_end_history_mode_catches_leak_deleted_from_the_tree`
+3. 真实仓库那条用 `git log -S` 现算期望值，浅克隆下显式 skip（原因写进 skip 消息）
 """
 
 import subprocess
@@ -124,19 +132,118 @@ def test_tree_mode_scans_tracked_files():
     assert all(i == p for i, p in pairs), "工作树模式：标识即路径"
 
 
-def test_end_to_end_catches_the_real_historical_leak():
-    """**核心证据**：全历史模式必须命中 2026-06 那次真实泄露。
+# 泄露所在的文件（与 2026-06 事故同名，便于人读时对上号）
+_LEAK_DOC = "docs/review-2026-06-01.md"
 
-    这条用真实仓库历史验证，而不是合成 fixture——一个"在真实数据上什么都没发现"
-    的扫描器，与一个坏掉的扫描器无法区分。
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    """在合成仓库里跑一条 git 命令（显式钉住签名/身份，不读用户全局配置）。
+
+    合成仓库：tmp 下 `git init` + 两个提交，**不联网、不碰本仓**，所以能留在
+    quick 门禁（`-m "unit or service"`）里跑——CI 的报错正是由这类断言引起的，
+    把它挪出 CI 等于让回归网失效。
     """
-    proc = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "check_secrets.py"), "--all-refs"],
-        capture_output=True, text=True, cwd=ROOT, timeout=900,
+    return subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "-c", "user.name=gate-test",
+         "-c", "user.email=gate-test@example.invalid", *args],
+        cwd=repo, capture_output=True, text=True, check=True,
     )
-    assert proc.returncode == 1, f"全历史必须命中（清历史前预期为红）\n{proc.stdout[:500]}"
-    assert "docs/review-2026-06-01.md" in proc.stdout
-    assert "已知泄露指纹" in proc.stdout
+
+
+def _repo_with_leak_only_in_history(tmp_path: Path) -> Path:
+    """造一个真仓库：提交 1 抄录凭据，提交 2 把文件删掉——泄露只存在于历史里。"""
+    repo = tmp_path / "origin"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    doc = repo / _LEAK_DOC
+    doc.parent.mkdir(parents=True)
+    doc.write_text(f"当时的值是 {_LEAK} 这样\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "抄录凭据")
+    doc.unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "移除抄录")
+    return repo
+
+
+def _run_gate(repo: Path, *args: str, timeout: int = 300) -> subprocess.CompletedProcess:
+    """在 `repo` 里跑门禁脚本（cwd 决定它扫哪个仓库）。"""
+    return subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_secrets.py"), *args],
+        capture_output=True, text=True, cwd=repo, timeout=timeout,
+    )
+
+
+def _git_here(*args: str) -> str:
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
+                          text=True, check=True).stdout
+
+
+def test_end_to_end_history_mode_catches_leak_deleted_from_the_tree(tmp_path):
+    """**核心证据**：能抓到"只存在于历史提交里"的凭据。
+
+    左侧对照（同一仓库的工作树模式必须绿）让断言有鉴别力——证明它不是因为
+    "扫什么都报红"才命中，而是真的读到了已被删除的历史 blob。
+    """
+    repo = _repo_with_leak_only_in_history(tmp_path)
+
+    tree = _run_gate(repo)
+    assert tree.returncode == 0, f"文件已删除，工作树模式不该命中\n{tree.stdout}"
+
+    hist = _run_gate(repo, "--all-refs")
+    assert hist.returncode == 1, f"历史里的泄露必须命中\n{hist.stdout[:500]}"
+    assert _LEAK_DOC in hist.stdout
+    assert "已知泄露指纹" in hist.stdout
+
+
+def test_shallow_checkout_refuses_to_report_green(tmp_path):
+    """浅克隆下 `--all-refs` 必须**拒答**（退出码 2），不得打印"✓ 通过"。
+
+    这正是 CI 的情境：self-hosted job `git fetch --depth 1`、GitHub-hosted
+    `actions/checkout@v4` 默认同样 depth 1。修前本用例是绿的假象——脚本对
+    2026-06 那次泄露报"通过"（当时 CI 的失败就出在这里）。
+    """
+    origin = _repo_with_leak_only_in_history(tmp_path)
+    clone = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", "--no-tags",
+                    f"file://{origin}", str(clone)], check=True, capture_output=True)
+
+    is_shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
+                                cwd=clone, capture_output=True, text=True,
+                                check=True).stdout.strip()
+    assert is_shallow == "true", "前置条件：这个 clone 必须是浅克隆（否则本用例没在测该情形）"
+
+    proc = _run_gate(clone, "--all-refs")
+    assert proc.returncode == 2, f"历史不完整时必须拒答而不是报绿\n{proc.stdout[:500]}"
+    assert "无法判定" in proc.stdout
+    assert "✓" not in proc.stdout, "拒答时不得出现通过标记"
+
+
+def test_real_repo_full_history_verdict_is_faithful():
+    """真实仓库：全历史判定必须与 git 自己的 pickaxe（`log -S`）一致。
+
+    期望值**现算**而不是写死"预期为红"：CR-01 步骤 3 清完历史后
+    `docs/review-2026-06-01.md` 里的泄露就该消失，写死会让这条用例在 owner
+    做对事情的那一刻变成一条永远修不好的红灯。
+
+    浅克隆下无从判定 → 显式 skip（CI 即此类情形，skip 原因会打在摘要里，
+    不会静默转绿）；脚本自身在那种环境下也已经拒答（退出码 2）。
+    """
+    if _git_here("rev-parse", "--is-shallow-repository").strip() == "true":
+        pytest.skip("浅克隆（CI 的 checkout 是 --depth 1）：看不到完整历史，"
+                    "全历史判据请在完整 clone 上跑 `make check-secrets-history`")
+
+    # pickaxe 只看内容是否出现在某个提交的 diff 里，不依赖本扫描器的实现
+    leaked = _git_here("log", "--all", "-S", _LEAK_PREFIX, "--format=%H",
+                       "--", _LEAK_DOC).strip()
+
+    proc = _run_gate(ROOT, "--all-refs", timeout=900)
+    if leaked:
+        assert proc.returncode == 1, f"历史里仍有泄露，必须命中\n{proc.stdout[:500]}"
+        assert _LEAK_DOC in proc.stdout
+        assert "已知泄露指纹" in proc.stdout
+    else:
+        assert proc.returncode == 0, f"历史已清理，必须转绿\n{proc.stdout[:500]}"
 
 
 def test_working_tree_is_clean():
