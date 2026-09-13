@@ -319,24 +319,52 @@ def _extract_from_message(msg: Message, category: str) -> list[dict]:
     return results
 
 
-async def _attachment_available(agent: "Agent", url: str) -> bool:
-    """资源索引软删过滤：/api/attachments/{id} → 附件记录存在且 active；其余 URL 不过滤。
+#: 资源索引单请求最多扫描多少条归档消息（S2-F1）。凑不满 limit 就一路翻到会话末尾
+#: 会把事件循环占住数十秒~数分钟；超预算改为如实报 has_more + 续扫游标。
+_RESOURCE_SCAN_MAX_MESSAGES = 500
 
-    Mongo 离线（附件 repo fail-closed）保守过滤——附件不可校验 → 不展示（避免
-    指向已删/不可用文件）。legacy /uploads/images/* 非附件，不过滤。
+_ATTACHMENT_URL_PREFIX = "/api/attachments/"
+
+
+def _attachment_id_of(url: str) -> str | None:
+    """`/api/attachments/{id}` → id；非附件 URL 返回 None（不过滤）。"""
+    if not url.startswith(_ATTACHMENT_URL_PREFIX):
+        return None
+    return url[len(_ATTACHMENT_URL_PREFIX):].split("/", 1)[0] or None
+
+
+async def _active_attachment_ids(agent: "Agent",
+                                 urls: list[str]) -> set[str] | None:
+    """一次 `$in` 批量校验附件可用性（S2-F1）。
+
+    原先 `_attachment_available` 对**每个候选项各发一次** `await repo.get()` ——
+    单请求可产生数百次串行 Mongo 往返，把事件循环占住数十秒，拖垮同进程的
+    WS/TTS/其他 REST。
+
+    Returns:
+        active 附件 ID 集合；`None` 表示"无法校验"（无 repo 或存储不可用）——
+        调用方据此**保守过滤**（附件不可校验 → 不展示，避免指向已删文件）。
     """
-    if not url.startswith("/api/attachments/"):
-        return True
-    attachment_id = url.rsplit("/", 1)[-1]
+    ids = [aid for aid in (_attachment_id_of(u) for u in urls) if aid]
+    if not ids:
+        return set()
     repo = getattr(agent, "attachment_repo", None)
     if repo is None:
-        return True
+        return None
+    finder = getattr(repo, "find_active_ids", None)
     try:
-        doc = await repo.get(AttachmentId(attachment_id))
+        if finder is not None:
+            return await finder(ids)
+        # 兼容替身/旧 repo：退化为逐条查询（语义相同，仅慢）
+        out: set[str] = set()
+        for aid in ids:
+            doc = await repo.get(AttachmentId(aid))
+            if doc is not None and (doc.get("status") or "") == STATUS_ACTIVE:
+                out.add(aid)
+        return out
     except Exception:
         # 附件 repo fail-closed（StorageUnavailableError 等）：保守过滤不展示
-        return False
-    return doc is not None and (doc.get("status") or "") == STATUS_ACTIVE
+        return None
 
 
 def _items_from_message(msg: Message, category: str, start_offset: int = 0):
@@ -373,11 +401,25 @@ async def _next_hit(agent: "Agent", message_repo: MessageRepository, session_id:
     Returns:
         (资源项 dict, cursor) 或 None（无更多命中）。
     """
+    async def _first_active(
+        pairs: list[tuple[dict, tuple[str, int]]],
+    ) -> tuple[dict, tuple[str, int]] | None:
+        """从候选中返回第一条**可用**的资源（S2-F1：一次批量校验，不再逐条往返）。"""
+        if not pairs:
+            return None
+        active_ids = await _active_attachment_ids(
+            agent, [it["url"] for it, _ in pairs])
+        for item, cursor in pairs:
+            aid = _attachment_id_of(item["url"])
+            if aid is None or (active_ids is not None and aid in active_ids):
+                return item, cursor
+        return None
+
     msg = await message_repo.get_by_mongo_id(SessionId(session_id), doc_id)
     if msg is not None:
-        for item, cursor in _items_from_message(msg, category, offset):
-            if await _attachment_available(agent, item["url"]):
-                return item, cursor
+        hit = await _first_active(list(_items_from_message(msg, category, offset)))
+        if hit is not None:
+            return hit
     scan_before = doc_id
     while True:
         msgs, _ = await message_repo.query_page(SessionId(session_id), before=scan_before,
@@ -389,9 +431,9 @@ async def _next_hit(agent: "Agent", message_repo: MessageRepository, session_id:
             if not did:
                 continue
             scan_before = did
-            for item, cursor in _items_from_message(msg, category):
-                if await _attachment_available(agent, item["url"]):
-                    return item, cursor
+            hit = await _first_active(list(_items_from_message(msg, category)))
+            if hit is not None:
+                return hit
     return None
 
 
@@ -415,49 +457,93 @@ async def _scan_resources(agent: "Agent", message_repo: MessageRepository,
     """
     start_id, start_offset = before if before is not None else (None, 0)
     items: list[dict] = []
-    last_cursor: tuple[str, int] | None = None
+    last_cursor: tuple[str, int] = ("", 0)   # 仅在 items 非空时被读取
     scan_before = start_id
 
     # 阶段一：收集命中项直到凑够 limit
+    # S2-F1：**先收集候选，再一次性批量校验可用性**（原先每个候选一次 `repo.get()`，
+    # 单请求可产生数百次串行 Mongo 往返）。同时在批次之间引入**扫描硬预算**：
+    # 凑不满 limit 就一路翻到会话末尾会把事件循环占住数十秒~数分钟。
+    scanned = 0
+    candidates: list[tuple[dict, tuple[str, int]]] = []
+
+    def _drain() -> bool:
+        """把候选按序校验后并入结果；返回是否已凑够 limit。"""
+        nonlocal last_cursor
+        for item, cursor in candidates:
+            aid = _attachment_id_of(item["url"])
+            if aid is not None and not _active_cache.get(aid, False):
+                continue
+            if len(items) >= limit:
+                return True
+            items.append(item)
+            last_cursor = cursor
+        candidates.clear()
+        return len(items) >= limit
+
+    _active_cache: dict[str, bool] = {}
+
+    async def _prime_active() -> None:
+        urls = [it["url"] for it, _ in candidates]
+        active_ids = await _active_attachment_ids(agent, urls)
+        for url in urls:
+            aid = _attachment_id_of(url)
+            if aid:
+                # active_ids is None（无法校验）→ 保守过滤
+                _active_cache[aid] = bool(active_ids and aid in active_ids)
+
     # 续扫时先处理 cursor 消息从 start_offset 起的剩余资源（query_page 的 before
     # 是排他的，不含 cursor 消息本身，需按 _id 单独取回）
     if start_id is not None:
         cursor_msg = await message_repo.get_by_mongo_id(SessionId(session_id), start_id)
         if cursor_msg is not None:
-            for item, cursor in _items_from_message(cursor_msg, category, start_offset):
-                if not await _attachment_available(agent, item["url"]):
-                    continue
-                if len(items) >= limit:
-                    break
-                items.append(item)
-                last_cursor = cursor
+            candidates.extend(_items_from_message(cursor_msg, category, start_offset))
+            await _prime_active()
+            _drain()          # 够不够都由下方统一判定（**不可在此早退**：会跳过阶段二
+                              # 的 peek，使 has_more 恒真）
+
     # 再扫 cursor 消息之后的消息（首页 start_id=None 直接从这里开始）
+    truncated = False
     while len(items) < limit:
+        if scanned >= _RESOURCE_SCAN_MAX_MESSAGES:
+            # 超预算 → 如实报"还有更多"并给出续扫游标，而不是继续占用事件循环
+            logger.info(
+                "资源索引扫描达到预算 %d 条消息（session=%s category=%s）——"
+                "返回续扫游标", _RESOURCE_SCAN_MAX_MESSAGES, session_id, category)
+            truncated = True
+            break
         msgs, _ = await message_repo.query_page(SessionId(session_id), before=scan_before,
                                                 limit=_RESOURCE_SCAN_BATCH)
         if not msgs:
             break
+        scanned += len(msgs)
         for msg in msgs:
             doc_id = msg.metadata.get("_mongo_id")
             if not doc_id:
                 continue
             scan_before = doc_id
-            for item, cursor in _items_from_message(msg, category):
-                if not await _attachment_available(agent, item["url"]):
-                    continue
-                if len(items) >= limit:
-                    break
-                items.append(item)
-                last_cursor = cursor
-            if len(items) >= limit:
+            candidates.extend(_items_from_message(msg, category))
+        if candidates:
+            await _prime_active()
+            if _drain():
                 break
-    if len(items) < limit:
-        # 未凑够 limit → 已扫到会话末尾，无更多命中
-        return items, False, None
-    if last_cursor is None:
+
+    if not items:
+        if truncated and scan_before:
+            # 预算截断、本页零命中：**仍要给出续扫游标**。返回 `has_more=False` 会让
+            # 客户端就此收手，预算之外的真实资源被**静默丢掉**——"观测面说没有了，
+            # 事实是还没扫到"。用**消息级**游标（offset 0）续扫：每页至少前进
+            # `_RESOURCE_SCAN_MAX_MESSAGES` 条消息，不会原地打转。
+            return [], True, _encode_resource_cursor(scan_before, 0)
+        return [], False, None
+    if not truncated and len(items) < limit:
+        # 未凑够 limit 且扫到末尾 → 无更多命中
         return items, False, None
 
-    # 阶段二：peek 一条命中资源判定 has_more（只探不收集）
+    # 阶段二：peek 一条命中资源判定 has_more（只探不收集）。
+    # 超预算截断时**跳过 peek 直接报 True**——我们明知后面还有没扫到的消息。
+    if truncated:
+        return items, True, _encode_resource_cursor(*last_cursor)
     has_more = await _next_hit(agent, message_repo, session_id, category, *last_cursor) is not None
     return items, has_more, _encode_resource_cursor(*last_cursor)
 

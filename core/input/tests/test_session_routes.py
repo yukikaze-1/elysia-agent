@@ -2139,3 +2139,110 @@ class TestHistoryReadIsFailClosed:
         assert resp.status == 200
         body = json.loads(resp.body.decode())
         assert body["messages"] == [] and body["total"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════
+# S2-F1：资源索引必须有扫描预算 + 批量校验 + 限流兜底
+# ══════════════════════════════════════════════════════════════════
+
+class TestResourceScanBudget:
+    """`/api/sessions/{id}/resources` 原先"凑不满 limit 就按 200/批翻到会话末尾"，
+    且**每个候选各发一次** `await repo.get()`——单请求可产生数百次串行 Mongo 往返，
+    把事件循环占住数十秒~数分钟，拖垮同进程的 WS/TTS/其他 REST。而这条路径
+    **不在限流映射里**，没有任何兜底。
+    """
+
+    @pytest.mark.asyncio
+    async def test_scan_stops_at_budget_and_reports_has_more(self):
+        """扫描超过预算 → 停下并如实报 `has_more=True` + 续扫游标（而非继续占用循环）。"""
+        from core.input import session_routes
+        from core.schema.message import UserMessage
+        from core.schema.part import TextPart
+
+        def _msg(i: int) -> UserMessage:
+            # **刻意不含 URL**：本用例要的是"扫了很多消息却一条 link 都没命中"，
+            # 否则第一批就凑满 limit、循环立刻 break，预算根本走不到。
+            return UserMessage(
+                message_id=MessageId(f"m{i}"),
+                content=[TextPart(content=f"第 {i} 条普通消息")],
+                timestamp="2026-01-01T00:00:00+00:00",
+                metadata={"_mongo_id": f"{i:024d}"},
+            )
+
+        batch = 200
+        total = session_routes._RESOURCE_SCAN_MAX_MESSAGES * 4           # noqa: SLF001
+        # **关键**：这些消息里没有 link（用 category="link" 扫）——否则第一批就凑满
+        # limit、循环立刻 break，预算根本没被走到（本用例第一版就是这样假绿的）。
+        all_msgs = [_msg(i) for i in range(total)]
+
+        repo = MagicMock()
+        calls = {"n": 0}
+
+        async def _query_page(sid, before=None, limit=batch):
+            start = 0 if before is None else next(
+                i + 1 for i, m in enumerate(all_msgs) if m.metadata["_mongo_id"] == before)
+            calls["n"] += 1
+            return all_msgs[start:start + limit], len(all_msgs[start:start + limit]) > limit
+
+        repo.query_page = _query_page
+        repo.get_by_mongo_id = AsyncMock(return_value=None)
+        agent = MagicMock()
+        agent.attachment_repo = None
+
+        items, has_more, cursor = await session_routes._scan_resources(  # noqa: SLF001
+            agent, repo, "conv_1", "link", None, 50)
+
+        assert items == []
+        # 预算把扫描**停住**了：无预算时会一路扫完 2000 条（10 批）
+        assert calls["n"] <= session_routes._RESOURCE_SCAN_MAX_MESSAGES // batch + 2, (  # noqa: SLF001
+            f"扫描批次数 {calls['n']} 超出预算量级——预算没生效")
+        # 且**不得**因为"本页零命中"就谎报"没有更多"
+        assert has_more is True, "预算截断时必须如实报还有更多（后面确实还没扫到）"
+        assert cursor, (
+            "零命中但被截断时也必须给续扫游标——否则预算之外的真实资源被静默丢掉")
+
+    @pytest.mark.asyncio
+    async def test_attachment_lookup_is_batched(self):
+        """附件可用性校验必须**批量**（一次 `$in`），不是每候选一次往返。"""
+        from core.input import session_routes
+
+        repo = MagicMock()
+        calls: list[list[str]] = []
+
+        async def _find_active_ids(ids):
+            calls.append(list(ids))
+            return set(ids)
+
+        repo.find_active_ids = _find_active_ids
+        agent = MagicMock()
+        agent.attachment_repo = repo
+
+        urls = [f"/api/attachments/att_{i}" for i in range(100)]
+        active = await session_routes._active_attachment_ids(agent, urls)  # noqa: SLF001
+
+        assert active == {f"att_{i}" for i in range(100)}
+        assert len(calls) == 1, f"应一次批量查询，实得 {len(calls)} 次"
+        assert len(calls[0]) == 100
+
+    @pytest.mark.asyncio
+    async def test_unavailable_store_filters_conservatively(self):
+        """无法校验（存储不可用）→ 保守过滤，不展示可能已删的附件。"""
+        from core.input import session_routes
+
+        repo = MagicMock()
+        repo.find_active_ids = AsyncMock(side_effect=RuntimeError("mongo down"))
+        agent = MagicMock()
+        agent.attachment_repo = repo
+
+        active = await session_routes._active_attachment_ids(  # noqa: SLF001
+            agent, ["/api/attachments/att_1"])
+        assert active is None, "无法校验必须回 None（调用方保守过滤）"
+
+    def test_resources_route_is_rate_limited(self):
+        """`/api/sessions/{id}/resources` 必须落进限流映射（此前完全没有兜底）。"""
+        from core.input.middleware import _rest_rate_category
+
+        assert _rest_rate_category("/api/sessions/conv_1/resources") == "search"
+        # 相邻路径不受影响
+        assert _rest_rate_category("/api/sessions/conv_1") is None
+        assert _rest_rate_category("/api/sessions/conv_1/messages") is None

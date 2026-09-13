@@ -340,6 +340,30 @@ class AttachmentRepository(Repository):
                     "附件分页遇到缺少 attachment_id 的记录，中止完整读取")
         return out
 
+    async def find_active_ids(self, attachment_ids: list[str]) -> set[str]:
+        """批量返回**存在且 active** 的附件 ID 集合（S2-F1）。
+
+        资源索引原先对每个候选项各发一次 `await repo.get()` —— 单请求可产生数百次
+        **串行** Mongo 往返，把事件循环占住数十秒。这里用一次 `$in` 收口。
+
+        Args:
+            attachment_ids: 待校验的附件 ID 列表。
+
+        Returns:
+            其中存在且 `status == active` 的 ID 集合。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（离线，fail-closed 由调用方处理）。
+        """
+        if not attachment_ids:
+            return set()
+        db = self._require_db()
+        docs = await db.find(COLLECTION, {
+            "attachment_id": {"$in": list(attachment_ids)},
+            "status": STATUS_ACTIVE,
+        }, limit=len(attachment_ids))
+        return {str(d["attachment_id"]) for d in docs if d.get("attachment_id")}
+
     async def find_by_status(self, status: str) -> list[dict]:
         """按状态查询全部附件（完整分页，P0-01：不依赖默认 limit=100）。
 

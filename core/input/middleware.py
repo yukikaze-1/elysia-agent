@@ -5,6 +5,7 @@ _make_rate_limit_middleware + _nosniff_uploads（原 create_app 内闭包）。�
 """
 
 import logging
+import re
 from typing import Awaitable, Callable
 
 from aiohttp import web
@@ -77,12 +78,21 @@ _REST_RATE_CATEGORY: tuple[tuple[str, str], ...] = (
     ("/api/search/", "search"),
     ("/api/chat", "messages"),
 )
+# S2-F1：`/api/sessions/{id}/resources` 是**扫描型**入口（按需遍历归档消息提取资源），
+# 原先不在这张表里 → 无限流兜底。它比 search 更贵（search 有索引查询，这条是全档案扫描），
+# 故归入 search 类别共用配额。
+_REST_RATE_REGEX: tuple[tuple[str, str], ...] = (
+    (r"^/api/sessions/[^/]+/resources$", "search"),
+)
 
 
 def _rest_rate_category(path: str) -> str | None:
     """REST 路径 → 限流类别；未映射路径不限制。"""
     for prefix, category in _REST_RATE_CATEGORY:
         if path.startswith(prefix):
+            return category
+    for pattern, category in _REST_RATE_REGEX:
+        if re.match(pattern, path):
             return category
     return None
 
