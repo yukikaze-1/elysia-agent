@@ -29,8 +29,10 @@ class RelationshipSection(Jinja2Section):
     async def render(self) -> str:
         return self._render_template(
             name=self._character_name,
-            user_name=self._user_name,
-            user_pronoun=self._user_pronoun,
+            # CR-12：user_name 由用户经 `PUT /api/me` 设置并落 Mongo（持久化、每回合
+            # 生效）。不转义即可闭合 `<relationship>` 并伪造区块，注入点在 F1 之后。
+            user_name=escape_authored_prompt(self._user_name),
+            user_pronoun=escape_authored_prompt(self._user_pronoun),
             relationship_style=escape_authored_prompt(self._relationship_style),
         )
 

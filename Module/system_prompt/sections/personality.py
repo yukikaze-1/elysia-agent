@@ -60,7 +60,9 @@ class PersonalitySection(Jinja2Section):
         return self._render_template(
             name=self._name,
             core_personality=core,
-            self_personality=self._self,
+            # L2「自我」由 CharacterReflector 的 LLM 反思产物演化而来——不可信文本
+            self_personality=(escape_authored_prompt(self._self)
+                              if isinstance(self._self, str) else self._self),
             examples=examples,
         )
 

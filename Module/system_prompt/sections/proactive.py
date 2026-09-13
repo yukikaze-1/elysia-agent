@@ -26,8 +26,8 @@ class ProactiveSection(Jinja2Section):
 
     async def render(self) -> str:
         return self._render_template(
-            user_name=self._user_name,
-            user_pronoun=self._user_pronoun,
+            user_name=escape_authored_prompt(self._user_name),
+            user_pronoun=escape_authored_prompt(self._user_pronoun),
             conversation_initiative=escape_authored_prompt(
                 self._conversation_initiative
             ),

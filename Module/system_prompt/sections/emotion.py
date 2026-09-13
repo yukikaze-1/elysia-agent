@@ -33,8 +33,11 @@ class EmotionSection(Jinja2Section):
 
     async def render(self) -> str:
         return self._render_template(
-            mood=self._mood, user_name=self._user_name,
-            user_pronoun=self._user_pronoun,
+            # mood 是 LLM 生成的自由文本（<mood> 标签），user_name 是用户可控文本
+            # ——两者都是不可信输入（CR-12 / S2-H2 同根）。
+            mood=escape_authored_prompt(self._mood),
+            user_name=escape_authored_prompt(self._user_name),
+            user_pronoun=escape_authored_prompt(self._user_pronoun),
             emotion_style=escape_authored_prompt(self._emotion_style),
         )
 
