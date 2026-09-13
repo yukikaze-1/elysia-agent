@@ -226,6 +226,9 @@ class Agent(AgentLifecycle, AgentServer):
 
         # ---- L1: Cognitive ----
         self._bus = EventBus()
+        #: 未登记事件类型计数（S3-23）：debug/日志用它暴露
+        #: 「发布方与消费方类型表不一致」，而不是静默丢弃。
+        self._unhandled_events = 0
         self._fsm = AgentFSM()
         self._llm = LLMAdapter(model=config.llm.model)
 
@@ -776,7 +779,14 @@ class Agent(AgentLifecycle, AgentServer):
                              type(data).__name__, exc_info=True)
 
     async def _dispatch_event(self, data: Any) -> None:
-        """按事件类型分派（S3-03 抽出的方法体，供 per-event 异常边界包裹）。"""
+        """按事件类型分派（S3-03 抽出的方法体，供 per-event 异常边界包裹）。
+
+        S3-23：**补 else 分支**。此前未登记的类型落到函数末尾被**静默丢弃**——
+        零日志、零计数，事件发出去了、消费端当没看见。报告把这类"`else` 分支的
+        系统性缺失"列为根因簇 RC-7：它让"发出去没人处理"与"处理成功"在观测面上
+        完全一样。典型现场就是 `EventBusHITLNotifier` post 的 `hitl_request`：
+        `EventData` 判别联合里没有它，于是审批卡片永远不会出现、也没有任何提示。
+        """
         if isinstance(data, InterruptData):
             self._handle_interrupt(data)
         elif isinstance(data, UserInputData):
@@ -787,6 +797,13 @@ class Agent(AgentLifecycle, AgentServer):
             self._handle_task_result(data)
         elif isinstance(data, StateChangeData):
             await self._handle_state_change(data)
+        else:
+            self._unhandled_events += 1
+            logger.warning(
+                "EventBus: 未登记的事件类型被丢弃 type=%s（共 %d 次）——"
+                "发布方与消费方的类型表不一致；若这是新功能，需在 _dispatch_event "
+                "登记，否则它在观测面上与「处理成功」无法区分",
+                type(data).__name__, self._unhandled_events)
 
     def _handle_interrupt(self, data: InterruptData) -> None:
         """处理 INTERRUPT 事件：cancel cognitive task，清空队列。

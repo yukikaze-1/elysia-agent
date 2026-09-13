@@ -22,17 +22,25 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class EventBusHITLNotifier(HITLNotifier):
-    """基于 EventBus 的 HITLNotifier 演示实现。
+    """基于 EventBus 的 HITLNotifier 实现（**当前唯一实现，已注入生产 WorkflowEngine**）。
 
-    用 EventBus.post() 推送审批卡片到前端。
-    EventBus 是 Agent 内部的优先级事件通道，前端通过 WebSocket 订阅。
+    用 `EventBus.post()` 推送审批卡片到前端；EventBus 是 Agent 内部的优先级事件通道。
 
-    ⚠️ 演示代码——不直接用于生产。认知循环重构时替换为正式实现。
+    **S3-23 实测的三处断裂**（原先 docstring 写"演示代码——不直接用于生产"，而它其实
+    就是生产装配用的那一个，`_lifecycle_task_system` 直接注入 WorkflowEngine）：
 
-    用法:
-        bus = EventBus()
-        hitl = EventBusHITLNotifier(bus)
-        task_system = WorkflowEngine(infra, hitl_notifier=hitl)
+    1. `request_approval` 用 `type="hitl_request"`（本类的常量）post **plain dict**；
+       而 `_process_events` 的判别联合里没有这个类型 → 事件被**静默丢弃**
+       （已修：`_dispatch_event` 补了 `else` 分支并记 warning + 计数）；
+    2. mailbox 的 `approval_needed` 不在 `_poll_mailboxes` 处理的三个 type 里；
+    3. 审批结果回传路由到**错误的审批域**（workflow `agent_id` 查
+       `SafetyPipeline._hitl_requests`，恒不命中）。
+
+    **v1 不可达**：`needs_approval()` 无条件 `return False`、Evaluator v1 不产
+    `ASK_APPROVAL`——所以上述三处目前**没有任何触发路径**，属潜伏缺陷。
+
+    **启用 workflow HITL 之前必须先把 1–3 接通**：本 docstring 就是那条交接说明，
+    不要照着旧文案把它当"演示代码"忽略掉。
     """
 
     # EventBus 事件类型——需要在 core/event_bus.py 中注册
@@ -64,7 +72,12 @@ class EventBusHITLNotifier(HITLNotifier):
                 "HITLNotifier.request_approval 失败: approval_id=%s",
                 event_data.approval_id,
             )
-            # 不抛异常——Mailbox 审计流兜底
+            # S3-23：原注释写"不抛异常——Mailbox 审计流兜底"，但**本类没有 mailbox
+            # 兜底**（构造只收 bus）。吞掉异常等于"审批请求悄无声息地消失"。
+            # 仍不抛（调用方是 WorkflowEngine，抛会打断任务），但必须**可见**。
+            logger.warning(
+                "HITLNotifier.request_approval: 审批请求已丢弃（无消费端兜底）"
+                " approval_id=%s", event_data.approval_id)
 
     async def cancel_approval(self, approval_ids: list[ApprovalId]) -> None:
         """通过 EventBus 批量通知前端移除审批卡片。
