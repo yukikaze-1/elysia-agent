@@ -15,9 +15,15 @@ skips:
   - B101   # assert——大量为测试/防御惯用；生产 assert（-O 下失效）另立专项清理
   - B311   # random 非密码学用途（时间/ID 生成）
   - B404   # subprocess import——B603/B607 已覆盖实际 shell 调用
-  - B105   # 硬编码密码（测试密钥占位符）
-  - B106   # 硬编码密码函数参数（同上）
-  - B107   # 硬编码密码默认参数（同上）
+  # B105/B106/B107 —— 硬编码密码（值）。
+  # 原理由「测试密钥占位符」**不准确**：bandit 本就排除 tests/。实测解除后 27 项
+  # **全部**为误报——它按**标识符名**猜，命中的是参数名 `_config_secret`、枚举值
+  # `token_budget_exceeded`、集合名 `sessions`/`archive`/`ltm`、空串默认值。
+  # 真正的覆盖由 `scripts/check_secrets.py`（`make check-secrets`）承担：它匹配
+  # 凭据**值**的形态（含已知泄露指纹），比按名字猜强，且进 CI 阻断。
+  - B105
+  - B106
+  - B107
   - B108   # 硬编码 /tmp 路径（脚本临时文件惯用）
   - B104   # 硬编码 IPv4 绑定（127.0.0.1 回环开发默认）
   - B110   # try-except-pass——部分为有意容错（逐处审后移除）

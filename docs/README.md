@@ -22,6 +22,7 @@
 | 文档 | 内容 |
 |------|------|
 | [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md) | v2 结构化聊天 + 多会话/历史/搜索/资源 REST + Desktop 工具契约 + 模型 Profile/TTS 声音契约 + 三种语音/TTS 播放契约 + 通用附件与媒体契约（§13）+ 多角色/身份契约（§14，Stage A–H）+ 错误码目录 54 码 |
+| [credential-handling.md](credential-handling.md) | **凭据处理规范与泄露响应**（CR-01）：凭据放哪 / 文档引用只写变量名+掩码 / 泄露响应顺序「先轮换→再清历史→最后补门禁」/ 清历史 runbook / `make check-secrets` 门禁能力与**已知边界** |
 | [electron-backend-security.md](electron-backend-security.md) | 远程认证/TLS/限制/受保护会话数据完整性 + 密钥 Secret Store/SSRF + 附件签名下载与签发安全（§3.5）+ 公开入口限流/幂等持久化 + 探针分层 /health /ready（§3.7，批次 1-9D + 2026-08-11 加固 + 2026-08-12 补偿门禁） |
 | [archive/electron-v2-first-integration-runbook.md](archive/electron-v2-first-integration-runbook.md) | **Electron v2 首次联调最小 runbook**（runtime SHA / schemaHash 离线门禁 / Token / 探针口径 / WS 三头 / clean-start / ACK 成功标准与负面用例）⚠️ 已归档 |
 | [archive/contract-release-2026-08-11.md](archive/contract-release-2026-08-11.md) | Contract 发版记录：transportVersion/protocolVersion/schemaHash/backend commit + 产物清单 ⚠️ 已归档 |

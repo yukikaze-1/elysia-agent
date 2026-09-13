@@ -295,8 +295,11 @@ class TestDesktopWsApprovalReplay:
         # 手动注册一条 pending 审批（write_file 元数据可 enrich：risk=high, backend）
         pipeline = agent.tool_adapter._manager._pipeline  # noqa: SLF001
         params = {"path": "data/sandbox/a.txt", "content": "hello"}
+        # CR-13：登记形状与 `_run_hitl` 同构（第 4 项 = 发起连接 ID）。本用例验证的是
+        # 重连重播的 wire 形状，故用 ""（无绑定）——否则受众会收窄到发起连接，
+        # 新连接反而收不到重播帧（那是定向投递的预期行为，不是本用例要测的）。
         pipeline._hitl_requests["req_replay"] = (  # noqa: SLF001
-            asyncio.Event(), "write_file", params)
+            asyncio.Event(), "write_file", params, "")
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
         try:

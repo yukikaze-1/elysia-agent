@@ -234,8 +234,10 @@ class TestSubmitApproval:
         adapter._manager.submit_approval = MagicMock(return_value=True)  # noqa: SLF001
 
         assert adapter.submit_approval("req_abc", True) is True
+        # CR-13：第三个参数是提交审批的连接 ID（未提供时透传 None，由安全管道
+        # 按"该请求是否登记了发起连接"决定放行或拒绝）。
         adapter._manager.submit_approval.assert_called_once_with(  # noqa: SLF001
-            "req_abc", True
+            "req_abc", True, None
         )
 
     @pytest.mark.service

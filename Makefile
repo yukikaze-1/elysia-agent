@@ -97,6 +97,17 @@ check-arch:
 check-debug-auth:
 	python scripts/check_debug_auth.py
 
+# Secret scanning（CR-01 步骤 4）：扫**被跟踪文件**里的凭据形态（key/Bearer/私钥/
+# `.env` 入库/文档抄录赋值）。纯 stdlib、秒级，进 CI pr-gate 阻断。
+check-secrets:
+	python scripts/check_secrets.py
+
+# 全历史 secret scanning（CR-01 步骤 3 的验收器）：**在清历史完成前预期为红** ——
+# 2026-06 的 `docs/review-2026-06-01.md` 在 commit f1dcc803 里抄录了真 key。
+# 这条不是门禁、是"历史是否已清理"的判据：清完 `git filter-repo` 后应转绿。
+check-secrets-history:
+	python scripts/check_secrets.py --all-refs
+
 start:
 	bash scripts/start.sh
 

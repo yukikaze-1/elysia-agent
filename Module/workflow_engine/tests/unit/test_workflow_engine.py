@@ -1125,7 +1125,7 @@ def test_submit_approval_with_real_tool_adapter():
     # 登记一个真实待审批请求（与 SafetyPipeline._run_hitl 同构）→ 经公开链路命中
     pending_event = asyncio.Event()
     adapter._manager._pipeline._hitl_requests["req-real"] = (  # noqa: SLF001
-        pending_event, "mock_tool", {},
+        pending_event, "mock_tool", {}, "",   # CR-13：第 4 项 = 发起连接（"" = 无绑定）
     )
 
     assert ts.submit_approval(

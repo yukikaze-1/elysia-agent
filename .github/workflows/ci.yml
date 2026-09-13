@@ -66,6 +66,11 @@ jobs:
         run: |
           python -m pip-audit --ignore-vuln PYSEC-2026-3447
           python -m bandit -r core/ Module/ frontend_contract/ scripts/ -q -c bandit.yaml
+      - name: Secret scanning (CR-01)
+        # 扫被跟踪文件里的凭据形态（含 2026-06 事故的 key 指纹）。**只扫工作树**：
+        # 全历史里那份抄录（commit f1dcc803）在清历史完成前必然命中，那是
+        # `make check-secrets-history` 的判据、不是 PR 门禁（见 docs/credential-handling.md）。
+        run: python scripts/check_secrets.py
       - name: CI trust boundary check
         # 覆盖全部 workflow（此前只查 ci.yml——nightly/contract-frames 的
         # PR 可达 job 若引 self-hosted 或宿主 .env 会漏检）
