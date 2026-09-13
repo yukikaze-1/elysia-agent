@@ -46,12 +46,15 @@ async def _list_character_versions(agent: "Agent", content_type: str,
     """
     # Task 12（§6.5 读端迁移）：_list_character_versions 经 agent.character_engine
     # 解析当前会话绑定 instance 的 engine（非全局单例）——Task 11 后该 property
-    # 经 registry.get(binding.instance_id).ensure_engine() 解析；版本历史键 `sid`
-    # 仍为 state.session_id（§5.1 保留作版本键）。
+    # 经 registry.get(binding.instance_id).ensure_engine() 解析。
+    #
+    # S3-21：键从 `engine.version_key` 取（**与写侧同源**）。此前这里用
+    # `agent.session.session_id`（会话 ID），而写侧用 `state.session_id`
+    # （构造时 = instanceId）——两者永不相等 → 版本历史恒空、回滚恒 404。
     engine = getattr(agent, "character_engine", None)
     if not engine or not engine.version_repo:
         return None, "版本历史不可用", "STORAGE_UNAVAILABLE", 503
-    sid = agent.session.session_id
+    sid = engine.version_key
     versions = await engine.version_repo.list_versions(
         sid, limit=limit, before_version=before_version,
         content_type=content_type,
@@ -79,7 +82,7 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
     engine = getattr(agent, "character_engine", None)
     if not engine or not engine.version_repo:
         return None, "版本历史不可用", "STORAGE_UNAVAILABLE", 503
-    sid = agent.session.session_id
+    sid = engine.version_key          # S3-21：与写侧同源
     entry = await engine.version_repo.get_version(sid, target_version,
                                                     content_type=content_type)
     if entry is None:

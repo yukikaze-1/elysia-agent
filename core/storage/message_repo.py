@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from bson import ObjectId
+from bson.errors import InvalidId
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
 from core.storage.base import Repository, StorageUnavailableError
@@ -160,6 +161,36 @@ def _build_search_filter(*, session_id: SessionId | None, query: str,
             ts_range["$lt"] = end
         filter_expr["timestamp"] = ts_range
     return filter_expr
+
+
+def _to_object_id(msg_id: MessageId) -> ObjectId:
+    """消息 ID → ObjectId；非法值抛 `InvalidMessageIdError`（S3-19）。
+
+    此前 `ObjectId(msg_id)` 裸调用 → `bson.InvalidId` 冒泡成 500。畸形 ID 是**客户端
+    错误**，应由路由映射成 400 `CONTRACT_VALIDATION`（与 before/after 游标同一约定）。
+
+    Args:
+        msg_id: wire 上的消息 ID（24-hex）。
+
+    Returns:
+        对应的 ObjectId。
+
+    Raises:
+        InvalidMessageIdError: 不是合法 ObjectId。
+    """
+    try:
+        return ObjectId(msg_id)
+    except (InvalidId, TypeError) as e:
+        raise InvalidMessageIdError(f"非法消息 ID: {msg_id!r}") from e
+
+
+class InvalidMessageIdError(ValueError):
+    """消息 ID 不是合法的 Mongo ObjectId（S3-19）。
+
+    继承 `ValueError`：调用方既可精确捕获，也不破坏既有 `except ValueError` 语义。
+    此前 `ObjectId(msg_id)` 裸调用，畸形 ID 抛 `bson.InvalidId` 一路冒泡成 **500**——
+    那是**客户端错误**，应当是 400。
+    """
 
 
 class MessageRepository(Repository):
@@ -643,11 +674,16 @@ class MessageRepository(Repository):
             msg_id: 消息 ID。
 
         Returns:
-            删除的消息数。若数据库不可用返回 0。
+            删除的消息数。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接（S3-19——原先静默返回 0，
+                调用方无法区分"没删到"与"存储不可用"；同类的
+                `delete_by_session` / `clear_all` 早已 fail-closed，只有这两个写方法漏改）。
+            InvalidMessageIdError: `msg_id` 不是合法 ObjectId（应映射 400 而非 500）。
         """
-        if self._db is None:
-            return 0
-        result = await self._db.delete_many(COLLECTION, {"_id": ObjectId(msg_id)})
+        db = self._require_db("delete_one")
+        result = await db.delete_many(COLLECTION, {"_id": _to_object_id(msg_id)})
         logger.info("MessageRepository delete_one: msg_id=%s, deleted=%d", msg_id, result)
         return result
 
@@ -659,13 +695,16 @@ class MessageRepository(Repository):
             new_text: 新的文本内容。
 
         Returns:
-            修改的记录数。若数据库不可用返回 0。
+            修改的记录数。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接（S3-19，同上）。
+            InvalidMessageIdError: `msg_id` 不是合法 ObjectId。
         """
-        if self._db is None:
-            return 0
-        result = await self._db.update_one(
+        db = self._require_db("update_text")
+        result = await db.update_one(
             COLLECTION,
-            {"_id": ObjectId(msg_id)},
+            {"_id": _to_object_id(msg_id)},
             {"$set": {"content": [{"type": "text", "content": new_text}]}},
         )
         logger.info("MessageRepository update_text: msg_id=%s, text_len=%d, modified=%d", msg_id, len(new_text), result)

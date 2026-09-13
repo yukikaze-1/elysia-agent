@@ -250,9 +250,9 @@ async def _collect_character_and_reflector(agent: "Agent", info: DebugInfo) -> N
         info.l2_version_count = 0
         engine = getattr(agent, "character_engine", None)
         if engine and engine.version_repo:
-            sid = agent.session.session_id
+            # S3-21：与写侧同源（此前用 agent.session.session_id → 计数恒 0）
             info.l2_version_count = await engine.version_repo.count_versions(
-                sid, content_type="l2")
+                engine.version_key, content_type="l2")
     except Exception:
         info.l2_version_count = 0
 
@@ -261,7 +261,7 @@ async def _collect_character_and_reflector(agent: "Agent", info: DebugInfo) -> N
         engine = getattr(agent, "character_engine", None)
         if engine and engine.version_repo:
             info.c6_version_count = await engine.version_repo.count_versions(
-                agent.session.session_id, content_type="c6")
+                engine.version_key, content_type="c6")
     except Exception:
         info.c6_version_count = 0
 

@@ -533,3 +533,67 @@ class TestQuerySearchLiteral:
         ])
         messages, has_more, _ = asyncio.run(repo.query_search(query="a" * 201))
         assert messages == [] and has_more is False
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-19：写路径 fail-closed + 畸形 ID 不得冒泡成 500
+# ══════════════════════════════════════════════════════════════════
+
+class TestWritePathsFailClosed:
+    """`delete_one` / `update_text` 原先 `_db is None → return 0`（静默）——调用方
+    无法区分"没删到"与"存储不可用"；而同类的 `delete_by_session` / `clear_all`
+    早已 fail-closed，**只有这两个写方法漏改**。
+
+    另外 `ObjectId(msg_id)` 裸调用：畸形 ID 抛 `bson.InvalidId` 一路冒泡成 **500**
+    ——那是客户端错误，应当是 400。
+    """
+
+    def test_delete_one_raises_when_db_none(self):
+        from core.storage.base import StorageUnavailableError
+
+        repo = MessageRepository(db=None)
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.delete_one("m1"))
+
+    def test_update_text_raises_when_db_none(self):
+        from core.storage.base import StorageUnavailableError
+
+        repo = MessageRepository(db=None)
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.update_text("m1", "新文本"))
+
+    @pytest.mark.parametrize("bad_id", ["abc", "", "zzzz", "12345"])
+    def test_malformed_id_raises_domain_error(self, bad_id):
+        """畸形 ID 抛 `InvalidMessageIdError`（路由据此回 400，而不是 500）。"""
+        from core.storage.message_repo import InvalidMessageIdError
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+        repo = MessageRepository(db=FakeDocumentDBBackend())
+        with pytest.raises(InvalidMessageIdError):
+            asyncio.run(repo.delete_one(bad_id))
+        with pytest.raises(InvalidMessageIdError):
+            asyncio.run(repo.update_text(bad_id, "x"))
+
+    def test_domain_error_is_a_value_error(self):
+        """继承 ValueError → 既有 `except ValueError` 调用方不被破坏。"""
+        from core.storage.message_repo import InvalidMessageIdError
+
+        assert issubclass(InvalidMessageIdError, ValueError)
+
+    def test_valid_id_still_works(self):
+        """回归网：合法 24-hex ID 行为不变。"""
+        from bson import ObjectId
+
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+        fake = FakeDocumentDBBackend()
+        oid = ObjectId()
+        asyncio.run(fake.insert_one("message_archive", {
+            "_id": oid, "session_id": "s1", "role": "user",
+            "content": [{"type": "text", "content": "hi"}],
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        }))
+        repo = MessageRepository(db=fake)
+
+        assert asyncio.run(repo.update_text(str(oid), "改过")) == 1
+        assert asyncio.run(repo.delete_one(str(oid))) == 1

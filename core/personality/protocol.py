@@ -163,6 +163,16 @@ class CharacterEngineProtocol(Protocol):
     #: （engine 构造时注入），因此读它拿到的是实例权威值。
     state: CharacterRuntimeState
 
+    @property
+    def version_key(self) -> str:
+        """L2/C6 版本历史的键——**写读唯一来源**（S3-21）。
+
+        写侧曾用 `state.session_id`、读侧用 `agent.session.session_id`，两者永不
+        相等 → 版本历史恒空、回滚恒 404。声明为 property 而非可变属性：实现是只读
+        计算值，声明成属性会让「可写」成为一个不存在的承诺（pyright 也会拒绝）。
+        """
+        ...
+
     # ── prompt section 数据提供 ──
 
     def render_c1(self) -> C1Data:

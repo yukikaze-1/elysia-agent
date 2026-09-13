@@ -143,3 +143,69 @@ class TestDebugDeleteDoesNotSwallowReleaseFailure:
 
         assert resp.status == 200
         repo.delete.assert_awaited_once()
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-19：debug 归档路由的 ID 校验与写失败语义
+# ══════════════════════════════════════════════════════════════════
+
+class TestArchiveRouteIdValidation:
+    """`ObjectId(msg_id)` 裸调用 → 畸形 ID 抛 `bson.InvalidId` 冒泡成 **500**。
+    畸形 ID 是**客户端错误**，应当是 400 `CONTRACT_VALIDATION`
+    （与 before/after 游标同一约定）。写失败也必须是 503 而非"成功 0 条"。"""
+
+    @pytest.mark.asyncio
+    async def test_delete_malformed_id_is_400(self):
+        from core.input.debug_routes import archive as mod
+        from core.storage.message_repo import InvalidMessageIdError
+
+        repo = MagicMock()
+        repo.get_by_id = AsyncMock(return_value=None)
+        repo.delete_one = AsyncMock(
+            side_effect=InvalidMessageIdError("非法消息 ID: 'abc'"))
+        agent = MagicMock()
+        agent.message_repo = repo
+
+        resp = await mod.archive_delete_handler(_request(agent, {"msg_id": "abc"}))
+
+        assert resp.status == 400, f"畸形 ID 应为 400（而非 500），实得 {resp.status}"
+        body = json.loads(resp.body.decode())
+        assert body["code"] == "CONTRACT_VALIDATION"
+
+    @pytest.mark.asyncio
+    async def test_delete_storage_down_is_503(self):
+        from core.input.debug_routes import archive as mod
+        from core.storage.base import StorageUnavailableError
+
+        repo = MagicMock()
+        repo.get_by_id = AsyncMock(return_value=None)
+        repo.delete_one = AsyncMock(side_effect=StorageUnavailableError("offline"))
+        agent = MagicMock()
+        agent.message_repo = repo
+
+        resp = await mod.archive_delete_handler(_request(agent, {"msg_id": "a" * 24}))
+
+        assert resp.status == 503
+        assert json.loads(resp.body.decode())["retryable"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_malformed_id_is_400(self):
+        from core.input.debug_routes import archive as mod
+        from core.storage.message_repo import InvalidMessageIdError
+
+        repo = MagicMock()
+        repo.update_text = AsyncMock(
+            side_effect=InvalidMessageIdError("非法消息 ID: 'zz'"))
+        agent = MagicMock()
+        agent.message_repo = repo
+
+        request = _request(agent, {"msg_id": "zz"})
+
+        async def _json_object(_request):
+            return {"text": "新文本"}
+
+        with mock.patch.object(mod, "_json_object", new=_json_object):
+            resp = await mod.archive_update_handler(request)
+
+        assert resp.status == 400, f"实得 {resp.status}"
+        assert json.loads(resp.body.decode())["code"] == "CONTRACT_VALIDATION"

@@ -1,6 +1,8 @@
 """Cognitive 工具执行 — _execute_tools_directly + _handle_submit_task。"""
 from __future__ import annotations
 
+from typing import Any
+
 import asyncio
 import json
 import logging
@@ -44,6 +46,9 @@ class CognitiveTools:
     _delegation_preparer: DelegationPreparer | None = None
     _user_profile: UserProfile | None = None
     _task_system: WorkflowEngine | None = None
+    #: AgentStatus——由 `CognitiveLoop.status` property 提供（本 mixin 无 __init__，
+    #: 故在此声明形状供 pyright 解析；S3-16 起工具调用会读它取实时 FSM 状态）。
+    status: Any
 
     # ---- Tool execution ----
 
@@ -78,6 +83,11 @@ class CognitiveTools:
                     call_id=tc.id or uuid.uuid4().hex,
                     session_id=str(self._session.session_id),
                 )
+                # S3-16：`_fsm_state` 此前**只在启动写一次**（`_lifecycle_tools`），
+                # 于是 `get_self_state` 恒返回启动时状态（恒 idle）——**工具系统性
+                # 给出错误自述**，比缺失更糟：排障时会采信它。这里每次调用刷新成
+                # 实时值（clone 出来的 services 是本次调用的副本，写它不污染其他调用）。
+                ctx.services["_fsm_state"] = self.status.current_name()
                 tr = await self._tool_adapter.execute(func_name, ctx=ctx, **args)
             except asyncio.CancelledError:
                 logger.info("工具取消: %s", func_name)

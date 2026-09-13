@@ -59,6 +59,26 @@ class CharacterEngine:
     # 向后兼容：_schedule 从 _utils 导入，保留为类属性以便测试访问
     _schedule = _schedule
 
+    @property
+    def version_key(self) -> str:
+        """L2/C6 版本历史的键——**写读唯一来源**（S3-21）。
+
+        **为什么需要这个 property**：写侧（`CompressionManager` 写版本、
+        `_character_rollback` 回滚后再写一版）用的是 `state.session_id`，而读侧
+        （`_list_character_versions` / debug Overview 计数）用的是
+        `agent.session.session_id`。这两个值**永不相同**——`CharacterRuntimeState`
+        构造时把 `session_id` 设成 `SessionId(instance.instanceId)`
+        （`core/character/runtime.py`），而 `agent.session.session_id` 是会话 ID。
+        结果是**版本历史恒空、回滚恒 404、Overview 计数恒 0**。
+
+        命名为 `session_id` 却承载 instanceId 是历史遗留（契约字段名未改，改动面
+        太大）；把这个事实收在一个 property 里，写读两侧都从这里取，键就再也分不开。
+
+        Returns:
+            版本历史的键（当前为运行时状态的 `session_id`，即角色实例 ID）。
+        """
+        return str(self.state.session_id)
+
     def __init__(
         self,
         *,

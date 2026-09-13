@@ -27,6 +27,7 @@ from core.storage.attachment_release import (
     release_session_attachments,
 )
 from core.storage.base import StorageUnavailableError
+from core.storage.message_repo import InvalidMessageIdError
 from core.storage.destructive_guard import DestructiveConfirmRequired, require_confirm
 from core.storage.message_repo import CONFIRM_TOKEN as MESSAGE_CONFIRM_TOKEN
 from core.storage.session_repo import CONFIRM_TOKEN as SESSION_CONFIRM_TOKEN
@@ -112,7 +113,19 @@ async def archive_delete_handler(request: web.Request) -> web.Response:
             return _protocol_error_response(
                 "STORAGE_UNAVAILABLE", "附件引用释放失败，消息未删除（可重试）",
                 503, retryable=True)
-    ok = await repo.delete_one(msg_id)
+    try:
+        ok = await repo.delete_one(msg_id)
+    except InvalidMessageIdError:
+        # S3-19：畸形 ID 是**客户端错误** → 400（此前 ObjectId 裸调用抛 InvalidId
+        # 冒泡成 500，把"你传错了"报成"服务器炸了"）
+        return _protocol_error_response(
+            "CONTRACT_VALIDATION", f"非法消息 ID: {msg_id}", 400)
+    except StorageUnavailableError:
+        # S3-19：写路径此前 `_db is None → return 0`，调用方无法区分"没删到"与
+        # "存储不可用"——现在 fail-closed，这里映射 503（消息未删，可重试）
+        return _protocol_error_response(
+            "STORAGE_UNAVAILABLE", "存储暂不可用，消息未删除（可重试）", 503,
+            retryable=True)
     # 同步清理当前 session —— archive 和 session 是独立存储，
     # 只删 archive 不改 session 会导致 LLM prompt 仍包含已删消息
     session_purged = agent.purge_message_from_session(msg_id)
@@ -140,7 +153,15 @@ async def archive_update_handler(request: web.Request) -> web.Response:
     new_text = (body.get("text") or "").strip()
     if not new_text:
         return _protocol_error_response("CONTRACT_VALIDATION", "text 不能为空", 400)
-    ok = await repo.update_text(msg_id, new_text)
+    try:
+        ok = await repo.update_text(msg_id, new_text)
+    except InvalidMessageIdError:
+        return _protocol_error_response(
+            "CONTRACT_VALIDATION", f"非法消息 ID: {msg_id}", 400)
+    except StorageUnavailableError:
+        return _protocol_error_response(
+            "STORAGE_UNAVAILABLE", "存储暂不可用，消息未修改（可重试）", 503,
+            retryable=True)
     logger.info("DEBUG API: archive_update msg_id=%s, text_len=%d, ok=%s", msg_id, len(new_text), ok)
     return web.json_response(contract.DebugResult(ok=ok).wire_dict())
 

@@ -13,6 +13,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any, TYPE_CHECKING
 
 from core.schema.compression import CompressionTrigger
+from core.schema.types import SessionId
 from core.schema.utils import now_iso
 from core.personality._utils import _extract_tag
 from paths import ProjectPath
@@ -69,6 +70,43 @@ class CompressionManager:
         self._version_repo = version_repo
         self._character = character_config
         self._compression_lock = asyncio.Lock()
+
+    async def _save_version(self, text: str, changes: list[str],
+                            trigger: "CompressionTrigger",
+                            *, content_type: str = "l2") -> None:
+        """写一条版本历史——**L2/C6 的唯一写入点**（S3-21）。
+
+        为什么提取：写入原先内联在两处（L2 压缩、C6 刷新），键各写各的；读侧又有
+        三处（版本列表、回滚查询、Overview 计数）。**同一个语义散在五处**是这类
+        "写键 ≠ 读键"缺陷的温床。收敛成一个方法后，键只可能来自 `_version_key()`。
+
+        Args:
+            text: 版本正文。
+            changes: 变更摘要。
+            trigger: 触发来源（压缩/首刷/手动回滚等）。
+            content_type: "l2" 或 "c6"。
+        """
+        if self._version_repo is None:
+            logger.info("CompressionManager: version_repo 未配置，版本历史未保存")
+            return
+        await self._version_repo.append_version(
+            session_id=self._version_key(),
+            text=text,
+            timestamp=now_iso(),
+            trigger=trigger,
+            change_summary=changes,
+            content_type=content_type,
+        )
+
+    def _version_key(self) -> "SessionId":
+        """L2/C6 版本历史的键——与 `CharacterEngine.version_key` **同一来源**（S3-21）。
+
+        放在这里而不是直接读 `self._state.session_id`：`session_id` 这个名字承载的
+        其实是角色实例 ID（`CharacterRuntimeState` 构造时设为 `instanceId`），
+        读侧曾经用 `agent.session.session_id`（会话 ID）→ 两个键永不相等。
+        统一走字符串化 + 单点，避免两侧再次分叉。
+        """
+        return SessionId(str(self._state.session_id))
 
     # ---- 公共接口 ----
 
@@ -251,17 +289,8 @@ class CompressionManager:
         logger.info("CompressionManager: L3→L2 压缩完成 (%d chars, %.0f ms, %d 条改动)",
                     len(new_self), elapsed_ms, len(changes))
 
-        # 写版本历史
-        if self._version_repo is not None:
-            await self._version_repo.append_version(
-                session_id=self._state.session_id,
-                text=new_self,
-                timestamp=now_iso(),
-                trigger=trigger,
-                change_summary=changes,
-            )
-        else:
-            logger.info("CompressionManager: version_repo 未配置，版本历史未保存")
+        # 写版本历史（S3-21：唯一写入点，键与读侧同源）
+        await self._save_version(new_self, changes, trigger)
 
         # 触发 C6 刷新（通过回调，确保 engine 委托方法的 mock 可拦截）
         if _refresh_cb is not None:
@@ -335,13 +364,6 @@ class CompressionManager:
         logger.info("CompressionManager: C6 刷新完成 (%d chars, %.0f ms, %d 条改动)",
                     len(new_style), elapsed_ms, len(changes))
 
-        # 6. 写版本历史
-        if self._version_repo is not None:
-            await self._version_repo.append_version(
-                session_id=self._state.session_id,
-                text=new_style,
-                timestamp=now_iso(),
-                trigger=CompressionTrigger.C6_REFRESH,
-                change_summary=changes,
-                content_type="c6",
-            )
+        # 6. 写版本历史（S3-21：唯一写入点）
+        await self._save_version(new_style, changes,
+                                 CompressionTrigger.C6_REFRESH, content_type="c6")
