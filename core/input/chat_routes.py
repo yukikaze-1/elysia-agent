@@ -69,6 +69,13 @@ async def chat_api_handler(request: web.Request) -> web.Response:
     accepted = await agent.process_message(
         text=text, user_name=user_name, content=content)
     if not accepted:
+        # CR-08：False 有两个成因，必须报对——停机窗口回 429「队列已满」是
+        # 观测面说谎（队列没满，且不会再被消费）。停机是 503，队列满是 429。
+        from core.agent import RunState
+        if agent.state != RunState.RUNNING:
+            return web.json_response(
+                rest_contract.ApiFail(error="Agent 正在关停，未接受该消息").wire_dict(),
+                status=503)
         return web.json_response(
             rest_contract.ApiFail(error="Agent 忙，消息队列已满").wire_dict(),
             status=429)

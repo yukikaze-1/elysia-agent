@@ -573,6 +573,17 @@ class Agent(AgentLifecycle, AgentServer):
         if not text.strip() and not content:
             return False
 
+        # CR-08：停机窗口拒收。准入判定原先只读 FSM 投影（`status.is_accepting_input`），
+        # 而事件消费者读 `self._state`——`stop()` 首行即置 STOPPED、消费者随即退出，
+        # 但 FSM 仍显示 accepting，于是整个停机窗口（20 步清理，数秒~数十秒）内新消息
+        # 仍被投进**无界** bus 队列并 `return True`：调用方回 ok、v2 还把 accepted 写进
+        # 幂等表，同 clientRequestId 重试因而永远重放这个 ACK，重启也补不回来。
+        # 本判定读与消费者**同一个变量**，窗口收敛为 0。
+        if self._state != RunState.RUNNING:
+            logger.warning(
+                "Agent 非运行态 (state=%s) — 拒绝新消息，不投递 bus", self._state.name)
+            return False
+
         # v2 在 ACK accepted 前原子固定实际目标（None 也解析成当时 active）并登记
         # accepted work。删除会话会在同一 SessionManager 生命周期锁下检查引用计数，
         # 因而 EventBus/pending/生成中的消息不会被删除后静默丢弃或改投新 active。

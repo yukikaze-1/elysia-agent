@@ -65,6 +65,21 @@ def _in_progress_error() -> dict:
             "retryable": True, "retryAfterMs": IN_PROGRESS_RETRY_AFTER_MS}
 
 
+def _not_accepted_error(agent: "Agent") -> dict:
+    """``process_message`` 返回 False 时的错误信封——两个成因必须报对（CR-08）。
+
+    停机窗口报「Agent 忙，消息队列已满」是观测面说谎：队列没满，而且**不会再被
+    消费**（消费者已随 `_state` 退出）。停机是「稍后重试会成功」，队列满也是，
+    故 retryable 相同，但码名必须区分——否则排障方向被引到容量问题上。
+    """
+    from core.agent import RunState
+    if agent.state != RunState.RUNNING:
+        return {"code": "AGENT_BUSY", "message": "Agent 正在关停，未接受该消息",
+                "retryable": True}
+    return {"code": "QUEUE_FULL", "message": "Agent 忙，消息队列已满",
+            "retryable": True}
+
+
 async def _send_rejected(ws: "web.WebSocketResponse | None",
                          conversation_id: str, client_request_id: str,
                          client_message_id: str | None, error: dict, *,
@@ -504,9 +519,7 @@ async def _finish_v2_text(
         else:
             await _release_attachment_reservations(agent, reserved, message_id)
             await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
-                                 ctx.client_message_id,
-                                 {"code": "QUEUE_FULL",
-                                  "message": "Agent 忙，消息队列已满", "retryable": True},
+                                 ctx.client_message_id, _not_accepted_error(agent),
                                  received_at=ctx.received_at)
         return
 
@@ -541,9 +554,7 @@ async def _finish_v2_text(
             sent_message_ids.add(message_id)
     else:
         await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
-                             ctx.client_message_id,
-                             {"code": "QUEUE_FULL",
-                              "message": "Agent 忙，消息队列已满", "retryable": True},
+                             ctx.client_message_id, _not_accepted_error(agent),
                              received_at=ctx.received_at)
 
 

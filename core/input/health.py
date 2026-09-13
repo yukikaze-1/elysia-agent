@@ -40,8 +40,19 @@ def _runtime_info(agent: "Agent") -> dict:
         fsm_state = agent.status.current_name()
     except Exception:
         fsm_state = "unknown"
+    try:
+        # CR-08：`fsm` 与 `run_state` 是**两个状态源**，停机窗口内二者不同步
+        # （stop() 首行置 STOPPED，FSM 仍显示 accepting）。两个都报，分歧即可见。
+        # 非 str 值（非真实 Agent / 测试替身）降级 unknown——/health 的"恒 200、
+        # 零网络探针"是硬不变量，不能因为多报一个字段而 500（原 fsm 的 try 同理）。
+        run_state = agent.state.name
+        if not isinstance(run_state, str):
+            run_state = "unknown"
+    except Exception:
+        run_state = "unknown"
     return {
         "fsm": fsm_state,
+        "run_state": run_state,
         "llm": getattr(agent.llm, "model", "unknown"),
         "memory": {
             # 走公开接口 session.messages，不摸私有 _messages（改名时 getattr 会静默降级）
@@ -96,7 +107,8 @@ async def _readiness_payload(
 
     - ``chatReady``（HTTP 门禁）= ``mongo_ok``（session+message+attachment 真实 ping，
       ``asyncio.gather`` 并行探测）且 ``identity_ok``（用户身份权威存储可达，
-      P0-3 fail-closed）且（非 product_mode 或 ``idempotency_ok`` 真实 ping
+      P0-3 fail-closed）且 ``lifecycle_ok``（``Agent._state == RUNNING``，CR-08：
+      停机窗口必须立刻摘除）且（非 product_mode 或 ``idempotency_ok`` 真实 ping
       且补偿状态满足）；product 模式幂等门禁 = ping AND not ``needs_recovery``
       （BE-P1-07 D4：降级期记录未 reconcile 时 chatReady 保持 false）；
     - ``fullReady`` = ``chatReady`` 且 ``milvus_ok``——Milvus 仅上报**不门禁 HTTP**
@@ -136,12 +148,21 @@ async def _readiness_payload(
             idempotency_ok = idempotency_ok and not get_store().needs_recovery
 
     chat_ready = mongo_ok and identity_ok and (not product_mode or idempotency_ok)
+
+    # CR-08：非 RUNNING 一律不就绪。原先 /ready 在整个停机窗口持续 200，误导负载
+    # 均衡继续导流——而这段时间 `process_message` 会把消息投进无人消费的 bus 队列
+    # 并回成功。readiness 读 `_state`（与事件消费者同源），停机即摘除。
+    from core.agent import RunState
+    lifecycle_ok = agent.state == RunState.RUNNING
+    chat_ready = chat_ready and lifecycle_ok
+
     full_ready = chat_ready and milvus_ok
     dependencies = {
         "mongo": mongo_ok,
         "milvus": milvus_ok,
         "idempotency": idempotency_ok,
         "identity": identity_ok,
+        "lifecycle": lifecycle_ok,
     }
     status = "ok" if all(dependencies.values()) else "degraded"
 
@@ -169,8 +190,9 @@ async def health_handler(request: web.Request) -> web.Response:
 async def ready_handler(request: web.Request) -> web.Response:
     """Readiness 探针——核心 chat 门禁：``chatReady`` 才 200（BE-P2-01 D9）。
 
-    chatReady = mongo 并行 ping 且（非 product 或 idempotency ping）；Milvus 不门禁
-    HTTP（文本可降级），经 payload 的 fullReady/dependencies 可观测。
+    chatReady = mongo 并行 ping 且 lifecycle（``_state == RUNNING``，CR-08）且
+    （非 product 或 idempotency ping）；Milvus 不门禁 HTTP（文本可降级），经
+    payload 的 fullReady/dependencies 可观测。
 
     Args:
         request: aiohttp Request（product_mode / idempotency_repo 在 create_app 注入）。

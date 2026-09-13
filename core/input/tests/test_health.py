@@ -31,6 +31,13 @@ def _make_mock_agent() -> MagicMock:
     agent.tool_adapter.tool_names = ["t1", "t2"]
     agent.output = MagicMock()
     agent.bus = MagicMock()
+    # CR-08：/ready 的 chatReady 含 lifecycle 门禁（_state == RUNNING）。
+    # 真实服务中的 agent 必处于 RUNNING，故 fixture 如实置位。
+    from core.agent import RunState
+    # 注意：真实 Agent 的 `state` 是返回 `_state` 的 property；MagicMock 上二者
+    # 互不相关，health.py 读的是公开访问器 `agent.state`，故两个都要置位。
+    agent._state = RunState.RUNNING
+    agent.state = RunState.RUNNING
     return agent
 
 
@@ -168,7 +175,7 @@ class TestHealthEndpoints:
                     "dependencies"):
             assert key in data, f"缺少字段 {key}"
         assert set(data["dependencies"]) == {
-            "mongo", "milvus", "idempotency", "identity"}
+            "mongo", "milvus", "idempotency", "identity", "lifecycle"}
         assert isinstance(data["version"], str) and data["version"]
         assert isinstance(data["request_id"], str) and data["request_id"]
         assert isinstance(data["uptime"], (int, float))

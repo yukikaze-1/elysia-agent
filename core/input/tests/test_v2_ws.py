@@ -577,10 +577,14 @@ class TestQueueFullAck:
         """process_message 返回 False（队列满）。"""
         def __init__(self, ws):
             from Module.output import WebSocketChannel
+            from core.agent import RunState
             # 真实 WebSocketChannel——_route_v2_text 经 _find_channel 按 isinstance 匹配
             self.output = type("O", (), {
                 "channels": [WebSocketChannel(ws, protocol_version=2)]})()
             self.resolve_calls = 0
+            # CR-08：False 的成因由 `agent.state` 区分（RUNNING → QUEUE_FULL，
+            # 否则 AGENT_BUSY）。本替身模拟的是「运行中队列满」。
+            self.state = RunState.RUNNING
         async def resolve_session(self, conversation_id, protocol_version):
             self.resolve_calls += 1
             return type("S", (), {"session_id": "default"})()
@@ -1195,6 +1199,10 @@ class _FakeV2Agent:
         self.process_exc: Exception | None = None
         self.gen_registry = gen_registry
         self.session_manager = session_manager or _FakeSessionMgr()
+        # CR-08：`process_message` 返回 False 时，错误码由 `agent.state` 区分
+        # （RUNNING → QUEUE_FULL，否则 AGENT_BUSY）。本替身默认模拟运行中的 agent。
+        from core.agent import RunState
+        self.state = RunState.RUNNING
 
     @property
     def generation_registry(self):

@@ -72,6 +72,11 @@ def _make_app():
     agent = MagicMock()
     agent.output = MagicMock()
     agent.bus = MagicMock()
+    # CR-08：/ready 的 chatReady 现在含 lifecycle 门禁（_state == RUNNING）。
+    # 真实 Agent 的 `state` 是返回 `_state` 的 property；MagicMock 上二者互不
+    # 相关，health.py 读公开访问器 `agent.state`，故两个都要置位。
+    agent._state = RunState.RUNNING
+    agent.state = RunState.RUNNING
     return create_app(agent, serve_static=False)
 
 
@@ -1092,6 +1097,10 @@ class TestEndpoints:
         agent.tool_adapter.tool_names = ["t1", "t2"]
         agent.output = MagicMock()
         agent.bus = MagicMock()
+        # CR-08：/ready 的 chatReady 含 lifecycle 门禁；真实 Agent 的 `state` 是
+        # 返回 `_state` 的 property，MagicMock 上二者互不相关，故都要置位。
+        agent._state = RunState.RUNNING
+        agent.state = RunState.RUNNING
 
         def _set_shutting_down():
             agent._state = RunState.STOPPING
