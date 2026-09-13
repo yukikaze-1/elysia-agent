@@ -10,7 +10,23 @@ cd "$SCRIPT_DIR/.."
 
 PYTHON=""
 if command -v conda &> /dev/null && conda env list 2>/dev/null | grep -q "^Elysia "; then
-    PYTHON="conda run -n Elysia --no-capture-output python"
+    # CR-02：**直接 exec 环境内的 python，不经 `conda run`**。`conda run` 是中间
+    # 进程且实测**不转发 SIGTERM**（docs/review/2026-09-12-code-review-ledger.md §6.1-#1），
+    # 于是 `kill -TERM` / `docker stop` / `systemctl stop` 只杀 conda，python 收不到
+    # 信号 → 内核默认动作硬杀 → Agent.stop() 的 20 步清理一步不跑。
+    # 解析出环境前缀后 `exec` 掉 shell，SIGTERM 直达 python 本身。
+    _ENV_PREFIX="$(conda run -n Elysia python -c 'import sys; print(sys.prefix)' 2>/dev/null || true)"
+    if [[ -n "$_ENV_PREFIX" && -x "$_ENV_PREFIX/bin/python" ]]; then
+        # CONDA_PREFIX 必须显式导出：app.py 用它定位 conda 的 SSL 证书
+        # （`$CONDA_PREFIX/ssl/cert.pem`），绕过 `conda run` 后该变量不再自动设置。
+        CONDA_PREFIX="$_ENV_PREFIX"
+        export CONDA_PREFIX
+        export PATH="$_ENV_PREFIX/bin:$PATH"
+        PYTHON="$_ENV_PREFIX/bin/python"
+    else
+        PYTHON="conda run -n Elysia --no-capture-output python"
+        echo "  ⚠ 无法解析 Elysia 环境前缀——回退 conda run（该路径下 SIGTERM 不会透传到 python）"
+    fi
 elif command -v python3 &> /dev/null; then
     PYTHON="python3"
 else
@@ -111,4 +127,5 @@ echo ""
 
 # 清除 ALL_PROXY（httpx 不支持 socks:// scheme，会炸）
 export ALL_PROXY="" all_proxy=""
-$PYTHON app.py
+# CR-02：exec 让 python 取代本 shell —— 信号直达进程，不经中间层。
+exec $PYTHON app.py

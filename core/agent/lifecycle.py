@@ -192,15 +192,36 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
                 except Exception:
                     logger.error("Startup step %s failed", name, exc_info=True)
                     raise
-        except Exception:
-            # 回滚——清理已启动的步骤，避免僵尸 Agent + 重复后台循环
+        except BaseException:
+            # 回滚——清理已启动的步骤，避免僵尸 Agent + 重复后台循环。
+            # CR-02：捕获 **BaseException** 而非 Exception——`CancelledError` /
+            # `KeyboardInterrupt` 都是 BaseException 子类，原先它们绕过回滚，
+            # 留下"半初始化 Agent"（已 spawn 的后台 task、已建 DB 客户端、
+            # 已启动的 scheduler worker 全部被丢弃，而 `_state` 停在 RUNNING）。
             logger.warning("Agent start failed, rolling back", exc_info=True)
             self._state = RunState.STOPPED
-            await self.stop()
+            try:
+                await self.stop()
+            except BaseException:
+                # 回滚中再次被取消/中断：记录后仍然重抛**原始**异常，
+                # 否则调用方看到的是二次异常、根因被掩盖。
+                logger.error("回滚期间 stop() 再次失败", exc_info=True)
             raise
 
     async def stop(self) -> None:
-        """Stop the agent — 按 _SHUTDOWN_STEPS 顺序执行清理。"""
+        """Stop the agent — 按 _SHUTDOWN_STEPS 顺序执行清理。
+
+        CR-02：逐步清理捕获 **BaseException**——原先只 catch `Exception`，
+        而 `CancelledError`/`KeyboardInterrupt` 是 BaseException 子类，一旦关停
+        过程中被取消（用户再按一次 Ctrl+C、超时取消、SIGINT 落在 stop 上），
+        **剩余清理步骤被整段跳过**（会话落库 / 归档 drain / 3 个 flush /
+        生成终态 / WS 关闭帧全部不做）。现在保证"已进入 stop() 就走完"，
+        并把非 `Exception` 的那个异常（取消/中断）在收尾后重抛，不吞掉取消语义。
+
+        Raises:
+            BaseException: 逐步清理中出现的第一个非 `Exception` 异常（通常是
+                `asyncio.CancelledError`），在本方法收尾完成后重抛。
+        """
         logger.info("Agent stopping...")
         self._state = RunState.STOPPED
         for pending in self._pending_messages:
@@ -208,6 +229,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         self._pending_messages.clear()
         self._background_tasks.clear()  # restart 复用同一实例，清理残留后台任务
 
+        pending_exc: BaseException | None = None
         for name, method_name in self._SHUTDOWN_STEPS:
             logger.debug("Shutdown step: %s", name)
             method = getattr(self, method_name)
@@ -215,8 +237,10 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
                 result = method()
                 if hasattr(result, "__await__"):
                     await result
-            except Exception:
+            except BaseException as exc:
                 logger.warning("Shutdown step %s failed", name, exc_info=True)
+                if not isinstance(exc, Exception) and pending_exc is None:
+                    pending_exc = exc
 
         # ARCH-INC-P2-03：兜底 drain——上面逐步收尾已各自限时，这里只处理
         # 未被任何具名字段接管的残留后台任务。用 drain 而非 aclose：同一实例
@@ -230,6 +254,10 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         self._session_manager.clear_work()
 
         logger.info("Agent stopped")
+
+        # CR-02：收尾完成后重抛被捕获的取消/中断——清理走完了，但取消语义不能吞。
+        if pending_exc is not None:
+            raise pending_exc
 
     # ---- stop() sub-methods ----
 

@@ -57,6 +57,99 @@ def _route_registered(app: web.Application, path: str) -> bool:
     return False
 
 
+async def _shutdown_server(agent: "AgentServer", runner: web.AppRunner) -> None:
+    """服务关停序列：``agent.stop()`` → ``runner.cleanup()``（CR-02）。
+
+    **两者都必须执行**：``stop()`` 负责 20 步业务清理（会话落库 / 归档 drain /
+    flush / 生成终态 / WS 关闭帧），``runner.cleanup()`` 负责 HTTP 层释听。
+    原先两者是裸露的顺序语句——``stop()`` 抛错（含关停途中被取消）就整段跳过
+    ``cleanup()``，端口与连接泄漏到进程退出。
+
+    Args:
+        agent: 提供 ``stop()`` 的 agent。
+        runner: 已 setup 的 aiohttp AppRunner。
+    """
+    try:
+        await agent.stop()
+    finally:
+        try:
+            await asyncio.wait_for(runner.cleanup(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("HTTP server cleanup timed out — forcing exit")
+
+
+def _install_signal_handlers(
+    agent: "AgentServer",
+    loop: asyncio.AbstractEventLoop | None = None,
+    *,
+    _exit: Callable[[int], None] | None = None,
+) -> list[str]:
+    """把 SIGTERM / SIGINT 接到 agent 的优雅关停（CR-02），返回已注册的信号名。
+
+    缺陷原状：全仓**零信号处理**。SIGTERM 走内核默认动作 = 立即终止，
+    ``Agent.stop()`` 的 20 步清理（会话落库 / 归档 drain / 3 个 flush / 生成终态 /
+    WS 关闭帧 / embedding shutdown）**一步都不执行**。`docker stop`、`systemctl
+    stop`、`kill <pid>`、Electron 关后端子进程全部走这条路径。
+
+    语义：
+    - **SIGTERM**：第一次 → ``request_shutdown()``（主循环按 ``_state`` 退出后走完整
+      ``stop()``）；第二次 → 立即强退（系统在 SIGTERM 之后通常紧跟 SIGKILL，不给第二次
+      机会反而是常态，故第二次必是"卡住了"）。
+    - **SIGINT**：保留 Ctrl+C 的「第一次优雅、第二次强退」语义——第二次 ``raise
+      KeyboardInterrupt`` 交给 ``asyncio.Runner`` 既有的强退路径（``Handle._run``
+      对 SystemExit/KeyboardInterrupt 直接重抛，不会被吞成 "Exception in callback"）。
+
+    注册点选 ``run_server`` 而非 ``app.py``：所有入口（app.py、嵌入式调用、测试）
+    都要经过这里，且 ``add_signal_handler`` 需要一个正在运行的 loop。Windows 的
+    ProactorEventLoop 不支持信号处理器 → ``NotImplementedError`` 降级为告警，
+    不阻断启动。
+
+    Args:
+        agent: 提供 ``request_shutdown()`` 的 agent（结构化，便于单测替身）。
+        loop: 目标事件循环，缺省取当前运行中的循环。
+        _exit: 强退钩子（仅测试注入；生产用 ``raise KeyboardInterrupt``）。
+
+    Returns:
+        成功注册的信号名列表（``["SIGTERM", "SIGINT"]``；不支持时为空）。
+    """
+    import signal as _signal
+
+    if loop is None:
+        loop = asyncio.get_running_loop()
+
+    registered: list[str] = []
+    seen: set[int] = set()
+
+    def _force_exit(signame: str) -> None:
+        logger.warning("第二次收到 %s —— 跳过剩余清理强制退出", signame)
+        if _exit is not None:
+            _exit(1)
+            return
+        raise KeyboardInterrupt
+
+    def _make(signame: str, force_code: int) -> Callable[[], None]:
+        def _handler() -> None:
+            if force_code in seen:
+                _force_exit(signame)
+                return
+            seen.add(force_code)
+            logger.info("收到 %s —— 开始优雅关停（再次发送将强制退出）", signame)
+            agent.request_shutdown()
+        return _handler
+
+    for sig, force_code in ((_signal.SIGTERM, int(_signal.SIGTERM)),
+                            (_signal.SIGINT, int(_signal.SIGINT))):
+        try:
+            loop.add_signal_handler(sig, _make(sig.name, force_code))
+        except (NotImplementedError, RuntimeError, ValueError, AttributeError):
+            # NotImplementedError：Windows ProactorEventLoop；RuntimeError：非主线程
+            logger.warning("无法注册 %s 处理器（该平台/线程不支持）——"
+                           "进程信号仍走内核默认动作", sig.name)
+            continue
+        registered.append(sig.name)
+    return registered
+
+
 def _resolve_switch_params(
     svc: str, model_id: str,
 ) -> tuple[dict, str, Any]:
@@ -134,6 +227,8 @@ class AgentServer:
         start: Callable[..., Coroutine[Any, Any, None]]
         stop: Callable[..., Coroutine[Any, Any, None]]
         process_message: Callable[..., Coroutine[Any, Any, None]]
+        # CR-02：信号处理器把 SIGTERM/SIGINT 接到 request_shutdown（Agent 提供）
+        request_shutdown: Callable[[], None]
 
     def _print_startup_banner(self, mongo_ok: bool, milvus_ok: bool) -> str:
         """构建启动横幅字符串。调用方负责打印/记录。
@@ -532,18 +627,21 @@ class AgentServer:
             print(f"  按 Ctrl+C 停止")
             print(f"{'='*50}\n", flush=True)
 
+            # CR-02：SIGTERM（docker stop / systemctl stop / kill）此前直接硬杀进程，
+            # 20 步清理一步不跑。注册点在这里而非 app.py——所有入口都经过本方法。
+            _install_signal_handlers(self)
+
             try:
                 while self._state == RunState.RUNNING:
                     await asyncio.sleep(1)
             except (KeyboardInterrupt, asyncio.CancelledError):
                 pass
-
-            was_restarting = self._state == RunState.RESTARTING
-            await self.stop()
-            try:
-                await asyncio.wait_for(runner.cleanup(), timeout=3.0)
-            except asyncio.TimeoutError:
-                logger.warning("HTTP server cleanup timed out — forcing exit")
+            finally:
+                # CR-02：`stop()` 与 `runner.cleanup()` 都放在 finally 里——
+                # 中断落在 idle 循环之外的任何位置（含 stop() 自身抛错）都必须
+                # 走完关停；原先两者都是裸露的顺序语句，一次中断即整段跳过。
+                was_restarting = self._state == RunState.RESTARTING
+                await _shutdown_server(self, runner)
 
             if was_restarting:
                 if self._config_path is not None:
