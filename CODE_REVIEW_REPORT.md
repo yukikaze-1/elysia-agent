@@ -100,6 +100,15 @@
 | **CR-13** HITL 审批不绑定审批连接 | ✅ 已修（**行为变更**）| `a56162e5` |
 | **C / P0 `#6c`（N5）** `/ready` 未纳入 embedding | ✅ 已修 | `3e51da04` |
 | 4 条 P0 级回归测试（P0 `#6d`）| ✅ 已补齐 | 见下 |
+| **ARCH-INC-P1-01** `core/task` → `core/tool_runtime` 命名收窄 | ✅ 已修 | `5d52eb22` |
+| **ARCH-INC-P1-02** 应用用例层（签名 / 会话激活）| 🟡 部分（ToolControlService 评估后**不做**）| `da9a7b19` |
+| **S3-03** `_process_events` 无 per-event 边界 → 消费者被单事件杀死 | ✅ 已修 | `7b7802a4` |
+| **S2-A1** 关停 flush 超时 → 待整合批次永久丢失 | ✅ 已修 | `7b7802a4` |
+| **S2-A3** WorkflowEngine stop 外层预算被内层必然截断 | ✅ 已修 | `7b7802a4` |
+| **S3-09** 热重启后嵌入后端已关闭但 provider 仍缓存 | ✅ 已修 | `7b7802a4` |
+| **S2-F4** 未处理异常 → 纯文本 500（无兜底信封）| ✅ 已修 | `3d764b8d` |
+| **S2-B5** Milvus 不可达时每 60s 泄漏一个客户端 | ✅ 已修 | `3d764b8d` |
+| **S2-4** SSE 的 `ACAO: *` | ✅ 已修 | `3d764b8d` |
 
 > **S1 已全部处置**：10 条 S1 中 9 条已修，剩 `CR-01` 属运维动作（轮换凭据），
 > 代码侧无从代劳。S2 关键项 `CR-12`/`CR-13` 已修。
@@ -257,7 +266,7 @@ app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取
 ### 0.4.3 S1 收口轮（2026-09-13）：CR-02 / CR-05 / CR-06 / CR-08 / CR-11 + C + CR-12 / CR-13
 
 同一天连续四批，覆盖**全部剩余 S1**（除 `CR-01` 运维动作）与两条关键 S2。
-`make test-quick` 4536 → **4605 passed**（B/C/D 批实测；A 批另 +30）。每一项都逐条做了「先证明守卫能抓到违规」
+`make test-quick` 4536 → **4691 passed**（+155），收集数 4652（会话伊始 4652→4738）。每一项都逐条做了「先证明守卫能抓到违规」
 的反证，并在下方记录**反证本身暴露出的问题**（这部分比通过项更有信息量）。
 
 | 批次 | 提交 | 内容 |
@@ -301,6 +310,43 @@ app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取
 - `/health`、`/ready` 增加 `run_state` 与 `fsm` **并列上报**：停机窗口内二者本就不同步
   （fsm=idle、run_state=STOPPING），只报一个就得猜谁在说谎。
 - `docs/electron-backend-security.md` 的 `/ready` 语义、`start.sh` 的能力说明同步更新。
+
+
+### 0.4.4 架构两项 + Batch 3/4/9 精选（2026-09-13）
+
+| 批次 | 提交 | 内容 |
+|---|---|---|
+| E-1 | `5d52eb22` | ARCH-INC-P1-01 命名收窄（`core/task` → `core/tool_runtime` 等）|
+| E-2 | `da9a7b19` | ARCH-INC-P1-02 应用用例层：`AttachmentSigningService` + `SessionApplicationService` |
+| F-1 | `7b7802a4` | S3-03 / S2-A1 / S2-A3 / S3-09 |
+| F-2 | `3d764b8d` | S2-F4 / S2-B5 / S2-4 |
+
+**E-2 的实质收益（不是"多了一层"）**：「激活会话」的规则原先**两处各写一遍且顺序不同**
+——WS 先判忙、REST 先判存在性，于是**同一个未知会话**在 WS 得到 `AGENT_BUSY`、在 REST
+得到 `SESSION_NOT_FOUND`。统一为存在性优先，并把 `SessionBusyError`（切换竞态）的翻译
+也收进用例层（原先只有 WS 捕获，REST 会回 500）。**越权维度 2026-09-12 已清零，本批补的是
+"同一事实只有一个答案"。**
+
+`ToolControlService` **评估后不做**：盘过实际代码，工具控制面在输入层已只剩一次调用 +
+契约转换，再包一层就是评估稿明确反对的**无行为代理**。理由写进提交与
+`core/application/` 的装配注释，避免下次审计重新发现。
+
+**F 批的两条自我纠正（都由守卫与测试当场抓到）**：
+
+1. `_mark_unavailable` 我先写成"同步方法 + `create_task` 火忘 close"——**R6 门禁当场报红**
+   （裸后台任务未登记）。释放客户端天然异步，改为 async（两个调用点都在协程里），
+   而不是去 allowlist 登记豁免。
+2. `_json_object` 最初把 `HTTPRequestEntityTooLarge` 也包成 400——**F13 既有测试立刻抓到**。
+   "请求太大"与"格式不对"会让客户端做出完全相反的处置，已放行 413。
+
+**S3-09 的反证第一次是全绿的**（改动没有测试覆盖），补 6 项后才转红——「反证全绿」
+不是"守卫很强"，而是"守卫没装在改动上"。这条已经出现两次（另一次在 CR-11）。
+
+**F 批剩余（按报告 P1→P3 清单，尚未开始）**：S2-A1 的彻底版（关停时把批次落盘而非只
+requeue）、S2-B1（`ensure_index` 同名不同参 / `schema_drift` 误报）、S2-B2（`non_fatal`
+三处）、S2-B3/B4（附件 GC 目录守卫 + 两阶段隔离）、S2-B6（幂等证据探测三态）、
+S2-C1/C2、S2-D2~D8（workflow 不变量，7 项同根，建议整批做）、S2-E2~E5、S2-F1/F2、
+S2-G1（插件错误串被包装成 `success=True`）、S2-5/6/7/8/9/10、S3 系列。
 
 **已知遗留（本批未做，非疏漏）**：
 
