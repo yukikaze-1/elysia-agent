@@ -403,3 +403,140 @@ async def test_consolidator_accepts_scoped_view():
     cons = MemoryConsolidator(_FakeLLM(), memory=view)  # 应接受 scoped view
     assert cons._memory is view
 
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-12 / S3-13：比对失败的回退边界 + requeue 上界
+# ══════════════════════════════════════════════════════════════════
+
+class TestCompareFallbackBoundary:
+    """`_compare_and_resolve` 原先把"LLM 比对"与"执行动作"放在**同一个 try** 里，
+    于是"执行到第 2 条动作时失败"也会走 insert-all 回退：**已 insert 的重复插入、
+    已 merge/update 的二次应用**。正确回退只在"一条动作都还没执行"时成立。
+    """
+
+    def _cm(self, *, llm_fail=False, insert_fail_on=None, existing=None):
+        from core.memory.consolidator import MemoryConsolidator
+        from core.schema.memory import MemoryType
+
+        memory = AsyncMock()
+        memory.get_all = MagicMock(return_value=existing or [MagicMock(id="e1")])
+        memory.search = AsyncMock(return_value=[])
+        memory.update_text = AsyncMock()
+        memory.insert = AsyncMock(
+            side_effect=(insert_fail_on if insert_fail_on is not None else None))
+
+        llm = AsyncMock()
+        if llm_fail:
+            llm.think = AsyncMock(side_effect=RuntimeError("llm down"))
+        else:
+            result = MagicMock()
+            result.text = json.dumps([
+                {"action": "insert", "content": "新记忆 A",
+                 "type": MemoryType.FACT.value, "poignancy": 5},
+                {"action": "insert", "content": "新记忆 B",
+                 "type": MemoryType.FACT.value, "poignancy": 5},
+            ])
+            llm.think = AsyncMock(return_value=result)
+
+        cm = MemoryConsolidator(llm=llm, memory=memory, character_name="E",
+                                  user_name="U")
+        return cm, memory
+
+    @pytest.mark.asyncio
+    async def test_action_failure_does_not_rerun_whole_batch(self):
+        """**核心**：第 2 条动作失败 → 不得把第 1 条再 insert 一遍。"""
+        from core.schema.memory import ExtractedMemory, MemoryType
+
+        calls = {"n": 0}
+
+        async def _insert(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("milvus hiccup")
+
+        cm, memory = self._cm(insert_fail_on=_insert)
+        items = [
+            ExtractedMemory(type=MemoryType.FACT, content="x", poignancy=5),
+            ExtractedMemory(type=MemoryType.FACT, content="y", poignancy=5),
+        ]
+
+        inserted = await cm._compare_and_resolve(items)      # noqa: SLF001
+
+        assert calls["n"] == 2, (
+            f"insert 被调用 {calls['n']} 次——第 1 条被重复插入了（回退重跑）")
+        assert inserted == 1, f"只有第 1 条真正入库，实得 {inserted}"
+
+    @pytest.mark.asyncio
+    async def test_compare_failure_still_falls_back_to_insert_all(self, caplog):
+        """比对阶段失败 → 回退 insert-all 仍**安全且保留**（此时一条都没执行）。"""
+        import logging
+
+        from core.schema.memory import ExtractedMemory, MemoryType
+
+        cm, memory = self._cm(llm_fail=True)
+        items = [ExtractedMemory(type=MemoryType.FACT, content="x", poignancy=5)]
+
+        with caplog.at_level(logging.WARNING):
+            inserted = await cm._compare_and_resolve(items)   # noqa: SLF001
+
+        assert inserted == 1
+        memory.insert.assert_awaited_once()
+        # 降级必须可见：原先只有 logger.debug
+        assert any(r.levelno >= logging.WARNING for r in caplog.records), \
+            "insert-all 降级在默认日志级别不可见"
+
+
+class TestRequeueIsBounded:
+    """requeue 走 `batch + self._buffer` 前插且**无上界**：LLM 持续失败时缓冲无界
+    增长，而提取 prompt 只取 `[-2000:]`——**最旧的轮次永远进不了 prompt**，
+    却仍在每轮触发一次注定失败的 LLM 调用。"""
+
+    def _cm(self):
+        from core.memory.consolidator import MemoryConsolidator
+
+        memory = AsyncMock()
+        memory.get_all = MagicMock(return_value=[])
+        cm = MemoryConsolidator(llm=AsyncMock(), memory=memory,
+                                  character_name="E", user_name="U")
+        return cm
+
+    def test_requeue_drops_oldest_beyond_cap(self, caplog):
+        import logging
+
+        from core.memory.consolidator import MemoryConsolidator
+
+        cm = self._cm()
+        cap = MemoryConsolidator.MAX_BUFFER_TURNS
+
+        # 缓冲已**超界** 5 条，再 requeue 1 批 → 共需丢弃 6 条
+        cm._buffer = [(f"u{i}", f"a{i}") for i in range(cap + 5)]   # noqa: SLF001
+        with caplog.at_level(logging.WARNING):
+            cm._requeue([("unew", "anew")])                         # noqa: SLF001
+
+        assert len(cm._buffer) == cap, f"缓冲未被上界约束：{len(cm._buffer)}"  # noqa: SLF001
+        # **FIFO**：requeue 前插到队首，于是它连同最旧的 5 条一起被丢。
+        # 这是有意的取舍——提取 prompt 只取末尾 2000 字符，最旧的内容本来就进不了
+        # prompt，丢掉它不损失"本来会被提取"的信息；保住新内容更重要。
+        assert ("unew", "anew") not in cm._buffer                   # noqa: SLF001
+        for i in range(5):
+            assert (f"u{i}", f"a{i}") not in cm._buffer             # noqa: SLF001
+        assert cm._buffer[0] == ("u5", "a5")                        # noqa: SLF001
+        assert cm._buffer[-1] == (f"u{cap + 4}", f"a{cap + 4}")     # noqa: SLF001
+        assert cm.stats()["dropped_turns"] == 6
+        assert any(r.levelno >= logging.WARNING for r in caplog.records), \
+            "丢弃必须是可见事件（不能静默）"
+
+    def test_stats_exposes_dropped_turns(self):
+        cm = self._cm()
+        stats = cm.stats()
+        assert "dropped_turns" in stats and stats["dropped_turns"] == 0
+        assert stats["max_buffer_turns"] > 0
+
+    def test_requeue_under_cap_keeps_everything(self):
+        """回归网：未超界时 requeue 语义不变（前插、零丢失）。"""
+        cm = self._cm()
+        cm._buffer = [("u1", "a1")]                                # noqa: SLF001
+        cm._requeue([("u2", "a2")])                                # noqa: SLF001
+        assert cm._buffer == [("u2", "a2"), ("u1", "a1")]           # noqa: SLF001
+        assert cm.stats()["dropped_turns"] == 0

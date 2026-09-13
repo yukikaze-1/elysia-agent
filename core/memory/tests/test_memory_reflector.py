@@ -262,3 +262,74 @@ async def test_reflector_accepts_scoped_view_and_none_session():
     assert r._memory is view
     assert r._session is None
 
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-14：逐组失败不得静默，且不得无条件复位计数器
+# ══════════════════════════════════════════════════════════════════
+
+class TestGroupFailureIsVisible:
+    """每组失败原先只 `logger.debug` 且**无条件** `_reset_counters()` →
+    **去重永久静默失效**：日志上看不出异常（"日志说成功但实际全失败"的典型），
+    而计数器被复位意味着"已做过去重"，下一轮要等再攒够阈值才重试。"""
+
+    def _reflector(self, *, fail_groups: int, total_groups: int):
+        from core.memory.memory_reflector import MemoryReflector
+
+        ref = MemoryReflector.__new__(MemoryReflector)
+        ref._last_summary = {}                     # noqa: SLF001
+        ref._memory = MagicMock()                  # noqa: SLF001
+        ref._memory.get_all = MagicMock(return_value=[MagicMock()])   # noqa: SLF001
+        ref._reset_counters = MagicMock()          # noqa: SLF001
+        ref._cluster_entries = AsyncMock(          # noqa: SLF001
+            return_value=[[MagicMock()] for _ in range(total_groups)])
+
+        state = {"n": 0}
+
+        async def _review(_group):
+            state["n"] += 1
+            if state["n"] <= fail_groups:
+                raise RuntimeError("llm down")
+            return []
+
+        ref._review_group = _review                # noqa: SLF001
+        ref._execute_actions = AsyncMock(return_value=(0, 0, 0))   # noqa: SLF001
+        return ref
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_logs_warning_and_resets(self, caplog):
+        import logging
+
+        ref = self._reflector(fail_groups=1, total_groups=3)
+
+        with caplog.at_level(logging.WARNING):
+            summary = await ref._do_reflect()
+
+        assert summary["failed_groups"] == 1
+        assert summary["groups"] == 3
+        assert any(r.levelno >= logging.WARNING and "审查失败" in r.getMessage()
+                   for r in caplog.records), "失败必须在默认级别可见"
+        ref._reset_counters.assert_called_once()      # 有成功的组 → 正常复位  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_all_failed_keeps_counters(self, caplog):
+        """**核心**：全组失败**不得**复位计数器——否则下一轮要等很久才重试。"""
+        import logging
+
+        ref = self._reflector(fail_groups=3, total_groups=3)
+
+        with caplog.at_level(logging.WARNING):
+            summary = await ref._do_reflect()
+
+        assert summary["failed_groups"] == 3
+        ref._reset_counters.assert_not_called()       # noqa: SLF001
+        assert any("保留触发计数" in r.getMessage() for r in caplog.records), \
+            "保留计数这件事本身也要可见"
+
+    @pytest.mark.asyncio
+    async def test_no_failure_resets(self):
+        """回归网：全部成功 → 正常复位。"""
+        ref = self._reflector(fail_groups=0, total_groups=2)
+        summary = await ref._do_reflect()
+        assert summary["failed_groups"] == 0
+        ref._reset_counters.assert_called_once()      # noqa: SLF001

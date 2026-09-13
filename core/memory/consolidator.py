@@ -175,6 +175,11 @@ class MemoryConsolidator:
     """从对话中提取并存储关键事实。"""
 
     BUFFER_THRESHOLD = 6  # 攒够 N 条消息再调 LLM 提取
+    #: 缓冲（含 requeue 前插）的**硬上界**（S3-13）。requeue 走 `batch + self._buffer`
+    #: 前插且无上界：LLM 持续失败时缓冲无界增长，而提取 prompt 只取 `[-2000:]`——
+    #: **最旧的轮次永远不会进入 prompt**，却仍在每轮触发一次注定失败的 LLM 调用。
+    #: 超界时从最旧开始丢，并**如实记录丢弃条数**（丢弃是可见事件，不是静默行为）。
+    MAX_BUFFER_TURNS = 200
 
     def __init__(self, llm: MemoryLLM, memory: ScopedLongTermMemory | LongTermMemory,
                  character_name: str = "Elysia",
@@ -195,6 +200,7 @@ class MemoryConsolidator:
         self._user_name = user_name
         self._history: list[dict] = []  # recent consolidation results
         self._buffer: list[tuple[str, str]] = []  # (user_msg, assistant_msg) 缓冲
+        self._dropped_turns = 0                    # 因上界丢弃的轮数（S3-13，可见指标）
         self._threshold = buffer_threshold if buffer_threshold is not None else self.BUFFER_THRESHOLD
         self._consolidate_lock = asyncio.Lock()
         # 最近一次运行的状态（debug 面板 / 日志）——区分「没跑」/「在跑」/「跑了提取 0 条」/「跑失败」
@@ -323,7 +329,7 @@ class MemoryConsolidator:
             # 这批对话永久丢失**，而日志只有一句 "flush timed out"，完全不提数据丢失。
             logger.warning("Consolidation extraction failed（requeue batch 待重试）",
                            exc_info=True)
-            self._buffer = batch + self._buffer
+            self._requeue(batch)
             self._finish_run(extracted=0, inserted=0, error=f"提取失败: {e}")
             if not isinstance(e, Exception):
                 raise        # 取消/中断语义不吞——缓冲已还原，交给调用方处理
@@ -341,7 +347,7 @@ class MemoryConsolidator:
                 # 同 S2-A1：取消也必须还原缓冲（`_compare_and_resolve` 内部有
                 # 嵌入/向量库 await，同样可能被关停预算掐断）。
                 logger.warning("Consolidation 存储失败（requeue batch 待重试）", exc_info=True)
-                self._buffer = batch + self._buffer
+                self._requeue(batch)
                 self._finish_run(extracted=len(items), inserted=0,
                                  error=f"存储失败: {e}")
                 if not isinstance(e, Exception):
@@ -359,6 +365,33 @@ class MemoryConsolidator:
                     self._last_turns, len(items), inserted)
         return items
 
+    def _requeue(self, batch: list[tuple[str, str]]) -> None:
+        """把失败的 batch 前插回缓冲，并施加**硬上界**（S3-13）。
+
+        requeue 的语义是"这轮没成功，下次再试"。但持续失败时它会无界增长：每轮
+        `batch + self._buffer` 前插，而提取 prompt 只取末尾 2000 字符——**最旧的轮次
+        永远进不了 prompt**，却仍在每轮触发一次注定失败的 LLM 调用。
+
+        超界时从**队首（最旧）**开始丢，并记录丢弃条数（丢弃必须是可见事件）。
+        为什么丢最旧而不是最新：提取 prompt 只取末尾 2000 字符——**最旧的内容本来
+        就进不了 prompt**，丢掉它不会损失任何"本来会被提取"的信息，只是停止为它
+        反复付一次注定失败的 LLM 调用。代价是 requeue 的那批（前插 → 位于队首）
+        在长期故障时会被先丢掉，即"重试"在极端积压下让位于"保住新内容"——
+        这是有意的取舍，不是遗漏。
+
+        Args:
+            batch: 本轮失败、待重试的 (user_msg, assistant_msg) 列表。
+        """
+        self._buffer = batch + self._buffer
+        overflow = len(self._buffer) - self.MAX_BUFFER_TURNS
+        if overflow > 0:
+            self._buffer = self._buffer[overflow:]
+            logger.warning(
+                "Consolidation 缓冲超过上界 %d——丢弃最旧 %d 轮（累计丢弃 %d 轮）",
+                self.MAX_BUFFER_TURNS, overflow, self._dropped_turns + overflow,
+            )
+            self._dropped_turns += overflow
+
     def _finish_run(self, *, extracted: int, inserted: int, error: str = "") -> None:
         """记录本次运行结果（debug 面板 / 日志用）。"""
         self._running = False
@@ -375,6 +408,8 @@ class MemoryConsolidator:
         """
         return {
             "buffer_size": len(self._buffer),
+            "max_buffer_turns": self.MAX_BUFFER_TURNS,
+            "dropped_turns": self._dropped_turns,
             "threshold": self._threshold,
             "history": [dict(h) for h in self._history[-5:]],
             "running": self._running,
@@ -396,14 +431,7 @@ class MemoryConsolidator:
         """
         if not new_items or not self._memory.get_all():
             # 无已有记忆，全部直接 insert
-            for item in new_items:
-                await self._memory.insert(
-                    item.content,
-                    memory_type=item.type.value,
-                    poignancy=item.poignancy,
-                    source="consolidation",
-                )
-            return len(new_items)
+            return await self._insert_all(new_items)
 
         try:
             # 1. 搜索相关已有记忆
@@ -436,10 +464,23 @@ class MemoryConsolidator:
                 extra_body={"thinking": {"type": "disabled"}},
             )
             actions = _parse_compare_actions(result.text, expected_count=len(new_items))
+        except Exception:
+            # 比对阶段失败：**此时一条动作都没执行**，回退 insert-all 是安全的
+            # （不会重复应用）。S3-12：这条回退原先与"执行动作"共用一个 try，
+            # 于是"执行到第 2 条时失败"也会走这里——已 insert 的重复插入、
+            # 已 merge/update 的二次应用。日志也从 debug 提到 warning：
+            # 这是**数据重复**级别的降级，不该在默认级别看不见。
+            logger.warning(
+                "Consolidation 比对失败，回退为全部插入（%d 条）", len(new_items),
+                exc_info=True)
+            return await self._insert_all(new_items)
 
-            # 3. 执行 — merge → update → insert
-            inserted = 0
-            for action in actions:
+        # 3. 执行 — merge → update → insert（**逐条兜底**：单条失败不影响其余，
+        #    更不触发"整批重跑"）
+        inserted = 0
+        failed = 0
+        for idx, action in enumerate(actions):
+            try:
                 if isinstance(action, MergeAction):
                     await self._memory.update_text(
                         action.target_id, action.merged_content,
@@ -457,18 +498,22 @@ class MemoryConsolidator:
                     )
                     inserted += 1
                 # SkipAction — 无操作
+            except Exception:
+                failed += 1
+                logger.warning(
+                    "Consolidation 第 %d/%d 条动作执行失败（其余继续，不回退重跑）: %s",
+                    idx + 1, len(actions), action.__class__.__name__, exc_info=True)
+        if failed:
+            logger.warning("Consolidation: %d/%d 条动作未生效", failed, len(actions))
+        return inserted
 
-            return inserted
-
-        except Exception:
-            logger.debug("Consolidation compare failed, falling back to insert all",
-                         exc_info=True)
-            # 回退：全部 insert
-            for item in new_items:
-                await self._memory.insert(
-                    item.content,
-                    memory_type=item.type.value,
-                    poignancy=item.poignancy,
-                    source="consolidation",
-                )
-            return len(new_items)
+    async def _insert_all(self, new_items: list[ExtractedMemory]) -> int:
+        """全部直接插入（无比对可用时的降级路径）。"""
+        for item in new_items:
+            await self._memory.insert(
+                item.content,
+                memory_type=item.type.value,
+                poignancy=item.poignancy,
+                source="consolidation",
+            )
+        return len(new_items)

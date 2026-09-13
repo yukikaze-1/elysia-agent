@@ -165,6 +165,7 @@ class MemoryReflector:
         total_merges = 0
         total_updates = 0
         total_deletes = 0
+        failed_groups = 0
 
         # 2. 逐组 LLM 审查
         for group in groups:
@@ -175,7 +176,13 @@ class MemoryReflector:
                 total_updates += u
                 total_deletes += d
             except Exception:
-                logger.debug("MemoryReflector: group review failed", exc_info=True)
+                # S3-14：原先只 `logger.debug` —— **去重永久静默失效**，日志上看不出来
+                # （"日志说成功但实际全失败"的典型）。这是数据质量级别的降级，
+                # 必须在默认级别可见。
+                failed_groups += 1
+                logger.warning(
+                    "MemoryReflector: 第 %d/%d 组审查失败",
+                    failed_groups, len(groups), exc_info=True)
 
         # 3. 记录摘要 + 重置计数器
         summary = {
@@ -183,9 +190,25 @@ class MemoryReflector:
             "merges": total_merges,
             "updates": total_updates,
             "deletes": total_deletes,
+            "groups": len(groups),
+            "failed_groups": failed_groups,
         }
         self._last_summary = summary
-        self._reset_counters()
+
+        if failed_groups:
+            logger.warning(
+                "MemoryReflector: %d/%d 组审查失败（本轮去重不完整）",
+                failed_groups, len(groups))
+
+        # **全组失败 → 不复位计数器**：复位等于告诉触发逻辑"已做过去重了"，
+        # 而实际一条都没处理——下一轮要等到再攒够阈值才重试（可能很久）。
+        # 保留计数让它尽快重试；只要有一组成功就算跑过（避免失败组把成功组拖成
+        # 无限重试）。
+        if failed_groups < len(groups):
+            self._reset_counters()
+        else:
+            logger.warning(
+                "MemoryReflector: 全部 %d 组失败——保留触发计数以便尽快重试", len(groups))
 
         if total_merges or total_updates or total_deletes:
             logger.info(
