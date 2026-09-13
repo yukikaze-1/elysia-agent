@@ -994,7 +994,13 @@ class LongTermMemory:
         return self._embedding_provider.is_ready
 
     async def close(self) -> None:
-        """关闭长期记忆：取消嵌入加载、关闭 Milvus 连接。"""
-        self._embedding_provider.cancel()
+        """关闭长期记忆：**作废嵌入后端**、关闭 Milvus 连接。
+
+        S3-09：必须是 `reset()` 而不是 `cancel()`——`cancel()` 只打断在途加载，
+        已加载的后端引用会留在 provider 里；Agent 同一实例热重启（`stop()` →
+        `start()`）后它指向一个**已关闭**的后端，`embed()` 恒返回 `[]`，
+        新记忆无向量、不入 journal、退出即丢。
+        """
+        self._embedding_provider.reset()
         if self._repo:
             await self._repo.close()

@@ -290,9 +290,10 @@ class WorkflowEngine:
         # 不随 _tasks 弹出；stop() 自触发取消所产生的新孤儿同样可达）。
         # 等 3s 后超时 cancel——防止事件循环关闭强杀正在执行副作用的工具
         # （「副作用不打断」在 loop-close 场景同样成立）。
-        # 注：best-effort——core 侧用 wait_for(..., timeout=5.0) 包 stop()，若活跃任务
-        # 已耗 ~2s+，本段（stop 尾部 4s 预算）可能被外层取消而跳过，孤儿工具残留
-        # 至 loop-close 被强杀。取舍：优先保正常关闭路径，孤儿收尾尽力而为。
+        # 注（2026-09-13 更新）：core 侧外层预算已对齐到本方法的**整条最坏路径**
+        # （`_LifecycleTaskSystem._TASK_SYSTEM_STOP_BUDGET = 20s ≥ 10+3+3+1`），
+        # 故本段不再会被外层提前取消。改动本方法内任一预算时须同步改那个常量——
+        # 两条预算是一组不变量（S2-A3 的成因正是它们曾经不等）。
         orphans = [t for t in self._infra.orphan_tools if not t.done()]
         if orphans:
             _, orphan_pending = await asyncio.wait(orphans, timeout=3.0)

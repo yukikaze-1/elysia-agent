@@ -47,7 +47,7 @@ import time
 import os
 from dataclasses import asdict
 import logging
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import Any, TYPE_CHECKING, Awaitable, Callable
 
 if TYPE_CHECKING:
     from core.monitoring.token_tracker import TokenTracker
@@ -763,16 +763,30 @@ class Agent(AgentLifecycle, AgentServer):
             if rid:
                 set_request_id(rid)
 
-            if isinstance(data, InterruptData):
-                self._handle_interrupt(data)
-            elif isinstance(data, UserInputData):
-                self._handle_user_input(data)
-            elif isinstance(data, SystemTickData):
-                self._handle_system_tick(data)
-            elif isinstance(data, TaskResultData):
-                self._handle_task_result(data)
-            elif isinstance(data, StateChangeData):
-                await self._handle_state_change(data)
+            # S3-03：**per-event 异常边界**。此前任一 handler 抛异常都会冒泡出
+            # 本方法，永久杀死这个唯一的事件消费者（`_lifecycle_tools.py` 只在
+            # 启动时 spawn 一次，无 watchdog）——表现为 Agent "进程在线但完全不理人"，
+            # `_pending_user_inputs` 只增不减。单个事件处理失败不该让整个 Agent 失聪。
+            try:
+                await self._dispatch_event(data)
+            except asyncio.CancelledError:
+                raise                      # 取消是控制流，必须继续传播
+            except Exception:
+                logger.error("事件处理失败（已跳过该事件，消费者继续）type=%s",
+                             type(data).__name__, exc_info=True)
+
+    async def _dispatch_event(self, data: Any) -> None:
+        """按事件类型分派（S3-03 抽出的方法体，供 per-event 异常边界包裹）。"""
+        if isinstance(data, InterruptData):
+            self._handle_interrupt(data)
+        elif isinstance(data, UserInputData):
+            self._handle_user_input(data)
+        elif isinstance(data, SystemTickData):
+            self._handle_system_tick(data)
+        elif isinstance(data, TaskResultData):
+            self._handle_task_result(data)
+        elif isinstance(data, StateChangeData):
+            await self._handle_state_change(data)
 
     def _handle_interrupt(self, data: InterruptData) -> None:
         """处理 INTERRUPT 事件：cancel cognitive task，清空队列。

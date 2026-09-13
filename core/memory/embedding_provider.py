@@ -217,3 +217,20 @@ class EmbeddingProvider:
         """取消后台嵌入模型加载任务（如正在进行）。"""
         if self._task and not self._task.done():
             self._task.cancel()
+
+    def reset(self) -> None:
+        """丢弃已加载的后端并允许重新加载（S3-09）。
+
+        **为什么必须有**：`Agent` 同一实例支持 `stop()` → `start()` 热重启，
+        而 stop 会关掉嵌入后端。原先 provider 仍缓存着那个**已关闭**的 `_backend`，
+        重启后 `embed()` 恒返回 `[]`——新记忆没有向量、不入 `_pending_syncs`
+        journal、退出即丢，而日志只有一句 DEBUG。归档侧早有对称修复
+        （`reopen_all_archives`），嵌入侧此前没有。
+
+        与 `cancel()` 的区别：`cancel()` 只打断在途加载；`reset()` 是"作废状态"，
+        清后端引用 + 失败冷却，使下一次 `ensure()` 真的重新加载。
+        """
+        self.cancel()
+        self._task = None
+        self._backend = None
+        self._failed_at = None

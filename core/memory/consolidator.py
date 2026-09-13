@@ -313,13 +313,20 @@ class MemoryConsolidator:
             result = await self._llm.think([{"role": "user", "content": prompt}],
                 extra_body={"thinking": {"type": "disabled"}})
             items = _parse_extraction(result.text)
-        except Exception as e:
+        except BaseException as e:
             # 解析失败（含 _JsonArrayParseError）→ batch 重新入队待下轮重试，
             # 整合机会不静默丢失（S9）。warning 可见 LLM 输出异常。
+            #
+            # **必须是 BaseException（S2-A1）**：关停 flush 走
+            # `asyncio.wait_for(flush(), timeout=5.0)`，超时 → 取消 → `CancelledError`
+            # 是 BaseException 子类，原先绕过 `except Exception` → **requeue 不执行、
+            # 这批对话永久丢失**，而日志只有一句 "flush timed out"，完全不提数据丢失。
             logger.warning("Consolidation extraction failed（requeue batch 待重试）",
                            exc_info=True)
             self._buffer = batch + self._buffer
             self._finish_run(extracted=0, inserted=0, error=f"提取失败: {e}")
+            if not isinstance(e, Exception):
+                raise        # 取消/中断语义不吞——缓冲已还原，交给调用方处理
             return []
 
         # batch 已在锁内 detach——不再 clear self._buffer（B5/P1-11：不清掉并发新消息）
@@ -329,12 +336,16 @@ class MemoryConsolidator:
                 inserted = await self._compare_and_resolve(items)
                 logger.debug("Consolidation compared: %d items → %d inserted",
                              len(items), inserted)
-            except Exception as e:
-                # 存储失败（含 compare 回退 insert 仍失败）→ batch 重新入队待重试
+            except BaseException as e:
+                # 存储失败（含 compare 回退 insert 仍失败）→ batch 重新入队待重试。
+                # 同 S2-A1：取消也必须还原缓冲（`_compare_and_resolve` 内部有
+                # 嵌入/向量库 await，同样可能被关停预算掐断）。
                 logger.warning("Consolidation 存储失败（requeue batch 待重试）", exc_info=True)
                 self._buffer = batch + self._buffer
                 self._finish_run(extracted=len(items), inserted=0,
                                  error=f"存储失败: {e}")
+                if not isinstance(e, Exception):
+                    raise
                 return []
 
         for item in items:

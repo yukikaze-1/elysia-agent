@@ -80,13 +80,32 @@ class _LifecycleTaskSystem:
             self._mailbox_task, timeout=3.0, label="agent-mailbox")
         self._mailbox_task = None
 
+    # 外层预算必须 ≥ `WorkflowEngine.stop()` 的**整条最坏路径**，不是它的单个
+    # `timeout` 参数。S2-A3 的缺陷正是外层 5.0s < 内层 10.0s：只要有任意任务仍在
+    # RUNNING（后台任务引擎的常态），外层必然先超时，把 stop() 从中间掐断，于是
+    # 后续 `task.cancel()`、孤儿工具收尾、兜底清理**全部不执行**，运行中的任务在
+    # 已关闭的 ToolAdapter/LLM/Mongo 上继续 await，semaphore 也永不释放。
+    #
+    # 内部算术（`Module/workflow_engine/workflow_engine.py::stop`）：
+    #   等任务自然完成 10s + cancel 后二次等待 3s + 孤儿工具 3s + cancel 落地 1s
+    #   ≈ 17s
+    # 取 20s 留余量。**改内层任何一段都要同步改这里**——两条预算是一组不变量。
+    _TASK_SYSTEM_STOP_BUDGET = 20.0
+
     async def _stop_task_system(self) -> None:
-        """停止 WorkflowEngine（5s 超时）。"""
+        """停止 WorkflowEngine（外层预算 ≥ 其内部预算，S2-A3）。"""
         if self._task_system:
             try:
-                await asyncio.wait_for(self._task_system.stop(), timeout=5.0)
+                await asyncio.wait_for(
+                    self._task_system.stop(),
+                    timeout=self._TASK_SYSTEM_STOP_BUDGET)
             except asyncio.TimeoutError:
-                logger.warning("WorkflowEngine stop timed out")
+                # 超时说明 stop() 自身卡住（内部预算已用尽仍未返回）——留可见痕迹，
+                # 但不改流程：_SHUTDOWN_STEPS 会继续走后面的清理。
+                logger.error(
+                    "WorkflowEngine stop 超时（>%.0fs，超过其内部最坏路径）——"
+                    "后台任务未收尾，semaphore 可能未释放",
+                    self._TASK_SYSTEM_STOP_BUDGET)
         # 关闭 DelegationPreparer 内部 AsyncOpenAI 客户端，避免 /restart 泄漏 httpx 连接池
         if self._delegation_preparer:
             try:
