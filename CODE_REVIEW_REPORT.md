@@ -130,6 +130,8 @@
 | **S2-E5** 历史接口 fail-open，与 `/ready` 的 fail-closed 相反 | ✅ 已修 | `d512d6d6` |
 | **S2-F1** 资源索引可吃满事件循环 + 不在限流映射 | ✅ 已修 | `7897584b` |
 | **S2-F2** debug 删除吞掉附件释放失败 | ✅ 已修 | `7897584b` |
+| **S2-5** `wire_dict()` 漏非 JSON 原生值（帧静默丢失 / REST 500）| ✅ 已修 | `a148460c` |
+| **S2-10** `coerce` 对任何泛型都解包 + validator 同缺陷（env 覆盖启动崩）| ✅ 已修 | `a148460c` |
 
 > **S1 已全部处置**：10 条 S1 中 9 条已修，剩 `CR-01` 属运维动作（轮换凭据），
 > 代码侧无从代劳。S2 关键项 `CR-12`/`CR-13` 已修。
@@ -287,7 +289,7 @@ app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取
 ### 0.4.3 S1 收口轮（2026-09-13）：CR-02 / CR-05 / CR-06 / CR-08 / CR-11 + C + CR-12 / CR-13
 
 同一天连续四批，覆盖**全部剩余 S1**（除 `CR-01` 运维动作）与两条关键 S2。
-`make test-quick` 4536 → **4768 passed**（+232），收集数 4652 → **4831**；另有 `-m "not unit and not service"`（quick 排除的 61 条）**54 passed / 7 skipped**——该集合此前从未被跑过，见下 §0.4.5。每一项都逐条做了「先证明守卫能抓到违规」
+`make test-quick` 4536 → **4794 passed**（+258），收集数 4652 → **4858**；另有 `-m "not unit and not service"`（quick 排除的 61 条）**54 passed / 7 skipped**——该集合此前从未被跑过，见下 §0.4.5。每一项都逐条做了「先证明守卫能抓到违规」
 的反证，并在下方记录**反证本身暴露出的问题**（这部分比通过项更有信息量）。
 
 | 批次 | 提交 | 内容 |
@@ -363,11 +365,11 @@ app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取
 **S3-09 的反证第一次是全绿的**（改动没有测试覆盖），补 6 项后才转红——「反证全绿」
 不是"守卫很强"，而是"守卫没装在改动上"。这条已经出现两次（另一次在 CR-11）。
 
-**F 批已做 28 项**：S3-03 / S2-A1 / S2-A3 / S3-09（`7b7802a4`）、
+**F 批已做 30 项**：S3-03 / S2-A1 / S2-A3 / S3-09（`7b7802a4`）、
 S2-F4 / S2-B5 / S2-4（`3d764b8d`）、S2-G1（`76a07212`）、S2-B3/B4（`dc7918b2`）、
 S2-B1/B2（`c4129197`）、**S2-D5/D7/D8（`2a751d10`）、S2-D6（`4f88c2ad`）、
 S2-D2 + S2-D3①（`b5953d30`）、S2-D4（`179781ff`）、S2-B6（`f7e92aca`）、
-S2-C1/C2（`bc88353e`）、S2-C3（`fe28b7e2`）、**S2-E2~E5（`d512d6d6`）、S2-F1/F2（`7897584b`）**。
+S2-C1/C2（`bc88353e`）、S2-C3（`fe28b7e2`）、**S2-E2~E5（`d512d6d6`）、S2-F1/F2（`7897584b`）、S2-5/S2-10（`a148460c`）**。
 
 **D 系列的共同点值得记**：六项里有 **四项是"有兜底、无来源"或"两条分支不一致"**——
 `MISSING_DEPENDENCY` 有 fatal 分类但产生它的分支恒不可达；`error`/`error_code` 有字段
@@ -391,8 +393,8 @@ CR-13 给 `_run_hitl` 加了第 4 个位置参数，`core/tests/test_phase2.py` 
 **S2-D3②③**（重试退避 + 幂等键；mutation 工具默认不重试）、**S2-D4②③**
 （`_run_and_cleanup` 外层 `wait_for` 兜底；`max_mutations` 计数器 + `MUTATION_LIMIT_REACHED`
 生产者）、S2-D3②③、S2-F1/F2、
-S2-5/6/7/8/9/10（`wire_dict` JSON 归一化 / `coerce` Union 解包 / 沙盒 `.resolve()` /
-`start.sh` flock / compose 拆卷 + healthcheck / 版本比对 + CI 装锁）、S3 系列。
+**S2-6/7/8**（沙盒 `.resolve()` / `start.sh` flock / compose 拆卷 + healthcheck）、
+**S2-9**（版本比对 + CI 装锁 + 依赖上限）、S3 系列。
 
 **已知遗留（本批未做，非疏漏）**：
 
