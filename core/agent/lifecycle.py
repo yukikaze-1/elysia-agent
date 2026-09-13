@@ -49,6 +49,36 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
     所有属性由 Agent.__init__ 初始化，本 mixin 不含 __init__。
     """
 
+    @property
+    def _state(self) -> RunState:
+        """Agent 生命周期状态——`self.status.run_state` 的**视图**（#43）。
+
+        真实存储只有一处（`AgentStatus.run_state`），所以"S2-A2/CR-08 的根因：两个
+        状态源互不同步"在结构上不可能再发生：`Agent._state` 与状态层读的是同一个值。
+
+        回退分支只服务**测试替身**：`object.__new__(Agent)` 造出来的桩没有 `status`
+        属性（`__init__` 未跑），此时落回实例字典。这是刻意的窄口子——真实 Agent 在
+        `Agent.__init__` 里**先**建 `self.status`、**后**写 `_state`（两者相邻），
+        两条路径不会同时成立。
+
+        放在本 mixin 而不是 `agent.py`：`_state` 是生命周期状态，语义上属这里；同时
+        `core/tests/test_doc_counts.py` 用 `agent.py` 的 `@property` 数量钉住"45 个
+        **公开**访问路径"，私有 property 不该混进那个计数。
+        """
+        status = self.__dict__.get("status")
+        if status is None:
+            return self.__dict__.get("_state_fallback", RunState.STOPPED)
+        return status.run_state
+
+    @_state.setter
+    def _state(self, value: RunState) -> None:
+        """写入生命周期状态——落到 `AgentStatus.set_run_state`（同上一处存储）。"""
+        status = self.__dict__.get("status")
+        if status is None:
+            self.__dict__["_state_fallback"] = value
+            return
+        status.set_run_state(value)
+
     # shutdown 步骤按依赖顺序排列（stop() 中正序执行）
     # C4/P1-13：先关 admission/consumer（不再 post 新 turn）→ cancel/await generation
     # （不再产生新 tail）→ 再 drain after-response tail → flush 记忆 → 逐资源 close。
@@ -101,7 +131,6 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
 
     if TYPE_CHECKING:
         # 由 Agent.__init__ 初始化的属性，供 Pylance/Pyright 静态检查
-        _state: RunState
         _started_at: float
         _fsm: AgentFSM
         _llm: LLMAdapter

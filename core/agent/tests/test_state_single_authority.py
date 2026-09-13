@@ -62,10 +62,11 @@ class TestRunStateSingleAuthority:
         存储**；状态层另有一份。两份各自演化 → 停机窗口内 `process_message` 读到的
         与事件消费者读到的不是同一个值（CR-08）。
         """
-        assert isinstance(Agent.__dict__["_state"], property), (
+        prop = next((vars(klass)["_state"] for klass in Agent.__mro__
+                     if "_state" in vars(klass)), None)
+        assert isinstance(prop, property), (
             "Agent._state 不再是 property——生命周期轴又变成了两份存储")
-        assert Agent.__dict__["_state"].fset is not None, (
-            "Agent._state 只读，production 写点无处落脚")
+        assert prop.fset is not None, "Agent._state 只读，production 写点无处落脚"
 
     def test_real_agent_state_and_status_cannot_diverge(self):
         """真实 Agent：写 `_state` 立即反映到 `status.run_state`，反之亦然。"""

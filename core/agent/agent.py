@@ -1310,31 +1310,6 @@ class Agent(AgentLifecycle, AgentServer):
         """Agent 运行状态（只读）。"""
         return self._state
 
-    @property
-    def _state(self) -> RunState:
-        """Agent 生命周期状态——`self.status.run_state` 的**视图**（#43）。
-
-        真实存储只有一处（`AgentStatus.run_state`），所以"S2-A2/CR-08 的根因：两个
-        状态源互不同步"在结构上不可能再发生：`Agent._state` 与状态层读的是同一个值。
-
-        回退分支只服务**测试替身**：`object.__new__(Agent)` 造出来的桩没有 `status`
-        属性（`__init__` 未跑），此时落回实例字典。这是刻意的窄口子——真实 Agent 在
-        `__init__` 里第 449 行建 `self.status`，第 471 行才写 `_state`，两条路径不会
-        同时成立。
-        """
-        status = self.__dict__.get("status")
-        if status is None:
-            return self.__dict__.get("_state_fallback", RunState.STOPPED)
-        return status.run_state
-
-    @_state.setter
-    def _state(self, value: RunState) -> None:
-        """写入生命周期状态——落到 `AgentStatus.set_run_state`（同上一处存储）。"""
-        status = self.__dict__.get("status")
-        if status is None:
-            self.__dict__["_state_fallback"] = value
-            return
-        status.set_run_state(value)
 
     @property
     def started_at(self):
