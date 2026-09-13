@@ -57,6 +57,16 @@ class EmbeddingProvider:
         self._retry_cooldown = retry_cooldown
         self.expected_dimension = expected_dimension
 
+    @property
+    def is_ready(self) -> bool:
+        """嵌入后端是否已就绪（**非阻塞**，不触发加载）。
+
+        `/ready` 与 debug 面板读的是这个属性——它们绝不能因为探一下嵌入而触发
+        一次冷加载（实测冷加载 11s 起）。"未就绪"同时涵盖"正在加载"与"加载失败
+        冷却中"，对 readiness 而言两者都是"还不能写长期记忆"。
+        """
+        return self._backend is not None
+
     async def ensure(self, wait: bool = False) -> "EmbeddingBackend | None":
         """确保嵌入后端已加载。
 

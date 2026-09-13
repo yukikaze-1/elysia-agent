@@ -213,8 +213,8 @@ async def _collect_session_and_memory(agent: "Agent", info: DebugInfo) -> None:
             info.lt_count_milvus = await agent.memory_repo.count()
     except Exception:
         logger.debug("DebugInfo: Milvus count 失败", exc_info=True)
-    info.lt_pending_sync_count = len(getattr(agent.long_term, "_dirty_ids", ()))  # noqa: SLF001
-    info.embedding_ok = agent.long_term._embedding_provider._backend is not None  # noqa: SLF001
+    info.lt_pending_sync_count = agent.long_term.pending_sync_count
+    info.embedding_ok = agent.long_term.embedding_ready
     info.mongodb_ok = await agent.session_repo.health_check()
 
 

@@ -111,8 +111,10 @@ async def _readiness_payload(
       停机窗口必须立刻摘除）且（非 product_mode 或 ``idempotency_ok`` 真实 ping
       且补偿状态满足）；product 模式幂等门禁 = ping AND not ``needs_recovery``
       （BE-P1-07 D4：降级期记录未 reconcile 时 chatReady 保持 false）；
-    - ``fullReady`` = ``chatReady`` 且 ``milvus_ok``——Milvus 仅上报**不门禁 HTTP**
-      （文本可降级使用）；
+    - ``fullReady`` = ``chatReady`` 且 ``milvus_ok`` 且 ``embedding_ok``——后者是
+      "长期记忆真的能持久化"的完整条件（C/CR-10：嵌入不可用时 `insert()` 只写进程内
+      `_entries`，重启即丢）。Milvus 与 embedding 都**不门禁 HTTP**（文本可降级使用），
+      只经 ``fullReady``/``dependencies`` 可观测；
     - ``status``：全依赖 ok → "ok" 否则 "degraded"（可观测，非 HTTP 门禁）。
 
     Args:
@@ -129,6 +131,11 @@ async def _readiness_payload(
     mongo_ok = session_ok and message_ok and attachment_ok
 
     milvus_ok = await _probe(agent.long_term.health_check)
+
+    # C/CR-10：嵌入后端可用性。**非阻塞属性**（不触发冷加载——实测 11s 起）。
+    # 原先 `/ready` 只报 mongo/milvus：Milvus 通了而 embedding 挂了时，探针与面板
+    # 全都正常，长期记忆实际"只在进程内、重启即丢"（CR-10 的静默丢数据）。
+    embedding_ok = bool(getattr(agent.long_term, "embedding_ready", False))
 
     # P0-3：用户身份权威存储（Mongo user_identity_profiles）纳入门禁——身份不可用时
     # 不得用占位身份继续生成/建会话（fail-closed）。无 repo 的本地模式 health_check
@@ -156,10 +163,13 @@ async def _readiness_payload(
     lifecycle_ok = agent.state == RunState.RUNNING
     chat_ready = chat_ready and lifecycle_ok
 
-    full_ready = chat_ready and milvus_ok
+    # `fullReady` = "长期记忆真的能持久化"：chatReady + Milvus 可达 + **嵌入就绪**。
+    # 三者缺一，insert() 都只会写进进程内 `_entries`（重启即丢），故都属"完整就绪"。
+    full_ready = chat_ready and milvus_ok and embedding_ok
     dependencies = {
         "mongo": mongo_ok,
         "milvus": milvus_ok,
+        "embedding": embedding_ok,
         "idempotency": idempotency_ok,
         "identity": identity_ok,
         "lifecycle": lifecycle_ok,

@@ -973,6 +973,26 @@ class LongTermMemory:
         """当前活跃条目总数。"""
         return len(self._entries)
 
+    @property
+    def pending_sync_count(self) -> int:
+        """尚未同步到 Milvus 的条目数（非阻塞）。
+
+        面板把「内存条目数」与「Milvus 真实行数」并列显示，本值补上第三个维度：
+        **有多少条是写了但没落库**。原先 debug 层靠穿透 `_dirty_ids` 拿这个数
+        （`# noqa: SLF001`），走公开访问器后该豁免可以去掉。
+        """
+        return len(self._dirty_ids)
+
+    @property
+    def embedding_ready(self) -> bool:
+        """嵌入后端是否就绪（**非阻塞**，不触发加载；见 C/CR-10）。
+
+        LTM 的持久化以嵌入可用为前提：`insert()` 在 `embedding == []` 时既不写
+        Milvus 也不进 `_dirty_ids`——嵌入不可用等于"长期记忆只在进程内、重启即丢"。
+        `/ready` 与 debug 面板据此上报，避免"所有观测面显示正常、实际在丢数据"。
+        """
+        return self._embedding_provider.is_ready
+
     async def close(self) -> None:
         """关闭长期记忆：取消嵌入加载、关闭 Milvus 连接。"""
         self._embedding_provider.cancel()

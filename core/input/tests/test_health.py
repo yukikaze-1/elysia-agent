@@ -175,7 +175,7 @@ class TestHealthEndpoints:
                     "dependencies"):
             assert key in data, f"缺少字段 {key}"
         assert set(data["dependencies"]) == {
-            "mongo", "milvus", "idempotency", "identity", "lifecycle"}
+            "mongo", "milvus", "embedding", "idempotency", "identity", "lifecycle"}
         assert isinstance(data["version"], str) and data["version"]
         assert isinstance(data["request_id"], str) and data["request_id"]
         assert isinstance(data["uptime"], (int, float))
