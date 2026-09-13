@@ -100,11 +100,11 @@ make test-external
 ```bash
 conda activate Elysia
 
-# 日常开发 — 秒级验证（~60s）
+# 日常开发（实测 ≈9min；日常迭代请按模块跑，见下）
 make test-quick
 # 或: pytest -m "unit or service" -q -x --tb=short
 
-# 提交前 — 排除 slow（~5min）
+# 提交前 — 排除 slow（实测 ≈9min）
 make test-normal
 # 或: pytest -m "not slow and not external" -q --tb=short
 
@@ -112,7 +112,7 @@ make test-normal
 make test-full
 # 或: pytest -q
 
-# 导入风格门禁（秒级）
+# 导入风格门禁（秒级——这一条确实快）
 make lint
 # 或: ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
 ```

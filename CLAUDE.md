@@ -16,16 +16,23 @@ Plain Python（无 `pyproject.toml` 等构建系统）。前端 Vue 3 + Vite + T
 
 ### 分层运行
 
+    > **实测（2026-09-13，本机）**：三档耗时其实**很接近**——quick ≈9min、
+    > normal ≈9min、full ≈9m47s（4924 passed）。原因是绝大部分用例都是
+    > unit/service，三档都包含它们；`slow`/`integration` 只占几十条。
+    > 文档此前写的「秒级 / 5 分钟 / 22 分钟」三个都不准（那个 22 分钟是更早
+    > 时代的数字），照它做时间预算会差一个量级。日常迭代请**按模块**跑
+    > （见下），全量留给推之前。
+
 ```bash
-# 日常开发 — 秒级（unit + service）
+# 日常开发（unit + service；本机实测 ≈9min，日常请按模块跑）
 make test-quick
 # 或: pytest -m "unit or service" -q -x --tb=short
 
-# 提交前 — 排除 slow（~5min）
+# 提交前 — 排除 slow（实测 ≈9min）
 make test-normal
 # 或: pytest -m "not slow and not external" -q --tb=short
 
-# 全量 — 推之前（~22min）
+# 全量 — 推之前（实测 ≈10min）
 make test-full
 # 或: pytest -q
 
@@ -309,7 +316,7 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
 - **Project paths**: `from paths import ProjectPath, get_project_root` — 所有项目文件系统路径的唯一定义点。`ProjectPath.X.resolve()` 返回基于 `ELYSIA_ROOT` 环境变量（fallback 为项目根目录）的绝对 `Path`。
 - **AgentStatus**: `agent.status`（`AgentStatus`）提供语义状态查询（`is_accepting_input` / `is_speaking` / `should_suppress_vad_interrupt` 等）；`agent.phases`（`CognitivePhaseController`）驱动阶段转换。底层 `AgentFSM` 不对外暴露。设计文档：[spec](docs/superpowers/specs/archive/2026-07/2026-07-30-agent-status-interface-design.md)。
-- **Agent 公开接口**: `Agent` 作为组合根，通过 45 个同名 `@property` 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
+- **Agent 公开接口**: `Agent` 作为组合根，通过 **45 个同名 `@property`** 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
 - **私有穿透的两种形态（R3 都看不见）**: ① 字符串形式 `getattr(obj, "_priv")`；② 点式深读 `obj.sub._priv`。`make check-arch` 的 R3 只管**跨包导入私有符号**，这两种都躲得过。规则是「每处私有穿透**要么改走公开 API，要么同行标注 `# noqa: SLF001` + 理由**」，由两道可执行守卫兜底：
   - `core/tests/test_cross_package_privacy.py` —— **全仓跨包守卫**。按「属性名归属包」近似判定跨包（同包内部私有访问是正常封装，不判违规）。**已知局限**：同名属性会漏报，故是回归网而非完备审计工具。
   - `core/input/tests/test_layer_discipline.py` —— 输入层守卫，比全仓规则更严（该层任何未标注穿透即红）。
