@@ -150,6 +150,10 @@ jobs:
         run: make check-types
       - name: Architecture boundary check (ARCH-INC-P1-03)
         run: make check-arch
+      - name: Timeout budget check (#47 ①)
+        run: make check-timeouts
+      - name: Contract reachability check (#47 ②)
+        run: make check-contract
       - name: Debug frontend auth guard (S2-F3)
         run: make check-debug-auth
       - name: Run quick tests

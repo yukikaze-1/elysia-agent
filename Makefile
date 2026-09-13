@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth check-timeouts check-contract
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -90,6 +90,18 @@ check-compose:
 # 存量泄漏在脚本内 allowlist 逐项登记理由，新增即红。
 check-arch:
 	python scripts/check_architecture.py
+
+# 超时预算门禁（#47 ①）：R1 词法嵌套递减 / R2 登记的不变量（外层 ≥ 内层）/
+# R3 具名预算必须表态（登记为外层 或 叶子+理由）。纯 AST、~1s。
+# 存在理由：S2-A3 那类「外层 5s < 内层 17s」的缺陷此前只写在注释里，注释不是机制。
+check-timeouts:
+	python scripts/check_timeout_budget.py
+
+# 契约可达性门禁（#47 ②）：枚举成员必须有生产者（或在册预留）、字段有读必须有写
+# （或在册缺口）。纯 AST、~3s。
+# 存在理由（RC-12）：pyright/check-types 只校形状，不会问「这个字段/枚举值真的有人生产吗」。
+check-contract:
+	python scripts/check_contract_reachability.py
 
 # Debug 前端凭据守卫（S2-F3）：`/debug/api/*` 只认 SERVER_AUTH_TOKEN，
 # 所有请求必须经 debug/auth.ts::debugFetch 带 Authorization 头；
