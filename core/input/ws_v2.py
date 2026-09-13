@@ -96,20 +96,39 @@ def _not_accepted_error(agent: "Agent") -> dict:
 async def _send_rejected(ws: "web.WebSocketResponse | None",
                          conversation_id: str, client_request_id: str,
                          client_message_id: str | None, error: dict, *,
-                         received_at: str) -> None:
-    """拒绝路径统一收口（Task 4）：``store.reject``（持久化完整 ACK 负载 + error）→
-    rejected ACK（before ACK，received_at 同一值；重试重放原 rejected 逐字一致）。
+                         received_at: str, terminal: bool = True) -> None:
+    """拒绝路径统一收口（Task 4）。
+
+    **必须显式声明这是不是终态**（S2-C1）。原先只有一个 helper，于是"瞬时拒绝"与
+    "终态拒绝"共用一条路径，而它**先持久化为 `STATUS_REJECTED`**——`_handle_idempotency_hit`
+    随后会对同键同内容的后续请求**逐字重放该拒绝**。结果是：所有 `retryable=True`
+    的拒绝都变成**该 `clientRequestId` 的永久失败**，客户端遵守 `retryable` 重发多少次
+    都不会成功，且没有任何线索指向"必须换 clientRequestId"。
+    同一份 `_in_progress_error()` 负载在 `_send_ack`（不落库 → 重试可成功）与
+    `_send_rejected`（落库 → 永久失败）两条路径下**语义相反**，这正是缺陷的形状。
+
+    Args:
+        ws: WebSocket 连接。
+        conversation_id: 会话 ID。
+        client_request_id: 客户端请求 ID（幂等键）。
+        client_message_id: 客户端消息 ID。
+        error: 错误负载（code/message/retryable/…）。
+        received_at: 接收时刻（原值重放用）。
+        terminal: **True = 终态拒绝**（持久化，同键重试重放该拒绝）；
+            **False = 瞬时拒绝**（不落库，重试同键仍可被正常处理）。
+            `retryable=True` 的错误**必须**传 False，否则契约字段在说谎。
     """
-    await get_store().reject(
-        conversation_id, client_request_id,
-        code=error.get("code", ""), message=error.get("message", ""),
-        retryable=bool(error.get("retryable")),
-        received_at=received_at,
-        client_message_id=client_message_id,
-        conversation_id_wire=conversation_id,
-        details=error.get("details"),
-        retry_after_ms=error.get("retryAfterMs"),
-    )
+    if terminal:
+        await get_store().reject(
+            conversation_id, client_request_id,
+            code=error.get("code", ""), message=error.get("message", ""),
+            retryable=bool(error.get("retryable")),
+            received_at=received_at,
+            client_message_id=client_message_id,
+            conversation_id_wire=conversation_id,
+            details=error.get("details"),
+            retry_after_ms=error.get("retryAfterMs"),
+        )
     await _send_ack(ws, "", client_request_id, client_message_id, conversation_id,
                     "rejected", error=error, received_at=received_at)
 
@@ -513,7 +532,7 @@ async def _finish_v2_text(
             await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
                                  ctx.client_message_id,
                                  _storage_unavailable_error("附件引用持久化失败"),
-                                 received_at=ctx.received_at)
+                                 received_at=ctx.received_at, terminal=False)
             return
         try:
             accepted = await agent.process_message(
@@ -551,7 +570,7 @@ async def _finish_v2_text(
             await _release_attachment_reservations(agent, reserved, message_id)
             await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
                                  ctx.client_message_id, _not_accepted_error(agent),
-                                 received_at=ctx.received_at)
+                                 received_at=ctx.received_at, terminal=False)
         return
 
     try:
@@ -587,7 +606,7 @@ async def _finish_v2_text(
     else:
         await _send_rejected(ws, ctx.ack_conversation_id, ctx.client_request_id,
                              ctx.client_message_id, _not_accepted_error(agent),
-                             received_at=ctx.received_at)
+                             received_at=ctx.received_at, terminal=False)
 
 
 async def _route_v2_text(agent: "Agent", ws: "web.WebSocketResponse | None",

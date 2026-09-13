@@ -1618,3 +1618,138 @@ class TestEvidenceProbeIsNotFailOpen:
         assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
         assert acks[-1]["error"]["retryable"] is True
         assert agent.process_calls == 0, "不得进入业务流（那正是重复 generation）"
+
+
+# ══════════════════════════════════════════════════════════════════
+# S2-C1：retryable 的拒绝不得落成终态
+# ══════════════════════════════════════════════════════════════════
+
+class TestRetryableRejectionIsNotTerminal:
+    """`_send_rejected` 先把拒绝**持久化**为终态 `STATUS_REJECTED`，随后
+    `_handle_idempotency_hit` 对同键同内容的后续请求**逐字重放该拒绝**。于是所有
+    `retryable=True` 的拒绝都变成**该 clientRequestId 的永久失败**：客户端遵守
+    `retryable` 重发多少次都不会成功，且没有任何线索指向"必须换 clientRequestId"。
+
+    同一份 `_in_progress_error()` 负载在 `_send_ack`（不落库 → 重试可成功）与
+    `_send_rejected`（落库 → 永久失败）下**语义相反**——这就是缺陷的形状。
+    """
+
+    @pytest.mark.asyncio
+    async def test_queue_full_rejection_stays_retryable(self, fresh_store):
+        """QUEUE_FULL（retryable）→ 不落终态；同键重试必须能被**重新处理**。"""
+        import core.input.ws_v2 as _m
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.input.tests.test_v2_ws import _FakeV2Agent, _text_msg
+        from core.input.ws_handler import handle_json_message
+        from core.storage.idempotency import get_store
+        from core.storage.idempotency_repo import STATUS_CLAIMED, STATUS_REJECTED
+
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        agent.process_result = False          # 第一次：Agent 忙 → QUEUE_FULL
+
+        await handle_json_message(_text_msg("r_qf"), agent, None, ws, voice_mgr=None)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["error"]["code"] == "QUEUE_FULL"
+        assert acks[-1]["error"]["retryable"] is True
+
+        entry = await get_store().lookup("default", "r_qf")
+        assert entry is not None
+        assert entry.status != STATUS_REJECTED, (
+            "retryable=True 的拒绝被落成终态 → 同键重试只会永远重放这条拒绝")
+        assert entry.status == STATUS_CLAIMED, (
+            f"应保持 CLAIMED 以便重试被重新处理，实得 {entry.status}")
+
+        # 立即重试：claim 仍新鲜 → IN_PROGRESS（"原请求可能仍在途，退避后再试"）。
+        # 关键是它**不再是那条 QUEUE_FULL 的逐字重放**——重试路径已经活了。
+        ws.sent.clear()
+        agent.process_result = True
+        await handle_json_message(_text_msg("r_qf"), agent, None, ws, voice_mgr=None)
+        acks2 = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks2 and acks2[-1]["status"] == "rejected"
+        assert acks2[-1]["error"]["code"] == "IN_PROGRESS", (
+            f"立即重试应拿到 IN_PROGRESS（可退避重试），而不是重放 QUEUE_FULL：{acks2}")
+
+        # 越过宽限期后再重试 → 走 stale CLAIMED 恢复路径，被**真正处理**
+        store = get_store()
+        store._entries[("default", "r_qf")].claimed_at = time.time() - 3600  # noqa: SLF001
+        ws.sent.clear()
+        await handle_json_message(_text_msg("r_qf"), agent, None, ws, voice_mgr=None)
+        acks3 = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks3 and acks3[-1]["status"] == "accepted", (
+            f"越过宽限期后必须能重新处理，实得 {acks3}")
+
+    @pytest.mark.asyncio
+    async def test_contract_validation_rejection_is_terminal(self, fresh_store):
+        """对照：非重试的终态拒绝仍要落库（同键重试重放原拒绝，逐字一致）。"""
+        import core.input.ws_v2 as _m
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.input.tests.test_v2_ws import _FakeV2Agent, _text_msg
+        from core.input.ws_handler import handle_json_message
+        from core.storage.idempotency import get_store
+        from core.storage.idempotency_repo import STATUS_REJECTED
+
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws)
+        agent.process_exc = RuntimeError("boom")     # → INTERNAL（retryable=False）
+
+        await handle_json_message(_text_msg("r_term"), agent, None, ws, voice_mgr=None)
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks and acks[-1]["error"]["code"] == "INTERNAL"
+        assert acks[-1]["error"]["retryable"] is False
+
+        entry = await get_store().lookup("default", "r_term")
+        assert entry is not None and entry.status == STATUS_REJECTED, (
+            "非重试的终态拒绝仍须落库（重放语义不变）")
+
+
+class TestRetryableRejectionGuardIsStructural:
+    """**结构性守卫**：`_send_rejected` 的调用点里，凡错误负载可能是 `retryable=True`
+    的，都必须显式 `terminal=False`（S2-C1）。
+
+    为什么用静态扫描而不是只写运行时用例：该缺陷的形状是"同一个 helper 表达两种
+    语义"，运行时只能覆盖走到的那几条路径（附件路径的回归在反证时就漏了网）。
+    逐调用点扫描能覆盖**全部现状 + 未来新增**的调用点。
+    """
+
+    #: 可能返回 retryable=True 的负载构造器（名字即约定）。
+    _RETRYABLE_HELPERS = ("_not_accepted_error", "_storage_unavailable_error",
+                          "_in_progress_error")
+
+    def test_every_retryable_rejection_declares_terminal_false(self):
+        import ast
+        import pathlib as _pl
+
+        src = _pl.Path("core/input/ws_v2.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        offenders: list[str] = []
+
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "_send_rejected"):
+                continue
+            # error 负载是第 5 个位置参数（index 4）
+            if len(node.args) < 5:
+                continue
+            error_arg = node.args[4]
+            seg = ast.get_source_segment(src, error_arg) or ""
+            looks_retryable = (
+                any(h in seg for h in self._RETRYABLE_HELPERS)
+                or ("retryable" in seg and "True" in seg)
+            )
+            if not looks_retryable:
+                continue
+            terminal_false = any(
+                kw.arg == "terminal"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is False
+                for kw in node.keywords
+            )
+            if not terminal_false:
+                offenders.append(f"ws_v2.py:{node.lineno}  {seg[:60]}")
+
+        assert not offenders, (
+            "以下 `_send_rejected` 传了可能 retryable=True 的负载却未声明 "
+            "terminal=False —— 该拒绝会被持久化成终态，同键重试永远重放它：\n  "
+            + "\n  ".join(offenders))

@@ -15,6 +15,7 @@ import asyncio
 import pytest
 
 from core.schema.types import GenerationId, MessageId, SessionId
+from core.schema.utils import now_iso
 from core.storage.generation_repo import GenerationRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
@@ -271,3 +272,77 @@ class TestTtlExpiry:
 
         doc = asyncio.run(repo.find_one(GenerationId("g_old")))
         assert isinstance(doc.get("ttl_expires_at"), datetime)
+
+
+class TestMarkStaleDoesNotClobberCompleted:
+    """S2-C2：`mark_stale` 的读谓词必须**重复出现在写侧**，且返回值必须是真实改动数。
+
+    原实现：读用 `{status, updated_at < cutoff}`、写只剩 `{generation_id}` ——
+    find 与 update 之间正常完成的 generation 被**无条件覆写**成 interrupted +
+    finished_at（前端当失败、终态被篡改、token 统计对账不上）。返回值还写成
+    `modified += 1`（迭代次数）——**一条都没改也会报 N**。
+    """
+
+    def _seed(self, repo, gen_id: str, *, status: str, updated_at: str) -> None:
+        asyncio.run(repo._db.insert_one(  # noqa: SLF001
+            "generations",
+            {"generation_id": gen_id, "session_id": "conv_1", "status": status,
+             "updated_at": updated_at, "created_at": updated_at,
+             "user_message_id": "msg_u", "message_id": "msg_a"},
+        ))
+
+    def test_completed_between_find_and_update_is_not_clobbered(self):
+        """**TOCTOU**：读之后、写之前完成的 generation 不得被改成 interrupted。"""
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        self._seed(repo, "g_stale", status="running",
+                   updated_at="2020-01-01T00:00:00+00:00")
+        self._seed(repo, "g_done", status="running",
+                   updated_at="2020-01-01T00:00:00+00:00")
+
+        real_find = repo._db.find                       # noqa: SLF001
+        flipped = {"done": False}
+
+        async def _find_then_complete(collection, filter_expr, **kw):
+            docs = await real_find(collection, filter_expr, **kw)
+            if not flipped["done"] and docs:
+                # 模拟"find 之后、update 之前"另一条路径把 g_done 正常收尾
+                flipped["done"] = True
+                await repo._db.update_one(     # noqa: SLF001
+                    "generations", {"generation_id": "g_done"},
+                    {"$set": {"status": "completed", "updated_at": now_iso()}})
+            return docs
+
+        repo._db.find = _find_then_complete            # type: ignore[method-assign]  # noqa: SLF001
+        modified = asyncio.run(repo.mark_stale(
+            "running", "2026-01-01T00:00:00+00:00"))
+
+        done = asyncio.run(repo.find_one(GenerationId("g_done")))
+        assert done is not None and done["status"] == "completed", (
+            f"期间完成的 generation 被覆写了：{done}")
+        assert modified == 1, f"返回值必须是**真实改动数**（实得 {modified}）"
+
+    def test_counts_only_actual_modifications(self):
+        """返回值 = modified_count，不是迭代次数。"""
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        self._seed(repo, "g1", status="running", updated_at="2020-01-01T00:00:00+00:00")
+        self._seed(repo, "g2", status="running", updated_at="2020-01-01T00:00:00+00:00")
+        self._seed(repo, "g_new", status="running",
+                   updated_at="2030-01-01T00:00:00+00:00")   # 未过期
+
+        modified = asyncio.run(repo.mark_stale(
+            "running", "2026-01-01T00:00:00+00:00"))
+
+        assert modified == 2, f"只应改动 2 条过期记录，实得 {modified}"
+        assert asyncio.run(repo.find_one(GenerationId("g_new")))["status"] == "running"
+
+    def test_scans_past_backend_default_limit(self):
+        """分页扫描：超过后端默认 limit=100 的残留也要清完。"""
+        repo = GenerationRepository(db=FakeDocumentDBBackend())
+        for i in range(150):
+            self._seed(repo, f"g{i:03d}", status="running",
+                       updated_at="2020-01-01T00:00:00+00:00")
+
+        modified = asyncio.run(repo.mark_stale(
+            "running", "2026-01-01T00:00:00+00:00"))
+
+        assert modified == 150, f"默认 limit=100 会漏掉后半批，实得 {modified}"

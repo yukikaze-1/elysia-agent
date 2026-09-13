@@ -341,7 +341,11 @@ class TestAttachmentMessage:
 
     @pytest.mark.asyncio
     async def test_queue_full_rejected_no_refs_entry_rejected(self, aiohttp_client):
-        """队列满（mock process_message=False）→ rejected QUEUE_FULL + 幂等 entry reject 持久化 + refs 不递增。"""
+        """队列满（mock process_message=False）→ rejected QUEUE_FULL + refs 不递增。
+
+        S2-C1：QUEUE_FULL 是 `retryable=True` → **不落终态**（原先断言
+        `entry.status == "rejected"` 把"该幂等键永久失败"写成了预期行为）。
+        """
         agent, app = _make_agent_app()
         _add_attachment(agent._attachment_repo, "att_x")  # noqa: SLF001
         client = await aiohttp_client(app)
@@ -363,10 +367,13 @@ class TestAttachmentMessage:
             # refs 不递增
             doc = agent._attachment_repo.records["att_x"]  # noqa: SLF001
             assert doc["ref_count"] == 0 and not doc["refs"]
-            # Task 4：reject 持久化——重试重放原 rejected QUEUE_FULL（非重新进入）
+            # S2-C1：瞬时拒绝不落终态——保持 CLAIMED，重试仍能被重新处理
             entry = await get_store().lookup("default", "req_qfull")
-            assert entry is not None and entry.status == "rejected"
-            assert entry.error["code"] == "QUEUE_FULL"
+            assert entry is not None and entry.status != "rejected", (
+                "retryable 的拒绝被落成终态 → 该幂等键永久失败")
+            assert entry.status == "claimed"
+            # 未落终态 → entry.error 为空（拒绝只发给了客户端，没写进幂等表）
+            assert entry.error is None
             await ws.send_json({
                 "type": "text", "content": "hi",
                 "clientRequestId": "req_qfull",
@@ -374,9 +381,10 @@ class TestAttachmentMessage:
             })
             ack2 = await _read_ack(ws)
             assert ack2["status"] == "rejected"
-            assert ack2["error"]["code"] == "QUEUE_FULL"
-            assert ack2["error"] == ack["error"], "rejected 重放 error 逐字一致"
-            assert ack2["receivedAt"] == ack["receivedAt"], "receivedAt 用持久化原值"
+            # S2-C1：瞬时拒绝不落终态 → 重试回到「原请求可能仍在途」的 IN_PROGRESS，
+            # 而不是把 QUEUE_FULL 逐字重放（那会让该幂等键永久失败）
+            assert ack2["error"]["code"] == "IN_PROGRESS", ack2["error"]
+            assert ack2["error"]["retryable"] is True
             await ws.close()
         finally:
             await agent.stop()

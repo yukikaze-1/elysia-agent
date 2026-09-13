@@ -610,18 +610,25 @@ class TestQueueFullAck:
         assert ack and ack[0]["status"] == "rejected"
         assert ack[0]["error"]["code"] == "QUEUE_FULL"
         assert ack[0]["error"]["retryable"] is True
-        # Task 4：reject 持久化——同 clientRequestId 重试重放原 rejected（非重新进入）
+        # S2-C1：`retryable=True` 的拒绝**不得落成终态**——否则同 clientRequestId
+        # 重试只会永远重放这条 QUEUE_FULL（客户端遵守 retryable 重发多少次都不成功，
+        # 且没有任何线索指向"必须换 clientRequestId"）。保持 CLAIMED 让重试能被重新处理。
         entry = await get_store().lookup("default", "q1")
-        assert entry is not None and entry.status == STATUS_REJECTED
-        assert entry.error["code"] == "QUEUE_FULL"
+        assert entry is not None and entry.status != STATUS_REJECTED, (
+            "retryable 的拒绝被落成终态 → 该幂等键永久失败")
+        assert entry.status == "claimed"
         ws.sent.clear()
         await handle_json_message(
             {"type": "text", "content": "你好", "clientRequestId": "q1"},
             agent, None, ws, voice_mgr=None)
         ack2 = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert ack2 and ack2[0]["status"] == "rejected"
-        assert ack2[0]["error"] == ack[0]["error"], "rejected 重放 error 逐字一致"
-        assert ack2[0]["receivedAt"] == ack[0]["receivedAt"], "receivedAt 用持久化原值"
+        # S2-C1：**瞬时**拒绝不落终态，故重试不再是"逐字重放"——它回到
+        # 「原请求可能仍在途」的 IN_PROGRESS 语义（可退避重试，最终能成功）。
+        # 终态拒绝（`retryable=False`）的重放语义不变，见
+        # `test_plain_text_exception_rejected_and_entry_rejected`。
+        assert ack2[0]["error"]["code"] == "IN_PROGRESS", ack2[0]["error"]
+        assert ack2[0]["error"]["retryable"] is True
 
     @pytest.mark.asyncio
     async def test_plain_text_exception_rejected_and_entry_rejected(self, fresh_idempotency):
@@ -1583,8 +1590,15 @@ class TestV2IdempotencyStateMachine:
         assert (await get_store().lookup("default", "r1")).status == "accepted"
 
     @pytest.mark.asyncio
-    async def test_rejected_replay_byte_identical(self, fresh_idempotency):
-        """rejected 路径（QUEUE_FULL）→ store.reject；同键重试重放原 rejected（receivedAt 原值）。"""
+    async def test_retryable_rejection_is_not_persisted_as_terminal(self, fresh_idempotency):
+        """**S2-C1 修正**：QUEUE_FULL 是 `retryable=True`，**不得**落成终态。
+
+        原用例名 `test_rejected_replay_byte_identical`，断言"同键重试逐字重放原 rejected"
+        ——**把缺陷写成了预期**。那条语义对**瞬时**拒绝是致命的：客户端遵守 `retryable`
+        重发多少次都只会拿到同一条拒绝，且没有任何线索指向"必须换 clientRequestId"。
+        （终态拒绝的重放语义仍然成立，由 `test_process_exception_rejects_internal`
+        那条 `retryable=False` 的路径覆盖。）
+        """
         from core.storage.idempotency import get_store
         from core.input.ws_handler import handle_json_message
         from core.input.tests.test_voice_ws import FakeWs
@@ -1595,20 +1609,20 @@ class TestV2IdempotencyStateMachine:
         acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert acks and acks[-1]["status"] == "rejected"
         assert acks[-1]["error"]["code"] == "QUEUE_FULL"
-        first_error = dict(acks[-1]["error"])
-        first_received = acks[-1]["receivedAt"]
-        # entry 已 reject（不再 delete）：重试重放原 rejected ACK（逐字一致）
+        # 幂等键**未**落终态 → 重试路径仍然活着
         entry = await get_store().lookup("default", "q1")
-        assert entry is not None and entry.status == "rejected"
-        assert entry.error["code"] == "QUEUE_FULL"
+        assert entry is not None and entry.status == "claimed", (
+            f"retryable 的拒绝被落成 {entry.status} → 该幂等键永久失败")
+        # 立即重试：新鲜 CLAIMED → IN_PROGRESS（可退避重试），不是重放 QUEUE_FULL
         ws.sent.clear()
         await handle_json_message(_text_msg("q1"), agent, None, ws, voice_mgr=None)
         acks2 = [s for s in ws.sent if s.get("type") == "user_message.ack"]
         assert acks2 and acks2[-1]["status"] == "rejected"
-        assert acks2[-1]["error"] == first_error, "rejected 重放 error 逐字一致"
-        assert acks2[-1]["receivedAt"] == first_received, "rejected 重放 receivedAt 用持久化原值"
+        assert acks2[-1]["error"]["code"] == "IN_PROGRESS", (
+            f"应回到「原请求可能仍在途」的语义，实得 {acks2[-1]['error']}")
         assert acks2[-1]["clientRequestId"] == "q1"
-        assert agent.process_calls == 1, "rejected 重放不重复 process"
+        # 首次调用已进过一次业务流（返回 False），重试**不再**进入
+        assert agent.process_calls == 1, "立即重试走 IN_PROGRESS，不重复进入业务流"
 
     @pytest.mark.asyncio
     async def test_process_exception_rejects_internal(self, fresh_idempotency):
@@ -1647,9 +1661,12 @@ class TestV2IdempotencyStateMachine:
         assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
         assert agent.process_calls == 0, "refs 未全持久化不调 process"
         assert repo.released == ["att_x"], "已预留 refs 需回滚"
+        # S2-C1：STORAGE_UNAVAILABLE 是**瞬时**故障（retryable=True）→ 不落终态；
+        # 保持 CLAIMED，存储恢复后同键重试能被重新处理。
         entry = await get_store().lookup("default", "ab")
-        assert entry is not None and entry.status == "rejected"
-        assert entry.error["code"] == "STORAGE_UNAVAILABLE"
+        assert entry is not None and entry.status != "rejected", (
+            "瞬时故障被落成终态 → 该幂等键永久失败")
+        assert entry.status == "claimed"
 
     @pytest.mark.asyncio
     async def test_storage_unavailable_ack_carries_idempotency_durable(self, fresh_idempotency):

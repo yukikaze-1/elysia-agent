@@ -309,27 +309,50 @@ class GenerationRepository(Repository):
         """
         if self._db is None:
             return 0
-        stale_docs = await self._db.find(
-            COLLECTION,
-            {"status": status_from, "updated_at": {"$lt": older_than_iso}},
-        )
+        # S2-C2：**写侧必须带读谓词**。原先读用 `{status, updated_at < cutoff}`、
+        # 写只剩 `{generation_id}` —— find 与 update 之间正常完成的 generation 会被
+        # **无条件覆写**成 interrupted + finished_at：前端当失败、终态被篡改、
+        # token 统计对账不上（启动清理与长生成收尾交错即可命中）。
+        # 另：`find` 原先没有 limit，静默吃后端默认 limit=100（大批残留清理不全）。
+        predicate = {"status": status_from, "updated_at": {"$lt": older_than_iso}}
         modified = 0
-        for doc in stale_docs:
-            gen_id = doc.get("generation_id")
-            if not gen_id:
-                continue
-            await self._db.update_one(
-                COLLECTION, {"generation_id": gen_id},
-                {"$set": {
-                    "status": STATUS_INTERRUPTED,
-                    "updated_at": now_iso(),
-                    # review 修复（批次 C）：终态语义与 mark() 一致——stale 清理标
-                    # interrupted 一并写 finished_at（此前保持 None，契约
-                    # finishedAt 恒空，无法区分中断时刻）。
-                    "finished_at": now_iso(),
-                }},
-            )
-            modified += 1
+        page = 100
+        while True:
+            # **每轮重查、不用 skip 推进**：改过的文档已不再满足谓词（status 变了），
+            # 用 skip 会跳过尚未处理的那一批（实测 150 条只清到 100 条）。
+            stale_docs = await self._db.find(COLLECTION, predicate, limit=page)
+            if not stale_docs:
+                break
+            changed_in_page = 0
+            for doc in stale_docs:
+                gen_id = doc.get("generation_id")
+                if not gen_id:
+                    continue
+                # 写侧重复读谓词（TOCTOU 收口）：期间状态/时间变了的文档不再命中，
+                # `modified_count` 为 0 —— 那才是"真的没改"。
+                changed = await self._db.update_one(
+                    COLLECTION,
+                    {"generation_id": gen_id, **predicate},
+                    {"$set": {
+                        "status": STATUS_INTERRUPTED,
+                        "updated_at": now_iso(),
+                        # review 修复（批次 C）：终态语义与 mark() 一致——stale 清理标
+                        # interrupted 一并写 finished_at（此前保持 None，契约
+                        # finishedAt 恒空，无法区分中断时刻）。
+                        "finished_at": now_iso(),
+                    }},
+                )
+                # 原先写 `modified += 1`（迭代次数）——**返回值造假**：即使一条都没改
+                # 也会报 N。现在只计真正改动的条数。
+                modified += changed
+                changed_in_page += changed
+            if len(stale_docs) < page:
+                break
+            if changed_in_page == 0:
+                # 整页无人可改（全被并发改写）→ 再查也是同一批，防死循环
+                logger.warning(
+                    "GenerationRepository mark_stale: 整页 0 改动，提前结束分页")
+                break
         if modified:
             logger.info(
                 "GenerationRepository mark_stale: %d → interrupted (from=%s)",

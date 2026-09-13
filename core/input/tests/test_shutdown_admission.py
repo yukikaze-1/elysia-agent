@@ -11,8 +11,9 @@
 1. `process_message` 在三个非 RUNNING 状态下一律返回 False（且不投 bus、不登记
    v2 accepted work）；
 2. `/ready` 停机窗口 503、`/health` 仍 200 且暴露两个状态源的分歧；
-3. v2 WS 真实链路：停机窗口收到 **rejected**（AGENT_BUSY），重试重放的是
-   rejected 而**不是** accepted。
+3. v2 WS 真实链路：停机窗口收到 **rejected**（AGENT_BUSY），且**绝不重放 accepted**。
+   S2-C1 之后，这条瞬时拒绝不落终态——同 key 立即重试拿到 `IN_PROGRESS`
+   （"原请求可能仍在途"，可退避重试），而不是被逐字重放成永久失败。
 """
 
 import asyncio
@@ -218,7 +219,13 @@ async def _send_and_read_ack(ws, content: str, client_request_id: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_v2_text_rejected_during_shutdown_and_never_replays_accepted(aiohttp_client):
-    """停机窗口 → rejected(AGENT_BUSY)；恢复后同 key 重试 → 重放 rejected，不是 accepted。"""
+    """停机窗口 → rejected(AGENT_BUSY)；同 key 重试**绝不重放 accepted**。
+
+    S2-C1 之后这条拒绝（`retryable=True`）**不落终态**，故重试不再逐字重放它，
+    而是回到「原请求可能仍在途」的 `IN_PROGRESS`——客户端按 `retryable` 退避后
+    同键重试仍能真正被处理。CR-08 的原始诉求（"不得重放一个撒谎的 accepted"）
+    由此更强地成立：没有 accepted 被写进去。
+    """
 
     from core.cognitive.tests.test_v2_generation import _make_agent_with, _UsageLLM
     from core.input.server import create_app
@@ -238,11 +245,14 @@ async def test_v2_text_rejected_during_shutdown_and_never_replays_accepted(aioht
         assert ack["error"]["code"] == "AGENT_BUSY", ack
         assert ack["error"]["retryable"] is True, ack
 
-        # 恢复运行后再发同 key 同内容 → 幂等重放，**必须是 rejected**
+        # 恢复运行后再发同 key 同内容 → 瞬时拒绝不落终态，重试回到 IN_PROGRESS
+        # （幂等表里**没有** accepted 被写进去，这正是 CR-08 的诉求）
         agent._state = RunState.RUNNING
         ack2 = await _send_and_read_ack(ws, "停机窗口的消息", "req_sd")
-        assert ack2["status"] == "rejected", f"重放成了 {ack2['status']}：{ack2}"
-        assert ack2["error"]["code"] == "AGENT_BUSY"
+        assert ack2["status"] == "rejected", f"不得变成 accepted：{ack2}"
+        assert ack2["error"]["code"] == "IN_PROGRESS", (
+            f"瞬时拒绝不该被逐字重放成永久失败：{ack2['error']}")
+        assert ack2["error"]["retryable"] is True
     finally:
         # 断言失败也必须关 WS——否则未关闭的连接会让 aiohttp 测试服务器收尾挂死，
         # 把「一条失败」变成「整个 job 超时」。
