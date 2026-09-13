@@ -112,7 +112,9 @@ class TestExpectedIndexesPinnedToCode:
         """防止解析器故障导致表被"清空"却测试通过。"""
         total = sum(len(v) for v in EXPECTED_INDEXES.values())
         assert len(EXPECTED_INDEXES) == 12
-        assert total == 24, f"期望 24 个索引，实际 {total}"
+        # 26 = 24（S3-20 前）+ generations.user_message_id_1_created_at_-1
+        #    + character_instances.character_id_1_instance_id_1
+        assert total == 26, f"期望 26 个索引，实际 {total}"
 
 
 @pytest.mark.unit
@@ -349,3 +351,63 @@ class TestIndexOptionConflicts:
         with caplog.at_level(logging.ERROR):
             log_schema_drift_report(report)
         assert any("选项冲突" in r.getMessage() for r in caplog.records)
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-20：热路径查询必须有覆盖 filter + sort 的索引
+# ══════════════════════════════════════════════════════════════════
+
+class TestHotQueryIndexes:
+    """`find_by_user_message` 是**幂等证据探测**的热路径（每次 stale CLAIMED 恢复都走
+    一次），filter `user_message_id` + sort `created_at desc`——而两个字段原先都没有
+    索引 → **每次探测都是 COLLSCAN**，随档案增长线性劣化。
+
+    这类缺陷 `EXPECTED_INDEXES` 的 AST 钉死天然看不见：它只保证"声明过的索引名与表
+    对得上"，**不保证"该声明的索引都声明了"**。所以这里按**查询形态**断言。
+    """
+
+    def test_find_by_user_message_has_covering_index(self):
+        """幂等证据热路径：filter + sort 两列都要被同一个复合索引覆盖。"""
+        from core.storage.schema_drift import EXPECTED_INDEXES
+
+        declared = EXPECTED_INDEXES["generations"]
+        assert "user_message_id_1_created_at_-1" in declared, (
+            f"find_by_user_message 的 filter(user_message_id) + sort(created_at desc) "
+            f"没有覆盖索引——每次幂等恢复都会 COLLSCAN。现有：{sorted(declared)}")
+
+    def test_compound_index_order_matches_query(self):
+        """复合索引的**顺序**要匹配查询：等值条件在前、排序键在后。
+
+        反了就用不上（Mongo 只能按索引前缀扫描，排序键在前会让等值过滤退化成扫描）。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEXES
+
+        name = "user_message_id_1_created_at_-1"
+        assert name in EXPECTED_INDEXES["generations"]
+        prefix, _, suffix = name.partition("_1_")
+        assert prefix == "user_message_id" and suffix == "created_at_-1", (
+            f"复合索引顺序应为主要过滤键在前：{name}")
+
+    def test_list_by_character_has_index(self):
+        """`list_by_character(character_id)` + sort instance_id 也需要索引。
+
+        既有复合索引前缀是 `owner_user_id`，按 `character_id` 单查**用不上**。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEXES
+
+        assert "character_id_1_instance_id_1" in EXPECTED_INDEXES["character_instances"]
+
+    def test_admin_listing_is_documented_as_unindexed(self):
+        """**有意的例外必须写明理由**——否则下一个人会把"没加索引"当遗漏。
+
+        `CharacterRepository.list_definitions` 是管理/目录路径（四种可选过滤的任意
+        组合、由扫描上限限界），不为组合过滤逐一套索引。
+        """
+        import pathlib
+
+        src = (pathlib.Path(__file__).resolve().parents[1] / "character_repo.py").read_text(
+            encoding="utf-8")
+        idx = src.index("async def list_definitions")
+        doc = src[idx:idx + 900]
+        assert "S3-20" in doc and "有意不为" in doc, (
+            "list_definitions 未加索引这件事必须**在代码里**写明理由")

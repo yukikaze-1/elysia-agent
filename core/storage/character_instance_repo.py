@@ -37,6 +37,11 @@ class CharacterInstanceRepository(Repository):
         try:
             self._db = DocumentDBFactory.create("mongodb/default", base_url=self._base_url)
             await self._db.ensure_index(COLLECTION, [("instance_id", 1)], unique=True)
+            # S3-20：`list_by_character(character_id[, owner_user_id])` + sort instance_id
+            # 原先无可用索引——既有复合索引的前缀是 `owner_user_id`，按 `character_id`
+            # 单独查用不上（前缀不匹配）。
+            await self._db.ensure_index(
+                COLLECTION, [("character_id", 1), ("instance_id", 1)])
             await self._db.ensure_index(
                 COLLECTION,
                 [("owner_user_id", 1), ("character_id", 1), ("canonical", 1)],

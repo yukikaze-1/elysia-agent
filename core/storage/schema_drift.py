@@ -101,7 +101,8 @@ EXPECTED_INDEXES: dict[str, frozenset[str]] = {
         "attachment_id_1", "created_at_1", "ref_count_1", "status_1",
     }),
     "character_instances": frozenset({
-        "instance_id_1", "owner_user_id_1_character_id_1_canonical_1",
+        "character_id_1_instance_id_1", "instance_id_1",
+        "owner_user_id_1_character_id_1_canonical_1",
     }),
     "character_revisions": frozenset({"character_id_1_revision_-1"}),
     "character_versions": frozenset({"session_id_1_content_type_1_version_-1"}),
@@ -111,7 +112,7 @@ EXPECTED_INDEXES: dict[str, frozenset[str]] = {
     }),
     "generations": frozenset({
         "generation_id_1", "message_id_1", "session_id_1_updated_at_-1",
-        "ttl_expires_at_1",
+        "ttl_expires_at_1", "user_message_id_1_created_at_-1",
     }),
     "idempotency": frozenset({
         "conversation_id_1_client_request_id_1", "expires_at_1",

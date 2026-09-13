@@ -98,6 +98,12 @@ class GenerationRepository(Repository):
             await self._db.ensure_index(COLLECTION, [("generation_id", 1)], unique=True)
             await self._db.ensure_index(COLLECTION, [("session_id", 1), ("updated_at", -1)])
             await self._db.ensure_index(COLLECTION, [("message_id", 1)])
+            # S3-20：**幂等证据探测的热路径**（`find_by_user_message`：filter
+            # `user_message_id` + sort `created_at` desc）。此前两个字段都没有索引
+            # → 每次探测都是 COLLSCAN，而它在"恢复 stale CLAIMED"时每条都会走一次，
+            # 随档案增长线性劣化。复合索引同时覆盖 filter 与 sort（避免内存排序）。
+            await self._db.ensure_index(
+                COLLECTION, [("user_message_id", 1), ("created_at", -1)])
             try:
                 # B6/P2-01：TTL 基于真实 BSON Date ttl_expires_at（旧 updated_at ISO 不生效）
                 await self._db.ensure_index(

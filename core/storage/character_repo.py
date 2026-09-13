@@ -131,6 +131,15 @@ class CharacterRepository(Repository):
     async def list_definitions(self, *, source: str | None = None, status: str | None = None,
                                owner_user_id: str | None = None, search: str | None = None,
                                cursor: str | None = None, limit: int = 50) -> list[CharacterDefinition]:
+        """列角色定义（目录页）。
+
+        **S3-20 评估：有意不为本方法的过滤组合加索引。** 它是**管理/目录**路径
+        （`source` / `status` / `owner_user_id` / `slug` 正则四种可选过滤的任意组合），
+        只在上层"列出角色"时走一次、且由 `MAX_CHARACTER_LIST_SCAN` 限界；为组合过滤
+        逐一套索引的写放大比它省下的扫描更贵。**真正每次恢复都走的热路径是
+        `GenerationRepository.find_by_user_message`**（已补复合索引）。
+        若将来目录规模或调用频次显著上升，再按实际查询形态针对性加。
+        """
         if self._db is None:
             raise StorageUnavailableError("CharacterRepository 未连接")
         filt: dict = {}
