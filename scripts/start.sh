@@ -6,6 +6,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
+# ── 0. 单实例守卫（S2-7）────────────────────────────────────────────────────
+# 并发跑两次 start.sh 会各自走完预检、各自 `docker compose up`、各自 exec python——
+# 第二个进程在 bind 8765 时才失败，而此前它已经动过数据库与前端产物；
+# 更糟的是两边都认为"服务在跑"。用 flock 在**进入任何副作用之前**收口。
+# 锁按项目根路径区分（不同 checkout 可各跑一份），放在 ${TMPDIR} 下不污染仓库。
+# fd 9 一直持有到 exec 之后——进程存活期间锁不掉。
+_LOCK_NAME="elysia-agent-$(printf '%s' "$PWD" | cksum | cut -d' ' -f1).lock"
+LOCK_FILE="${TMPDIR:-/tmp}/${_LOCK_NAME}"
+if command -v flock &> /dev/null; then
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        echo "✗ 已有 start.sh 在运行（锁: $LOCK_FILE）——拒绝并发启动。" >&2
+        echo "  确认没有残留进程后重试；锁文件可安全删除。" >&2
+        exit 1
+    fi
+else
+    # macOS 默认无 flock（util-linux 包）。**显式告警而非静默跳过**——
+    # 让"守卫没生效"这件事可见，而不是让人以为有保护。
+    echo "  ⚠ 未找到 flock——跳过单实例守卫（并发启动可能竞争端口）" >&2
+fi
+
 # ── 检测 Python 环境 ───────────────────────────────────────────────────────
 
 PYTHON=""

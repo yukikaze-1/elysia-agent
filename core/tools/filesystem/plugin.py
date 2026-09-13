@@ -45,6 +45,70 @@ class ReadFileParams(BaseModel):
     max_lines: int = Field(default=200, ge=1, le=500, description="最大读取行数")
 
 
+def _sandbox_roots(profile: SafetyProfile, safe_sid: str, *,
+                   write: bool) -> list[Path]:
+    """沙盒边界（write → 仅 write_dir；read → write_dir + read_dirs）。"""
+    roots: list[str] = []
+    if write:
+        roots.append(profile.write_dir)
+    else:
+        if profile.read_dirs:
+            roots.extend(profile.read_dirs)
+        roots.append(profile.write_dir)
+    out: list[Path] = []
+    for r in roots:
+        try:
+            out.append(Path(r.replace("{session_id}", safe_sid)).resolve())
+        except (OSError, RuntimeError):
+            continue
+    return out
+
+
+def resolve_in_sandbox(raw: str, *, profile: SafetyProfile, session_id: str,
+                       write: bool) -> tuple[Path | None, str | None]:
+    """解析路径并做沙盒 containment 检查（S2-6）。
+
+    为什么插件自己要查：`_safe_path` 只在 `profile.filesystem_allowed` 时由
+    `SafetyPipeline` 注入；插件被直接调用（测试 / 直接执行路径）时拿到的是
+    **原始用户输入**。而原先的插件内检查是 `Path(path)`（**未 resolve**）与已
+    `resolve()` 的 `write_dir` 比较——`PurePath.is_relative_to` 只比路径部件：
+
+    - `<sandbox>/../../etc/x` 的部件以 `('/', 'sandbox')` 开头 → **判为"在沙盒内"**，
+      而实际写入由内核按 `..` 解析，落到沙盒外（实测逃逸成功）；
+    - 反过来，经 symlink 到达沙盒的**合法**路径（`/tmp/link → sandbox`）因为未解析
+      而与被解析的 write_dir 不匹配 → **误拒**。
+
+    先 `resolve()` 再比较，两个方向同时修好。
+
+    Args:
+        raw: 原始路径（可能相对、可能含 `..`）。
+        profile: 该插件的安全配置。
+        session_id: 会话 ID（`{session_id}` 模板替换）。
+        write: True=写路径（只允许 write_dir），False=读路径（read_dirs + write_dir）。
+
+    Returns:
+        (resolved_path, None) 或 (None, 拒绝原因)。
+    """
+    from Module.tool.safety import sanitize_session_id
+
+    safe_sid = sanitize_session_id(session_id or "default")
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        base = _sandbox_roots(profile, safe_sid, write=write)
+        if not base:
+            return None, "拒绝访问: 未配置沙盒边界"
+        p = base[0] / p
+    try:
+        resolved = p.resolve()
+    except (OSError, RuntimeError) as e:
+        return None, f"路径解析失败: {e}"
+
+    roots = _sandbox_roots(profile, safe_sid, write=write)
+    if not roots or not any(resolved.is_relative_to(r) for r in roots):
+        return None, f"拒绝访问: 路径 '{raw}' 越过了 sandbox 边界"
+    return resolved, None
+
+
 class ReadFilePlugin(ToolPlugin):
     name = "read_file"
     description = "读取指定文件的内容（仅文本文件）"
@@ -72,7 +136,13 @@ class ReadFilePlugin(ToolPlugin):
             文件内容字符串，或错误信息。
         """
         path = ctx.get("_safe_path") or params.path
-        resolved = Path(path)
+        # S2-6：插件自己也做 containment（`_safe_path` 只在 filesystem_allowed 时注入）
+        resolved, err = resolve_in_sandbox(
+            path, profile=self.safety, session_id=ctx.session_id or "default",
+            write=False)
+        if err or resolved is None:
+            return tool_failure(err or "路径不可用",
+                                error_type=ErrorType.PERMISSION_DENIED)
 
         if not resolved.exists():
             return tool_failure(f"路径不存在: {path}",
@@ -158,7 +228,12 @@ class ListDirPlugin(ToolPlugin):
             目录列表字符串，或错误信息。
         """
         path = ctx.get("_safe_path") or params.path
-        resolved = Path(path)
+        resolved, err = resolve_in_sandbox(
+            path, profile=self.safety, session_id=ctx.session_id or "default",
+            write=False)
+        if err or resolved is None:
+            return tool_failure(err or "路径不可用",
+                                error_type=ErrorType.PERMISSION_DENIED)
 
         if not resolved.exists():
             return tool_failure(f"路径不存在: {path}",
@@ -276,20 +351,15 @@ class WriteFilePlugin(ToolPlugin):
             写入结果字符串。
         """
         path = ctx.get("_safe_path") or params.path
-        resolved = Path(path)
-
-        session_id = ctx.session_id or "default"
-        safe_sid = session_id.replace("/", "_").replace("\\", "_")
-        write_dir = Path(
-            self.safety.write_dir.replace("{session_id}", safe_sid)
-        ).resolve()
-
-        # D1/P1-14 + P2-05：is_relative_to 替代 startswith（sibling 逃逸）；
-        # 检查待写内容的真实 UTF-8 字节数（新建文件当前大小 0 会绕过 max_file_bytes）
-        if not resolved.is_relative_to(write_dir):
-            return tool_failure(
-                f"拒绝写入: 路径 '{params.path}' 越过了 sandbox 边界",
-                error_type=ErrorType.PERMISSION_DENIED)
+        # S2-6：**先 resolve 再 containment**。原先 `Path(path)` 未解析却与已解析的
+        # write_dir 比 `is_relative_to`——词法比较让 `<sandbox>/../../etc/x` 通过
+        # （部件前缀相同），实际写入落到沙盒外；symlink 到达沙盒的合法路径则被误拒。
+        resolved, err = resolve_in_sandbox(
+            path, profile=self.safety, session_id=ctx.session_id or "default",
+            write=True)
+        if err or resolved is None:
+            return tool_failure(err or "路径不可用",
+                                error_type=ErrorType.PERMISSION_DENIED)
         try:
             content_bytes = params.content.encode("utf-8")
         except UnicodeEncodeError:

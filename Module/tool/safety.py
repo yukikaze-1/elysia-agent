@@ -13,7 +13,7 @@ from typing import Any, AsyncIterator, Callable
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
-def _sanitize_session_id(session_id: str) -> str:
+def sanitize_session_id(session_id: str) -> str:
     """对 session_id 做安全过滤，防止路径穿越攻击。
 
     仅允许 [a-zA-Z0-9_-]。不匹配时返回 "default"。
@@ -35,6 +35,9 @@ from Module.tool.capability import Capability
 from Module.tool.protocol import ToolProgress
 
 logger = logging.getLogger(__name__)
+
+#: 兼容旧名（本模块内历史引用）。跨包一律用公开名——R3 禁止跨包导入下划线符号。
+_sanitize_session_id = sanitize_session_id
 
 
 # ============================================================================
@@ -232,7 +235,7 @@ def _resolve_sandbox_path(
         (解析后的绝对路径, 错误信息或 None)。
     """
     raw = Path(path)
-    safe_sid = _sanitize_session_id(session_id)
+    safe_sid = sanitize_session_id(session_id)
     if not raw.is_absolute():
         if is_write:
             write_dir = profile.write_dir.replace("{session_id}", safe_sid)
@@ -651,7 +654,7 @@ class SafetyPipeline:
         profile = plugin.safety
         if profile is None:
             return None
-        session_id = _sanitize_session_id(
+        session_id = sanitize_session_id(
             getattr(ctx, "session_id", "default") or "default"
         )
 

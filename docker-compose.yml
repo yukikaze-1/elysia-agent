@@ -34,6 +34,12 @@ x-datastore: &datastore
   networks:
     - internal
 
+# S2-8：**healthcheck + depends_on 条件**。此前只有 `depends_on: [etcd, minio]`
+# （compose 默认 condition=service_started）——容器**建起来**就算满足，Milvus 会在
+# etcd/MinIO 真正可用之前启动，首次连接失败要靠自身重试兜；而 `start.sh` 用
+# "端口能不能连上"判断就绪，宿主机端口由 docker-proxy 提前占用，判断同样偏乐观。
+# 这几段让"就绪"成为可被编排系统观察的事实。
+
 services:
   # ---- MongoDB（dev/production 共享；仅 127.0.0.1 发布数据端口；启用认证） ----
   mongodb:
@@ -49,6 +55,12 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?在 .env 设置 MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?在 .env 设置 MONGO_INITDB_ROOT_PASSWORD}
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   # ---- etcd（无宿主端口，仅内部网络；dev/production 共享） ----
   etcd:
@@ -64,6 +76,12 @@ services:
     volumes:
       - etcd_data:/etcd
     command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   # ---- MinIO dev（仅 127.0.0.1 暴露 9000/9001 供本地调试） ----
   minio:
@@ -80,6 +98,12 @@ services:
     volumes:
       - minio_data:/minio_data
     command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   # ---- MinIO production（无宿主端口，仅内部网络供 Milvus 使用） ----
   minio-prod:
@@ -93,6 +117,12 @@ services:
     volumes:
       - minio_data_prod:/minio_data
     command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   # ---- Milvus dev（仅 127.0.0.1 暴露 19530/9091 供调试；启用授权） ----
   milvus:
@@ -112,8 +142,17 @@ services:
     volumes:
       - milvus_data:/var/lib/milvus
     depends_on:
-      - etcd
-      - minio
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      # Milvus 的 19530 由 docker-proxy **提前**占用——宿主端口可连 ≠ 服务就绪
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
 
   # ---- Milvus production（仅 127.0.0.1 暴露 19530；不发布 metrics 9091） ----
   milvus-prod:
@@ -132,8 +171,16 @@ services:
     volumes:
       - milvus_data_prod:/var/lib/milvus
     depends_on:
-      - etcd
-      - minio-prod
+      etcd:
+        condition: service_healthy
+      minio-prod:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
 
 volumes:
   mongo_data:

@@ -57,6 +57,22 @@ class TestReadFilePlugin:
         ctx.services["_safe_path"] = path
         return ctx
 
+    @staticmethod
+    def _plugin(tmp_path, **over):
+        """读沙盒指向 tmp_path —— **S2-6 起插件自己也做 containment**。
+
+        这些用例把文件建在 `tmp_path` 下，而插件默认 `read_dirs` 是
+        `/home/yomu/data/sandbox`；此前插件不做自己的检查（只信 `_safe_path`），
+        所以"沙盒配置"与"实际路径"不一致也照样跑过——**前提不真实**。
+        现在必须让两者一致（生产里 `_safe_path` 也只可能来自该沙盒内部）。
+        """
+        plugin = ReadFilePlugin()
+        plugin.safety.read_dirs = [str(tmp_path)]
+        plugin.safety.write_dir = str(tmp_path)
+        for k, v in over.items():
+            setattr(plugin.safety, k, v)
+        return plugin
+
     # ── 基本功能 ──
 
     @pytest.mark.asyncio
@@ -65,7 +81,7 @@ class TestReadFilePlugin:
         file = tmp_path / "hello.txt"
         file.write_text("hello\nworld\n")
 
-        plugin = ReadFilePlugin()
+        plugin = self._plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(file)),
             emit=None,
@@ -82,7 +98,7 @@ class TestReadFilePlugin:
         """不存在的路径返回 '路径不存在'。"""
         path = str(tmp_path / "nonexistent.txt")
 
-        plugin = ReadFilePlugin()
+        plugin = self._plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(path),
             emit=None,
@@ -94,7 +110,7 @@ class TestReadFilePlugin:
     @pytest.mark.asyncio
     async def test_not_a_file_when_path_is_directory(self, tmp_path):
         """路径是目录时返回 '不是文件'。"""
-        plugin = ReadFilePlugin()
+        plugin = self._plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(tmp_path)),
             emit=None,
@@ -112,7 +128,7 @@ class TestReadFilePlugin:
         # 写入无效 UTF-8 字节以触发 UnicodeDecodeError
         file.write_bytes(b"\x00\x01\x02\xff\xfe\xfd")
 
-        plugin = ReadFilePlugin()
+        plugin = self._plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(file)),
             emit=None,
@@ -127,7 +143,7 @@ class TestReadFilePlugin:
         file = tmp_path / "empty.txt"
         file.write_text("")
 
-        plugin = ReadFilePlugin()
+        plugin = self._plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(file)),
             emit=None,
@@ -145,7 +161,7 @@ class TestReadFilePlugin:
         lines = [f"line{i}" for i in range(10)]
         file.write_text("\n".join(lines))
 
-        plugin = ReadFilePlugin()
+        plugin = self._plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(file)),
             emit=None,
@@ -162,7 +178,7 @@ class TestReadFilePlugin:
         file = tmp_path / "many.txt"
         file.write_text("\n".join(f"line{i}" for i in range(20)))
 
-        plugin = ReadFilePlugin()
+        plugin = self._plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(file)),
             emit=None,
@@ -179,7 +195,7 @@ class TestReadFilePlugin:
         file = tmp_path / "large.txt"
         file.write_text("\n".join(f"line{i}" for i in range(300)))
 
-        plugin = ReadFilePlugin()
+        plugin = self._plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(file)),
             emit=None,
@@ -194,6 +210,16 @@ class TestReadFilePlugin:
 # ============================================================================
 # ListDirPlugin（列目录插件）
 # ============================================================================
+
+def _list_plugin(tmp_path, **over):
+    """列目录沙盒指向 tmp_path —— S2-6 起插件自己做 containment，前提必须一致。"""
+    plugin = ListDirPlugin()
+    plugin.safety.read_dirs = [str(tmp_path)]
+    plugin.safety.write_dir = str(tmp_path)
+    for k, v in over.items():
+        setattr(plugin.safety, k, v)
+    return plugin
+
 
 class TestListDirPlugin:
     """ListDirPlugin — 列出目录内容，含大小和时间戳。"""
@@ -214,7 +240,7 @@ class TestListDirPlugin:
         subdir = tmp_path / "sub"
         subdir.mkdir()
 
-        plugin = ListDirPlugin()
+        plugin = _list_plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(tmp_path)),
             emit=None,
@@ -234,7 +260,7 @@ class TestListDirPlugin:
         """不存在的路径返回 '路径不存在'。"""
         path = str(tmp_path / "ghost")
 
-        plugin = ListDirPlugin()
+        plugin = _list_plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(path),
             emit=None,
@@ -249,7 +275,7 @@ class TestListDirPlugin:
         file = tmp_path / "plain.txt"
         file.write_text("hello")
 
-        plugin = ListDirPlugin()
+        plugin = _list_plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(file)),
             emit=None,
@@ -268,7 +294,7 @@ class TestListDirPlugin:
         nested = subdir / "deep.txt"
         nested.write_text("hidden")
 
-        plugin = ListDirPlugin()
+        plugin = _list_plugin(tmp_path)
         result = await plugin.execute(
             ctx=self._make_ctx(str(tmp_path)),
             emit=None,
@@ -301,8 +327,7 @@ class TestListDirHardening:
         (listed / "ok.txt").write_text("ok")
         (listed / "link").symlink_to(outside)
 
-        plugin = ListDirPlugin()
-        plugin.safety.allow_symlinks = False
+        plugin = _list_plugin(tmp_path, allow_symlinks=False)
         result = await plugin.execute(
             ctx=self._ctx(str(listed)), emit=None,
             params=ListDirParams(path=str(listed), depth=2),
@@ -320,9 +345,10 @@ class TestListDirHardening:
         listed = tmp_path / "listed"
         listed.mkdir()
 
-        plugin = ListDirPlugin()
-        plugin.safety.allow_symlinks = False
+        plugin = _list_plugin(tmp_path, allow_symlinks=False)
         result = await plugin.execute(
+            # 相对路径 + `_safe_path` 注入：生产语义（管线解析后注入绝对安全路径，
+            # 而头部回显调用方原始 `params.path`）
             ctx=self._ctx(str(listed)), emit=None,
             params=ListDirParams(path="relative-ish", depth=1),
         )
