@@ -121,3 +121,96 @@ async def test_process_releases_lease_after_cancel():
 
     assert rt.is_generation_busy is False
     await loop._output.close()
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-15：去重必须跑在 tail lease **之外**
+# ══════════════════════════════════════════════════════════════════
+
+class TestDedupRunsOutsideTailLease:
+    """tail lease 计入 `runtime.is_generation_busy`，而 `CharacterService._runtime_is_busy()`
+    把 generation 在途判为 busy → `reset_evolution` 与角色 revision 变更会 **409
+    CHARACTER_BUSY**。
+
+    MemoryReflector 去重（KMeans 全量 + 逐组串行 LLM）**数十秒到分钟级**，原先内联在
+    lease 内的 `_after_response` 里 await → 这整段时间里"改角色/回滚/重置演化"全部
+    是**可重试的失败**（用户看到"操作失败请重试"）。
+
+    移出去是安全的：去重只动 LTM（Milvus），不碰 session/runtime 状态——lease 保护的
+    正是后者。
+    """
+
+    @pytest.mark.asyncio
+    async def test_dedup_is_deferred_not_awaited_in_after_response(self):
+        """`_after_response` 必须**返回**去重调用，而不是就地 await 它。"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from core.cognitive.loop import CognitiveLoop
+
+        loop = CognitiveLoop.__new__(CognitiveLoop)
+        loop._shutting_down = False          # noqa: SLF001
+        loop._session = MagicMock()          # noqa: SLF001
+        loop._session.save = AsyncMock()     # noqa: SLF001
+        loop._engine = None                  # noqa: SLF001
+        loop._consolidator = None            # noqa: SLF001
+        loop._pending_after_response = []    # noqa: SLF001
+        loop._memory_reflector = None        # noqa: SLF001
+
+        reflector = MagicMock()
+        reflector.increment_round = MagicMock()
+        reflector.increment_new_memories = MagicMock()
+        reflector.check_and_reflect = AsyncMock(return_value=None)
+
+        _task, dedup = await loop._after_response(             # noqa: SLF001
+            "u", "a", memory_reflector=reflector)
+
+        # 计数器当场更新（廉价），但**去重没被调用**
+        reflector.increment_round.assert_called_once()
+        reflector.check_and_reflect.assert_not_awaited()
+        assert dedup is not None, "去重调用必须交给调用方（否则又回到 lease 内执行）"
+
+        # 调用返回的去重调用才真正执行
+        await dedup()
+        reflector.check_and_reflect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_finalize_releases_lease_before_dedup(self):
+        """**顺序即语义**：`end_generation()` 必须早于去重调用。
+
+        用 AST 断言而不是跑整条链路：这里要钉的是**语句顺序**，跑起来反而看不清。
+        """
+        import ast
+        import pathlib
+
+        src = pathlib.Path("core/cognitive/finalize.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.AsyncFunctionDef) and n.name == "_run_after_response")
+
+        end_line = None
+        dedup_line = None
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            if isinstance(f, ast.Attribute) and f.attr == "end_generation":
+                end_line = node.lineno
+            # `await dedup()`——被调用者是 Name，不是 Attribute
+            if isinstance(f, ast.Name) and f.id == "dedup":
+                dedup_line = node.lineno
+
+        assert end_line is not None, "找不到 end_generation()"
+        assert dedup_line is not None, "找不到去重调用（await dedup()）"
+        assert end_line < dedup_line, (
+            "end_generation() 必须在 await dedup() **之前**——"
+            "顺序反了就等于去重仍在 lease 内，409 会回来")
+
+    def test_runtime_doc_records_the_exclusion(self):
+        """`begin_generation_tail` 的 docstring 不得再说 tail 覆盖 MemoryReflector。"""
+        import pathlib
+
+        src = pathlib.Path("core/character/runtime.py").read_text(encoding="utf-8")
+        idx = src.index("def begin_generation_tail")
+        doc = src[idx:idx + 1200]
+        assert "不含 MemoryReflector 去重" in doc, (
+            "tail lease 的文档必须写明它**不**覆盖去重，否则下一个人会把去重挪回去")

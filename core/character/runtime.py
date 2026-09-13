@@ -116,9 +116,13 @@ class CharacterRuntime:
     def begin_generation_tail(self) -> None:
         """为回合的后台收尾（``_after_response``）追加一份 lease。
 
-        主回合的 lease 在 ``process()`` 返回时释放，但记忆沉淀/性格反思/
-        MemoryReflector/会话保存仍在后台 task 中运行。tail lease 由该 task 在
-        finally 中释放，使 busy 覆盖到「最后一次相关状态持久化」完成。
+        主回合的 lease 在 ``process()`` 返回时释放，但记忆沉淀/性格反思/会话保存仍在
+        后台 task 中运行。tail lease 由该 task 在 finally 中释放，使 busy 覆盖到
+        「最后一次相关状态持久化」完成。
+
+        **不含 MemoryReflector 去重**（S3-15）：它只动 LTM、不碰 session/runtime 状态，
+        却在租约内跑数十秒到分钟级 → 期间 `reset_evolution` / 角色 revision 变更持续
+        409。它在 lease 释放**之后**由同一 task 执行。
         """
         with self._op_guard:
             self._generation_ops += 1

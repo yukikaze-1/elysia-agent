@@ -76,7 +76,8 @@ class CognitiveFinalize:
     _session_work_reserver: Callable[[SessionId], Awaitable["SessionMemory"]] | None
     _session_work_releaser: Callable[[SessionId], None] | None
     _pending_after_response: list[asyncio.Task]
-    _after_response: Callable[..., Awaitable["asyncio.Task[None] | None"]]
+    _after_response: Callable[..., Awaitable[
+        "tuple[asyncio.Task[None] | None, Callable[[], Awaitable[object]] | None]"]]
     _transition_idle: Callable[..., Awaitable[None]]
 
     def _apply_final_mood_fallback(self, target: "SessionMemory",
@@ -207,8 +208,9 @@ class CognitiveFinalize:
             runtime.begin_generation_tail()
 
         async def _run_after_response() -> None:
+            dedup: "Callable[[], Awaitable[object]] | None" = None
             try:
-                reflect_task = await self._after_response(
+                reflect_task, dedup = await self._after_response(
                     user_message, public_text,
                     session=target, engine=engine,
                     consolidator=runtime.consolidator if runtime else None,
@@ -225,8 +227,20 @@ class CognitiveFinalize:
                     except Exception:
                         logger.warning("性格反思任务异常", exc_info=True)
             finally:
+                # S3-15：**先放 lease，再跑去重**。去重（KMeans 全量 + 逐组串行 LLM，
+                # 数十秒到分钟级）只动 LTM，不碰 session/runtime 状态；把它留在 lease
+                # 内会让 `reset_evolution` 与角色 revision 变更在此期间**持续 409
+                # CHARACTER_BUSY**。顺序在此处是语义的一部分，不是排版。
                 if runtime is not None:
                     runtime.end_generation()
+                if dedup is not None:
+                    try:
+                        await dedup()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.warning("MemoryReflector check failed（lease 外）",
+                                       exc_info=True)
                 if background_reserved and self._session_work_releaser is not None:
                     self._session_work_releaser(target.session_id)
 

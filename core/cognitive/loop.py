@@ -977,11 +977,13 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                               engine: "CharacterEngineProtocol | None" = None,
                               consolidator: MemoryConsolidator | None = None,
                               memory_reflector: MemoryReflector | None = None,
-                              ) -> "asyncio.Task[None] | None":
+                              ) -> "tuple[asyncio.Task[None] | None, Callable[[], Awaitable[object]] | None]":
         """Post-response 钩子：沉淀记忆、性格反思、保存会话。
 
         以 fire-and-forget 方式由 _finalize_turn 调用。
-        执行顺序：Consolidator 提取记忆 → CharacterReflector 缓冲 → MemoryReflector 去重 → 保存 session。
+        执行顺序：Consolidator 提取记忆 → CharacterReflector 缓冲 → 保存 session；
+        MemoryReflector 去重**不在本方法内执行**——它作为延迟调用返回，由调用方在
+        tail lease 释放后运行（S3-15）。
 
         Args:
             user_message: 用户原始输入
@@ -1006,7 +1008,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # 否则最后轮记忆沉淀丢失、session 降级写 JSONL。
         if self._shutting_down:
             logger.debug("after_response 跳过——agent 正在关闭")
-            return None
+            return None, None
 
         # 局部捕获：不读 self._session / self._engine——resolver 切走后
         # 本轮 in-flight 异步延续仍写发起会话 / 发起引擎。
@@ -1046,16 +1048,24 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                     self._pending_after_response.append(task)
             except Exception:
                 logger.warning("性格反思缓冲失败", exc_info=True)
-        # 更新 MemoryReflector 计数器
+        # 更新 MemoryReflector 计数器（廉价、非阻塞——留在本处）
+        #
+        # S3-15：**去重本身不在 tail lease 内 await**，而是作为"延迟调用"返回给
+        # `finalize._run_after_response`，由它在 `runtime.end_generation()` **之后**执行。
+        #
+        # 为什么必须移出去：tail lease 计入 `runtime.is_generation_busy`，而
+        # `_runtime_is_busy()` 把 generation 在途判为 busy → 去重期间（KMeans 全量 +
+        # 逐组串行 LLM，实测数十秒到分钟级）`reset_evolution` 与角色 revision 变更
+        # **持续 409 CHARACTER_BUSY**（retryable），用户看到的是"操作失败请重试"。
+        #
+        # 为什么移出去是安全的：去重只动 LTM（Milvus），**不碰 session/runtime 状态**
+        # ——tail lease 保护的正是后者（会话保存、L2 缓冲的归属）。
+        dedup: "Callable[[], Awaitable[object]] | None" = None
         if target_memory_reflector:
             target_memory_reflector.increment_round()
             if items:
                 target_memory_reflector.increment_new_memories(len(items))
-            # 检查是否需要触发去重（非阻塞，快速判断）
-            try:
-                await target_memory_reflector.check_and_reflect()
-            except Exception:
-                logger.warning("MemoryReflector check failed", exc_info=True)
+            dedup = target_memory_reflector.check_and_reflect
         # 异步保存会话（fire-and-forget，不阻塞本轮）
         try:
             await target_session.save()
@@ -1063,7 +1073,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             raise
         except Exception:
             logger.error("会话保存失败", exc_info=True)
-        return reflect_task
+        return reflect_task, dedup
 
     async def flush_after_response(self, timeout: float = 5.0) -> None:
         """等待所有 pending _after_response task 完成。
