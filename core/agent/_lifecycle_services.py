@@ -64,15 +64,41 @@ class _LifecycleServices:
             response_recorder=self._response_recorder,
         )
 
+    async def _apply_service_enabled(self) -> None:
+        """把**当前会话**的三态开关同步到运行时槽位（S2-C3）。
+
+        三态语义：`ServiceState.<svc>_enabled` 非 None 用之（用户显式改过），否则回退
+        `config.<svc>.enabled`。同时**同步 TTS 管理器的内部标志**——它才是 loop 的实际
+        门控，只改 `_tts_enabled` 会让"开关状态"与"是否真的会说话"分叉。
+
+        **为什么必须能在会话切换时调用**：`ServiceState` 是 `SessionMemory` 的字段
+        （每会话持久化），而原先它**只在启动步骤**被应用一次。切到另一个会话后，内存
+        槽位保持上一个会话的值，而 `session.service_state` 已经是新会话的值——前端读
+        capabilities（取自内存槽位）与服务端持久化值不一致，"重启后开关回退"。实测：
+        切到 `stt_enabled=True` 的会话后 `agent.stt_enabled` 仍是 `False`。
+
+        **不含模型切换**：`llm_model` / `stt_model` / `tts_model` 的切换要建/拆后端
+        （网络 client），在会话激活路径上做会带来明显的延迟与失败面；它们在启动时由
+        `_apply_service_state` 应用，运行期由显式 `switch_llm/switch_stt/switch_tts`
+        应用。这是**有意的取舍**，不是遗漏——写在这里以免下次审计重新发现。
+        """
+        ss = self.session.service_state
+        self._stt_enabled = (
+            ss.stt_enabled if ss.stt_enabled is not None else self._config.stt.enabled)
+        self._tts_enabled = (
+            ss.tts_enabled if ss.tts_enabled is not None else self._config.tts.enabled)
+        if self._cognitive is not None:
+            # TTS 管理器标志是 loop 的唯一门控（与 set_service 同一接线）
+            await self._cognitive._tts_mgr.set_enabled(self._tts_enabled)  # noqa: SLF001
+
     async def _apply_service_state(self) -> None:
         """启动步骤：读 ServiceState → 设模式槽位 → LLM 应用。位于 tts 步骤前。
 
-        三态语义：ServiceState.<svc>_enabled 非 None 用之（用户显式改过），否则回退
-        config.<svc>.enabled。LLM：llm_model 非空且 ≠ config.llm.model → switch_llm。
+        三态开关部分见 `_apply_service_enabled`（也用于会话切换）。
+        LLM：llm_model 非空且 ≠ config.llm.model → switch_llm。
         """
+        await self._apply_service_enabled()
         ss = self.session.service_state
-        self._stt_enabled = ss.stt_enabled if ss.stt_enabled is not None else self._config.stt.enabled
-        self._tts_enabled = ss.tts_enabled if ss.tts_enabled is not None else self._config.tts.enabled
         if ss.llm_model and ss.llm_model != self._config.llm.model:
             await self.switch_llm(ss.llm_model)
 

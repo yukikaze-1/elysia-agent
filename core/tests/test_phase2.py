@@ -317,7 +317,9 @@ class TestMemoryIntegration:
         await agent.start()
         # 模拟 HITL 在测试环境中自动审批
         original_run_hitl = agent._tool_adapter._manager._pipeline._run_hitl
-        async def _auto_approve(plugin, name, params):
+        async def _auto_approve(plugin, name, params, origin_connection_id=""):
+            # CR-13 起 `_run_hitl` 多一个 `origin_connection_id` 位置参数——
+            # 猴补丁的替身必须跟上真实签名，否则一调用就 TypeError。
             return True, "confirmed"
         agent._tool_adapter._manager._pipeline._run_hitl = _auto_approve
 

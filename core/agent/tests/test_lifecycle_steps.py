@@ -8,6 +8,7 @@ import pytest
 from core.agent._lifecycle_services import _LifecycleServices
 from core.agent.lifecycle import AgentLifecycle
 from core.schema.service_state import ServiceState
+from core.schema.types import SessionId
 
 pytestmark = pytest.mark.unit
 
@@ -236,6 +237,20 @@ class TestSchemaDriftStep:
         assert agent._schema_drift_report.scanned is False  # noqa: SLF001
 
 
+def _wire_service_enabled(agent) -> None:
+    """把真实的 `_apply_service_enabled` 接到 mock agent 上。
+
+    这些测试把 `_LifecycleServices` 当**非绑定 mixin** 用（`_LifecycleServices._x(agent)`），
+    而 `agent` 是 `MagicMock`——`self._apply_service_enabled()` 只会拿到一个自动属性
+    （不是 awaitable，直接 TypeError）。接上真实实现，测试才仍然覆盖三态逻辑本身，
+    而不是降级成"某个 mock 被调用过"。
+    """
+    async def _apply() -> None:
+        await _LifecycleServices._apply_service_enabled(agent)
+
+    agent._apply_service_enabled = mock.AsyncMock(side_effect=_apply)   # noqa: SLF001
+
+
 class TestApplyServiceState:
     """_apply_service_state 启动步骤：读 ServiceState → 设模式槽位 → LLM 应用。"""
 
@@ -253,6 +268,7 @@ class TestApplyServiceState:
         agent._config.llm.model = "deepseek/deepseek-v4-flash"
         agent.switch_llm = mock.AsyncMock(return_value={"ok": True})
 
+        _wire_service_enabled(agent)
         await _LifecycleServices._apply_service_state(agent)
 
         assert agent._stt_enabled is True
@@ -269,6 +285,7 @@ class TestApplyServiceState:
         agent._config.llm.model = "deepseek/deepseek-v4-flash"
         agent.switch_llm = mock.AsyncMock(return_value={"ok": True})
 
+        _wire_service_enabled(agent)
         await _LifecycleServices._apply_service_state(agent)
 
         assert agent._stt_enabled is True
@@ -285,6 +302,7 @@ class TestApplyServiceState:
         agent._config.llm.model = "deepseek/deepseek-v4-flash"
         agent.switch_llm = mock.AsyncMock(return_value={"ok": True})
 
+        _wire_service_enabled(agent)
         await _LifecycleServices._apply_service_state(agent)
 
         agent.switch_llm.assert_not_awaited()
@@ -408,3 +426,121 @@ class TestStartTTSGate:
                 await _LifecycleServices._start_tts(agent)
         mc.assert_called_once()
 
+
+
+def _bind_switch_session(agent) -> None:
+    """把真实的 `Agent.switch_session` 绑到 mock agent 上。
+
+    `agent` 是 `MagicMock`——`agent.switch_session(...)` 只会调用一个自动生成的
+    MagicMock 属性，**真实方法根本不执行**。接线后，'切会话是否重放服务开关'
+    这件事才真的被测到。
+    """
+    from core.agent.agent import Agent
+
+    async def _switch(sid):
+        return await Agent.switch_session(agent, sid)
+
+    agent.switch_session = _switch
+
+
+class TestServiceFlagsFollowSessionOnSwitch:
+    """S2-C3：切会话后运行时槽位必须跟随**该会话**的 `service_state`。
+
+    `ServiceState` 是 `SessionMemory` 的字段（每会话持久化），而它原先**只在启动步骤**
+    被应用一次（`lifecycle.py` 的 `_STARTUP_STEPS`）。切到另一个会话后内存槽位保持
+    上一个会话的值，而 `session.service_state` 已经是新会话的值 → 前端读 capabilities
+    （取自内存槽位）与服务端持久化值不一致；重启后 `_apply_service_state` 改用新会话的
+    值，用户视角就是"开关回退了"。
+
+    实测（修复前）：切到 `stt_enabled=True` 的会话后 `agent.stt_enabled` 仍是 False。
+    """
+
+    @pytest.mark.asyncio
+    async def test_apply_service_enabled_syncs_both_slots(self, fake_agent):
+        agent = fake_agent
+        agent.session.service_state = ServiceState(stt_enabled=True, tts_enabled=True)
+        agent._config.stt.enabled = False
+        agent._config.tts.enabled = False
+        agent._cognitive = mock.MagicMock()
+        agent._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
+
+        await _LifecycleServices._apply_service_enabled(agent)
+
+        assert agent._stt_enabled is True                      # noqa: SLF001
+        assert agent._tts_enabled is True                      # noqa: SLF001
+        # TTS 管理器标志才是 loop 的实际门控——只改槽位会让"开关状态"与
+        # "是否真的会说话"分叉
+        agent._cognitive._tts_mgr.set_enabled.assert_awaited_once_with(True)  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_apply_service_enabled_does_not_switch_llm(self, fake_agent):
+        """**有意取舍**：会话激活路径不做模型热切换（要建/拆后端，延迟与失败面大）。
+
+        这条断言是**记录设计决定**而不只是防回归——下次审计看到"切会话不切模型"
+        时，应当先看到这里写明的理由。
+        """
+        agent = fake_agent
+        agent.session.service_state = ServiceState(
+            llm_model="deepseek/deepseek-v4-pro", stt_enabled=True)
+        agent._config.llm.model = "deepseek/deepseek-v4-flash"
+        agent._cognitive = mock.MagicMock()
+        agent._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
+        agent.switch_llm = mock.AsyncMock(return_value={"ok": True})
+
+        await _LifecycleServices._apply_service_enabled(agent)
+
+        agent.switch_llm.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_switch_session_applies_new_session_state(self, fake_agent):
+        """接线：`switch_session` 必须真的调用它（否则等于没修）。"""
+        agent = fake_agent
+        target = mock.MagicMock()
+        target.character_binding = {"instance_id": "inst_1"}
+        agent._session_manager.ensure_loaded = mock.AsyncMock(return_value=target)
+        agent._session_manager.switch = mock.AsyncMock(return_value={"ok": True})
+        agent.ensure_character_runtime = mock.AsyncMock()
+        agent._apply_service_enabled = mock.AsyncMock()
+        # **接上真实方法**：`agent` 是 MagicMock，直接 `agent.switch_session(...)` 只会
+        # 调用一个自动属性，等于什么都没测（本用例第一版就是这样假绿的）。
+        _bind_switch_session(agent)
+
+        await agent.switch_session(SessionId("conv_x"))
+
+        agent._apply_service_enabled.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_two_sessions_disagree(self, fake_agent):
+        """端到端：两个会话的开关不同 → 切换后槽位必须跟着变（往返都一致）。"""
+        agent = fake_agent
+        agent._config.stt.enabled = False
+        agent._cognitive = mock.MagicMock()
+        agent._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
+
+        states = {"conv_a": ServiceState(stt_enabled=True),
+                  "conv_b": ServiceState(stt_enabled=False)}
+
+        def _ensure(sid):
+            target = mock.MagicMock()
+            target.character_binding = {"instance_id": "inst_1"}
+            target.service_state = states[str(sid)]
+            return target
+
+        agent._session_manager.ensure_loaded = mock.AsyncMock(side_effect=_ensure)
+        agent.ensure_character_runtime = mock.AsyncMock()
+        _wire_service_enabled(agent)          # 接真实的三态同步逻辑
+
+        async def _switch(sid):
+            # 活动会话指针 + 活动会话对象一起换（真实 SessionManager 的行为）
+            agent.session = mock.MagicMock()
+            agent.session.service_state = states[str(sid)]
+            return {"ok": True}
+
+        agent._session_manager.switch = mock.AsyncMock(side_effect=_switch)
+        _bind_switch_session(agent)
+
+        await agent.switch_session(SessionId("conv_a"))
+        # 断言运行时槽位（公开属性 agent.stt_enabled 读的就是它）
+        assert agent._stt_enabled is True, "切到显式开启的会话 → 运行时槽位应为 True"   # noqa: SLF001
+        await agent.switch_session(SessionId("conv_b"))
+        assert agent._stt_enabled is False, "切回显式关闭的会话 → 运行时槽位应为 False"  # noqa: SLF001

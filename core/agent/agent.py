@@ -1037,7 +1037,14 @@ class Agent(AgentLifecycle, AgentServer):
         binding = target.character_binding or self._default_binding
         instance_id = binding.get("instance_id") or self._default_binding["instance_id"]
         await self.ensure_character_runtime(instance_id)
-        return await self._session_manager.switch(sid)
+        switched = await self._session_manager.switch(sid)
+        # S2-C3：**切换后重放该会话的服务开关三态**。`ServiceState` 是 SessionMemory 的
+        # 字段（每会话持久化），而它原先只在启动步骤被应用一次——切到另一个会话后内存
+        # 槽位保持上一个会话的值，前端读 capabilities（取自内存槽位）与服务端持久化值
+        # 不一致，"重启后开关回退"。实测：切到 stt_enabled=True 的会话后
+        # `agent.stt_enabled` 仍是 False。
+        await self._apply_service_enabled()
+        return switched
 
     async def ensure_character_runtime(self, instance_id: str) -> CharacterRuntime:
         """Ensure a built-in/custom runtime and its engine are ready for UI/chat."""
