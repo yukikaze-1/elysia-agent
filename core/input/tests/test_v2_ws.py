@@ -278,7 +278,7 @@ class TestSetTtsVoice:
         agent = _make_agent_with(_UsageLLM())
         await agent.start()
         agent._tts = _FakeTtsBackend([{"id": "v1", "name": "音色一"}])  # noqa: SLF001 — 测试注入后端
-        agent._tts_enabled = True  # noqa: SLF001 — 测试注入有效开关
+        agent.session.service_state.tts_enabled = True  # 测试注入权威（会话三态字段）
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
         try:
@@ -300,7 +300,7 @@ class TestSetTtsVoice:
         agent = _make_agent_with(_UsageLLM())
         await agent.start()
         agent._tts = _FakeTtsBackend([{"id": "v1"}])  # noqa: SLF001
-        agent._tts_enabled = True  # noqa: SLF001
+        agent.session.service_state.tts_enabled = True  # 权威注入
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
         try:
@@ -322,7 +322,7 @@ class TestSetTtsVoice:
         agent = _make_agent_with(_UsageLLM())
         await agent.start()
         agent._tts = None  # noqa: SLF001
-        agent._tts_enabled = False  # noqa: SLF001
+        agent.session.service_state.tts_enabled = False  # 权威注入
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
         try:
@@ -343,7 +343,7 @@ class TestSetTtsVoice:
         agent = _make_agent_with(_UsageLLM())
         await agent.start()
         agent._tts = _FakeTtsBackend([{"id": "v1"}])  # noqa: SLF001
-        agent._tts_enabled = True  # noqa: SLF001
+        agent.session.service_state.tts_enabled = True  # 权威注入
         agent.session.service_state.tts_voice = "v1"  # 先有覆盖
         app = create_app(agent, serve_static=False)
         client = await aiohttp_client(app)
@@ -497,7 +497,7 @@ class TestV2BinaryNoLegacy:
     def _enable_stt(agent) -> None:
         # 必须在 start() 之后注入：_apply_service_state 启动时按 service_state/config
         # 重写 _stt_enabled（config.stt.enabled=False），start 前设 True 会被覆盖掉。
-        agent._stt_enabled = True  # noqa: SLF001
+        agent.session.service_state.stt_enabled = True  # 权威注入
 
     @pytest.mark.asyncio
     async def test_v1_binary_drives_legacy_stt(self, aiohttp_client, fresh_idempotency):

@@ -215,6 +215,8 @@ class AgentServer:
         _cognitive: CognitiveLoop
         _task_system: WorkflowEngine | None
         _state: RunState
+
+        async def _sync_tts_gate(self) -> None: ...
         _config_path: str | None
         _config: AppConfig
         _tts: TTSBackend | None
@@ -478,16 +480,15 @@ class AgentServer:
                     r = await self.switch_tts(model)
                 if not r["ok"]:
                     return {"ok": False, "enabled": self.stt_enabled if service == "stt" else self.tts_enabled, "error": r.get("error")}
-        # 置运行时槽位（stt 或 tts）
-        if service == "stt":
-            self._stt_enabled = enabled
-        else:
-            self._tts_enabled = enabled
-            # 内部接线（loop gate 唯一来源），非跨模块访问
-            await self._cognitive._tts_mgr.set_enabled(enabled)  # noqa: SLF001
         # 持久化 enabled（补建成功后才写，失败已 return）
+        # #43：只写**唯一权威**（会话三态字段）。原先这里还写一份 Agent 内存槽位
+        # `_stt_enabled`/`_tts_enabled`——那一份已删除，`agent.stt_enabled` 改为
+        # 现算派生值，因此不存在需要"同步"的第二处。
         setattr(self.session.service_state, f"{service}_enabled", persist)
         await self.session.save()
+        # TTS 管理器标志是派生投影，经唯一写点刷新
+        if service == "tts":
+            await self._sync_tts_gate()
         # 重播 capabilities——向所有 WebSocket 客户端广播（switch_* 补建路径自身也会播，幂等无害）
         await broadcast_capabilities(self)
         return {"ok": True, "enabled": enabled}
@@ -538,8 +539,7 @@ class AgentServer:
             # "开"（config=false+显式 true）跨重启存活；config=false+None 保留 YAML 硬关
             ss = self.session.service_state
             stt_model = ss.stt_model or self._config.stt.model               # startup_stt_model
-            stt_gate = ss.stt_enabled if ss.stt_enabled is not None else self._config.stt.enabled
-            if stt_gate:
+            if self.stt_enabled:
                 try:
                     from Module.stt import STTFactory
                     from core.providers.custom_providers import resolve_model_params

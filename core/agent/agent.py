@@ -388,9 +388,9 @@ class Agent(AgentLifecycle, AgentServer):
         )
 
         self._tts = None  # 在 _start_tts() 中创建
-        self._tts_enabled: bool | None = None  # TTS 有效开关（None → 回退 config.tts.enabled）
+
         self._stt: STTBackend | None = None  # STT 后端 — stt_transcribe() 读取，支持热切换
-        self._stt_enabled: bool | None = None  # STT 有效开关（None → 回退 config.stt.enabled）
+
         self._stt_emotion_state: dict = {"emotion": "NEUTRAL", "events": []}  # STT 情绪/事件状态
         self._stt_ok = False  # STT 连通性标志 — 在 run_server() 中设置
 
@@ -437,16 +437,21 @@ class Agent(AgentLifecycle, AgentServer):
             session_work_releaser=self._session_manager.release_work,
         )
 
+        # ---- Status & Phase Controller（#43：先建，IdleMonitor 共用同一个对象）----
+        from core.status import FSMBackedStatus, FSMBackedPhaseController
+
+        self.status: AgentStatus = FSMBackedStatus(self._fsm)
+
+        # IdleMonitor 此前自建一个 `FSMBackedStatus(fsm)`——同一 FSM 上挂着两个状态
+        # 包装器（相位一致，但生命周期轴看不见）。改为注入本 Agent 的 status：状态
+        # 只有一个持有者，"谁能接活"也只有一个回答者。
         self._idle = IdleMonitor(
             character=self._character,
             fsm=self._fsm,
             event_bus=self._bus,
+            status=self.status,
         )
 
-        # ---- Status & Phase Controller ----
-        from core.status import FSMBackedStatus, FSMBackedPhaseController
-
-        self.status: AgentStatus = FSMBackedStatus(self._fsm)
         self.phases: CognitivePhaseController = FSMBackedPhaseController(
             fsm=self._fsm,
             bus=self._bus,
@@ -468,6 +473,8 @@ class Agent(AgentLifecycle, AgentServer):
             checkpoint_path="data/scheduler_checkpoint.json",
         )
 
+        # #43：`_state` **不再是独立存储**——见下方 `_state` property。
+        # 生命周期轴与相位轴现在由 `self.status` 这一个对象持有。
         self._state = RunState.STOPPED
         self._event_task: asyncio.Task | None = None
         self._req_counter: int = 0
@@ -580,14 +587,19 @@ class Agent(AgentLifecycle, AgentServer):
             return False
 
         # CR-08：停机窗口拒收。准入判定原先只读 FSM 投影（`status.is_accepting_input`），
-        # 而事件消费者读 `self._state`——`stop()` 首行即置 STOPPED、消费者随即退出，
+        # 而事件消费者读 `_state`——`stop()` 首行即置 STOPPED、消费者随即退出，
         # 但 FSM 仍显示 accepting，于是整个停机窗口（20 步清理，数秒~数十秒）内新消息
         # 仍被投进**无界** bus 队列并 `return True`：调用方回 ok、v2 还把 accepted 写进
         # 幂等表，同 clientRequestId 重试因而永远重放这个 ACK，重启也补不回来。
-        # 本判定读与消费者**同一个变量**，窗口收敛为 0。
-        if self._state != RunState.RUNNING:
+        # #43：判定收敛到 `status.accepts_new_turns`（两个轴合一）——修 CR-08 时是在
+        # 每个入口各加一次 `_state != RUNNING`，那是"N 处都要记得"；现在只有一个定义点。
+        # 注意这里**不能**用 `status.accepts_new_turns`：本入口的语义是"忙则排队"，
+        # 而 lifecycle 未就绪要"拒收"——两者是不同处置。合起来问会让相位忙时改判拒收
+        # （`test_busy_queue_threads_conversation_id` 就是这条回归）。下面分别问。
+        if not self.status.is_service_running:
             logger.warning(
-                "Agent 非运行态 (state=%s) — 拒绝新消息，不投递 bus", self._state.name)
+                "Agent 非运行态 (run_state=%s, fsm=%s) — 拒绝新消息，不投递 bus",
+                self._state.name, self.status.current_name())
             return False
 
         # v2 在 ACK accepted 前原子固定实际目标（None 也解析成当时 active）并登记
@@ -1096,14 +1108,20 @@ class Agent(AgentLifecycle, AgentServer):
         return self._stt
 
     @property
-    def stt_enabled(self):
-        """STT 有效开关（三态回退：None → config.stt.enabled）。"""
-        return self._stt_enabled if self._stt_enabled is not None else self._config.stt.enabled
+    def stt_enabled(self) -> bool:
+        """STT 有效开关——**派生**（#43）。
+
+        唯一权威是当前会话的 `session.service_state.stt_enabled`（三态：None = 用户从未
+        显式设置 → 回退 `config.stt.enabled`）。此前还有一个 Agent 内存槽位
+        `_stt_enabled` 与它并行，两者靠"记得同步"维持——那正是 S2-C3「四个真相源」里
+        的两个。槽位删除后，切会话不需要任何"同步"动作：读的就是新会话的值。
+        """
+        return self._effective_service_enabled("stt")
 
     @property
-    def tts_enabled(self):
-        """TTS 有效开关（三态回退：None → config.tts.enabled）。"""
-        return self._tts_enabled if self._tts_enabled is not None else self._config.tts.enabled
+    def tts_enabled(self) -> bool:
+        """TTS 有效开关——派生，同 `stt_enabled`（#43）。"""
+        return self._effective_service_enabled("tts")
 
     @property
     def stt_emotion_state(self):
@@ -1288,9 +1306,35 @@ class Agent(AgentLifecycle, AgentServer):
         return self._user_identity_store
 
     @property
-    def state(self):
+    def state(self) -> RunState:
         """Agent 运行状态（只读）。"""
         return self._state
+
+    @property
+    def _state(self) -> RunState:
+        """Agent 生命周期状态——`self.status.run_state` 的**视图**（#43）。
+
+        真实存储只有一处（`AgentStatus.run_state`），所以"S2-A2/CR-08 的根因：两个
+        状态源互不同步"在结构上不可能再发生：`Agent._state` 与状态层读的是同一个值。
+
+        回退分支只服务**测试替身**：`object.__new__(Agent)` 造出来的桩没有 `status`
+        属性（`__init__` 未跑），此时落回实例字典。这是刻意的窄口子——真实 Agent 在
+        `__init__` 里第 449 行建 `self.status`，第 471 行才写 `_state`，两条路径不会
+        同时成立。
+        """
+        status = self.__dict__.get("status")
+        if status is None:
+            return self.__dict__.get("_state_fallback", RunState.STOPPED)
+        return status.run_state
+
+    @_state.setter
+    def _state(self, value: RunState) -> None:
+        """写入生命周期状态——落到 `AgentStatus.set_run_state`（同上一处存储）。"""
+        status = self.__dict__.get("status")
+        if status is None:
+            self.__dict__["_state_fallback"] = value
+            return
+        status.set_run_state(value)
 
     @property
     def started_at(self):

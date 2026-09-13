@@ -46,7 +46,7 @@ async def test_tts_voices_returns_list(aiohttp_client):
     """TTS 启用 + 后端激活 → 200 含 voices。"""
     agent = _make_app_agent()
     agent._tts = _FakeBackend([{"id": "v1", "name": "音色一"}])  # noqa: SLF001 — 测试注入后端
-    agent._tts_enabled = True  # noqa: SLF001 — 测试注入有效开关
+    agent.session.service_state.tts_enabled = True  # 测试注入权威（会话三态字段）
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
 
@@ -64,7 +64,7 @@ async def test_tts_voices_static_source_for_gpt_sovits(aiohttp_client):
     """gpt-sovits（静态声明）→ source=static。"""
     agent = _make_app_agent()
     agent._tts = _FakeBackend([{"id": "Elysia"}], provider_name="gpt-sovits")  # noqa: SLF001
-    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_enabled = True  # 权威注入
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
 
@@ -81,7 +81,7 @@ async def test_tts_voices_disabled_empty(aiohttp_client):
     """TTS 未启用 → 200 空列表 + error（不炸）。"""
     agent = _make_app_agent()
     agent._tts = None  # noqa: SLF001
-    agent._tts_enabled = False  # noqa: SLF001
+    agent.session.service_state.tts_enabled = False  # 权威注入
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
 
@@ -100,7 +100,7 @@ async def test_tts_voices_current_follows_service_state(aiohttp_client):
     """current 随活动会话 service_state.tts_voice。"""
     agent = _make_app_agent()
     agent._tts = _FakeBackend([{"id": "v1"}, {"id": "v2"}])  # noqa: SLF001
-    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_enabled = True  # 权威注入
     # tts_voice 字段由 Task 11 加入 ServiceState——此处经 __dict__ 注入模拟已设置（getattr 兜底读取）
     agent.session.service_state.__dict__["tts_voice"] = "v2"
     app = create_app(agent, serve_static=False)
@@ -118,7 +118,7 @@ async def test_tts_voices_current_not_in_list_gets_appended(aiohttp_client):
     """F10：current 不在列表 → 追加保证 current 恒 ∈ voices[]。"""
     agent = _make_app_agent()
     agent._tts = _FakeBackend([{"id": "alloy"}], provider_name="openai")  # noqa: SLF001
-    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_enabled = True  # 权威注入
     agent.session.service_state.tts_voice = "elysia"  # noqa: SLF001 — 注入 current（不在列表）
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
@@ -137,7 +137,7 @@ async def test_tts_voices_current_in_list_not_duplicated(aiohttp_client):
     """F10：current 已在列表 → 不重复追加。"""
     agent = _make_app_agent()
     agent._tts = _FakeBackend([{"id": "elysia"}], provider_name="openai")  # noqa: SLF001
-    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_enabled = True  # 权威注入
     agent.session.service_state.tts_voice = "elysia"  # noqa: SLF001 — current 已在列表
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
@@ -161,7 +161,7 @@ async def test_tts_voices_default_current_no_service_state(aiohttp_client):
         api_key="sk-test", base_url="https://api.minimaxi.com", voice_id="fallback-voice",
     )
     agent._tts = backend  # noqa: SLF001 — 测试注入后端
-    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_enabled = True  # 权威注入
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
 
@@ -203,7 +203,7 @@ async def test_tts_preview_ok_fixed_text_and_voice_id(aiohttp_client):
     audio = b"\x00\x01\x02fake-wav-bytes"
     backend = _FakePreviewBackend(audio=audio)
     agent._tts = backend  # noqa: SLF001 — 测试注入后端
-    agent._tts_enabled = True  # noqa: SLF001 — 测试注入有效开关
+    agent.session.service_state.tts_enabled = True  # 测试注入权威（会话三态字段）
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
 
@@ -232,7 +232,7 @@ async def test_tts_preview_no_voice_id_default(aiohttp_client):
     agent = _make_app_agent()
     backend = _FakePreviewBackend()
     agent._tts = backend  # noqa: SLF001
-    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_enabled = True  # 权威注入
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
 
@@ -255,7 +255,7 @@ async def test_tts_preview_no_voice_falls_back_to_current(aiohttp_client):
     agent = _make_app_agent()
     backend = _FakePreviewBackend()
     agent._tts = backend  # noqa: SLF001
-    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_enabled = True  # 权威注入
     agent.session.service_state.tts_voice = "v-current"
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
@@ -277,7 +277,7 @@ async def test_tts_preview_backend_error(aiohttp_client):
     backend = _FakePreviewBackend()
     backend.fail = True
     agent._tts = backend  # noqa: SLF001
-    agent._tts_enabled = True  # noqa: SLF001
+    agent.session.service_state.tts_enabled = True  # 权威注入
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
 
@@ -295,7 +295,7 @@ async def test_tts_preview_disabled(aiohttp_client):
     """TTS 未启用（_active_tts_profile → None）→ {ok: False, error: "TTS 未启用"}。"""
     agent = _make_app_agent()
     agent._tts = None  # noqa: SLF001
-    agent._tts_enabled = False  # noqa: SLF001
+    agent.session.service_state.tts_enabled = False  # 权威注入
     app = create_app(agent, serve_static=False)
     client = await aiohttp_client(app)
 

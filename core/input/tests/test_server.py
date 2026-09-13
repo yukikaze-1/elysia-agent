@@ -601,7 +601,8 @@ class TestSetService:
                     break
             assert resp is not None and resp["ok"] is True and resp["enabled"] is False
             assert agent.session.service_state.tts_enabled is None  # False == config(False) → 写 None
-            assert agent._tts_enabled is False  # 运行时槽位同步（原始 bool，非 None）
+            # #43：没有"运行时槽位"了——有效开关是派生值（None → 回退 config）
+            assert agent.tts_enabled is False
 
     @pytest.mark.asyncio
     async def test_set_service_llm_rejected(self, aiohttp_client):
@@ -689,7 +690,7 @@ class TestSetService:
             assert cap["services"]["stt"]["available"] is True
             assert cap["services"]["stt"]["enabled"] is True
         assert agent.session.service_state.stt_enabled is True  # 补建成功 → 持久化
-        assert agent._stt_enabled is True  # 运行时槽位同步（原始 bool）
+        assert agent.stt_enabled is True  # #43：派生值跟随权威
 
     @pytest.mark.asyncio
     async def test_set_service_tts_enable_build_failure_not_persisted(self, aiohttp_client):
@@ -712,7 +713,7 @@ class TestSetService:
             assert resp is not None and resp["ok"] is False
             assert resp["error"] == "boom"
         assert agent.session.service_state.tts_enabled is None  # 补建失败不持久化
-        assert agent._tts_enabled is None  # 运行时槽位未动（未挂载成功）
+        assert agent.tts_enabled is False  # #43：无槽位可"未动"，派生值 = config 默认
 
 
 # ============================================================

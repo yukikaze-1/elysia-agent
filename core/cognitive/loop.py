@@ -656,8 +656,12 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                        ) -> None:
         """处理用户消息，驱动一轮完整的 ReAct 认知循环。"""
         async with self._process_lock:
-            if not self.status.is_accepting_input:
-                logger.warning("Agent not accepting input — skipping turn")
+            # #43：与 `Agent.process_message` 同一判定点（生命周期 + 相位）。
+            # CR-08 之后这里曾是两处独立的检查，新增入口很容易只问一半。
+            if not self.status.accepts_new_turns:
+                logger.warning(
+                    "Agent not accepting input (fsm=%s) — skipping turn",
+                    self.status.current_name())
                 return
 
             # BE-STAGEH-01 / P0-3：破坏性变更在途（CharacterBusyError）或权威身份

@@ -527,10 +527,10 @@ async def main() -> int:
     # ws_handler 判 agent.stt is not None 才建 audio_buf；tts_voices/preview 经
     # _active_tts_profile 读 agent.tts + agent.tts_enabled（不经 TTSFactory）。
     agent._stt = _SmokeSTTBackend()      # noqa: SLF001  # smoke 注入桩
-    agent._stt_enabled = True            # noqa: SLF001
+    agent.session.service_state.stt_enabled = True   # #43：权威 = 会话三态字段
     tts_stub = _SmokeTTSBackend()
     agent._tts = tts_stub                # noqa: SLF001
-    agent._tts_enabled = True            # noqa: SLF001
+    agent.session.service_state.tts_enabled = True   # #43：权威 = 会话三态字段
 
     try:
         app = create_app(agent, serve_static=False)

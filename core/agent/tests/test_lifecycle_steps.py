@@ -237,6 +237,31 @@ class TestSchemaDriftStep:
         assert agent._schema_drift_report.scanned is False  # noqa: SLF001
 
 
+def _real_service_agent(*, stt_default: bool = False, tts_default: bool = False):
+    """`object.__new__(Agent)` 真身替身——**#43 之后必须用它**。
+
+    `agent.stt_enabled` / `agent.tts_enabled` 现在是**派生 property**（权威 = 会话
+    `service_state` 三态 + config 回退）。在 `MagicMock` 上访问它们只会拿到自动属性
+    （恒真、且与 session 无关），于是"开关是否跟随会话"这件事根本测不到——本文件
+    第一版正是这样假绿的。真身替身让 property 真的执行。
+    """
+    from core.agent.agent import Agent
+
+    a = object.__new__(Agent)
+    # `session` 是只读 property（→ `_session_manager.active`），真身替身上必须从
+    # 底层字段造：直接 `a.session = ...` 会 AttributeError。
+    a._session_manager = mock.MagicMock()
+    a._session_manager.active = mock.MagicMock()
+    a._session_manager.active.save = mock.AsyncMock()
+    a._config = mock.MagicMock()
+    a._config.stt.enabled = stt_default
+    a._config.tts.enabled = tts_default
+    a._cognitive = mock.MagicMock()
+    a._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
+    a._tts = None
+    return a
+
+
 def _wire_service_enabled(agent) -> None:
     """把真实的 `_apply_service_enabled` 接到 mock agent 上。
 
@@ -248,16 +273,22 @@ def _wire_service_enabled(agent) -> None:
     async def _apply() -> None:
         await _LifecycleServices._apply_service_enabled(agent)
 
+    async def _sync() -> None:
+        await _LifecycleServices._sync_tts_gate(agent)
+
     agent._apply_service_enabled = mock.AsyncMock(side_effect=_apply)   # noqa: SLF001
+    # #43：`_apply_service_enabled` 现在只调 `_sync_tts_gate`（唯一门控写点）——
+    # MagicMock 上的自动属性不可 await，必须一并接上真实实现。
+    agent._sync_tts_gate = mock.AsyncMock(side_effect=_sync)            # noqa: SLF001
 
 
 class TestApplyServiceState:
-    """_apply_service_state 启动步骤：读 ServiceState → 设模式槽位 → LLM 应用。"""
+    """_apply_service_state 启动步骤：读 ServiceState → 应用开关 → LLM 应用。"""
 
     @pytest.mark.asyncio
-    async def test_sets_slots_and_switches_llm(self, fake_agent):
-        """service_state 显式值 → 槽位直接取显式值；llm_model ≠ config → switch_llm。"""
-        agent = fake_agent
+    async def test_explicit_values_win_and_switch_llm(self, fake_agent):
+        """service_state 显式值 → 有效开关取显式值；llm_model ≠ config → switch_llm。"""
+        agent = _real_service_agent(stt_default=True, tts_default=True)
         agent.session.service_state = ServiceState(
             llm_model="deepseek/deepseek-v4-pro",
             stt_enabled=True,
@@ -271,14 +302,15 @@ class TestApplyServiceState:
         _wire_service_enabled(agent)
         await _LifecycleServices._apply_service_state(agent)
 
-        assert agent._stt_enabled is True
-        assert agent._tts_enabled is False
+        # 显式值压过 config（config 两个都设成 True）
+        assert agent.stt_enabled is True
+        assert agent.tts_enabled is False
         agent.switch_llm.assert_awaited_once_with("deepseek/deepseek-v4-pro")
 
     @pytest.mark.asyncio
     async def test_effective_enabled_falls_back_to_config(self, fake_agent):
         """三态回退：enabled=None → 有效值 = config.<svc>.enabled。"""
-        agent = fake_agent
+        agent = _real_service_agent()
         agent.session.service_state = ServiceState()  # enabled 全 None
         agent._config.stt.enabled = True
         agent._config.tts.enabled = False
@@ -288,14 +320,14 @@ class TestApplyServiceState:
         _wire_service_enabled(agent)
         await _LifecycleServices._apply_service_state(agent)
 
-        assert agent._stt_enabled is True
-        assert agent._tts_enabled is False
+        assert agent.stt_enabled is True       # 派生：None → config.stt.enabled
+        assert agent.tts_enabled is False      # 派生：None → config.tts.enabled
         agent.switch_llm.assert_not_awaited()  # llm_model 为空 → 不应用
 
     @pytest.mark.asyncio
     async def test_no_switch_llm_when_same_as_config(self, fake_agent):
         """llm_model == config.llm.model → 不触发 switch_llm。"""
-        agent = fake_agent
+        agent = _real_service_agent()
         agent.session.service_state = ServiceState(llm_model="deepseek/deepseek-v4-flash")
         agent._config.stt.enabled = False
         agent._config.tts.enabled = False
@@ -312,22 +344,20 @@ class TestStartTTSGate:
     """_start_tts 建门（有效 enabled 三态）+ startup_tts_model。"""
 
     def _setup_tts_agent(self, agent, service_state, cfg_enabled):
-        agent.session.service_state = service_state
+        agent._session_manager.active.service_state = service_state
         agent._config.tts.enabled = cfg_enabled
         agent._config.tts.model = "minimax/speech-2.8-hd"
         agent._config.tts.rate_limit_rpm = 10
-        agent._tts_enabled = (
-            service_state.tts_enabled
-            if service_state.tts_enabled is not None else cfg_enabled
-        )
-        agent._tts = None  # 对齐 Agent.__init__ 初始值——MagicMock 未设时 auto-mock 恒真
+        # #43：建门直接读派生的 `agent.tts_enabled`（= service_state 三态 → config 回退），
+        # 不再有 Agent 内存槽位需要预置。
+        agent._tts = None  # 对齐 Agent.__init__ 初始值
         agent._cognitive.configure = mock.MagicMock()
         agent._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
 
     @pytest.mark.asyncio
     async def test_builds_with_startup_model_when_hotplug_open(self, fake_agent):
         """config=false + 显式 true → 建（热插拔'开'跨重启存活），用 startup_tts_model。"""
-        agent = fake_agent
+        agent = _real_service_agent()
         self._setup_tts_agent(
             agent, ServiceState(tts_model="custom/mytts", tts_enabled=True), cfg_enabled=False)
         backend = mock.MagicMock()
@@ -364,16 +394,17 @@ class TestStartTTSGate:
     @pytest.mark.asyncio
     async def test_gate_off_when_config_off_and_none(self, fake_agent):
         """config=false + None → 不建（YAML 硬关保留）。"""
-        agent = fake_agent
+        agent = _real_service_agent()
         self._setup_tts_agent(agent, ServiceState(), cfg_enabled=False)
-        with mock.patch("Module.tts.TTSFactory.create") as mc:            await _LifecycleServices._start_tts(agent)
+        with mock.patch("Module.tts.TTSFactory.create") as mc:
+            await _LifecycleServices._start_tts(agent)
         mc.assert_not_called()
         assert agent._tts is None
 
     @pytest.mark.asyncio
     async def test_gate_off_when_config_on_and_explicit_false(self, fake_agent):
         """config=true + 显式 false → 不建（尊重用户关闭，免浪费连接测试）。"""
-        agent = fake_agent
+        agent = _real_service_agent()
         self._setup_tts_agent(agent, ServiceState(tts_enabled=False), cfg_enabled=True)
         with mock.patch("Module.tts.TTSFactory.create") as mc:
             await _LifecycleServices._start_tts(agent)
@@ -383,7 +414,7 @@ class TestStartTTSGate:
     @pytest.mark.asyncio
     async def test_gate_on_when_config_on_and_none(self, fake_agent):
         """config=true + None → 建（现状行为），用 config 默认模型。"""
-        agent = fake_agent
+        agent = _real_service_agent()
         self._setup_tts_agent(agent, ServiceState(), cfg_enabled=True)
         backend = mock.MagicMock()
         backend.test = mock.AsyncMock(return_value={"ok": True})
@@ -400,7 +431,7 @@ class TestStartTTSGate:
         except 全吞成 fail-fast raise → 启动崩溃。修复后：缺 key 是配置缺欠而非
         配置错误，降级为 text-only，其他配置错误仍 fail-fast。
         """
-        agent = fake_agent
+        agent = _real_service_agent()
         self._setup_tts_agent(agent, ServiceState(), cfg_enabled=True)
         with mock.patch("Module.tts.TTSFactory.create", side_effect=ValueError(
                 "MiniMax TTS 需要 api_key，请设置 MINIMAX_API_KEY 环境变量或显式传入")) as mc, \
@@ -456,20 +487,24 @@ class TestServiceFlagsFollowSessionOnSwitch:
     """
 
     @pytest.mark.asyncio
-    async def test_apply_service_enabled_syncs_both_slots(self, fake_agent):
-        agent = fake_agent
+    async def test_apply_service_enabled_syncs_gate_from_session(self, fake_agent):
+        """#43：有效开关是**派生**的（会话三态优先，None 回退 config）。
+
+        修复前后对比：原先写两份（Agent 内存槽位 + TTS 管理器标志），本用例断言槽位；
+        现在权威只有会话 `service_state` 一份，`agent.tts_enabled` 现算，断言的是
+        派生值与门控投影。
+        """
+        agent = _real_service_agent()
         agent.session.service_state = ServiceState(stt_enabled=True, tts_enabled=True)
         agent._config.stt.enabled = False
         agent._config.tts.enabled = False
-        agent._cognitive = mock.MagicMock()
-        agent._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
 
         await _LifecycleServices._apply_service_enabled(agent)
 
-        assert agent._stt_enabled is True                      # noqa: SLF001
-        assert agent._tts_enabled is True                      # noqa: SLF001
-        # TTS 管理器标志才是 loop 的实际门控——只改槽位会让"开关状态"与
-        # "是否真的会说话"分叉
+        assert agent.stt_enabled is True                       # 显式值压过 config
+        assert agent.tts_enabled is True
+        # TTS 管理器标志是 loop 的实际门控——派生投影必须跟着走，否则"开关显示开着
+        # 但不会说话"
         agent._cognitive._tts_mgr.set_enabled.assert_awaited_once_with(True)  # noqa: SLF001
 
     @pytest.mark.asyncio
@@ -479,12 +514,10 @@ class TestServiceFlagsFollowSessionOnSwitch:
         这条断言是**记录设计决定**而不只是防回归——下次审计看到"切会话不切模型"
         时，应当先看到这里写明的理由。
         """
-        agent = fake_agent
+        agent = _real_service_agent()
         agent.session.service_state = ServiceState(
             llm_model="deepseek/deepseek-v4-pro", stt_enabled=True)
         agent._config.llm.model = "deepseek/deepseek-v4-flash"
-        agent._cognitive = mock.MagicMock()
-        agent._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
         agent.switch_llm = mock.AsyncMock(return_value={"ok": True})
 
         await _LifecycleServices._apply_service_enabled(agent)
@@ -511,11 +544,9 @@ class TestServiceFlagsFollowSessionOnSwitch:
 
     @pytest.mark.asyncio
     async def test_end_to_end_two_sessions_disagree(self, fake_agent):
-        """端到端：两个会话的开关不同 → 切换后槽位必须跟着变（往返都一致）。"""
-        agent = fake_agent
+        """端到端：两个会话的开关不同 → 切换后派生值必须跟着变（往返都一致）。"""
+        agent = _real_service_agent()
         agent._config.stt.enabled = False
-        agent._cognitive = mock.MagicMock()
-        agent._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
 
         states = {"conv_a": ServiceState(stt_enabled=True),
                   "conv_b": ServiceState(stt_enabled=False)}
@@ -531,16 +562,17 @@ class TestServiceFlagsFollowSessionOnSwitch:
         _wire_service_enabled(agent)          # 接真实的三态同步逻辑
 
         async def _switch(sid):
-            # 活动会话指针 + 活动会话对象一起换（真实 SessionManager 的行为）
-            agent.session = mock.MagicMock()
-            agent.session.service_state = states[str(sid)]
+            # 活动会话指针 + 活动会话对象一起换（真实 SessionManager 的行为）。
+            # `agent.session` 是只读 property → 必须换底层 `_session_manager.active`。
+            active = mock.MagicMock()
+            active.service_state = states[str(sid)]
+            agent._session_manager.active = active
             return {"ok": True}
 
         agent._session_manager.switch = mock.AsyncMock(side_effect=_switch)
         _bind_switch_session(agent)
 
         await agent.switch_session(SessionId("conv_a"))
-        # 断言运行时槽位（公开属性 agent.stt_enabled 读的就是它）
-        assert agent._stt_enabled is True, "切到显式开启的会话 → 运行时槽位应为 True"   # noqa: SLF001
+        assert agent.stt_enabled is True, "切到显式开启的会话 → 有效开关应为 True"
         await agent.switch_session(SessionId("conv_b"))
-        assert agent._stt_enabled is False, "切回显式关闭的会话 → 运行时槽位应为 False"  # noqa: SLF001
+        assert agent.stt_enabled is False, "切回显式关闭的会话 → 有效开关应为 False"

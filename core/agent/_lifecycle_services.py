@@ -38,9 +38,13 @@ class _LifecycleServices:
         _tts: TTSBackend | None
         _stt: STTBackend | None
         _llm: LLMAdapter
-        _stt_enabled: bool | None
-        _tts_enabled: bool | None
         switch_llm: Callable[[str], Coroutine[Any, Any, dict]]
+
+        # #43：有效开关是**派生 property**（权威 = 会话 service_state + config 回退），
+        # 定义在 `Agent` 上。mixin 里必须声明为 read-only property 而不是可变属性——
+        # 声明成属性会让 pyright 认为子类用可变量覆盖了 property。
+        @property
+        def tts_enabled(self) -> bool: ...
 
     async def _start_token_and_prompt(self) -> None:
         """创建 TokenTracker + PromptRecorder，注入 CognitiveLoop。"""
@@ -64,32 +68,56 @@ class _LifecycleServices:
             response_recorder=self._response_recorder,
         )
 
+    def _effective_service_enabled(self, service: str) -> bool:
+        """服务开关有效值的**唯一推导点**（#43/S2-C3）。
+
+        三个"来源"就此收敛成一个函数：会话三态字段（权威，用户显式设置过才非 None）
+        → 否则 config 默认值。`agent.stt_enabled` / `agent.tts_enabled` 都走这里，
+        capabilities 广播、TTS 门控、STT 路由因此不可能各读各的。
+
+        Args:
+            service: ``"stt"`` 或 ``"tts"``。
+
+        Returns:
+            有效开关（bool）。
+        """
+        ss = self.session.service_state
+        if service == "stt":
+            explicit, default = ss.stt_enabled, self._config.stt.enabled
+        else:
+            explicit, default = ss.tts_enabled, self._config.tts.enabled
+        return explicit if explicit is not None else default
+
+    async def _sync_tts_gate(self) -> None:
+        """把 TTS 门控同步到 `TTSStreamManager` 的**唯一写点**（#43）。
+
+        第四个"来源"是 TTS 管理器的内部标志（loop 的实际门控）。它不是权威，是
+        **派生投影**——但此前三个调用点各写一次（`set_service` / `_apply_service_enabled`
+        / `_start_tts`），任何一处漏写都会造成"开关显示开着但不会说话"。现在所有
+        改动路径都只调本方法。
+        """
+        if self._cognitive is not None:
+            # 内部接线（loop gate 唯一来源），非跨模块私有访问
+            await self._cognitive._tts_mgr.set_enabled(self.tts_enabled)  # noqa: SLF001
+
     async def _apply_service_enabled(self) -> None:
         """把**当前会话**的三态开关同步到运行时槽位（S2-C3）。
 
-        三态语义：`ServiceState.<svc>_enabled` 非 None 用之（用户显式改过），否则回退
-        `config.<svc>.enabled`。同时**同步 TTS 管理器的内部标志**——它才是 loop 的实际
-        门控，只改 `_tts_enabled` 会让"开关状态"与"是否真的会说话"分叉。
+        #43 之后"应用"只剩下**同步派生投影**：有效值的推导本身在
+        `_effective_service_enabled`（属性每次现算），不再有 Agent 内存槽位需要刷新，
+        也就不存在"切会话后槽位还是上一个会话的值"这类漂移。本方法只负责把派生值
+        写给 TTS 管理器。
 
-        **为什么必须能在会话切换时调用**：`ServiceState` 是 `SessionMemory` 的字段
-        （每会话持久化），而原先它**只在启动步骤**被应用一次。切到另一个会话后，内存
-        槽位保持上一个会话的值，而 `session.service_state` 已经是新会话的值——前端读
-        capabilities（取自内存槽位）与服务端持久化值不一致，"重启后开关回退"。实测：
-        切到 `stt_enabled=True` 的会话后 `agent.stt_enabled` 仍是 `False`。
+        **为什么仍然必须能在会话切换时调用**：`ServiceState` 是 `SessionMemory` 的字段
+        （每会话持久化）。`agent.stt_enabled` 现在自动跟随新会话，但 TTS 管理器的内部
+        标志是缓存，切会话后必须重算一次。
 
         **不含模型切换**：`llm_model` / `stt_model` / `tts_model` 的切换要建/拆后端
         （网络 client），在会话激活路径上做会带来明显的延迟与失败面；它们在启动时由
         `_apply_service_state` 应用，运行期由显式 `switch_llm/switch_stt/switch_tts`
         应用。这是**有意的取舍**，不是遗漏——写在这里以免下次审计重新发现。
         """
-        ss = self.session.service_state
-        self._stt_enabled = (
-            ss.stt_enabled if ss.stt_enabled is not None else self._config.stt.enabled)
-        self._tts_enabled = (
-            ss.tts_enabled if ss.tts_enabled is not None else self._config.tts.enabled)
-        if self._cognitive is not None:
-            # TTS 管理器标志是 loop 的唯一门控（与 set_service 同一接线）
-            await self._cognitive._tts_mgr.set_enabled(self._tts_enabled)  # noqa: SLF001
+        await self._sync_tts_gate()
 
     async def _apply_service_state(self) -> None:
         """启动步骤：读 ServiceState → 设模式槽位 → LLM 应用。位于 tts 步骤前。
@@ -105,14 +133,14 @@ class _LifecycleServices:
     async def _start_tts(self) -> None:
         """创建 TTS 后端（条件执行——建门 = 有效 enabled 三态）。
 
-        startup_tts_model = ServiceState.tts_model or config.tts.model；建门 = 有效
-        enabled（显式值优先，None 回退 config.tts.enabled）。创建后测试连通性，
-        不可用时自动降级为纯文本模式。
+        startup_tts_model = ServiceState.tts_model or config.tts.model；建门 =
+        `self.tts_enabled`（**#43：与 capabilities 广播、门控同步同一个派生点**，
+        不再在这里重算一遍三态回退——同一语义的第二处推导就是下一个漂移点）。
+        创建后测试连通性，不可用时自动降级为纯文本模式。
         """
         ss = self.session.service_state
         model = ss.tts_model or self._config.tts.model                    # startup_tts_model
-        gate = ss.tts_enabled if ss.tts_enabled is not None else self._config.tts.enabled  # 有效 enabled
-        if gate:
+        if self.tts_enabled:
             from Module.tts import TTSFactory
             from core.providers.custom_providers import resolve_model_params
             # 批次 5（D16）：desktop/local Profile 由 Electron 执行，后端启动不代理——
@@ -159,11 +187,7 @@ class _LifecycleServices:
                     result = await _asyncio.wait_for(self._tts.test(), timeout=1.0)
                     if result.get("ok"):
                         self._cognitive.configure(tts=self._tts)
-                        if self._tts_enabled is None:
-                            # 三态语义：_apply_service_state 已把 None 回退为 config.tts.enabled，
-                            # 此处 None 理论不可达，仅作类型收窄防御。
-                            return
-                        await self._cognitive._tts_mgr.set_enabled(self._tts_enabled)  # noqa: SLF001
+                        await self._sync_tts_gate()
                         logger.info("TTS backend connected")
                     else:
                         self._tts = None

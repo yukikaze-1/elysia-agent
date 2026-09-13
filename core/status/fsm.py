@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from core.status.agent_fsm import AgentFSM, AgentState
-from core.status.protocol import AgentStatus, CognitivePhaseController
+from core.status.protocol import AgentStatus, CognitivePhaseController, RunState
 from core.schema.agent import EventPriority
 from core.schema.types import RequestId
 
@@ -25,16 +25,50 @@ logger = logging.getLogger(__name__)
 # ── FSM-backed Status ─────────────────────────────────────────────────────────
 
 class FSMBackedStatus(AgentStatus):
-    """基于 AgentFSM 的 AgentStatus 实现。"""
+    """基于 AgentFSM 的 AgentStatus 实现——**两个轴由同一个对象持有**（#43）。
 
-    def __init__(self, fsm: AgentFSM) -> None:
+    - 相位轴：`self._fsm`（IDLE/THINKING/EXECUTING/SPEAKING/…）
+    - 生命周期轴：`self._run_state`（STOPPED/RUNNING/STOPPING/RESTARTING）
+
+    此前 `Agent._state` 与状态层是**两份互不相干的存储**：`Agent._state` 是普通实例
+    属性，状态层只投影 FSM。两者只能靠"记得同步"维持，停机窗口里正好没人记得——
+    这就是 CR-08（ACK 撒谎 + 消息永久丢失）的根因。现在 `Agent._state` 只是
+    `self.run_state` 的视图，`set_run_state` 是唯一写入点。
+    """
+
+    def __init__(self, fsm: AgentFSM, *,
+                 run_state: RunState = RunState.RUNNING) -> None:
+        """初始化。
+
+        Args:
+            fsm: 底层状态机（相位轴）。
+            run_state: 生命周期初值。默认 `RUNNING` 是给**独立构造**的场合（单测里
+                20 多处直接 `CognitiveLoop(...)` / `FSMBackedStatus(fsm)`）——没有
+                生命周期拥有者时该轴视为"不适用"，而不是伪装成"已停止"（后者会让
+                `accepts_new_turns` 恒假，把测试全部变成静默跳过）。
+                真实 Agent 在 `__init__` 里紧接着就置 `STOPPED`（`Agent._state =
+                RunState.STOPPED` 经 setter 落到这里），生产路径上不存在
+                "默认 RUNNING" 的窗口。
+        """
         self._fsm = fsm
+        self._run_state = run_state
         self._listeners: list[Callable[[str], Awaitable[None]]] = []
+
+    # ── 生命周期轴 ──
+
+    @property
+    def run_state(self) -> RunState:
+        return self._run_state
+
+    def set_run_state(self, state: RunState) -> None:
+        logger.debug("RunState: %s → %s", self._run_state.name, state.name)
+        self._run_state = state
 
     # ── 语义查询 ──
 
     @property
     def is_accepting_input(self) -> bool:
+        """相位轴：当前相位是否允许接收输入（**不含**生命周期，见 `accepts_new_turns`）。"""
         return self._fsm.state in (AgentState.IDLE, AgentState.IDLE_BACKGROUND_TASK)
 
     @property

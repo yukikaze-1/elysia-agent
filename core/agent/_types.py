@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 from core.schema.types import MessageId, RequestId, SessionId
+from core.status.protocol import RunState as _RunState
 
 if TYPE_CHECKING:
     from Module.workflow_engine.mailbox import WorkflowMailbox
@@ -43,9 +43,7 @@ class _BackgroundTaskEntry:
     mailbox: WorkflowMailbox
 
 
-class RunState(Enum):
-    """Agent 生命周期状态"""
-    STOPPED = auto()      # 初始 / 已停止
-    RUNNING = auto()      # 运行中
-    STOPPING = auto()     # 正常关机中
-    RESTARTING = auto()   # 重启中
+# RunState 已移至 `core.status.protocol`（#43：它是 AgentStatus 接口的一部分，
+# 放接口层才能让状态层持有它而不反向依赖 core.agent）。此处 re-export 兼容既有
+# 导入路径（`from core.agent._types import RunState` / `from core.agent import RunState`）。
+RunState = _RunState
