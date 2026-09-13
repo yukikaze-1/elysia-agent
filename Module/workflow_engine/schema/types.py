@@ -163,3 +163,7 @@ class NodeErrorCode(StrEnum):
     CONTEXT_OVERFLOW = "context_overflow"  # 单节点 prompt 超上下文窗口
     TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"  # 单节点 LLM 调用 token 超限
     NETWORK_ERROR = "network_error"        # 瞬态网络故障（可重试）
+    # S2-D7：节点声明的 `input_bindings` 一条都解析不出来（上游没跑 / 漏边 /
+    # 引用了被全量重建丢弃的节点 / output key 拼错）。原实现只 warning 后把空输入
+    # 塞进 prompt，LLM 会自行编造内容、Evaluator 还可能判成功——**静默错误结果**。
+    MISSING_INPUT = "missing_input"

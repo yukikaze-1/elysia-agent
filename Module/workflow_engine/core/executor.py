@@ -60,6 +60,10 @@ _TOOL_MATCH_SYSTEM = """你是一个任务执行专家。根据节点的描述�
 """
 
 
+class _MissingInputError(Exception):
+    """节点声明的输入一条都解析不出来（S2-D7）——专用类型以便映射到精确错误码。"""
+
+
 class Executor:
     """DAG 节点的执行引擎。
 
@@ -216,6 +220,16 @@ class Executor:
                     duration_ms=duration_ms,
                 )
 
+        except _MissingInputError as e:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            logger.warning("Executor: node=%s 输入缺失: %s", node.node_id, e)
+            return NodeResult(
+                node_id=node.node_id,
+                error=NodeErrorCode.MISSING_INPUT,
+                attempt=0,
+                duration_ms=duration_ms,
+            )
+
         except _ToolMatchError as e:
             duration_ms = int((time.monotonic() - start) * 1000)
             logger.warning("Executor: node=%s 工具匹配失败: %s", node.node_id, e)
@@ -254,15 +268,26 @@ class Executor:
             以 artifact_id 为 key、产物内容为 value 的字典
         """
         inputs: dict[ArtifactId, Any] = {}
+        missing: list[str] = []
         for aid in node.input_bindings:
             artifact = await self._artifact_store.get(aid)
             if artifact is not None:
                 inputs[aid] = artifact.content
             else:
+                missing.append(str(aid))
                 logger.warning(
                     "Executor: node=%s task=%s 上游产物 %s 不存在",
                     node.node_id, task_id, aid,
                 )
+        # S2-D7：**声明了 input_bindings 却一条都解析不出来**说明上游根本没跑（漏边、
+        # 引用了被全量重建丢弃的节点、或产物 key 拼错）。原实现只 warning 后把空输入
+        # 塞进 LLM prompt，LLM 会自行编造内容、Evaluator 还可能判成功——静默错误结果
+        # 并计入"成功节点"。这里显式失败，让节点走正常的失败/重规划路径。
+        if missing and not inputs:
+            raise _MissingInputError(
+                f"input_bindings 全部无法解析（{', '.join(missing)}）——"
+                f"上游产物不存在，拒绝在缺失输入下继续"
+            )
         return inputs
 
     # ── LLM 工具匹配 ────────────────────────────────────────────────────────

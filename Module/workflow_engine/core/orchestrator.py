@@ -137,6 +137,22 @@ class Orchestrator:
             CANCELED/BLOCKED/NEEDS_REPLAN）及可选的 checkpoint 和错误上下文。
         """
         task_id = task_state.task_id
+        # S2-D5 不变量断言：**空图不得进入执行循环**。`is_terminal()` 对空图空真，
+        # 于是循环立即 break、finalize 成 COMPLETED（0/0 节点）——用户收到"任务完成"
+        # 而实际什么都没做，且 `WorkflowState.error` 恒空，事后从查询面看不出异常。
+        # PlanValidator 会在规划阶段拦下空图；这里是执行期的最后一道（防 patch 后
+        # 变空、防绕过校验的调用方）。
+        if graph.node_count == 0:
+            logger.error(
+                "Orchestrator.run 拒绝空图: task_id=%s——空图对「全部 required 成功」"
+                "空真，继续执行会以 COMPLETED(0/0) 假成功收尾", task_id)
+            return OrchestratorResult(
+                status=OrchestratorRunStatus.FAILED,
+                error_context={
+                    "reason": "执行计划为空（0 个节点）——拒绝以「完成」收尾",
+                    "error_type": WorkflowErrorCode.PLANNING_FAILED.value,
+                },
+            )
         exec_state = self._init_exec(graph, resume_from, task_state)
         self._exec_state = exec_state
         logger.info("Orchestrator.run 开始: task_id=%s, nodes=%d", task_id, graph.node_count)

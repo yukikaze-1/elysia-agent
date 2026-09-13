@@ -351,6 +351,11 @@ class ValidationIssueType(StrEnum):
     MISSING_CONFIRMATION = "missing_confirmation"  # 高风险节点无确认标记
     MAX_NODES_EXCEEDED = "max_nodes_exceeded"    # 节点数超限
     MAX_DEPTH_EXCEEDED = "max_depth_exceeded"    # DAG 深度超限
+    # S2-D5：空图（或没有任何 required 节点）。`is_terminal()` 的原语义
+    # 「所有 required 节点都 SUCCESS」对空图**空真**，于是"什么都没做"会被判成
+    # "全部完成"——最坏的一类失败：假成功，且 `WorkflowState.error` 恒空（S2-D6），
+    # 事后从查询面看不出异常。
+    EMPTY_DAG = "empty_dag"
 
 
 class ValidationIssue(BaseModel):

@@ -320,14 +320,32 @@ def test_validate_structure_unreachable():
 
 
 def test_validate_structure_missing_dependency():
-    """边引用不存在的节点 → 由 from_plan 处理（warning + 跳过边）。"""
+    """边引用不存在的节点 → **必须报 MISSING_DEPENDENCY**（S2-D8）。
+
+    原测试断言 `len(issues) == 0`，把缺陷固化了：`from_plan` 只 warning 后丢掉这条
+    边，而 `validate_structure` 的"依赖不存在"检查遍历的是
+    `networkx.predecessors()`——networkx 只返回图中已存在的节点，那条分支**永远不
+    可能命中**。于是 `MISSING_DEPENDENCY` 成了"有兜底、无来源"的假保护，LLM 写错的边
+    既不报问题也不失败，只是**依赖被静默删除**：下游不再等上游，可能先执行并读到
+    缺失产物。
+    """
     plan = _make_plan([{"id": "a"}], [("a", "no_such_node")])
     pg = _graph(plan)
 
-    # 边被跳过（不在图中），所以图结构合法
     issues = pg.validate_structure()
-    # 单节点 DAG，无孤立
-    assert len(issues) == 0
+    missing = [i for i in issues if i.type == ValidationIssueType.MISSING_DEPENDENCY]
+    assert len(missing) == 1, f"丢边必须报出来，实得 {issues}"
+    assert "no_such_node" in missing[0].message
+    assert "a" in missing[0].message
+
+
+def test_dropped_edge_is_not_silently_ignored():
+    """丢边留痕：`_dropped_edges` 记录被丢弃的边，供校验/诊断消费。"""
+    plan = _make_plan([{"id": "a"}, {"id": "b"}], [("a", "b"), ("a", "ghost")])
+    pg = _graph(plan)
+
+    assert ("a", "ghost") in pg.dropped_edges
+    assert pg.is_predecessor(NodeId("a"), NodeId("b")) is True
 
 
 # ── 深度计算 ───────────────────────────────────────────────────────────────

@@ -175,6 +175,52 @@ class PlanValidator:
                 message=f"DAG 节点数 {len(plan.dag.nodes)} 超过上限 {max_nodes}",
             ))
 
+        # 9. 至少一个 required 节点（S2-D5 的业务侧）
+        #    空图由 `validate_structure` 报（第 0 项）；这里管"有节点但全 optional"，
+        #    它对"全部 required 成功"同样空真——任务会以 0/0 假成功收尾。
+        if plan.dag.nodes and not any(n.required for n in plan.dag.nodes):
+            issues.append(ValidationIssue(
+                type=ValidationIssueType.EMPTY_DAG,
+                message=f"DAG 有 {len(plan.dag.nodes)} 个节点但**没有一个 required**——"
+                        f"「全部 required 成功」空真，任务会假成功收尾",
+            ))
+
+        # 10. input_bindings ↔ output_as ↔ 拓扑前驱 的交叉一致性（S2-D7）
+        #     `input_bindings`（数据依赖）与 `edges`（执行依赖）是**两套独立声明**：
+        #     就绪判定只看 predecessors。LLM 产出两者不一致时（漏边、拼错 output:、
+        #     引用了已被全量重建丢弃的节点），节点会**早于/脱离**上游执行，由 LLM
+        #     自行编造内容，Evaluator 仍可能判成功 → 静默错误结果并计入"成功节点"。
+        producer = {
+            str(n.output_as): n.node_id
+            for n in plan.dag.nodes if n.output_as
+        }
+        for node in plan.dag.nodes:
+            for aid in node.input_bindings:
+                key = str(aid)
+                owner = producer.get(key)
+                if owner is None:
+                    issues.append(ValidationIssue(
+                        type=ValidationIssueType.MISSING_DEPENDENCY,
+                        node_id=node.node_id,
+                        message=f"input_bindings 引用了没有任何节点产出的 {key}"
+                                f"（没有节点的 output_as 等于它）",
+                    ))
+                    continue
+                if owner == node.node_id:
+                    continue
+                try:
+                    is_pred = graph.is_predecessor(owner, node.node_id)
+                except Exception:                     # noqa: BLE001 未知节点等
+                    is_pred = False
+                if not is_pred:
+                    issues.append(ValidationIssue(
+                        type=ValidationIssueType.MISSING_DEPENDENCY,
+                        node_id=node.node_id,
+                        message=f"input_bindings 引用 {key}（由 {owner} 产出），"
+                                f"但 {owner} 不是它的拓扑前驱——缺 edges 声明，"
+                                f"节点可能先于上游执行并读到缺失数据",
+                    ))
+
         # ── 汇总 ──────────────────────────────────────────────────────────
         if not issues:
             return ValidationResult(valid=True, action=ValidationAction.PROCEED), graph
@@ -183,6 +229,9 @@ class PlanValidator:
         fatal_types = {
             ValidationIssueType.MAX_NODES_EXCEEDED,
             ValidationIssueType.MAX_DEPTH_EXCEEDED,
+            # S2-D5：空图/无 required 不可"修复计划"——重规划也是空图，直接 ABORT，
+            # 避免"再试一次仍然假成功"。
+            ValidationIssueType.EMPTY_DAG,
         }
         has_fatal = any(i.type in fatal_types for i in issues)
         return ValidationResult(

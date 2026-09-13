@@ -40,15 +40,20 @@ class PlanGraph:
     例: A → B 表示 B 依赖 A，A 完成后 B 才能执行。
     """
 
-    def __init__(self, g: nx.DiGraph, nodes: dict[NodeId, DAGNode]) -> None:
+    def __init__(self, g: nx.DiGraph, nodes: dict[NodeId, DAGNode],
+                 dropped_edges: list[tuple[str, str]] | None = None) -> None:
         """初始化 PlanGraph。
 
         Args:
             g: NetworkX 有向图，节点为 NodeId。
             nodes: NodeId 到 DAGNode 的映射，保存节点的完整元数据。
+            dropped_edges: `from_plan` 因端点不存在而丢弃的边（S2-D8）——
+                留痕供 `validate_structure` 报成 `MISSING_DEPENDENCY`，
+                而不是无声地把依赖删掉。
         """
         self._g = g
         self._nodes = nodes  # NodeId → DAGNode（含 description, output_contract, required 等）
+        self._dropped_edges: list[tuple[str, str]] = list(dropped_edges or [])
 
     # ── 构造 / 导出 ──────────────────────────────────────────────────────────
 
@@ -77,13 +82,21 @@ class PlanGraph:
             g.add_node(node.node_id)
             nodes[node.node_id] = node
 
+        # S2-D8：端点不存在的边**不能静默丢弃**。原先只 warning 后 continue，
+        # 而 `validate_structure` 里那条"依赖的节点不存在"检查遍历的是
+        # `networkx.predecessors()`——networkx 只可能返回图中**已存在**的节点，
+        # 该分支永远不可能命中（`MISSING_DEPENDENCY` 成了"有兜底、无来源"的假保护）。
+        # 于是 LLM 写错的边既不报问题也不失败，只是**依赖被静默删除**：下游节点
+        # 不再等上游，可能先执行并读到缺失产物。
+        dropped_edges: list[tuple[str, str]] = []
         for from_id, to_id in plan.dag.edges:
             if from_id not in g.nodes or to_id not in g.nodes:
                 logger.warning("PlanGraph: edge 端点不存在 (%s → %s)", from_id, to_id)
+                dropped_edges.append((str(from_id), str(to_id)))
                 continue
             g.add_edge(from_id, to_id)
 
-        return cls(g, nodes)
+        return cls(g, nodes, dropped_edges)
 
     def to_plan(self, plan: Plan | None = None) -> Plan:
         """将当前图状态写回 Plan（更新 dag.nodes + dag.edges）。
@@ -163,15 +176,49 @@ class PlanGraph:
         """
         return list(nx.topological_sort(self._g))
 
+    @property
+    def dropped_edges(self) -> list[tuple[str, str]]:
+        """`from_plan` 因端点不存在而丢弃的边（S2-D8，只读）。
+
+        对外暴露是为了让校验/诊断/测试能看见"依赖被删掉了"这一事实——原先它只活在
+        一条 warning 日志里。
+        """
+        return list(self._dropped_edges)
+
+    def is_predecessor(self, maybe_pred: NodeId, node_id: NodeId) -> bool:
+        """`maybe_pred` 是否是 `node_id` 的（直接或间接）前驱。
+
+        S2-D7 用：`input_bindings` 声明的产物提供者必须是拓扑前驱——否则下游会
+        早于上游执行。用 `nx.ancestors` 而非直接前驱：允许中间节点被省略。
+
+        Args:
+            maybe_pred: 候选前驱节点 ID。
+            node_id: 目标节点 ID。
+
+        Returns:
+            True 表示存在从 maybe_pred 到 node_id 的路径。
+        """
+        if maybe_pred not in self._g.nodes or node_id not in self._g.nodes:
+            return False
+        return maybe_pred in nx.ancestors(self._g, node_id)
+
     def is_terminal(self, node_states: dict[NodeId, NodeState]) -> bool:
-        """所有 required=True 的节点都是 SUCCESS 状态。
+        """所有 required=True 的节点都是 SUCCESS 状态——**空图不算完成**。
+
+        S2-D5：原先空图会**空真**返回 True（"所有 required 都成功"对一个没有节点的
+        图成立），于是 `Orchestrator.run()` 的 `while not task_state.is_terminal()`
+        立即退出、直接 finalize 成 COMPLETED（0/0 节点）。用户收到"任务完成"而实际
+        什么都没做，且 `WorkflowState.error` 恒空——事后从查询面看不出异常。
+        `compute_progress()` 空图返回 0.0 而本方法返回 True，两者语义冲突也没人对齐。
 
         Args:
             node_states: NodeId 到 NodeState 的映射，记录每个节点的当前执行状态。
 
         Returns:
-            如果所有必需节点都已成功完成则返回 True，否则返回 False。
+            如果存在节点且所有必需节点都已成功完成则返回 True，否则返回 False。
         """
+        if not self._nodes:
+            return False
         for node_id, node in self._nodes.items():
             if not node.required:
                 continue
@@ -242,6 +289,20 @@ class PlanGraph:
         """
         issues: list[ValidationIssue] = []
 
+        # 0. 空图不变量（S2-D5）
+        #    `is_terminal()` 的语义是"所有 required 节点都 SUCCESS"——对空图**空真**。
+        #    可达路径：单节点 required 失败 → REPLAN → Replanner 用 remove_nodes
+        #    清空图（prompt 允许）→ patch 后校验通过 → 下次 run() 立即 break →
+        #    finalize() → **COMPLETED（0/0 节点）**。用户收到"任务完成"而实际什么
+        #    都没做。这里把它变成显式校验问题。
+        if len(self._g.nodes) == 0:
+            issues.append(ValidationIssue(
+                type=ValidationIssueType.EMPTY_DAG,
+                message="DAG 为空——没有任何节点；空图对「全部 required 成功」空真，"
+                        "会被判成完成。",
+            ))
+            return issues
+
         # 1. 环检测
         if not nx.is_directed_acyclic_graph(self._g):
             try:
@@ -255,6 +316,10 @@ class PlanGraph:
                 pass
 
         # 2. 依赖引用检查
+        #    注意：`predecessors()` 只可能返回图中已存在的节点，故下面的循环**恒不命中**
+        #    ——真正需要报的是 `from_plan` 丢弃的那些边（S2-D8），它们本来会让这个
+        #    分支变成"有兜底、无来源"的假保护。两者都保留：前者防未来实现变化，
+        #    后者是有来源的那一条。
         for node_id in self._g.nodes:
             for pred in self._g.predecessors(node_id):
                 if pred not in self._g.nodes:
@@ -263,6 +328,13 @@ class PlanGraph:
                         node_id=node_id,
                         message=f"依赖的节点 {pred} 不存在",
                     ))
+        for from_id, to_id in self._dropped_edges:
+            issues.append(ValidationIssue(
+                type=ValidationIssueType.MISSING_DEPENDENCY,
+                node_id=NodeId(to_id) if to_id in self._g.nodes else None,
+                message=f"边 {from_id} → {to_id} 的端点不存在，依赖被删除"
+                        f"（下游不再等待上游，可能读到缺失产物）",
+            ))
         # 3. 孤立节点（>1 节点时为异常，单节点任务正常）
         if len(self._g.nodes) > 1:
             for node_id in self._g.nodes:

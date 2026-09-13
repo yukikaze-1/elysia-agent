@@ -475,6 +475,16 @@ async def test_execute_llm_direct_mode(executor, sample_tools, running_state):
         input_bindings=[ArtifactId("output:search")],
         output_as=ArtifactId("output:summarize"),
     )
+    # 上游产物必须在 store 里——S2-D7 起"声明了 input_bindings 却一条都解析不出来"
+    # 会让节点显式失败（MISSING_INPUT），不再把空输入塞进 prompt 让 LLM 编内容。
+    # 本用例测的是"llm_direct 跳过工具匹配"，故如实铺好上游。
+    executor._artifact_store._artifacts["output:search"] = Artifact(
+        artifact_id=ArtifactId("output:search"),
+        artifact_type="text",
+        node_id=NodeId("search"),
+        task_id=WorkflowId("t1"),
+        content="搜索结果：今天晴，25℃",
+    )
     result = await executor.execute(node, WorkflowId("t1"), sample_tools, SessionId("s1"), running_state)
     assert result.error is None
     # llm_direct 路径不应调用 tool_registry
@@ -558,3 +568,53 @@ class TestExecutorCancellation:
         gate.set()                                      # 放行——工具完成（shield），结果弃用
         await asyncio.sleep(0.05)
         assert infra.tool_registry.execute.await_count == 1
+
+
+# ── S2-D7：声明了 input_bindings 却解析为空 → 显式失败 ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_missing_input_bindings_fail_explicitly(executor, sample_tools, running_state):
+    """上游产物全部缺失 → `MISSING_INPUT`，**不得**把空输入塞进 prompt。
+
+    原实现只 `logger.warning` 后继续：LLM 拿着空上下文自行编造内容，Evaluator 还可
+    能判成功——**静默错误结果**并计入"成功节点"。典型触发：LLM 漏写 edges 或引用了
+    被全量重建丢弃的节点。
+    """
+    from Module.workflow_engine.schema import ExecutionMode, NodeErrorCode
+
+    node = DAGNode(
+        node_id=NodeId("summarize"),
+        description="汇总搜索结果",
+        output_contract=OutputContract(description="汇总报告"),
+        execution_mode=ExecutionMode.LLM_DIRECT,
+        input_bindings=[ArtifactId("output:search")],   # store 里没有这个产物
+        output_as=ArtifactId("output:summarize"),
+    )
+    result = await executor.execute(node, WorkflowId("t1"), sample_tools,
+                                    SessionId("s1"), running_state)
+
+    assert result.error == NodeErrorCode.MISSING_INPUT, result
+    executor._infra.llm_client.chat.completions.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_partial_input_bindings_still_proceed(executor, sample_tools, running_state):
+    """回归网：**部分**产物缺失时仍继续（有可用上下文），只警告。"""
+    from Module.workflow_engine.schema import Artifact, ExecutionMode
+
+    executor._artifact_store._artifacts["output:a"] = Artifact(
+        artifact_id=ArtifactId("output:a"), artifact_type="text",
+        node_id=NodeId("a"), task_id=WorkflowId("t1"), content="上游内容",
+    )
+    node = DAGNode(
+        node_id=NodeId("summarize"),
+        description="汇总",
+        output_contract=OutputContract(description="报告"),
+        execution_mode=ExecutionMode.LLM_DIRECT,
+        input_bindings=[ArtifactId("output:a"), ArtifactId("output:missing")],
+        output_as=ArtifactId("output:summarize"),
+    )
+    result = await executor.execute(node, WorkflowId("t1"), sample_tools,
+                                    SessionId("s1"), running_state)
+    assert result.error is None, result

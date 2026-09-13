@@ -433,7 +433,7 @@ class WorkflowErrorCode(StrEnum):
     INTERNAL_ERROR = "internal_error"
 
 class NodeErrorCode(StrEnum):
-    """节点执行错误码——8 项。NodeResult.error 使用。"""
+    """节点执行错误码——9 项。NodeResult.error 使用。"""
     TOOL_ERROR = "tool_error"
     TOOL_TIMEOUT = "tool_timeout"
     TOOL_NOT_FOUND = "tool_not_found"
@@ -442,6 +442,7 @@ class NodeErrorCode(StrEnum):
     CONTEXT_OVERFLOW = "context_overflow"
     TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"
     NETWORK_ERROR = "network_error"
+    MISSING_INPUT = "missing_input"  # input_bindings 全部无法解析（S2-D7）
 
 class ResumeErrorCode(StrEnum):
     """resume() 失败时的错误码——6 项。"""
