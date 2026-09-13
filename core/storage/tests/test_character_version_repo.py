@@ -366,3 +366,141 @@ class TestAppendVersionFailClosed:
         body = ast.dump(fn)
         assert "_require_connected" in body, (
             "append_version 未走连接守卫——又会退回静默返回 0")
+
+
+# ══════════════════════════════════════════════════════════════════
+# #27：版本号分配必须原子（并发抢占 → 重算，而不是重复 / 500）
+# ══════════════════════════════════════════════════════════════════
+
+class _RaceGate:
+    """并发闸门：等 N 个写者都到达后一起放行（之后立即放行）。
+
+    用来把"两个 append 读到同一个 max"这件事**确定性**地复现出来——fake 后端内部
+    没有 await 交错点，单靠 `asyncio.gather` 两个协程其实是顺序跑完的，测不到竞态。
+    """
+
+    def __init__(self, participants: int = 2) -> None:
+        self._need = participants
+        self._arrived = 0
+        self._open = asyncio.Event()
+
+    async def wait(self) -> None:
+        self._arrived += 1
+        if self._arrived >= self._need:
+            self._open.set()
+        await self._open.wait()
+
+
+class _RaceDocumentDB:
+    """把 `insert_one` 挂到闸门上的 fake 代理——其余操作原样转发。"""
+
+    def __init__(self, inner, gate: _RaceGate) -> None:
+        self._inner = inner
+        self._gate = gate
+
+    def __getattr__(self, name):  # noqa: ANN001, ANN204
+        return getattr(self._inner, name)
+
+    async def insert_one(self, collection: str, document: dict) -> str:
+        await self._gate.wait()
+        return await self._inner.insert_one(collection, document)
+
+
+async def _run_concurrent_appends(*, with_unique_index: bool) -> list[int]:
+    """两个并发 append 打同一 (session_id, content_type)，返回拿到的版本号。
+
+    Args:
+        with_unique_index: 是否先声明 `(session_id, content_type, version)` 唯一索引。
+            False 用来复现"索引已降级为非唯一"这一**受支持的运维状态**
+            （见 `_ensure_version_index` 纪律 3：降级永不自我修复）。
+    """
+    from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+    backend = FakeDocumentDBBackend()
+    if with_unique_index:
+        await backend.ensure_index(
+            COLLECTION,
+            [("session_id", 1), ("content_type", 1), ("version", -1)],
+            unique=True,
+        )
+    repo = CharacterVersionRepository(db=backend)
+    gate = _RaceGate(participants=2)
+    repo._db = _RaceDocumentDB(backend, gate)
+    repo._injected_db = True
+
+    sid = SessionId("test-race")
+    kwargs = {
+        "timestamp": "2026-07-22T00:00:00+08:00",
+        "trigger": CompressionTrigger.COMPRESSION,
+        "change_summary": ["并发"],
+    }
+    versions = await asyncio.gather(
+        repo.append_version(session_id=sid, text="A", **kwargs),
+        repo.append_version(session_id=sid, text="B", **kwargs),
+    )
+    stored = await backend.find(COLLECTION, {"session_id": sid}, limit=10)
+    return list(versions) + [len(stored)]
+
+
+class TestAppendVersionAtomicity:
+    """#27：`append_version` 的 `max+1` 原先非原子（S2-B7(a)），两条出路都坏——
+    自建唯一索引健康时 `DuplicateKeyError` 未捕获冒泡 500；索引已降级为非唯一时
+    **静默**写入重复版本号，污染 L2/C6 历史（`list_versions` 按版本号排序展示，
+    重复版本会让回滚选错目标）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_appends_get_distinct_versions_with_unique_index(self):
+        """唯一索引健康：两个并发 append 拿到 1 与 2，无 500、无重复。"""
+        v_a, v_b, stored_count = await _run_concurrent_appends(with_unique_index=True)
+        assert sorted([v_a, v_b]) == [1, 2], f"并发版本号未去重/未重算: {v_a}, {v_b}"
+        assert stored_count == 2
+
+    @pytest.mark.asyncio
+    async def test_concurrent_appends_distinct_even_without_unique_index(self):
+        """唯一索引**已降级**（受支持的运维状态）：仍须拿到 1 与 2。
+
+        这是"两条出路都坏"的第二条：没有自建唯一索引时，重复写入不会报错，
+        旧实现会**静默**落两条 `version=1`。修复后仲裁者是文档 `_id`（Mongo 内建
+        唯一索引恒存在），与 `ensure_index` 健康与否无关。
+        """
+        v_a, v_b, stored_count = await _run_concurrent_appends(with_unique_index=False)
+        assert sorted([v_a, v_b]) == [1, 2], (
+            f"唯一索引降级后并发版本号重复（静默污染版本历史）: {v_a}, {v_b}")
+        assert stored_count == 2
+
+    @pytest.mark.asyncio
+    async def test_version_slot_id_is_injective(self):
+        """`_version_slot_id` 对 `(sid, content_type, version)` 必须是单射。"""
+        sid = SessionId("s")
+        ids = {
+            CharacterVersionRepository._version_slot_id(sid, "l2", 1),
+            CharacterVersionRepository._version_slot_id(sid, "c6", 1),
+            CharacterVersionRepository._version_slot_id(sid, "l2", 2),
+            CharacterVersionRepository._version_slot_id(SessionId("s2"), "l2", 1),
+        }
+        assert len(ids) == 4, "版本槽位 _id 冲突——不同版本会互相抢占"
+
+    @pytest.mark.asyncio
+    async def test_append_version_routes_backend_failure_through_call(self):
+        """写入后端真实故障 → `StorageUnavailableError`（而不是裸 driver 异常 500）。
+
+        旧实现裸调 `db.insert_one`，绕过 `_call` 的统一失败语义（S2-B7(a) 的
+        "裸 insert_one 绕过 `_call`"）。
+        """
+        from core.storage.base import StorageUnavailableError
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+        backend = FakeDocumentDBBackend()
+        repo = CharacterVersionRepository(db=backend)
+        repo._injected_db = True
+
+        async def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("mongo 挂了")
+
+        backend.insert_one = _boom  # type: ignore[method-assign]
+        with pytest.raises(StorageUnavailableError):
+            await repo.append_version(
+                session_id=SessionId("sid"), text="t",
+                timestamp="2026-07-22T00:00:00+08:00",
+                trigger=CompressionTrigger.COMPRESSION, change_summary=[])

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema.types import SessionId
 from core.schema.compression import CompressionTrigger, VersionEntry
-from core.storage.base import Repository, StorageUnavailableError
+from core.storage.base import Repository, StorageUnavailableError, is_duplicate_key
 
 if TYPE_CHECKING:
     from core.schema.types import IsoTimestamp
@@ -167,6 +167,26 @@ class CharacterVersionRepository(Repository):
 
     # ---- core API ----
 
+    # 版本号抢占重试上限。并发的两个写者每轮必有一个前进（仲裁者是 `_id` 槽位），
+    # 所以 1~2 轮即收敛；给 5 轮余量，超出则**明确失败**而不是静默写重复版本号。
+    _APPEND_RETRY_LIMIT = 5
+
+    @staticmethod
+    def _version_slot_id(session_id: SessionId, content_type: str, version: int) -> str:
+        """版本槽位 `_id`——让版本号的唯一性仲裁**不依赖自建索引**。
+
+        MongoDB 的内建 `_id` 唯一索引**恒存在**（由 server 保证，与 `ensure_index`
+        无关）；而本仓储的 `(session_id, content_type, version)` 唯一索引在检测到
+        存量重复时会被**有意**降级为非唯一，且文档明确写了"降级不自我修复"
+        （见 `_ensure_version_index` 纪律 3）。用 `_id` 当仲裁者，两条出路
+        （自建索引健康 / 已降级）都能挡住并发重复版本号。
+
+        分隔符 `|`：`content_type` 是代码内字面量（`"l2"`/`"c6"`…），`session_id`
+        由 `SessionManager` 生成（`conv_*` / `default`），两者都不含 `|`，故
+        `(sid, ct, v)` → `_id` 是单射。
+        """
+        return f"cv|{session_id}|{content_type}|{version}"
+
     async def append_version(
         self, session_id: SessionId, text: str,
         timestamp: "IsoTimestamp", trigger: CompressionTrigger,
@@ -174,6 +194,13 @@ class CharacterVersionRepository(Repository):
         content_type: str = "l2",
     ) -> int:
         """追加一个版本。自动计算 version 序号（per content_type，max+1）。
+
+        #27：版本号分配改为**乐观抢占 + 冲突重算**，不再是非原子的裸 `max+1`。
+        修复前两条出路都坏（S2-B7(a)）：自建唯一索引健康时未捕获的
+        `DuplicateKeyError` 冒泡成 500；索引已降级为非唯一时**静默**写入重复版本号，
+        污染 L2/C6 版本历史。同时写入改经 `_call` —— 原先裸调 `db.insert_one`
+        绕过统一失败语义（真实故障既不被包装成 `StorageUnavailableError`，也不会
+        触发 `_mark_unavailable` 让健康检查重连）。
 
         Args:
             session_id: 会话 ID。
@@ -189,30 +216,66 @@ class CharacterVersionRepository(Repository):
         Raises:
             StorageUnavailableError: 数据库未连接（S3-11——原先静默返回 0，调用方
                 无法区分"没写进去"与"版本号就是 0"，于是 L2 已变而无版本记录、
-                C6 不刷新，且因为处理计数已推进而**永不重试**）。
+                C6 不刷新，且因为处理计数已推进而**永不重试**）；或读/写后端操作
+                真实失败；或抢占连续超轮（防御分支，见 `_APPEND_RETRY_LIMIT`）。
         """
         db = self._require_connected("append_version")
-        # 计算下一个版本号 — 必须加 content_type 过滤
-        docs = await db.find(
-            COLLECTION,
-            {"session_id": session_id, "content_type": content_type},
-            sort=[("version", -1)],
-            limit=1,
-        )
-        next_version = (docs[0]["version"] + 1) if docs else 1
-        doc = {
-            "session_id": session_id,
-            "content_type": content_type,
-            "version": next_version,
-            "text": text,
-            "timestamp": timestamp,
-            "trigger": trigger.value,
-            "change_summary": change_summary,
-        }
-        logger.info("CharacterVersionRepository append_version: session_id=%s, content_type=%s, version=%d, trigger=%s, text_len=%d",
-                    session_id, content_type, next_version, trigger.value, len(text))
-        await db.insert_one(COLLECTION, doc)
-        return next_version
+        for attempt in range(1, self._APPEND_RETRY_LIMIT + 1):
+            # 计算下一个版本号 — 必须加 content_type 过滤（每 content_type 独立计数）
+            docs = await self._call(
+                lambda: db.find(
+                    COLLECTION,
+                    {"session_id": session_id, "content_type": content_type},
+                    sort=[("version", -1)],
+                    limit=1,
+                ),
+                reason="append_version 读取当前最大版本号失败",
+            )
+            next_version = (docs[0]["version"] + 1) if docs else 1
+            doc = {
+                # 显式 `_id` = 版本槽位：并发写同一版本号的第二个写者会被 Mongo 内建
+                # `_id` 唯一索引拒绝（与自建索引是否已降级无关）
+                "_id": self._version_slot_id(session_id, content_type, next_version),
+                "session_id": session_id,
+                "content_type": content_type,
+                "version": next_version,
+                "text": text,
+                "timestamp": timestamp,
+                "trigger": trigger.value,
+                "change_summary": change_summary,
+            }
+            try:
+                await self._call(
+                    # 显式默认参数绑定本轮 doc，避免闭包捕获到下一轮的重新赋值
+                    lambda d=doc: db.insert_one(COLLECTION, d),
+                    reason="append_version 写入版本失败",
+                    # 唯一键冲突是**并发抢占的正常信号**（`_call` 命中 non_fatal
+                    # 时裸抛原始异常，不判死整个仓储）——由下面的重算分支处理
+                    non_fatal=is_duplicate_key,
+                )
+            except Exception as exc:  # noqa: BLE001 — 由 is_duplicate_key 分流
+                if not is_duplicate_key(exc):
+                    raise
+                logger.info(
+                    "append_version: 版本号 %d 被并发写者抢占"
+                    "（session_id=%s, content_type=%s），重算重试（第 %d/%d 轮）",
+                    next_version, session_id, content_type,
+                    attempt, self._APPEND_RETRY_LIMIT,
+                )
+                continue
+            logger.info("CharacterVersionRepository append_version: session_id=%s, content_type=%s, version=%d, trigger=%s, text_len=%d",
+                        session_id, content_type, next_version, trigger.value, len(text))
+            return next_version
+
+        # 防御分支：本方法只在"每轮都有人抢先"时才到得了这里（2 个写者不可能）。
+        # 用 `StorageUnavailableError` 是**有意的**——它是调用方（CompressionManager /
+        # debug 回滚路由）已经映射为 503 + 可重试的统一失败出口，好过裸 RuntimeError
+        # 冒泡成 500。注意它是在 `_call` 之外抛的，故**不会**触发 `_mark_unavailable`
+        # ——存储本身是健康的，不该被这条竞争判死。
+        raise StorageUnavailableError(
+            f"append_version 连续 {self._APPEND_RETRY_LIMIT} 轮版本号均被并发抢占"
+            f"（session_id={session_id}, content_type={content_type}）——"
+            f"本次未写入任何版本，重试即可")
 
     def _require_connected(self, op: str) -> DocumentDBBackend:
         """连接守卫（S3-11）——离线时抛出而非静默返回默认值。
