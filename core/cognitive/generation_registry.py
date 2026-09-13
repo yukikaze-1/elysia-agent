@@ -169,13 +169,15 @@ class GenerationRegistry:
         """按 user_message_id 反查最近一条 generation（幂等 commit 证据，Task 3/4）。
 
         恢复 stale CLAIMED 时的判定依据：存在 generation 记录 → 该用户消息已处理。
-        异常/离线返回 None = 无证据（不阻塞调用方）。
+
+        **不吞异常**（S2-B6）：原实现在异常/离线时返回 None，与"确实没有 generation"
+        同形，调用方据此 TAKEOVER 重新处理 → 重复 generation。存储不可用时必须让调用方
+        看见（`StorageUnavailableError` → 可重试拒绝），而不是替它下结论。
+
+        Raises:
+            StorageUnavailableError: 存储不可用 / 查询失败。
         """
-        try:
-            return await self._repo.find_by_user_message(user_message_id)
-        except Exception as e:
-            logger.debug("GenerationRegistry.find_by_user_message 失败: %s", e)
-            return None
+        return await self._repo.find_by_user_message(user_message_id)
 
     async def mark_stale_interrupted(self, cutoff_iso: str) -> int:
         """把 cutoff 之前仍 running 的 generation 标为 interrupted（崩溃残留清理）。

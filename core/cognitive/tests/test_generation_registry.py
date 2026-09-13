@@ -112,12 +112,29 @@ class TestGenerationRegistry:
             user_message_id=MessageId("u1"), message_id=MessageId("a1"), model="m"))
         assert asyncio.run(reg.find_by_user_message(MessageId("nope"))) is None
 
-    def test_find_by_user_message_db_error_returns_none(self):
-        """repo 抛异常 → registry 返回 None（Mongo 离线 = 无证据，不阻塞调用方）。"""
+    def test_find_by_user_message_db_error_propagates(self):
+        """repo 抛异常 → registry **必须抛出**，不得返回 None（S2-B6）。
+
+        原测试断言"返回 None（Mongo 离线 = 无证据）"——**把缺陷写成了预期**。
+        "查不了"与"真的没有 generation"必须分开：调用方（`ws_v2` 的幂等命中处理）
+        把 None 读成"没处理过" → TAKEOVER 重新处理 → **同一 clientRequestId 产出两条
+        assistant 回复、user_message 归档两次、token 翻倍**。
+        """
         repo = GenerationRepository(db=MagicMock())
         repo._db.find = AsyncMock(side_effect=RuntimeError("mongo down"))
         reg = GenerationRegistry(repo=repo)
-        assert asyncio.run(reg.find_by_user_message(MessageId("u1"))) is None
+        with pytest.raises(RuntimeError):
+            asyncio.run(reg.find_by_user_message(MessageId("u1")))
+
+    def test_find_by_user_message_db_none_raises(self):
+        """`_db is None`（未连接）同样不得被当成"无证据"。"""
+        from core.storage.base import StorageUnavailableError
+
+        repo = GenerationRepository(db=None)
+        repo._db = None                                   # noqa: SLF001
+        reg = GenerationRegistry(repo=repo)
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(reg.find_by_user_message(MessageId("u1")))
 
     def test_mark_stale_interrupted(self):
         repo = GenerationRepository(db=FakeDocumentDBBackend())

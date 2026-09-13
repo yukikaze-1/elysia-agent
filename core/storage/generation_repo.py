@@ -203,10 +203,20 @@ class GenerationRepository(Repository):
             user_message_id: 触发生成的用户消息 ID。
 
         Returns:
-            最近的 generation 文档，不存在或数据库不可用返回 None。
+            最近的 generation 文档；**不存在返回 None**。
+
+        Raises:
+            StorageUnavailableError: 数据库不可用 / 查询失败（S2-B6）。
+
+        **三态而不是两态**：本方法是幂等恢复的**提交证据**探测——"查不到"与"查不了"
+        必须分开。原实现 `_db is None → return None`，与"真的没有 generation"同形，
+        调用方据此走 TAKEOVER 重新处理 → **同一 clientRequestId 产生两条 assistant
+        回复 + user_message 归档两次 + token 翻倍**，正是 D6c 幂等机制要消除的问题。
+        （对照：`find_by_message` 是搜索 API，失败返回 None 属正常降级，不受此约束。）
         """
         if self._db is None:
-            return None
+            raise StorageUnavailableError(
+                "GenerationRepository 未连接——无法判定提交证据（不得当作不存在）")
         results = await self._db.find(
             COLLECTION, {"user_message_id": user_message_id},
             sort=[("created_at", -1)], limit=1)

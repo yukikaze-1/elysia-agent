@@ -193,10 +193,20 @@ class TestGenerationRepository:
         assert doc["finished_at"], "stale 清理标 interrupted 应写 finished_at"
 
     def test_db_none_safe_defaults(self):
+        """未连接时的降级语义——**除提交证据探测外**都安全返回默认值。
+
+        `find_by_user_message` 是唯一的例外（S2-B6）：它是幂等恢复的**提交证据**，
+        "查不了"与"真的不存在"必须分开——前者若被读成"没处理过"，调用方会 TAKEOVER
+        重新处理，导致同一 clientRequestId 产出两条 assistant 回复、归档两次、
+        token 翻倍。其余方法（搜索/分页/标记）失败返回默认值是正常降级。
+        """
+        from core.storage.base import StorageUnavailableError
+
         repo = GenerationRepository(db=None)
         assert asyncio.run(repo.find_one(GenerationId("g1"))) is None
         assert asyncio.run(repo.find_by_message(MessageId("m1"))) is None
-        assert asyncio.run(repo.find_by_user_message(MessageId("m2"))) is None
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.find_by_user_message(MessageId("m2")))
         docs, has_more, cursor = asyncio.run(repo.find_by_session(SessionId("s1")))
         assert (docs, has_more, cursor) == ([], False, None)
         assert asyncio.run(repo.mark_stale("running", "iso")) == 0

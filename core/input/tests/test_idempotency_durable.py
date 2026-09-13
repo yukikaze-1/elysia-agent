@@ -1540,3 +1540,81 @@ class TestD3DurableInDetails:
         assert acks[-1]["error"]["details"]["idempotency_durable"] is store.durable
         assert store.durable is False
         assert mgr.reserve_calls == 0, "lookup fail-closed 在 reserve 前返回"
+
+
+# ══════════════════════════════════════════════════════════════════
+# S2-B6：幂等证据探测不得 fail-open（"查不了" ≠ "没有证据"）
+# ══════════════════════════════════════════════════════════════════
+
+class TestEvidenceProbeIsNotFailOpen:
+    """stale CLAIMED 的恢复规则里有一步"查提交证据"（generation 是否已建档）。
+    原实现把**三态**（连接不可用 / 查询异常 / 真不存在）一律当成"没处理过"→ TAKEOVER
+    重新 claim → **同一 clientRequestId 产出两条 assistant 回复、user_message 归档两次、
+    token 翻倍**——正是 D6c 幂等机制要消除的问题。
+
+    放大器：每个仓储各自新建 motor 客户端，generation 仓储的 `_db=None` 与
+    idempotency 仓储的健康状态**互相独立**，所以二次 `store()` 的 claim 仍会成功。
+    """
+
+    @pytest.mark.asyncio
+    async def test_unavailable_evidence_rejects_retryable_without_takeover(
+        self, fresh_store,
+    ):
+        """证据探测抛 `StorageUnavailableError` → 可重试拒绝，**不接管**。"""
+        import core.input.ws_v2 as _m
+        from core.input.tests.test_voice_ws import FakeWs
+        from core.input.tests.test_v2_ws import _FakeV2Agent, _text_msg
+        from core.input.ws_handler import handle_json_message
+        from core.storage.base import StorageUnavailableError
+        from core.storage.idempotency import IdempotencyEntry, IdempotencyStore, StoreResult
+
+        class _TakeoverStore(IdempotencyStore):
+            """lookup miss；store 首次返回 stale CLAIMED loser，二次会 acquired=True。
+
+            若证据探测 fail-open，就会走 TAKEOVER 并真的接管（acquired=True）——
+            本用例断言它**不该**走到那一步。
+            """
+
+            def __init__(self, stale: IdempotencyEntry) -> None:
+                super().__init__()
+                self.stale = stale
+                self.store_calls = 0
+
+            async def lookup(self, conversation_id, client_request_id):
+                return None
+
+            async def store(self, conversation_id, client_request_id, entry):
+                self.store_calls += 1
+                return StoreResult(entry=self.stale,
+                                   acquired=self.store_calls > 1)
+
+        import hashlib
+        stale = IdempotencyEntry(
+            user_message_id="msg_b6",
+            content_digest=hashlib.sha256("你好".encode()).hexdigest(),
+            created_at=time.monotonic(), conversation_id="default",
+            claimed_at=time.time() - 60.0,          # 过期 CLAIMED
+        )
+
+        class _BrokenRegistry:
+            async def find_by_user_message(self, user_message_id):
+                raise StorageUnavailableError("generation repo offline")
+
+        ws = FakeWs()
+        agent = _FakeV2Agent(ws, gen_registry=_BrokenRegistry())
+        store = _TakeoverStore(stale)
+        original = _m.get_store
+        _m.get_store = lambda: store
+        try:
+            await handle_json_message(
+                _text_msg("r_b6"), agent, None, ws, voice_mgr=None)
+        finally:
+            _m.get_store = original
+
+        acks = [s for s in ws.sent if s.get("type") == "user_message.ack"]
+        assert acks, f"必须有 ACK，实得 {ws.sent}"
+        assert acks[-1]["status"] == "rejected", (
+            f"存储不可用时**不得** TAKEOVER 重新处理：{acks[-1]}")
+        assert acks[-1]["error"]["code"] == "STORAGE_UNAVAILABLE"
+        assert acks[-1]["error"]["retryable"] is True
+        assert agent.process_calls == 0, "不得进入业务流（那正是重复 generation）"

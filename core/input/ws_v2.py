@@ -176,7 +176,24 @@ async def _handle_idempotency_hit(
     # 过期 CLAIMED + 提交证据（generation 已建档 → 已入队处理，重放 accepted 不重复生成）
     gen_registry = getattr(agent, "generation_registry", None)
     if gen_registry is not None:
-        evidence = await gen_registry.find_by_user_message(entry.user_message_id)
+        try:
+            evidence = await gen_registry.find_by_user_message(entry.user_message_id)
+        except StorageUnavailableError:
+            # S2-B6：**"查不了" ≠ "没有证据"**。原实现把连接不可用 / 查询异常 / 真不存在
+            # 一律当成"没处理过" → TAKEOVER 重新 claim → 同一 clientRequestId 产出
+            # 两条 assistant 回复、user_message 归档两次、token 翻倍（正是 D6c 要消除的）。
+            # 这里按**可重试拒绝**处理，且**不写终态**（不调 `store.reject`）——存储恢复后
+            # 同键重试仍能正常走证据判定；若写成 rejected，重试只会永远重放这条拒绝。
+            logger.warning(
+                "幂等证据探测不可用（存储离线）——按可重试拒绝，不接管 crid=%s",
+                client_request_id)
+            await _send_ack(ws, "", client_request_id, client_message_id,
+                            conversation_id, "rejected",
+                            error={"code": "STORAGE_UNAVAILABLE",
+                                   "message": "存储暂不可用，无法确认请求状态",
+                                   "retryable": True},
+                            received_at=received_at)
+            return "REJECT"
     else:
         evidence = None  # 无注册表（测试 fake/未配置）→ 无证据
     if evidence is not None:
