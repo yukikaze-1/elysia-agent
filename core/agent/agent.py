@@ -679,69 +679,16 @@ class Agent(AgentLifecycle, AgentServer):
         return purged
 
     async def _poll_mailboxes(self):
-        """轮询所有活跃后台任务的 mailbox。每 500ms 一次。"""
+        """轮询所有活跃后台任务的 mailbox。每 500ms 一次。
+
+        排空与投递的**唯一实现**在
+        `_LifecycleTaskSystem.drain_mailboxes_once()`——关停路径
+        （`_stop_mailbox`）调的是同一个方法，避免"轮询 vs 关停"两条路径
+        各写一份而漂移（S2-A4）。本方法因此只剩"节奏控制"。
+        """
         while self._state == RunState.RUNNING:
             await asyncio.sleep(0.5)
-            for task_id, info in list(self._background_tasks.items()):
-                mailbox = info.mailbox
-                if mailbox is None:
-                    continue
-                try:
-                    while True:
-                        try:
-                            event = mailbox.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break  # 队列已空，继续下一个 task
-                        if event is None:
-                            break  # 队列为空（get_nowait 空时返回 None），处理下一个 task
-                        data = event.data or {}
-                        if event.type.value == "completed":
-                            self._bus.post(TaskResultData(
-                                task_id=task_id,
-                                result=data.get("result", ""),
-                                original_intent=info.intent,
-                                dispatched_at=info.dispatched_at,
-                            ))
-                            self._background_tasks.pop(task_id, None)
-                            break  # task 已终态，跳出 while 处理下一个 task
-                        elif event.type.value == "failed":
-                            self._bus.post(TaskResultData(
-                                task_id=task_id,
-                                result=f"任务执行失败: {data.get('error', '未知错误')}",
-                                original_intent=info.intent,
-                                dispatched_at=info.dispatched_at,
-                                is_error=True,
-                            ))
-                            self._background_tasks.pop(task_id, None)
-                            logger.warning(
-                                "后台任务失败: %s — %s",
-                                info.intent, data.get('error', '未知错误'),
-                            )
-                            break
-                        elif event.type.value == "cancelled":
-                            # E3：取消事件改推 CANCELLED——消费侧须 pop 条目 + 呈现结果，
-                            # 否则 _background_tasks 条目永久驻留（直到下次 start 清理）。
-                            self._bus.post(TaskResultData(
-                                task_id=task_id,
-                                result=f"任务已取消: {data.get('reason', '用户取消')}",
-                                original_intent=info.intent,
-                                dispatched_at=info.dispatched_at,
-                                is_error=True,
-                            ))
-                            self._background_tasks.pop(task_id, None)
-                            logger.info(
-                                "后台任务已取消: %s — %s",
-                                info.intent, data.get('reason', '用户取消'),
-                            )
-                            break
-                except Exception:
-                    # 处理单个事件时的意外错误（event.data 访问 / TaskResultData
-                    # 构造 / bus.post 等）——不中断整体轮询，但必须留日志诊断。
-                    # 注意：队列空（asyncio.QueueEmpty）已在上方 get_nowait 分支
-                    # 显式处理，走到这里的是真实错误。
-                    logger.warning(
-                        "mailbox 轮询处理事件异常（task_id=%s）", task_id, exc_info=True,
-                    )
+            self.drain_mailboxes_once()
 
     # ---- Event dispatching ----
 

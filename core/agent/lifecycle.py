@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.config import AppConfig
     from core.schema.types import IsoTimestamp, SessionId
+    from Module.workflow_contract.schema import WorkflowId
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +63,13 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("flush_compression",    "_flush_compression"),
         ("drain_personality",    "_drain_personality_tasks"),
         ("stop_db_health",       "_stop_db_health"),
-        ("stop_mailbox",         "_stop_mailbox"),
+        # S2-A4：task_system 必须在 mailbox **之前**停。顺序反了会让 `_stop_mailbox`
+        # 在引擎仍在收尾时就做收尾排空，那时终态事件还没写进 mailbox；引擎停完之后
+        # 再排空才能一次读全（mailbox 是有界保留队列，终态事件优先保留，晚读不丢）。
+        # 配套改动：`_background_tasks.clear()` 从 `stop()` 入口移进了 `_stop_mailbox`
+        # ——否则排空时注册表已空，无条目可查（这正是 S2-A4 的原缺陷）。
         ("stop_task_system",     "_stop_task_system"),
+        ("stop_mailbox",         "_stop_mailbox"),
         ("stop_scheduler",       "_stop_scheduler"),
         ("stop_tool_adapter",    "_stop_tool_adapter"),
         ("stop_idle",            "_stop_idle"),
@@ -129,7 +135,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _attachment_gc_task: asyncio.Task[None] | None
         _embed_task: asyncio.Task[Any] | None
         _pending_messages: list[_PendingMessage]
-        _background_tasks: dict[str, _BackgroundTaskEntry]
+        _background_tasks: dict[WorkflowId, _BackgroundTaskEntry]
         _started_cognitive_tasks: set[asyncio.Task]  # C1/P1-06（agent 定义，lifecycle 复位）
         _lifecycle_tasks: AsyncTaskScope  # ARCH-INC-P2-03：Agent 长期循环
         _turns: AsyncTaskScope            # ARCH-INC-P2-03：每回合认知任务
@@ -227,7 +233,11 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         for pending in self._pending_messages:
             self._release_pending_session_work(pending)
         self._pending_messages.clear()
-        self._background_tasks.clear()  # restart 复用同一实例，清理残留后台任务
+        # S2-A4：**不在这里**清 `_background_tasks`（原先在此 clear）。
+        # 清在这里等于把停机窗口内到达的后台任务终态事件变成不可达：轮询循环随即
+        # 因 `_state != RUNNING` 停转，而 WorkflowEngine 还要好几步之后才停，中间
+        # 完成/失败/取消的任务其 mailbox 事件无人读、注册表条目也已消失。清理与
+        # 「最后一次同步排空」一起放在 `_stop_mailbox`（引擎停完之后）执行。
 
         pending_exc: BaseException | None = None
         for name, method_name in self._SHUTDOWN_STEPS:
