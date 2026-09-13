@@ -33,8 +33,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 工具执行超时 (秒)
+# 工具执行超时 (秒) — **单次尝试**的上限（`_execute_tool` 内层 wait_for）。
 _TOOL_TIMEOUT = 60.0
+
+# 单任务重试上限与退避上限——必须与 `QueuedToolCall` 的默认值/实现保持一致：
+# `max_retries` 默认 2（task.py），`retry_backoff_seconds()` 的 cap 为 30s。
+_MAX_TASK_RETRIES = 2
+_RETRY_BACKOFF_CAP = 30.0
+
+# 单个工具调用从入队到终态的最坏耗时上界（秒）：
+#   首发 + max_retries 次重试，各 ≤ _TOOL_TIMEOUT，外加每次重试前的退避。
+_CALL_BUDGET = _TOOL_TIMEOUT * (1 + _MAX_TASK_RETRIES) + _RETRY_BACKOFF_CAP * _MAX_TASK_RETRIES
+
+# `dispatch_tool_calls` 的整体等待上限（秒）。
+#
+# **必须是有限值，这是活性不变量而非性能调优**：worker pool 未启动、已停止，或有
+# worker 静默死亡时，子任务的 future 永远不会被 resolve，而没有预算的 `await gather`
+# 会让整个回合**永久挂起**，并一直持有 `CognitiveLoop._process_lock` + 会话 work
+# lease——该会话从此无法再接受任何输入（用户侧的"卡死"，无任何日志）。
+#
+# 取值 = 2 × 单调用最坏预算：
+#   - 下界必须 ≥ `_CALL_BUDGET`，否则会掐断**设计内**的单工具最坏路径（3 次尝试）；
+#   - 多留一波覆盖 num_workers=5 的常规批量并发；
+#   - 更大的批量宁可有界失败并给出明确错误，也不要悬挂。
+# `core/tool_runtime/tests/test_task_scheduler.py` 有断言锁死 "≥ _CALL_BUDGET"。
+_DISPATCH_TIMEOUT = 2 * _CALL_BUDGET
+
+
+def _tool_name_of(task: QueuedToolCall) -> str:
+    """从任务 payload 取工具名（非 TOOL_CALL 的 payload 可能不含该键）。"""
+    payload = task.payload
+    if isinstance(payload, dict):
+        return str(payload.get("tool_name", "?"))
+    return "?"
 
 
 class ToolCallDispatcher:
@@ -94,7 +125,13 @@ class ToolCallDispatcher:
         logger.info("Scheduler Worker Pool 启动 (%d workers)", self._num_workers)
 
     async def stop(self) -> None:
-        """停止调度器：保存 checkpoint，取消所有 worker，清空队列和注册表。"""
+        """停止调度器：保存 checkpoint，取消所有 worker，清空队列和注册表。
+
+        S3-02：清空注册表**之前**必须把仍在等待的 future 全部以明确失败 resolve。
+        否则 `dispatch_tool_calls` 的 `await gather/wait` 会永久悬挂——被取消的
+        worker 只会处理它**已经取到**的那个任务，还留在队列里的子任务其 future
+        无人 resolve，而注册表随即被 clear，连条目都不再可见。
+        """
         self._running = False
         self._save_checkpoint()
         # 先取消清理任务
@@ -111,15 +148,44 @@ class ToolCallDispatcher:
             await asyncio.gather(*gathers, return_exceptions=True)
         self._workers.clear()
         self._prune_task = None
-        # 排空队列并清空注册表
+        # 排空队列（这些任务没有 worker 会再取，只能在此收口）
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
                 self._queue.task_done()
             except asyncio.QueueEmpty:
                 break
+        abandoned = self._fail_pending_futures(
+            "工具调度器已停止，工具未执行或未完成",
+            error_type=ErrorType.UNAVAILABLE,
+        )
+        if abandoned:
+            logger.warning("Scheduler: 停止时仍有 %d 个子任务在等待，已按失败收口", abandoned)
         self._tasks.clear()
         logger.info("Scheduler Worker Pool 已停止")
+
+    def _fail_pending_futures(self, error: str, *, error_type: ErrorType) -> int:
+        """把注册表中所有未完成的 future 以明确失败 resolve，返回处理条数。
+
+        S3-02：这是"永不悬挂"的兜底。`future.set_result()` 而非 `set_exception()`
+        ——等待方（`dispatch_tool_calls`）对异常结果的语义是"工具执行抛异常"，而
+        "调度器没跑/被停掉"是**正常的有界失败**，应当以 `ToolResult.fail` 呈现给
+        LLM（它能看到错误并可换策略），而不是炸出 traceback。
+        """
+        abandoned = 0
+        for task in self._tasks.values():
+            fut = task._future
+            if fut is None or fut.done():
+                continue
+            if not task.is_terminal:
+                task.status = QueuedToolCallState.CANCELLED
+            task.error = error
+            task.touch()
+            fut.set_result(ToolResult.fail(
+                name=_tool_name_of(task), error=error, error_type=error_type,
+            ))
+            abandoned += 1
+        return abandoned
 
     # ---- 提交 ----
 
@@ -143,6 +209,11 @@ class ToolCallDispatcher:
     ) -> list[tuple[ToolCall, ToolResult | BaseException]]:
         """CognitiveLoop 调用：将 tool_calls 创建为子任务，并行执行，返回结果。
 
+        本方法是**有界**的（S3-02）：
+        1. 调度器未运行时立即以失败返回，不入队（不入队的任务不会有 worker 取）；
+        2. 等待受 `_DISPATCH_TIMEOUT` 约束，预算耗尽 → 取消在途子任务 + 逐项明确失败；
+        3. 外层取消（用户打断）仍按原语义级联取消子任务后向上抛。
+
         Args:
             request_id: 触发这批工具调用的用户请求 ID，为空时跳过关联
             calls: normalized tool calls from CognitiveLoop
@@ -150,6 +221,20 @@ class ToolCallDispatcher:
         Returns:
             list of (ToolCall, ToolResult | Exception)
         """
+        # S3-02 守卫：未运行 = 没有 worker 会消费队列。此前这里照常入队并 await，
+        # 于是 future 永不 resolve → 回合永久挂起且持 `_process_lock`（会话死锁）。
+        if not self._running:
+            logger.error(
+                "Scheduler: 未运行仍收到 dispatch（%d 个工具调用）→ 立即失败，不入队", len(calls))
+            return [
+                (tc, ToolResult.fail(
+                    name=tc.function.name,
+                    error="工具调度器未运行（Agent 未启动或正在关停），工具未执行",
+                    error_type=ErrorType.UNAVAILABLE,
+                ))
+                for tc in calls
+            ]
+
         sub_tasks: list[QueuedToolCall] = []
         for tc in calls:
             t = QueuedToolCall.new_tool_call(
@@ -159,6 +244,9 @@ class ToolCallDispatcher:
                 call_id=tc.id,
             )
             sub_tasks.append(t)
+
+        if not sub_tasks:
+            return []
 
         # 绑定 children
         if request_id:
@@ -175,30 +263,79 @@ class ToolCallDispatcher:
 
         logger.info("Scheduler: dispatch %d 工具子任务 (request=%s)", len(sub_tasks), request_id or "-")
 
+        futures = [st.get_future() for st in sub_tasks]
+        # 用 asyncio.wait 而非 wait_for(gather(...))：wait_for 超时会**级联取消**子
+        # future，之后就再也无法把它们改写成明确的失败结果（只能得到空 message 的
+        # CancelledError），LLM 侧看到的是"失败但不知为何"。
         try:
-            results = await asyncio.gather(
-                *[st.get_future() for st in sub_tasks],
-                return_exceptions=True,
-            )
+            _, pending = await asyncio.wait(futures, timeout=_DISPATCH_TIMEOUT)
         except asyncio.CancelledError:
             for st in sub_tasks:
                 self.cancel(st.id)
             raise
 
+        stuck: set[int] = set()
+        if pending:
+            for idx, fut in enumerate(futures):
+                if fut in pending:
+                    stuck.add(idx)
+            logger.error(
+                "Scheduler: dispatch 等待预算耗尽（%.0fs），%d/%d 个子任务未完成 —— "
+                "取消并逐项以超时收口: %s",
+                _DISPATCH_TIMEOUT, len(stuck), len(sub_tasks),
+                [sub_tasks[i].id for i in sorted(stuck)],
+            )
+            for idx in stuck:
+                self.cancel(sub_tasks[idx].id)
+
         # 组装返回: [(tc, result), ...]
         out: list[tuple[ToolCall, ToolResult | BaseException]] = []
         for idx, (tc, st) in enumerate(zip(calls, sub_tasks)):
-            raw = results[idx]
-            if isinstance(raw, BaseException):
+            if idx in stuck:
                 out.append((tc, ToolResult.fail(
-                    name=st.payload.get("tool_name", "?"),
-                    error=str(raw),
+                    name=tc.function.name,
+                    error=f"工具调度等待超时（>{_DISPATCH_TIMEOUT:.0f}s），已取消",
+                    error_type=ErrorType.TIMEOUT,
                 )))
-            elif isinstance(raw, ToolResult):
-                out.append((tc, raw))
-            else:
-                out.append((tc, raw))
+                continue
+            raw = self._outcome_of(futures[idx], st)
+            out.append((tc, raw))
         return out
+
+    @staticmethod
+    def _outcome_of(fut: asyncio.Future, task: QueuedToolCall) -> ToolResult:
+        """把 future 的终态翻译成 `ToolResult`。
+
+        S3-02 之前取消路径统一走 `gather(return_exceptions=True)` → 得到裸
+        `CancelledError`，随后被 `str(raw)` 转成**空字符串**，于是用户/LLM 只看到
+        "工具失败：␀"（典型"失败语义静默"）。这里为取消补上可读原因。
+
+        与改动前一致：本方法**恒**返回 `ToolResult`（绝不把裸异常交给消费方——
+        `CognitiveToolPhase._dispatch_tool_calls` 会直接取 `.llm_content`）。
+        """
+        if fut.cancelled():
+            return ToolResult.fail(
+                name=_tool_name_of(task),
+                error="工具调用被取消（回合被打断或调度器已停止）",
+                error_type=ErrorType.CANCELLED,
+            )
+        exc = fut.exception()
+        if exc is not None:
+            # 形如空 message 的异常（CancelledError/TimeoutError 裸实例）也给出类型名，
+            # 避免 `str(exc) == ""` 把失败原因整个吞掉。
+            detail = str(exc) or type(exc).__name__
+            return ToolResult.fail(
+                name=_tool_name_of(task), error=detail, error_type=ErrorType.TOOL_ERROR)
+        raw = fut.result()
+        if isinstance(raw, BaseException):
+            return ToolResult.fail(
+                name=_tool_name_of(task),
+                error=str(raw) or type(raw).__name__,
+                error_type=ErrorType.TOOL_ERROR,
+            )
+        if isinstance(raw, ToolResult):
+            return raw
+        return ToolResult(success=True, content=str(raw), tool_name=_tool_name_of(task))
 
     async def dispatch_background(self, coro: Any) -> TaskId:
         """提交一个后台协程，返回 task_id（P3-01-RESERVED：无生产调用方，保留作扩展储备）。

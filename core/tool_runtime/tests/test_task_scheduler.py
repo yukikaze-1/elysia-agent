@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from core.tool_runtime import QueuedToolCall, QueuedToolCallKind, QueuedToolCallState
 from core.tool_runtime import ToolCallDispatcher
+from core.tool_runtime import scheduler as _scheduler_mod
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
 from Module.tool import PluginContext
@@ -106,9 +107,17 @@ async def _make_multi_manager() -> ToolAdapter:
     return tm
 
 
-async def _make_sleep_manager(barrier: asyncio.Event) -> ToolAdapter:
-    """包含 WaiterPlugin 的 ToolAdapter — barrier 控制执行。"""
-    tm = ToolAdapter([], session_id="test")
+async def _make_sleep_manager(
+    barrier: asyncio.Event,
+    extra_plugins: list[type[ToolPlugin]] | None = None,
+) -> ToolAdapter:
+    """包含 WaiterPlugin 的 ToolAdapter — barrier 控制执行。
+
+    Args:
+        barrier: WaiterPlugin 阻塞的事件。
+        extra_plugins: 额外注册的常规插件（S3-02 用例需要"卡住一个 + 走通一个"）。
+    """
+    tm = ToolAdapter(list(extra_plugins or []), session_id="test")
     await tm.start()
     plugin = WaiterPlugin()
     plugin._barrier = barrier  # type: ignore[attr-defined]
@@ -688,6 +697,150 @@ async def test_checkpoint_no_path():
     sched._save_checkpoint()  # 仍不应抛异常
 
     sched._restore_checkpoint()  # 无文件 → 静默跳过
+    await sched.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 一.5、S3-02：dispatch_tool_calls 的有界性（活性不变量）
+#
+# 这四条锁定的不是"结果对不对"，而是"**一定会返回**"。修复前
+# `dispatch_tool_calls` 在调度器未运行 / stop() 与 dispatch 竞争时会永久挂起
+# ——它持 `CognitiveLoop._process_lock` + 会话 work lease，等于该会话死锁且无
+# 任何日志。因此每条都用 wait_for 兜底：回归时测试以 TimeoutError 失败，而不是
+# 把整个测试会话挂死。
+# ═══════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.service
+def test_dispatch_budget_never_below_single_call_budget():
+    """预算不变量：单调用最坏预算 > 单次尝试超时，且 dispatch 预算 ≥ 单调用预算。
+
+    S3-02 的取值不能被静默改小——若 `_DISPATCH_TIMEOUT` 掉到 `_CALL_BUDGET` 以下，
+    dispatch 会掐断**设计内**的单工具最坏路径（3 次尝试），把正常的慢工具变成超时。
+    """
+    assert _scheduler_mod._TOOL_TIMEOUT > 0
+    assert _scheduler_mod._CALL_BUDGET > _scheduler_mod._TOOL_TIMEOUT
+    assert _scheduler_mod._DISPATCH_TIMEOUT >= _scheduler_mod._CALL_BUDGET
+    # 单调用预算必须真的覆盖 max_retries 次重试 + 退避
+    expect = (_scheduler_mod._TOOL_TIMEOUT * (1 + _scheduler_mod._MAX_TASK_RETRIES)
+              + _scheduler_mod._RETRY_BACKOFF_CAP * _scheduler_mod._MAX_TASK_RETRIES)
+    assert _scheduler_mod._CALL_BUDGET == expect
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_dispatch_when_not_running_fails_fast():
+    """调度器未运行（从未 start / 已 stop）→ 立即失败返回，绝不入队后悬挂。
+
+    修复前：照常入队 + `await gather`，而没有任何 worker 会消费队列
+    → 永久挂起（revert 后本用例以 TimeoutError 失败）。
+    """
+    tm = await _make_manager()
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=2, checkpoint_path=None)
+    # 故意不 start()
+
+    calls = [_tc("c1", "echo", '{"msg":"hi"}'), _tc("c2", "echo", '{"msg":"yo"}')]
+    results = await asyncio.wait_for(
+        sched.dispatch_tool_calls("p1", calls), timeout=2.0)
+
+    assert len(results) == 2
+    for tc, r in results:
+        assert isinstance(r, ToolResult)
+        assert not r.success
+        assert r.error_type == ErrorType.UNAVAILABLE
+        assert r.error and "未运行" in r.error
+    # 未入队：注册表里不该留下任何痕迹
+    assert sched.total_count == 0
+    assert sched.pending_count == 0
+
+    # 已 stop 的调度器同样快速失败（而不是等 480s 预算）
+    await sched.start()
+    await sched.stop()
+    results2 = await asyncio.wait_for(
+        sched.dispatch_tool_calls("p1", calls), timeout=2.0)
+    assert all(not r.success for _, r in results2)
+    assert all(r.error_type == ErrorType.UNAVAILABLE for _, r in results2)
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_stop_resolves_inflight_dispatch():
+    """stop() 与 dispatch 竞争：在途 future 必须被明确失败 resolve，dispatch 返回。
+
+    构造：1 个 worker；第一个调用被 WaiterPlugin 卡住（worker 正在执行），第二个
+    调用还留在队列里。此时 stop() —— 修复前 worker 只处理"已取到"的任务，队列里
+    那个 future 无人 resolve 且注册表随即被 clear，等待方永久挂起（revert 后本用例
+    以 TimeoutError 失败）。
+    """
+    barrier = asyncio.Event()
+    tm = await _make_sleep_manager(barrier)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
+    await sched.start()
+
+    calls = [_tc("c1", "waiter", "{}"), _tc("c2", "echo", '{"msg":"queued"}')]
+    dispatch_task = asyncio.create_task(sched.dispatch_tool_calls("p1", calls))
+    # 等 worker 真正开始执行 c1（否则 stop() 可能先跑，测不到"队列里还有条目"）
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if sched.running_count == 1 and sched.pending_count == 1:
+            break
+    assert sched.running_count == 1, "worker 未接管第一个调用，测试前提不成立"
+    assert sched.pending_count == 1, "第二个调用未停留在队列中，测试前提不成立"
+
+    await sched.stop()
+
+    results = await asyncio.wait_for(dispatch_task, timeout=5.0)
+    assert len(results) == 2
+    for tc, r in results:
+        assert isinstance(r, ToolResult)
+        assert not r.success
+        # 失败原因必须**可读**——修复前取消路径经 gather 得到裸 CancelledError，
+        # str() 后是空字符串（"失败语义静默"）。
+        assert r.error
+    assert results[0][1].error_type == ErrorType.CANCELLED       # 执行中被取消
+    assert results[1][1].error_type == ErrorType.UNAVAILABLE     # 停留在队列未执行
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_dispatch_budget_exhausted_fails_bounded_and_keeps_pool_alive(monkeypatch):
+    """预算耗尽 → 有界失败（TIMEOUT），且被取消的 worker 不退出 worker 池。
+
+    取消单个任务是通过 cancel worker task 实现的，而 worker 会吞掉 CancelledError
+    继续循环——若这一点被改坏，一次超时就会让并发度静默-1（几十次后池子空转）。
+    """
+    barrier = asyncio.Event()
+    tm = await _make_sleep_manager(barrier, extra_plugins=[EchoPlugin])
+    # 必须单 worker：只有"唯一那个 worker 被取消后是否还活着"才是真断言
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
+    await sched.start()
+    monkeypatch.setattr(_scheduler_mod, "_DISPATCH_TIMEOUT", 0.05)
+
+    results = await asyncio.wait_for(
+        sched.dispatch_tool_calls("p1", [_tc("c1", "waiter", "{}")]), timeout=5.0)
+    assert len(results) == 1
+    r = results[0][1]
+    assert isinstance(r, ToolResult)
+    assert not r.success
+    assert r.error_type == ErrorType.TIMEOUT
+    assert "超时" in (r.error or "")
+
+    # 池子仍然可用（worker 没被取消掉）
+    monkeypatch.undo()
+    ok = await asyncio.wait_for(
+        sched.dispatch_tool_calls("p2", [_tc("c2", "echo", '{"msg":"alive"}')]), timeout=5.0)
+    assert ok[0][1].success, "一次超时后 worker 池失效——取消把 worker 杀掉了"
+    await sched.stop()
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_dispatch_empty_calls_returns_empty():
+    """空 calls → 空结果（不能因 asyncio.wait 拒绝空集合而抛 ValueError）。"""
+    tm = await _make_manager()
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=2, checkpoint_path=None)
+    await sched.start()
+    assert await sched.dispatch_tool_calls("p1", []) == []
     await sched.stop()
 
 
