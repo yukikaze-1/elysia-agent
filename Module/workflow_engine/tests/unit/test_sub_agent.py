@@ -457,6 +457,11 @@ async def test_handle_replan_dagpatch_success():
     event_types = [e.type for e in events]
     assert WorkflowEventType.FAILED not in event_types
 
+    # S2-D2：第二次 run() 必须拿到旧 exec_state（合并保留 SUCCESS），而不是 None
+    second_call = mock_orch.run.await_args_list[1]
+    assert second_call.kwargs.get("resume_from") is not None, (
+        "全量重建必须带回旧 exec_state——传 None 会让已成功节点整图重跑")
+
 
 @pytest.mark.asyncio
 async def test_handle_replan_dagpatch_validation_failure():
@@ -497,7 +502,13 @@ async def test_handle_replan_dagpatch_validation_failure():
 
 @pytest.mark.asyncio
 async def test_handle_replan_full_replan_success():
-    """replan 返回 Plan → 校验通过 → graph.replace() + version 继承 + resume_from=None。"""
+    """replan 返回 Plan → 校验通过 → graph.replace() + version 继承 + **带回旧 exec_state**。
+
+    S2-D2：`resume_from` 原先固定为 `None`（旧注释把这条写成了预期行为），于是
+    全量重建后 `_init_exec_state` 生成**全 PENDING**，新 DAG 里 node_id 相同、旧态为
+    SUCCESS 的节点**从头再跑一遍**——包括已产生副作用的节点。DAGPatch 分支一直返回
+    `checkpoint.exec` 走合并保留 SUCCESS，两条分支行为不一致。
+    """
     agent = _make_sub_agent()
     mock_orch = _assign_execute_mocks(agent)
 
@@ -550,6 +561,11 @@ async def test_handle_replan_full_replan_success():
     events = _collect_mailbox_events(mailbox)
     event_types = [e.type for e in events]
     assert WorkflowEventType.FAILED not in event_types
+
+    # S2-D2：第二次 run() 必须拿到旧 exec_state（合并保留 SUCCESS），而不是 None
+    second_call = mock_orch.run.await_args_list[1]
+    assert second_call.kwargs.get("resume_from") is not None, (
+        "全量重建必须带回旧 exec_state——传 None 会让已成功节点整图重跑")
 
 
 @pytest.mark.asyncio

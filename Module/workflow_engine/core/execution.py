@@ -75,7 +75,12 @@ async def execute_nodes(
         ns.started_at = now_iso()
 
         logger.info("Orchestrator: 执行 node=%s attempt=%d", node.node_id, ns.attempt)
-        result = await executor.execute(node, task_id, tools, session_id, ts)
+        # S2-D3：把上一轮的失败原因带进 prompt——否则重试与首次**逐字节相同**，
+        # LLM 只能原样重选同一工具同一参数（盲重跑），对"副作用已产生但返回失败"
+        # 的工具会造成重复执行。
+        previous_error = ns.error if ns.attempt > 1 else None
+        result = await executor.execute(node, task_id, tools, session_id, ts,
+                                        previous_error=previous_error)
         # Executor 返回的 attempt=0，用 Orchestrator 追踪的实际 attempt 覆盖
         result.attempt = ns.attempt
         results.append(result)

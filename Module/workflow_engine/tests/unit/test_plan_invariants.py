@@ -349,3 +349,126 @@ class TestPlanningFailureIsNotInternalError:
 
         assert await _plan_with_retry(planner, MagicMock(), MagicMock(), ts, "t1") is good
         assert ts.error_code is None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# S2-D3：重试不得是"盲重跑"
+# ═══════════════════════════════════════════════════════════════════
+
+class TestRetryCarriesFailureReason:
+    """失败重试原先是**盲重跑**：`NodeState.error` 会被记下，但
+    `Executor.execute()` 的签名里没有它，重试 prompt 与首次**逐字节相同**。
+    LLM 拿不到任何新信息，只能原样再选一次同样的工具、同样的参数——对"副作用已产生
+    但返回失败"的工具（典型：执行成功但响应超时）就是重复产生副作用。
+    """
+
+    def test_hint_is_absent_on_first_attempt(self):
+        from Module.workflow_engine.core.executor import _retry_hint
+
+        assert _retry_hint(None) is None
+        assert _retry_hint("") is None
+
+    def test_hint_mentions_reason_and_forbids_blind_repeat(self):
+        from Module.workflow_engine.core.executor import _retry_hint
+
+        hint = _retry_hint("工具超时：write_file 30s 未返回")
+        assert hint is not None
+        assert "write_file" in hint, "原因要原样带给 LLM"
+        assert "不要原样重复" in hint, "必须明确禁止盲重跑"
+        assert "副作用" in hint, "要提醒「可能已执行」的情形"
+
+    @pytest.mark.asyncio
+    async def test_execute_passes_previous_error_into_prompt(self):
+        """接线：`execute(previous_error=...)` 必须出现在发给 LLM 的 user message 里。"""
+        from Module.workflow_engine.core.executor import Executor
+        from Module.workflow_engine.schema import ArtifactId, DAGNode, OutputContract
+        from Module.workflow_contract import NodeId
+
+        captured: dict = {}
+
+        class _Completions:
+            async def create(self, **kwargs):
+                captured.update(kwargs)
+                msg = MagicMock()
+                msg.tool_calls = None
+                msg.content = "完成"
+                choice = MagicMock()
+                choice.message = msg
+                resp = MagicMock()
+                resp.choices = [choice]
+                resp.usage = None
+                return resp
+
+        llm = MagicMock()
+        llm.chat.completions.create = _Completions().create
+        infra = MagicMock()
+        infra.llm = llm
+        infra.llm_model = "test"
+        infra.tool_registry.definitions.return_value = []
+
+        executor = Executor(infra=infra, artifact_store=MagicMock(),
+                            hitl_notifier=MagicMock(), token_ledger=None)
+        node = DAGNode(
+            node_id=NodeId("n1"), description="写文件",
+            output_contract=OutputContract(description="结果"),
+            output_as=ArtifactId("output:n1"),
+        )
+        ts = MagicMock()
+
+        await executor.execute(node, "t1", [], "s1", ts,
+                               previous_error="上次 write_file 超时")
+
+        user_msg = captured["messages"][-1]["content"]
+        assert "上次 write_file 超时" in user_msg, user_msg
+        assert "不要原样重复" in user_msg
+
+
+class TestExecuteNodesThreadsPreviousError:
+    """**接线测试**：失败原因必须在 `execute_nodes` 那一层被取出并传给 Executor。
+
+    直接调 `Executor.execute(previous_error=...)` 只能证明"给了就生效"，证明不了
+    "真的会给"——`NodeState.error` 由 evaluator 写入 `exec_state`，而把两边的信息接
+    起来的那一行在 `execution.execute_nodes`。反证时正是这里漏了网。
+    """
+
+    @pytest.mark.asyncio
+    async def test_second_attempt_receives_recorded_error(self):
+        from Module.workflow_engine.core.execution import execute_nodes
+        from Module.workflow_engine.schema import (
+            ArtifactId,
+            DAGNode,
+            ExecutionPhase,
+            ExecutionState,
+            NodeResult,
+            NodeState,
+            NodeStatus,
+            OutputContract,
+        )
+
+        node = DAGNode(
+            node_id=NodeId("n1"), description="做事",
+            output_contract=OutputContract(description="产出"),
+            output_as=ArtifactId("output:n1"),
+        )
+        ns = NodeState(node_id=NodeId("n1"), status=NodeStatus.PENDING, attempt=1,
+                       error="上次超时")
+        exec_state = ExecutionState(
+            node_states={NodeId("n1"): ns},
+            current_phase=ExecutionPhase.EXECUTING,
+        )
+
+        seen: list[object] = []
+
+        async def _exec(node, task_id, tools, session_id, ts, previous_error=None):
+            seen.append(previous_error)
+            return NodeResult(node_id=NodeId("n1"), artifact_refs=[], attempt=0,
+                              duration_ms=1)
+
+        executor = MagicMock()
+        executor.execute = AsyncMock(side_effect=_exec)
+
+        await execute_nodes(executor, exec_state, [node], "t1", [], "s1", MagicMock())
+
+        assert ns.attempt == 2, "attempt 已自增到第二轮"
+        assert seen == ["上次超时"], (
+            "第二轮必须把上一轮记录的 error 传下去——否则重试与首次逐字节相同（盲重跑）")

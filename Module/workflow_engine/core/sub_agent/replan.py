@@ -316,7 +316,15 @@ async def handle_replan(
             task_state.task_id, task_state.plan.plan_version,
             new_graph.node_count,
         )
-        return True, None
+        # S2-D2：**必须也带回旧 exec_state**（原先返回 None）。
+        # 返回 None → 下次 `orchestrator.run(resume_from=None)` → `_init_exec_state`
+        # 生成**全 PENDING** → 新 DAG 里 node_id 相同、旧态为 SUCCESS 的节点**从头再跑
+        # 一遍**，包括已产生副作用的节点（写文件/发消息/写库/LTM 插入）。
+        # DAGPatch 分支一直返回 `checkpoint.exec`、走 `merge_exec_state` 保留 SUCCESS，
+        # 两条分支行为不一致；`execution_loop` 的 docstring 也写着"保留已成功节点的
+        # 状态，避免重复执行"。`merge_exec_state` 本就按 node_id 处理节点增删
+        # （保留 SUCCESS/SKIPPED、删掉的节点丢弃、新增的 PENDING），全量重建同样适用。
+        return True, checkpoint.exec
 
     else:
         # 局部修复路径——应用 DAGPatch

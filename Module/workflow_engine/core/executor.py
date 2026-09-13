@@ -60,6 +60,33 @@ _TOOL_MATCH_SYSTEM = """你是一个任务执行专家。根据节点的描述�
 """
 
 
+def _retry_hint(previous_error: str | None) -> str | None:
+    """把上一轮的失败原因编成给 LLM 的提示（S2-D3）。
+
+    **为什么需要**：失败重试原先是"盲重跑"——`NodeState.error` 会被记下，但
+    `Executor.execute()` 的签名里没有它，重试 prompt 与首次**逐字节相同**。LLM
+    拿不到任何新信息，只能原样再选一次同样的工具、同样的参数，于是对"副作用已产生
+    但返回失败"的工具（典型：执行成功但响应超时）会重复产生副作用。注释写着"共 3 次"
+    而实现是 4 次，叠加 ≤5 次 REPLAN（`merge_exec_state` 重置 attempt）单节点最坏
+    约 20 次。
+
+    Args:
+        previous_error: 上一轮失败原因；首次执行为 None。
+
+    Returns:
+        提示文本；首次执行返回 None（不改变首轮 prompt）。
+    """
+    if not previous_error:
+        return None
+    return (
+        "上一次尝试失败，原因是："
+        f"{previous_error}\n"
+        "请针对该原因调整：换用更合适的工具、修正参数，或改变做法。"
+        "**不要原样重复上一次的调用**；若判断该操作可能已产生副作用"
+        "（例如超时但实际已执行），请先确认结果而不是直接重做。"
+    )
+
+
 class _MissingInputError(Exception):
     """节点声明的输入一条都解析不出来（S2-D7）——专用类型以便映射到精确错误码。"""
 
@@ -112,6 +139,7 @@ class Executor:
         tools: list[Tool],
         session_id: SessionId,
         ts: "WorkflowState",
+        previous_error: str | None = None,
     ) -> NodeResult:
         """执行单个 DAGNode——LLM 匹配工具（或直出文本）→ 调用/存储结果。
 
@@ -135,6 +163,8 @@ class Executor:
             tools:  本次任务可用的工具列表（从 DelegationContext 透传）
             session_id: 会话 ID（工具调用上下文）
             ts:     任务级状态（E3——取消检查边界 token，await 边界一查即中）
+            previous_error: 上一轮失败原因（S2-D3）。非空时注入 prompt，让重试
+                有据可依，而不是盲重跑同一调用。
 
         Returns:
             NodeResult（artifact_refs + error + attempt + duration_ms）
@@ -151,7 +181,8 @@ class Executor:
             # 2. 按 execution_mode 分派
             if node.execution_mode == ExecutionMode.LLM_DIRECT:
                 # Planner 显式标注的纯 LLM 任务——跳过工具匹配，直接调 LLM
-                content = await self._call_llm_direct(node, upstream_data)
+                content = await self._call_llm_direct(
+                    node, upstream_data, previous_error)
                 check_cancelled(ts)                            # 直出路径检查点（不 shield，②④ 适用）
                 tool_result = ToolResult.ok(
                     name="llm_direct",
@@ -165,7 +196,8 @@ class Executor:
             else:
                 # tool_call 模式：function-calling 匹配工具 → 调用
                 # 或 LLM 自行判断不需要工具 → __llm_direct__
-                tool_name, params = await self._match_tool(node, tools, upstream_data)
+                tool_name, params = await self._match_tool(
+                    node, tools, upstream_data, previous_error)  # S2-D3：把上轮失败原因带进去
 
                 check_cancelled(ts)                            # ② LLM 返回后、工具调用前
 
@@ -297,6 +329,7 @@ class Executor:
         node: DAGNode,
         tools: list[Tool],
         upstream_data: dict[ArtifactId, Any],
+        previous_error: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """LLM function-calling：根据 node.description 匹配工具并填写参数。
 
@@ -342,6 +375,8 @@ class Executor:
             context_parts.append(f"期望输出: {node.output_contract.description}")
         if upstream_data:
             context_parts.append(f"上游数据: {upstream_data}")
+        if (hint := _retry_hint(previous_error)) is not None:
+            context_parts.append(hint)
 
         user_message = "\n".join(context_parts)
 
@@ -417,6 +452,7 @@ class Executor:
         self,
         node: DAGNode,
         upstream_data: dict[ArtifactId, Any],
+        previous_error: str | None = None,
     ) -> str:
         """Planner 标注了 llm_direct——直接调 LLM 生成文本，跳过工具匹配。
 
@@ -441,6 +477,8 @@ class Executor:
             if len(data_text) > 30000:
                 data_text = data_text[:30000] + f"\n...[截断 {len(data_text) - 30000} chars]"
             parts.append(f"上游数据:\n{data_text}")
+        if (hint := _retry_hint(previous_error)) is not None:
+            parts.append(hint)
 
         user = "\n\n".join(parts)
         logger.debug("Executor: node=%s llm_direct prompt (%d chars)", node.node_id, len(user))
