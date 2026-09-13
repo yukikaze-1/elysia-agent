@@ -151,7 +151,6 @@
 | **S2-7** `start.sh` 无并发守卫 | ✅ 已修 | `3c922165` |
 | **S2-8** compose 缺 healthcheck / `depends_on` 不等就绪（拆卷已有）| ✅ 已修 | `3c922165` |
 | **S2-9** 依赖锁不做版本比对 / 依赖无上限 / CI 与锁的关系未定义 | ✅ 已修 | `f733ab54` |
-| **S2-9** 镜像升级 | ⛔ **未验证**（本环境 Docker Hub 不可达）| 见下 |
 
 > **S1 已全部处置**：10 条 S1 中 9 条已修，剩 `CR-01` 属运维动作（轮换凭据），
 > 代码侧无从代劳。S2 关键项 `CR-12`/`CR-13` 已修。
@@ -385,7 +384,7 @@ app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取
 **S3-09 的反证第一次是全绿的**（改动没有测试覆盖），补 6 项后才转红——「反证全绿」
 不是"守卫很强"，而是"守卫没装在改动上"。这条已经出现两次（另一次在 CR-11）。
 
-**F 批已做 49 项**（+1 项未验证：镜像升级）——**P1–P3 清单已清空**：S3-03 / S2-A1 / S2-A3 / S3-09（`7b7802a4`）、
+**F 批已做 48 项**——**P1–P3 清单已清空**（含 1 项经复核**撤销**：MinIO 镜像升级，见 §0.4.6）：S3-03 / S2-A1 / S2-A3 / S3-09（`7b7802a4`）、
 S2-F4 / S2-B5 / S2-4（`3d764b8d`）、S2-G1（`76a07212`）、S2-B3/B4（`dc7918b2`）、
 S2-B1/B2（`c4129197`）、**S2-D5/D7/D8（`2a751d10`）、S2-D6（`4f88c2ad`）、
 S2-D2 + S2-D3①（`b5953d30`）、S2-D4（`179781ff`）、S2-B6（`f7e92aca`）、
@@ -408,25 +407,30 @@ CR-13 给 `_run_hitl` 加了第 4 个位置参数，`core/tests/test_phase2.py` 
 `pytest -m "not unit and not service" -q`（约 1 分钟）确认被 marker 排除的集合。
 替身（mock/猴补丁）与真实签名不同步时，失败只会在**真的走到那条路径**时出现。
 
-### §0.4.6 未能验证的项：MinIO 镜像升级
+### §0.4.6 已撤销：MinIO 镜像升级（依据不足）
 
-`docker-compose.yml` 的 MinIO 镜像仍是 `RELEASE.2023-03-20T20-16-18Z`（2023 年）。
-升级本身是一行改动，但**本环境无法验证**：
+> **2026-09-13 owner 决定：划掉该项，不升级。** 下面是撤销依据，留档以免将来重新
+> 被当成"待办"捡回来。
 
-```
-docker pull minio/minio:RELEASE.2025-04-22T22-12-26Z
-→ failed to resolve reference ... proxyconnect tcp: lookup YOMU.local: no such host
-```
+该动作原本只出现在路线图一行（`#40 … + MinIO 升级（S2-9）`），**正文从未写过条目**。
+追查其唯一线索"`S2-G8` 的 MinIO"（测试缺口表里的一格）：
 
-MinIO 后面挂着 **Milvus 的对象存储**（`minio_data` 卷）——盲升 tag 等于拿用户数据试。
-**因此没有改 tag**，改为登记为"升级候选"并加镜像 pin 策略守卫。
+- `S2-G8` 在报告全文**只出现那一次，条目本身从未展开**（与 S2-5/6/7/8/10 同源，
+  来自 R1-J 但未转录）；
+- 而那一格讲的是「**container 镜像 CVE 扫描完全缺失**」——即"看不见这个镜像有没有
+  洞"，**不是"这个镜像有洞"**。
 
-要完成该项，需要在能访问 registry 的机器上：
+tag 本身的来历也查清了：`bd538bb4`（N5095 安装实录）为让 Milvus standalone 跑起来
+按官方三件套补 etcd + MinIO，`RELEASE.2023-03-20T20-16-18Z` 是**照抄官方示例**，
+没有为版本写过任何理由。**旧 ≠ 有洞。**
 
-1. `docker compose --profile dev pull minio`（先备份 `minio_data` 卷）；
-2. `docker compose --profile dev up -d`，确认 `healthcheck` 变 healthy；
-3. 跑一次 Milvus 读写（`make test-quick` 覆盖 LTM 读写路径）；
-4. 通过后再更新 compose 与本节。
+撤销理由：① 无漏洞依据；② 它挂着 Milvus 的对象存储（数据平面），升级失败代价不对称；
+③ 本环境无 registry 访问，无法验证。**若将来要重开，正确的第一步不是升级，而是补上
+容器镜像 CVE 扫描**（`trivy image` / `grype` / Docker Scout——`pip-audit` 不覆盖容器
+镜像），由扫描结果决定，而不是由"tag 很旧"决定。
+
+镜像 pin 策略守卫**保留**（每个数据服务镜像必须有显式 tag 且登记 pin 级别），
+只是 MinIO 那条不再标注"升级候选"。
 
 **F 批剩余（按报告 P1→P3 清单）**：S2-A1 彻底版（关停时把批次**落盘**而非只 requeue）、
 **S2-D3②③**（重试退避 + 幂等键 + mutation 工具默认不重试，需幂等键基建）、
@@ -3804,7 +3808,7 @@ rg -n 'reload_from_milvus|health_check.*reload' core/memory/tests/  # 0 命中
 | # | 项 |
 |---|---|
 | 39 | **CR-01 步骤 3–5：清历史 + secret scanning 门禁 + 文档凭据规范** |
-| 40 | **S2-9（R1-J）：版本比对 + CI 装锁 + 依赖上限 + 镜像升级** |
+| 40 | **S2-9（R1-J）：版本比对 + CI 装锁 + 依赖上限**（镜像升级部分**已撤销**，见 §0.4.6）|
 | 41 | **CR-04 的彻底版：把 release 移到 clear 提交之后** |
 | 42 | **S3-19~S3-24 的其余项** |
 | 43 | **架构债：状态单一权威化**（`Agent._state` 与 FSM 合一 / `_tts_enabled` 四源合一）|
@@ -3936,7 +3940,7 @@ rg -n 'reload_from_milvus|health_check.*reload' core/memory/tests/  # 0 命中
 #36 coerce Union 解包（S2-10）
 #37 删除 SSE ACAO:*（S2-4）
 #38 沙盒 .resolve() / start.sh flock / compose 拆卷+healthcheck（S2-6/7/8）
-#40 版本比对 + CI 装锁 + 依赖上限 + MinIO 升级（S2-9）
+#40 版本比对 + CI 装锁 + 依赖上限（S2-9；镜像升级部分已撤销）
 #39 清历史 + secret scanning 门禁（CR-01 步骤 3–5）
 ```
 **#39 放在这里**是因为它依赖 #1 已完成（key 已轮换）——**先止损，再清洁**。
