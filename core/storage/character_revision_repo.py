@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.character.revision import CharacterRevision
-from core.storage.base import Repository, StorageUnavailableError
+from core.storage.base import (
+    Repository,
+    StorageUnavailableError,
+    is_duplicate_key,
+)
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 COLLECTION = "character_revisions"
 
@@ -89,10 +96,26 @@ class CharacterRevisionRepository(Repository):
         if self._db is None:
             raise StorageUnavailableError("CharacterRevisionRepository 未连接")
         doc = _to_doc(revision)
-        await self._call(
-            lambda: self._db.insert_one(COLLECTION, doc),  # type: ignore[union-attr]
-            reason="CharacterRevisionRepository.append_revision 写失败",
-        )
+        # S2-B2：唯一索引冲突（并发同 id+revision 双写）是**良性**竞争信号，
+        # 不是存储故障。不加 non_fatal 会 `_mark_unavailable()` 判死整个仓储——
+        # 此后所有读写都 raise 直到 60s 健康轮重连，本应 409 的竞争变成 503。
+        try:
+            await self._call(
+                lambda: self._db.insert_one(COLLECTION, doc),  # type: ignore[union-attr]
+                reason="CharacterRevisionRepository.append_revision 写失败",
+                non_fatal=is_duplicate_key,
+            )
+        except Exception as exc:
+            if not is_duplicate_key(exc):
+                raise
+            # 良性竞争：唯一索引在正常工作（同一 character_id+revision 并发双写）。
+            # **裸抛原始 DuplicateKeyError**——storage 层不 import domain 异常
+            # （那会造成 storage→character 反向依赖），由 `core.character.service`
+            # 在调用点映射成 `RevisionConflictError`（语义归属那一层）。
+            logger.info(
+                "CharacterRevisionRepository.append_revision 并发冲突（良性）："
+                "character=%s revision=%s", revision.characterId, revision.revision)
+            raise
 
     async def get_revision(self, character_id: str, revision: int) -> CharacterRevision | None:
         if self._db is None:

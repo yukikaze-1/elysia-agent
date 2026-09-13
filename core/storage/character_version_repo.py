@@ -75,9 +75,15 @@ class CharacterVersionRepository(Repository):
 
         desired_unique, dup_sample = await self._probe_duplicates()
 
-        existing: dict[object, dict] = {
-            idx.get("name"): idx for idx in await self._db.list_indexes(COLLECTION)
-        }
+        live = await self._db.list_indexes(COLLECTION)
+        if live is None:
+            # S2-B1 三态：查询失败 ≠ 无索引。状态未知时**不执行 create_index**——
+            # 同名不同选项会抛 OperationFailure 并让整个 repo 不可用。
+            logger.warning(
+                "CharacterVersionRepository：list_indexes 查询失败，跳过索引保障"
+                "（保持现状，下次 connect() 重试）")
+            return
+        existing: dict[object, dict] = {idx.get("name"): idx for idx in live}
         current = existing.get(index_name)
 
         if current is not None and bool(current.get("unique", False)) != desired_unique:

@@ -120,7 +120,7 @@ class DocumentDBBackend(ABC):
         ...
 
     @abstractmethod
-    async def list_indexes(self, collection: str) -> list[dict]:
+    async def list_indexes(self, collection: str) -> list[dict] | None:
         """列出 collection 的全部索引（schema 漂移自检用，只读）。
 
         Args:

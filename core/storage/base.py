@@ -54,6 +54,26 @@ class StorageUnavailableError(RuntimeError):
     """
 
 
+def is_duplicate_key(exc: BaseException) -> bool:
+    """是否唯一索引冲突（并发同键双写）——`_call(non_fatal=...)` 的谓词。
+
+    **为什么它是"良性"**：唯一索引在正确工作时，并发写同一键**必然**有一个 loser。
+    把它当存储故障会 `_mark_unavailable()` 判死整个仓储（此后所有读写都 raise，
+    直到 60s 健康轮重连），本应返回 409 的竞争变成 503。
+
+    驱动无关：检查异常类名（含 `__cause__` 链）。`Repository._call` 在 `non_fatal`
+    命中时**裸抛原始异常**（不包装），raw driver 异常的 `__cause__` 为 None，
+    只查 cause 会漏判，故两处都查。
+
+    （原私有 `idempotency_repo._is_duplicate_key` 下沉至此：现在三个角色仓储也要用它，
+    放在基类旁边比跨模块导入私有名更合适。）
+    """
+    if getattr(type(exc), "__name__", "") == "DuplicateKeyError":
+        return True
+    cause = getattr(exc, "__cause__", None)
+    return getattr(type(cause), "__name__", "") == "DuplicateKeyError"
+
+
 class Repository(ABC):
     """存储仓库基类。
 

@@ -257,8 +257,8 @@ class TestMongoDBIndex:
         assert await backend.drop_index("test", "idx") is False
 
     @pytest.mark.asyncio
-    async def test_list_indexes_returns_empty_on_error(self, backend):
-        """集合不存在 / 权限不足 → 空列表，不抛（自检不得因缺集合而失败）。"""
+    async def test_list_indexes_returns_empty_when_collection_absent(self, backend):
+        """集合不存在 → `[]`（合法状态：从未写入），不抛。"""
         mock_coll = _setup_mock_collection(backend, "test")
 
         class _Boom:
@@ -270,6 +270,62 @@ class TestMongoDBIndex:
 
         mock_coll.list_indexes = MagicMock(return_value=_Boom())
         assert await backend.list_indexes("test") == []
+
+    @pytest.mark.asyncio
+    async def test_list_indexes_returns_empty_on_namespace_not_found_code(self, backend):
+        """原生 `OperationFailure(code=26)` 同样识别为"集合不存在"。"""
+        mock_coll = _setup_mock_collection(backend, "test")
+
+        class _Err(Exception):
+            code = 26
+
+        class _Boom:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise _Err("ns does not exist")
+
+        mock_coll.list_indexes = MagicMock(return_value=_Boom())
+        assert await backend.list_indexes("test") == []
+
+    @pytest.mark.asyncio
+    async def test_list_indexes_returns_none_on_real_failure(self, backend):
+        """**查询失败 ≠ 集合不存在**（S2-B1）：返回 None 而不是 []。
+
+        原实现把两者都折成 `[]`，于是 `schema_drift` 把"查不到"读成"从未写入"
+        → 自检报"通过"——排障时最要紧的一类故障（索引选项冲突令仓储不可用）
+        恰好被报告成健康。
+        """
+        mock_coll = _setup_mock_collection(backend, "test")
+
+        class _Boom:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise RuntimeError("not authorized on default to execute command")
+
+        mock_coll.list_indexes = MagicMock(return_value=_Boom())
+        assert await backend.list_indexes("test") is None
+
+    @pytest.mark.asyncio
+    async def test_drop_index_refuses_when_state_unknown(self, backend):
+        """三态同样约束破坏性操作：查询失败时**不得**尝试删除。"""
+        mock_coll = _setup_mock_collection(backend, "test")
+
+        class _Boom:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise RuntimeError("connection reset")
+
+        mock_coll.list_indexes = MagicMock(return_value=_Boom())
+        dropped = MagicMock()
+        mock_coll.drop_index = dropped
+        assert await backend.drop_index("test", "some_index") is False
+        dropped.assert_not_called()
 
 
 @pytest.mark.service

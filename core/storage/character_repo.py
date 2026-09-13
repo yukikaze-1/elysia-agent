@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.character.definition import CharacterDefinition
-from core.storage.base import Repository, StorageUnavailableError
+from core.storage.base import is_duplicate_key, Repository, StorageUnavailableError
+
+logger = logging.getLogger(__name__)
 
 COLLECTION = "characters"
 CACHE_MAX = 64
@@ -96,10 +99,18 @@ class CharacterRepository(Repository):
     async def insert_definition(self, definition: CharacterDefinition) -> None:
         if self._db is None:
             raise StorageUnavailableError("CharacterRepository 未连接")
-        await self._call(
-            lambda: self._db.insert_one(COLLECTION, _to_doc(definition)),  # type: ignore[union-attr]
-            reason="CharacterRepository.insert_definition 写失败",
-        )
+        try:
+            await self._call(
+                lambda: self._db.insert_one(COLLECTION, _to_doc(definition)),  # type: ignore[union-attr]
+                reason="CharacterRepository.insert_definition 写失败",
+                non_fatal=is_duplicate_key,
+            )
+        except Exception as exc:
+            # S2-B2：并发创建同 id 是良性竞争（唯一索引在正常工作）——不判死仓储、
+            # 不包装成 503，写缓存后照常返回（后续读回 winner）。
+            if not is_duplicate_key(exc):
+                raise
+            logger.info("角色定义已存在（并发创建竞争）：%s", definition.characterId)
         self._cache_put(definition.characterId, definition)
 
     async def get_definition(self, character_id: str) -> CharacterDefinition | None:

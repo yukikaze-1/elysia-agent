@@ -9,10 +9,14 @@ UserIdentityStore 只有进程内缓存 + 可选 JSONL，Mongo 权威从未兑�
 
 from __future__ import annotations
 
+import logging
+
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.profile.user_identity import UserIdentity
 from core.schema.utils import now_iso
-from core.storage.base import Repository, StorageUnavailableError
+from core.storage.base import is_duplicate_key, Repository, StorageUnavailableError
+
+logger = logging.getLogger(__name__)
 
 COLLECTION = "user_identity_profiles"
 
@@ -101,15 +105,27 @@ class UserIdentityRepository(Repository):
         if self._db is None:
             raise StorageUnavailableError("UserIdentityRepository 未连接")
         db = self._db
-        await self._call(
-            lambda: db.update_one(
-                COLLECTION,
-                {"user_id": identity.userId},
-                {"$setOnInsert": _to_doc(identity)},
-                upsert=True,
-            ),
-            reason="UserIdentityRepository.bootstrap_if_absent 写失败",
-        )
+        try:
+            await self._call(
+                lambda: db.update_one(
+                    COLLECTION,
+                    {"user_id": identity.userId},
+                    {"$setOnInsert": _to_doc(identity)},
+                    upsert=True,
+                ),
+                # S2-B2：并发 bootstrap 时 setOnInsert 只有一个 winner，loser 可能撞
+                # 唯一索引 → 良性竞争，不得判死整个仓储（否则身份存储 60s 不可用，
+                # 而 `/ready` 的 chatReady 含 identity 门禁 → 全站 503）。
+                non_fatal=is_duplicate_key,
+                reason="UserIdentityRepository.bootstrap_if_absent 写失败",
+            )
+        except Exception as exc:
+            if not is_duplicate_key(exc):
+                raise
+            # **docstring 承诺的那一步**：loser 读回 winner。此前异常直接冒泡，
+            # 永远到不了下面的 get()——"读回 winner"只写在注释里。
+            logger.info("用户身份并发 bootstrap 冲突（良性），读回 winner：%s",
+                        identity.userId)
         loaded = await self.get(identity.userId)
         if loaded is None:
             raise StorageUnavailableError("UserIdentityRepository bootstrap 后读取失败")

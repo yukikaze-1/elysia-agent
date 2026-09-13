@@ -13,6 +13,9 @@ from Module.database.documentdb.protocol import DocumentDBBackend
 _COLLECTION_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
+logger = logging.getLogger(__name__)
+
+
 def _validate_collection(name: str) -> None:
     """校验 collection 名称是否合法（仅允许字母、数字、下划线、连字符）。
 
@@ -27,6 +30,18 @@ def _validate_collection(name: str) -> None:
             f"无效的 collection 名: {name!r}，"
             f"仅允许字母、数字、下划线和连字符"
         )
+
+
+def _is_namespace_not_found(exc: BaseException) -> bool:
+    """异常是否表示"集合不存在"（而非查询失败）。
+
+    pymongo 对不存在的集合抛 `OperationFailure`，错误码 26（NamespaceNotFound）。
+    也兼容不同驱动的文本措辞（"ns does not exist" / "ns not found"）。
+    """
+    if getattr(exc, "code", None) == 26:
+        return True
+    text = str(exc).lower()
+    return "ns does not exist" in text or "ns not found" in text
 
 
 class MongoDBBackend(DocumentDBBackend):
@@ -123,18 +138,33 @@ class MongoDBBackend(DocumentDBBackend):
         _validate_collection(collection)
         return await self._db[collection].create_index(keys, **kwargs)
 
-    async def list_indexes(self, collection: str) -> list[dict]:
+    async def list_indexes(self, collection: str) -> list[dict] | None:
         """列出 collection 的全部索引（只读；schema 漂移自检用）。
 
-        collection 不存在时返回空列表——自检不得因缺集合而失败。
+        **三态**（S2-B1）——原实现把三种情况压成同一个 `[]`：
+
+        | 返回 | 含义 |
+        |---|---|
+        | `[...]` | 查询成功（集合存在时 Mongo 至少返回内建 `_id_`）|
+        | `[]` | **集合不存在**（NamespaceNotFound，从未写入）|
+        | `None` | **查询失败**（权限不足 / 连接断开 / 服务端不支持）|
+
+        为什么必须分开：`schema_drift` 把 `[]` 读成"集合不存在（从未写入）"→ 不报
+        漂移、自检"通过"；一旦"查询失败"也被折成 `[]`，**排障时最重要的一类故障
+        （索引选项冲突导致仓储不可用）恰好会被自检报告成健康**。
+        `scanned` 这个"是否真正完成扫描"的区分位就是在这里被绕过的。
         """
         _validate_collection(collection)
         try:
             cursor = self._db[collection].list_indexes()
             return [dict(idx) async for idx in cursor]
-        except Exception:
-            # 集合不存在 / 权限不足 / 服务端不支持 → 视为"无索引"而非中断自检
-            return []
+        except Exception as exc:
+            if _is_namespace_not_found(exc):
+                return []          # 集合不存在——合法状态
+            logger.warning(
+                "list_indexes 查询失败 collection=%s（并非「集合不存在」）：%s",
+                collection, exc)
+            return None
 
     async def drop_index(self, collection: str, name: str) -> bool:
         """删除指定索引；索引不存在返回 False（幂等，不抛错）。
@@ -150,7 +180,13 @@ class MongoDBBackend(DocumentDBBackend):
         if name == "_id_":
             return False
         try:
-            existing = {idx.get("name") for idx in await self.list_indexes(collection)}
+            live = await self.list_indexes(collection)
+            if live is None:
+                # S2-B1 三态：查询失败 ≠ 索引不存在。删不得——宁可返回 False
+                # （幂等语义"没删成"），也不能在状态未知时执行破坏性操作。
+                logger.warning("drop_index 放弃：list_indexes 查询失败 collection=%s", collection)
+                return False
+            existing = {idx.get("name") for idx in live}
             if name not in existing:
                 return False
             await self._db[collection].drop_index(name)

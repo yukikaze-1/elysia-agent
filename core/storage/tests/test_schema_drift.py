@@ -246,3 +246,106 @@ class TestLogSchemaDriftReport:
         with caplog.at_level(logging.DEBUG, logger="core.storage.schema_drift"):
             log_schema_drift_report(SchemaDriftReport(scanned=False))
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+class TestQueryFailureIsNotAbsence:
+    """S2-B1：**"查不到" ≠ "不存在"**。
+
+    原实现把 `list_indexes` 的任何异常都折成 `[]`，而 `check_schema_drift` 把 `[]`
+    读成"集合不存在（从未写入）"→ `scanned=True`、无漂移 → 自检报"通过"。
+    于是排障时最要紧的一类故障——**索引选项冲突令整个仓储 `_db` 永久为 None**
+    （附件全站 503 / 幂等静默降级）——恰好会被自检报告成健康。
+    """
+
+    @pytest.mark.asyncio
+    async def test_none_from_list_indexes_means_not_scanned(self):
+        """`list_indexes` 返回 None（查询失败）→ `scanned=False`，不是"健康"。"""
+        backend = MagicMock()
+        backend.list_indexes = AsyncMock(return_value=None)
+        report = await check_schema_drift(backend)
+        assert report.scanned is False, "查询失败必须如实报告为未完成扫描"
+        assert "未执行" in report.summary()
+
+    @pytest.mark.asyncio
+    async def test_empty_list_still_means_absent_collection(self):
+        """回归网：真正的"集合不存在"（`[]`）仍是 absent，不报噪音。"""
+        backend = MagicMock()
+        backend.list_indexes = AsyncMock(return_value=[])
+        report = await check_schema_drift(backend)
+        assert report.scanned is True
+        assert len(report.absent) == len(EXPECTED_INDEXES)
+        assert not report.missing and not report.orphans
+
+
+class TestIndexOptionConflicts:
+    """S2-B1：同名索引的**选项**也要比。
+
+    Mongo 自动索引名只含键名+方向，`unique` / `expireAfterSeconds` **不进名字**——
+    所以选项冲突在"名字集合"上与健康状态完全一致，只看名字的自检看不见它。
+    而库里同名不同选项时 `create_index` 必抛 `OperationFailure`，`ensure_index`
+    在 `connect()` 的同一 try 里把它吞成 `return False` → 整个仓储不可用。
+    """
+
+    @pytest.mark.asyncio
+    async def test_unique_downgrade_detected(self):
+        """库里唯一索引被降级为非唯一 → 必须报选项冲突。"""
+        backend = MagicMock()
+        backend.list_indexes = AsyncMock(side_effect=lambda coll: [
+            {"name": _ID_INDEX},
+            *[
+                {"name": n,
+                 # 声明 unique 的索引在库里没有 unique → 冲突
+                 **({"unique": False} if coll == "characters" and n == "character_id_1" else {})}
+                for n in EXPECTED_INDEXES[coll]
+            ],
+        ])
+        report = await check_schema_drift(backend)
+        assert "characters" in report.option_conflicts
+        assert "character_id_1" in report.option_conflicts["characters"]
+        assert "选项冲突" in report.summary()
+
+    @pytest.mark.asyncio
+    async def test_ttl_present_matches(self):
+        """TTL 只比"有没有"，不比秒数——调大保留期属正常改动，不该报漂移。"""
+        backend = MagicMock()
+        backend.list_indexes = AsyncMock(side_effect=lambda coll: [
+            {"name": _ID_INDEX},
+            *[
+                {"name": n,
+                 **({"expireAfterSeconds": 999999} if n.startswith("ttl_") else {}),
+                 **({"unique": True} if n == "character_id_1" and coll == "characters" else {}),
+                 **({"unique": True} if n == "attachment_id_1" and coll == "attachments" else {}),
+                 **({"unique": True} if n == "instance_id_1" and coll == "character_instances" else {}),
+                 **({"unique": True} if n == "user_id_1" and coll == "user_identity_profiles" else {}),
+                 **({"unique": True} if n == "character_id_1_revision_-1" and coll == "character_revisions" else {}),
+                 **({"unique": True} if n == "session_id_1_content_type_1_version_-1" and coll == "character_versions" else {}),
+                 }
+                for n in EXPECTED_INDEXES[coll]
+            ],
+        ])
+        report = await check_schema_drift(backend)
+        assert not report.option_conflicts, report.option_conflicts
+
+    @pytest.mark.asyncio
+    async def test_ttl_missing_detected(self):
+        """声明了 TTL 但库里没有 → 冲突（记录永不回收）。"""
+        backend = MagicMock()
+        backend.list_indexes = AsyncMock(side_effect=lambda coll: [
+            {"name": _ID_INDEX},
+            *[{"name": n} for n in EXPECTED_INDEXES[coll]],
+        ])
+        report = await check_schema_drift(backend)
+        # generations / desktop_calls 声明了 ttl_expires_at_1 的 TTL
+        assert "generations" in report.option_conflicts
+
+    @pytest.mark.asyncio
+    async def test_option_conflict_logs_error(self, caplog):
+        backend = MagicMock()
+        backend.list_indexes = AsyncMock(side_effect=lambda coll: [
+            {"name": _ID_INDEX},
+            *[{"name": n} for n in EXPECTED_INDEXES[coll]],
+        ])
+        report = await check_schema_drift(backend)
+        with caplog.at_level(logging.ERROR):
+            log_schema_drift_report(report)
+        assert any("选项冲突" in r.getMessage() for r in caplog.records)

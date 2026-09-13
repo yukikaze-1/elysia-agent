@@ -39,7 +39,11 @@ import time
 from dataclasses import dataclass
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
-from core.storage.base import Repository, StorageUnavailableError
+from core.storage.base import (
+    Repository,
+    StorageUnavailableError,
+    is_duplicate_key as _is_duplicate_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,19 +77,6 @@ def _is_stale(claimed_at: float) -> bool:
     （Global Constraints 硬性要求；跨重启可比）。
     """
     return time.time() - claimed_at > _grace_seconds()
-
-
-def _is_duplicate_key(exc: BaseException) -> bool:
-    """是否唯一索引冲突（并发同键双写）。驱动无关：检查异常类名（含 cause 链）。
-
-    ``Repository._call`` 在 ``non_fatal`` 命中时裸抛原始异常（不包装）——raw driver
-    异常的 ``__cause__`` 为 None，只查 cause 会漏判（review 复核确认），故同时检查
-    ``type(exc).__name__`` 与 ``type(exc.__cause__).__name__``。
-    """
-    if getattr(type(exc), "__name__", "") == "DuplicateKeyError":
-        return True
-    cause = getattr(exc, "__cause__", None)
-    return getattr(type(cause), "__name__", "") == "DuplicateKeyError"
 
 
 @dataclass

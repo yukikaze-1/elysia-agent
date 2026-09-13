@@ -120,6 +120,39 @@ class RevisionConflictError(CharacterError):
         self.current_revision = current_revision
 
 
+async def _append_revision_or_conflict(rev_repo: object, revision: object,
+                                        character_id: str) -> None:
+    """写 revision，把**良性并发冲突**映射成 `RevisionConflictError`（S2-B2）。
+
+    为什么需要：`max_revision() + 1` 不是原子的，编辑器双击保存 / 两进程并发
+    会产生同一 `(character_id, revision)` 双写。唯一索引正常工作时会有一个 loser
+    抛 `DuplicateKeyError`——那是**竞争信号**，不是存储故障：
+
+    - 不映射 → 冒泡成 500（用户看到"服务器错误"而不是"已被他人修改，请刷新"）；
+    - 更糟的是若仓储把它当存储故障判死（`_mark_unavailable`），整个仓储最长 60s
+      不可用。
+
+    storage 层只裸抛原始 `DuplicateKeyError`（不 import domain 异常，避免
+    storage→character 反向依赖），语义归属在这一层。
+
+    Args:
+        rev_repo: `CharacterRevisionRepository`。
+        revision: 待写入的 `CharacterRevision`。
+        character_id: 冲突时回填给异常的角色 ID。
+
+    Raises:
+        RevisionConflictError: 同一 (character_id, revision) 已存在（并发双写）。
+    """
+    from core.storage.base import is_duplicate_key
+
+    try:
+        await rev_repo.append_revision(revision)     # type: ignore[attr-defined]
+    except Exception as exc:
+        if is_duplicate_key(exc):
+            raise RevisionConflictError(character_id, None) from exc
+        raise
+
+
 class CharacterStateConflictError(CharacterError):
     def __init__(self, instance_id: str, current_state_version: int | None = None):
         super().__init__(instance_id)
@@ -397,7 +430,7 @@ class CharacterService:
         revision = self._revision_from_draft(
             character_id, draft, revision=1, created_by=created_by
         )
-        await self.rev_repo.append_revision(revision)
+        await _append_revision_or_conflict(self.rev_repo, revision, character_id)
         try:
             definition = CharacterDefinition(
                 characterId=character_id,
@@ -632,7 +665,7 @@ class CharacterService:
         content = self._revision_from_draft(
             character_id, draft, revision=new_revision, state_policy=policy
         )
-        await self.rev_repo.append_revision(content)
+        await _append_revision_or_conflict(self.rev_repo, content, character_id)
         updated_at = now_iso()
         ok = await self.repo.cas_revision_pointer(
             character_id, expected_revision, new_revision, updated_at=updated_at
@@ -789,7 +822,7 @@ class CharacterService:
         )
         if not content.checksum:
             content.checksum = _checksum(content)
-        await self.rev_repo.append_revision(content)
+        await _append_revision_or_conflict(self.rev_repo, content, character_id)
         updated_at = now_iso()
         ok = await self.repo.cas_revision_pointer(
             character_id, expected_revision, new_revision, updated_at=updated_at
