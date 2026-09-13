@@ -463,8 +463,13 @@ tag 本身的来历也查清了：`bd538bb4`（N5095 安装实录）为让 Milvu
 ### §0.4.8 A 组 6 项完成（2026-09-13，S3-02 / S2-A4 / #27 / #31 / #43 / #47）
 
 owner 指定「做 §0.4.7 待办全景 A 组的全部，除 #41/#44/#45/#46」。六项各自独立提交，
-每项都带**反证验证**（revert / 注入后必须转红），五道门禁（lint / pyright / check-arch /
-check-types / check-timeouts / check-contract）+ 全量测试通过。
+每项都带**反证验证**（revert / 注入后必须转红）。
+
+**全量验收（2026-09-13 本机）**：`pytest -q` **5014 passed / 9 skipped / 0 failed**
+（9m44s；本轮起点 4857 passed）。门禁全绿：`lint` / `pyright`（全仓 0 error）/
+`check-arch` / `check-types`（含 golden frames）/ **`check-timeouts`（新增）** /
+**`check-contract`（新增）** / `check-debug-auth` / `check-secrets` / `check-ci-isolation`
+/ `check_error_codes` / `check_env_lock`。
 
 | 项 | 提交 | 修的是什么 | 反证方式 |
 |---|---|---|---|
