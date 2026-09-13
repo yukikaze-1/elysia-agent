@@ -1,9 +1,9 @@
-"""Task — AI 规划任务的统一数据模型。
+"""QueuedToolCall — 一次待执行的工具调用的数据模型（原 Task）。
 
-TaskScheduler Worker Pool 消费这些 task。
-认知循环产出工具调用规划时，每个 tool_call 封装为一个 Task 提交到 Worker Pool。
+ToolCallDispatcher（原 TaskScheduler）Worker Pool 消费这些调用。
+认知循环产出工具调用规划时，每个 tool_call 封装为一个 QueuedToolCall 提交到 Worker Pool。
 
-**扩展储备（`P3-01-RESERVED`）**：`TaskType.BACKGROUND`、`depends_on`、`children_ids`、
+**扩展储备（`P3-01-RESERVED`）**：`QueuedToolCallKind.BACKGROUND`、`depends_on`、`children_ids`、
 `run_in_background`、`progress`、`new_background()` 与 checkpoint 序列化
 （`to_dict`/`from_dict`）当前均无生产消费者，但 2026-09-12 决策**保留作扩展储备**
 （非死代码）——勿按引用审计删除。详见 `docs/review/2026-08-30-后端架构分层与模块化
@@ -18,16 +18,16 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, TypedDict
 
-from core.schema.types import TaskId
+from core.schema.types import RequestId, TaskId
 from core.utils import new_task_id
 
 
-class TaskType(Enum):
+class QueuedToolCallKind(Enum):
     TOOL_CALL = "tool_call"       # AI 规划的工具调用
     BACKGROUND = "background"     # P3-01-RESERVED: 脱离对话流的长时后台任务（预留）
 
 
-class TaskStatus(Enum):
+class QueuedToolCallState(Enum):
     PENDING = "pending"
     DISPATCHED = "dispatched"
     COMPLETED = "completed"
@@ -37,7 +37,7 @@ class TaskStatus(Enum):
 
 # 终态集合
 _TERMINAL_STATES = frozenset({
-    TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED,
+    QueuedToolCallState.COMPLETED, QueuedToolCallState.FAILED, QueuedToolCallState.CANCELLED,
 })
 
 
@@ -49,17 +49,17 @@ class ToolCallPayload(TypedDict):
 
 
 @dataclass
-class Task:
+class QueuedToolCall:
     """调度中心的任务单元。
 
     运行时字段 (_future, _worker_task) 不持久化。
     """
 
     id: TaskId
-    type: TaskType
-    status: TaskStatus = TaskStatus.PENDING
+    type: QueuedToolCallKind
+    status: QueuedToolCallState = QueuedToolCallState.PENDING
     priority: int = 5               # 0=最高, 5=默认, 9=后台
-    parent_id: str | None = None    # 实收 RequestId，本批不裁决（TaskId 贯通范围外）
+    request_id: RequestId | None = None   # 触发本调用的用户请求 ID（原 parent_id）
     depends_on: list[TaskId] = field(default_factory=list)   # P3-01-RESERVED: DAG 依赖预留
     children_ids: list[TaskId] = field(default_factory=list)  # P3-01-RESERVED: 任务树预留
     payload: ToolCallPayload | dict[str, Any] = field(default_factory=dict)  # dict = BACKGROUND/other
@@ -101,9 +101,9 @@ class Task:
 
     def can_retry(self) -> bool:
         """只有非终态或 FAILED 状态且未达重试上限才能重试。"""
-        if self.status == TaskStatus.CANCELLED:
+        if self.status == QueuedToolCallState.CANCELLED:
             return False
-        if self.status == TaskStatus.COMPLETED:
+        if self.status == QueuedToolCallState.COMPLETED:
             return False
         return self.retry_count < self.max_retries
 
@@ -126,23 +126,23 @@ class Task:
     @classmethod
     def new_tool_call(
         cls,
-        parent_id: str,
+        request_id: RequestId | None,
         tool_name: str,
         arguments: dict[str, Any],
         call_id: str = "",
         priority: int = 5,
-    ) -> "Task":
+    ) -> "QueuedToolCall":
         """创建工具调用子任务。
 
         Args:
-            parent_id: 父任务 ID
+            request_id: 触发本调用的用户请求 ID
             tool_name: 工具名称
             arguments: 工具参数
             call_id: LLM tool_call_id（D6-07：sourceCallId 数据源，thread 到 worker ctx.call_id）
             priority: 优先级，0=最高, 5=默认
 
         Returns:
-            Task: 新创建的工具调用任务
+            QueuedToolCall: 新创建的工具调用任务
         """
         payload: ToolCallPayload = {
             "tool_name": tool_name,
@@ -151,8 +151,8 @@ class Task:
         }
         return cls(  # type: ignore[reportCallIssue]
             id=new_task_id(),
-            type=TaskType.TOOL_CALL,
-            parent_id=parent_id,
+            type=QueuedToolCallKind.TOOL_CALL,
+            request_id=request_id,
             priority=priority,
             payload=payload,
         )
@@ -162,7 +162,7 @@ class Task:
         cls,
         payload: dict[str, Any],
         priority: int = 9,
-    ) -> "Task":
+    ) -> "QueuedToolCall":
         """创建后台任务（P3-01-RESERVED：无生产调用方，保留作扩展储备）。
 
         Args:
@@ -170,11 +170,11 @@ class Task:
             priority: 优先级，默认 9（后台）
 
         Returns:
-            Task: 新创建的后台任务
+            QueuedToolCall: 新创建的后台任务
         """
         return cls(  # type: ignore[reportCallIssue]
             id=new_task_id(),
-            type=TaskType.BACKGROUND,
+            type=QueuedToolCallKind.BACKGROUND,
             priority=priority,
             run_in_background=True,
             max_retries=3,
@@ -194,7 +194,7 @@ class Task:
             "type": self.type.value,
             "status": self.status.value,
             "priority": self.priority,
-            "parent_id": self.parent_id,
+            "request_id": self.request_id,
             "depends_on": self.depends_on,
             "children_ids": self.children_ids,
             "payload": self.payload,
@@ -208,21 +208,22 @@ class Task:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Task":
+    def from_dict(cls, d: dict[str, Any]) -> "QueuedToolCall":
         """从字典反序列化，用于 checkpoint 恢复。
 
         Args:
             d: 任务的字典表示
 
         Returns:
-            Task: 反序列化的任务实例
+            QueuedToolCall: 反序列化的任务实例
         """
         return cls(  # type: ignore[reportCallIssue]
             id=d["id"],
-            type=TaskType(d["type"]),
-            status=TaskStatus(d.get("status", "pending")),
+            type=QueuedToolCallKind(d["type"]),
+            status=QueuedToolCallState(d.get("status", "pending")),
             priority=d.get("priority", 5),
-            parent_id=d.get("parent_id"),
+            # 兼容旧 checkpoint 键（改名迁移：parent_id → request_id）
+            request_id=d.get("request_id", d.get("parent_id")),
             depends_on=d.get("depends_on", []),
             children_ids=d.get("children_ids", []),
             payload=d.get("payload", {}),

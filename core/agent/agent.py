@@ -33,7 +33,7 @@
                                │                           │
                                └── IdleMonitor ────────────┘
                                │
-                               └── TaskScheduler
+                               └── ToolCallDispatcher
 
     两阶段初始化：__init__ 创建 22 个组件；start() 在拿到 session_id 后再创建 8 个
     (token_tracker, tts, task_system 等)。交叉装配经 start() 中的
@@ -106,7 +106,7 @@ from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
 from Module.embedding import EmbeddingFactory
-from core.task import TaskScheduler
+from core.tool_runtime import ToolCallDispatcher
 from core.storage.session_repo import SessionRepository
 from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository
@@ -458,7 +458,7 @@ class Agent(AgentLifecycle, AgentServer):
         self._session_manager.set_busy_check(lambda: not self.status.is_accepting_input)
 
         # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
-        self._scheduler = TaskScheduler(
+        self._scheduler = ToolCallDispatcher(
             tool_executor=self._tool_adapter,
             tool_ctx=None,  # 在 start() 中通过 configure() 更新
             num_workers=5,
@@ -855,7 +855,7 @@ class Agent(AgentLifecycle, AgentServer):
         # 取消上一个未完成的 task（仅真正在跑时），防止快速连续事件造成孤儿
         self._cognitive.cancel_current()
         _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
-            parent_id=rid, calls=calls,
+            request_id=rid, calls=calls,
         )
 
         async def _run_with_session_lease() -> None:
@@ -912,7 +912,7 @@ class Agent(AgentLifecycle, AgentServer):
             rid = self.next_request_id()
             set_request_id(rid)
             _on_tool_calls = lambda calls: self._scheduler.dispatch_tool_calls(
-                parent_id=rid, calls=calls,
+                request_id=rid, calls=calls,
             )
             self._cognitive.cancel_current()
             task = self._turns.spawn(

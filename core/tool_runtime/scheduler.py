@@ -1,9 +1,9 @@
-"""TaskScheduler — AI 任务 Worker Pool。
+"""ToolCallDispatcher — 即时工具调用的 Worker Pool（原 TaskScheduler）。
 
 被 CognitiveLoop 调用。管理 N 个 worker 消费工具子任务和后台任务。
 Future 双向绑定确保 INTERRUPT 取消时精准传播到 Worker。
 
-**扩展储备（`P3-01-RESERVED`）**：`dispatch_background()`、`submit(Task)`、`get_task()`、
+**扩展储备（`P3-01-RESERVED`）**：`dispatch_background()`、`submit(QueuedToolCall)`、`get_task()`、
 `get_tree()` 与 checkpoint 持久化（`_save_checkpoint`/`_restore_checkpoint`）当前均无
 生产消费者（生产主路径是 `dispatch_tool_calls()`），但 2026-09-12 决策**保留作扩展
 储备**（非死代码）——勿按引用审计删除。详见 `docs/review/2026-08-30-后端架构分层与
@@ -26,7 +26,7 @@ from core.schema.tool import ToolCall
 
 from core.schema.types import RequestId, TaskId
 
-from core.task.task import Task, TaskType, TaskStatus
+from core.tool_runtime.task import QueuedToolCall, QueuedToolCallKind, QueuedToolCallState
 
 if TYPE_CHECKING:
     from core.adapter.tool_adapter import ToolAdapter
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 _TOOL_TIMEOUT = 60.0
 
 
-class TaskScheduler:
+class ToolCallDispatcher:
     """Worker Pool，执行 AI 规划的工具子任务和后台任务。
 
     不管理认知任务 — 认知循环有自己的执行路径。
@@ -62,8 +62,8 @@ class TaskScheduler:
         self._tool_ctx = tool_ctx
         self._num_workers = num_workers
         self._checkpoint_path = checkpoint_path
-        self._queue: asyncio.PriorityQueue[tuple[int, int, Task]] = asyncio.PriorityQueue()
-        self._tasks: dict[TaskId, Task] = {}
+        self._queue: asyncio.PriorityQueue[tuple[int, int, QueuedToolCall]] = asyncio.PriorityQueue()
+        self._tasks: dict[TaskId, QueuedToolCall] = {}
         self._workers: list[asyncio.Task] = []
         self._prune_task: asyncio.Task | None = None
         self._running = False
@@ -123,7 +123,7 @@ class TaskScheduler:
 
     # ---- 提交 ----
 
-    async def submit(self, task: Task) -> TaskId:
+    async def submit(self, task: QueuedToolCall) -> TaskId:
         """提交任务到 Worker Pool。
 
         Args:
@@ -139,21 +139,21 @@ class TaskScheduler:
         return task.id
 
     async def dispatch_tool_calls(
-        self, parent_id: RequestId, calls: list[ToolCall],
+        self, request_id: RequestId, calls: list[ToolCall],
     ) -> list[tuple[ToolCall, ToolResult | BaseException]]:
         """CognitiveLoop 调用：将 tool_calls 创建为子任务，并行执行，返回结果。
 
         Args:
-            parent_id: 父任务标识（request_id），为空字符串时跳过父子关联
+            request_id: 触发这批工具调用的用户请求 ID，为空时跳过关联
             calls: normalized tool calls from CognitiveLoop
 
         Returns:
             list of (ToolCall, ToolResult | Exception)
         """
-        sub_tasks: list[Task] = []
+        sub_tasks: list[QueuedToolCall] = []
         for tc in calls:
-            t = Task.new_tool_call(
-                parent_id=parent_id or "",
+            t = QueuedToolCall.new_tool_call(
+                request_id=request_id or None,
                 tool_name=tc.function.name,
                 arguments=tc.function.parsed,
                 call_id=tc.id,
@@ -161,9 +161,9 @@ class TaskScheduler:
             sub_tasks.append(t)
 
         # 绑定 children
-        if parent_id:
-            # 死代码：parent_id 是 RequestId 查 TaskId 字典恒不命中，本批不改行为
-            parent = self._tasks.get(parent_id)  # type: ignore[arg-type]
+        if request_id:
+            # 死代码：request_id 是 RequestId 查 TaskId 字典恒不命中，本批不改行为
+            parent = self._tasks.get(request_id)  # type: ignore[arg-type]
             if parent is not None:
                 for st in sub_tasks:
                     parent.add_child(st.id)
@@ -173,7 +173,7 @@ class TaskScheduler:
             self._seq += 1
             self._queue.put_nowait((st.priority, self._seq, st))
 
-        logger.info("Scheduler: dispatch %d 工具子任务 (parent=%s)", len(sub_tasks), parent_id or "-")
+        logger.info("Scheduler: dispatch %d 工具子任务 (request=%s)", len(sub_tasks), request_id or "-")
 
         try:
             results = await asyncio.gather(
@@ -209,7 +209,7 @@ class TaskScheduler:
         Returns:
             str: 后台任务的 ID
         """
-        t = Task.new_background(payload={"coro": coro})
+        t = QueuedToolCall.new_background(payload={"coro": coro})
         self._tasks[t.id] = t
         self._seq += 1
         await self._queue.put((t.priority, self._seq, t))
@@ -235,7 +235,7 @@ class TaskScheduler:
         task = self._tasks.get(task_id)
         if task is None:
             return False
-        task.status = TaskStatus.CANCELLED
+        task.status = QueuedToolCallState.CANCELLED
         task.touch()
 
         if task._worker_task is not None and not task._worker_task.done():
@@ -254,14 +254,14 @@ class TaskScheduler:
 
     # ---- 查询 ----
 
-    def get_task(self, task_id: TaskId) -> Task | None:
+    def get_task(self, task_id: TaskId) -> QueuedToolCall | None:
         """按 ID 获取任务。
 
         Args:
             task_id: 任务 ID
 
         Returns:
-            Task | None: 找到的任务，不存在则返回 None
+            QueuedToolCall | None: 找到的任务，不存在则返回 None
         """
         return self._tasks.get(task_id)
 
@@ -291,23 +291,23 @@ class TaskScheduler:
             tree["children"] = [self.get_tree(cid) for cid in task.children_ids]
         return tree
 
-    def all_tasks(self) -> list[Task]:
+    def all_tasks(self) -> list[QueuedToolCall]:
         """返回所有已知任务的列表。
 
         Returns:
-            list[Task]: 当前注册表中的全部任务
+            list[QueuedToolCall]: 当前注册表中的全部任务
         """
         return list(self._tasks.values())
 
     @property
     def pending_count(self) -> int:
         """返回待处理任务数量。"""
-        return sum(1 for t in self._tasks.values() if t.status == TaskStatus.PENDING)
+        return sum(1 for t in self._tasks.values() if t.status == QueuedToolCallState.PENDING)
 
     @property
     def running_count(self) -> int:
         """返回正在执行的任务数量。"""
-        return sum(1 for t in self._tasks.values() if t.status == TaskStatus.DISPATCHED)
+        return sum(1 for t in self._tasks.values() if t.status == QueuedToolCallState.DISPATCHED)
 
     # ---- Worker Loop ----
 
@@ -324,17 +324,17 @@ class TaskScheduler:
             except RuntimeError:
                 break
 
-            if task.status == TaskStatus.CANCELLED:
+            if task.status == QueuedToolCallState.CANCELLED:
                 self._queue.task_done()
                 self._cleanup_completed(task)
                 continue
 
-            task.status = TaskStatus.DISPATCHED
+            task.status = QueuedToolCallState.DISPATCHED
             task._worker_task = asyncio.current_task()
             task.touch()
 
             try:
-                if task.type == TaskType.TOOL_CALL:
+                if task.type == QueuedToolCallKind.TOOL_CALL:
                     result = await self._execute_tool(task)
                 else:
                     # BACKGROUND 任务 — 若有效载荷中包含协程则执行
@@ -344,19 +344,19 @@ class TaskScheduler:
                     else:
                         result = task.payload.get("result")
                 task.result = result
-                task.status = TaskStatus.COMPLETED
+                task.status = QueuedToolCallState.COMPLETED
                 task.touch()
                 if task._future is not None and not task._future.done():
                     task._future.set_result(result)
             except asyncio.CancelledError:
-                task.status = TaskStatus.CANCELLED
+                task.status = QueuedToolCallState.CANCELLED
                 task.touch()
                 if task._future is not None and not task._future.done():
                     task._future.cancel()
             except Exception as e:
                 logger.warning("Worker %s: 任务 %s 失败 — %s", name, task.id, e)
                 task.error = str(e)
-                task.status = TaskStatus.FAILED
+                task.status = QueuedToolCallState.FAILED
                 task.touch()
                 if task._future is not None and not task._future.done():
                     task._future.set_exception(e)
@@ -392,11 +392,11 @@ class TaskScheduler:
             logger.debug("Scheduler: 清理 %d 个终态任务", len(to_remove))
 
     @staticmethod
-    def _cleanup_completed(task: Task) -> None:
+    def _cleanup_completed(task: QueuedToolCall) -> None:
         """终态任务移除 worker task 引用。"""
         task._worker_task = None
 
-    async def _execute_tool(self, task: Task) -> ToolResult:
+    async def _execute_tool(self, task: QueuedToolCall) -> ToolResult:
         """执行工具子任务，含重试逻辑和超时保护。
 
         Args:
@@ -477,7 +477,7 @@ class TaskScheduler:
         try:
             pending = []
             for t in self._tasks.values():
-                if t.status != TaskStatus.PENDING or t.type != TaskType.BACKGROUND:
+                if t.status != QueuedToolCallState.PENDING or t.type != QueuedToolCallKind.BACKGROUND:
                     continue
                 try:
                     json.dumps(t.payload)  # 可序列化才 checkpoint（排除 coro）
@@ -528,8 +528,8 @@ class TaskScheduler:
             if not isinstance(tasks_raw, list):
                 raise ValueError("checkpoint tasks 不是数组")
             for td in tasks_raw:
-                t = Task.from_dict(td)
-                t.status = TaskStatus.PENDING
+                t = QueuedToolCall.from_dict(td)
+                t.status = QueuedToolCallState.PENDING
                 self._tasks[t.id] = t
                 self._seq += 1
                 self._queue.put_nowait((t.priority, self._seq, t))
@@ -545,5 +545,5 @@ class TaskScheduler:
         return len(self._tasks)
 
     def __repr__(self) -> str:
-        return (f"TaskScheduler(pending={self.pending_count}, "
+        return (f"ToolCallDispatcher(pending={self.pending_count}, "
                 f"running={self.running_count}, total={self.total_count})")

@@ -67,7 +67,7 @@ python -m pytest core/config/tests/ -v
 python -m pytest core/monitoring/tests/ -v
 
 # Task tests
-python -m pytest core/task/tests/ -v
+python -m pytest core/tool_runtime/tests/ -v
 
 # 其他模块
 python -m pytest Module/llm/tests/ -v
@@ -185,9 +185,9 @@ core/
 │   ├── app_config.py          # AgentConfig: YAML-loaded app configuration
 │   └── tests/
 ├── utils/                  # Utility functions: message_id + log_setup + text_utils
-├── task/                   # Task sub-package: task model + scheduler
-│   ├── task.py             # Task dataclass + TaskType/TaskStatus enums + Future binding
-│   ├── scheduler.py        # TaskScheduler: worker pool for ReAct tool calls (5 workers)
+├── tool_runtime/           # 工具调用运行时（ARCH-INC-P1-01 改名，原 core/task）：即时工具调度
+│   ├── task.py             # QueuedToolCall dataclass + Kind/State enums + Future binding
+│   ├── scheduler.py        # ToolCallDispatcher: worker pool for ReAct tool calls (5 workers)
 │   └── tests/
 └── tools/                 # Tool plugins (filesystem, web, memory, time, reminder, etc.)
 ```

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from core.memory.session_manager import SessionManager
     from core.memory.long_term import LongTermMemory
     from core.memory.consolidator import MemoryConsolidator
-    from core.task import TaskScheduler
+    from core.tool_runtime import ToolCallDispatcher
     from core.monitoring.event_bus import EventBus
     from core.status.agent_fsm import AgentFSM
     from core.cognitive import CognitiveLoop
@@ -109,7 +109,7 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _output: OutputManager
         _cognitive: CognitiveLoop
         _user_name: str
-        _scheduler: TaskScheduler
+        _scheduler: ToolCallDispatcher
         _config: AppConfig
         _bus: EventBus
         _idle: IdleMonitor

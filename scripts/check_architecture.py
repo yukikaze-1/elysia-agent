@@ -116,7 +116,7 @@ _R2_SOURCES = (
     "core.adapter",
     "core.prompt",
     "core.schema",
-    "core.task",
+    "core.tool_runtime",
     "core.monitoring",
 )
 
@@ -170,7 +170,7 @@ _TASK_SPAWN_ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         (1, "局部变量；生成器 finally 内 cancel + await，synthesize() 必然耗尽生成器"),
 
     # ── core/：长期循环或逐调用任务，均有具名字段/集合接管 ──
-    ("core/task/scheduler.py", "TaskScheduler.start"):
+    ("core/tool_runtime/scheduler.py", "ToolCallDispatcher.start"):
         (2, "_workers 列表 + _prune_task 字段；stop() 逐个 cancel + gather"),
     ("core/monitoring/idle_monitor.py", "IdleMonitor.start"):
         (1, "_task 字段；stop() cancel + await"),

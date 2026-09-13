@@ -17,7 +17,7 @@ from Module._common.task_scope import AsyncTaskScope, cancel_and_drain
 from Module.output import WebSocketChannel
 
 if TYPE_CHECKING:
-    from core.task import TaskScheduler
+    from core.tool_runtime import ToolCallDispatcher
     from core.memory.long_term import LongTermMemory
     from core.config import AppConfig
     from core.memory.session import SessionMemory
@@ -39,7 +39,7 @@ class _LifecycleTools:
     if TYPE_CHECKING:
         _tool_adapter: ToolAdapter
         _long_term: LongTermMemory
-        _scheduler: TaskScheduler
+        _scheduler: ToolCallDispatcher
         _config: AppConfig
         session: SessionMemory
         _started_at: float

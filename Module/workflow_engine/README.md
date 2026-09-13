@@ -29,9 +29,9 @@ WorkflowEngine 是独立于 CognitiveLoop 的后台任务编排引擎：LLM 通�
 
 契约层文档：[Module/workflow_contract/README.md](../workflow_contract/README.md)
 
-## 与 core/task TaskScheduler 的关系（互补非重复）
+## 与 `core/tool_runtime.ToolCallDispatcher` 的关系（互补非重复）
 
-| 维度 | `core/task.TaskScheduler` | `workflow_engine` |
+| 维度 | `core/tool_runtime.ToolCallDispatcher` | `workflow_engine` |
 |------|---------------------------|-------------------|
 | 职责 | ReAct 工具子任务 worker pool（5 workers） | 后台长任务 Plan-Execute-Evaluate-Replan 编排 |
 | 粒度 | 单次工具调用 / 短任务 | 多节点 DAG + Sub-Agent 决策闭环 |

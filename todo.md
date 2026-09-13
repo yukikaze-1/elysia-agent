@@ -18,9 +18,10 @@
 > checkpoint 持久化 / `dispatch_background()` / `new_background()` 全部保留。
 > P1-01 剩余范围因此收窄为**仅命名与概念**（`core/task` → `core/tool_runtime`、
 > `TaskScheduler` → `ToolCallDispatcher`、`Task` → `QueuedToolCall`、
-> `parent_id` → `request_id`）；改名本身**尚未执行**，待单独排期。
-> 因 `TaskType.BACKGROUND` 保留，`TaskType` 维持双成员，不做枚举消除。
-> 代码侧标记见 `core/task/task.py` 与 `core/task/scheduler.py` 的模块 docstring。
+> `parent_id` → `request_id`）。**改名已于 2026-09-13 完成**：连同包外零引用的
+> `TaskType`/`TaskStatus` → `QueuedToolCallKind`/`QueuedToolCallState` 一并收口；
+> checkpoint 反序列化兼容旧键 `parent_id`。`QueuedToolCallKind.BACKGROUND` 保留，
+> 不做枚举消除。见 `core/tool_runtime/README.md`。
 
 ## 已知 Bug
 

@@ -54,7 +54,7 @@ class PluginContext:
     # 网络
     http_client: Any = None        # httpx.AsyncClient | None
     # 调度
-    scheduler: Any = None          # TaskScheduler | None
+    scheduler: Any = None          # ToolCallDispatcher | None
     # 配置
     config: Any = None             # AppConfig | None
 

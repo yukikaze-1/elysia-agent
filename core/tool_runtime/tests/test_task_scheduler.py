@@ -1,4 +1,4 @@
-"""TaskScheduler 测试 — 调度层单元测试 + Agent 集成测试。"""
+"""ToolCallDispatcher 测试 — 调度层单元测试 + Agent 集成测试。"""
 
 import asyncio
 import functools
@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
 from pydantic import BaseModel, Field
 
-from core.task import Task, TaskType, TaskStatus
-from core.task import TaskScheduler
+from core.tool_runtime import QueuedToolCall, QueuedToolCallKind, QueuedToolCallState
+from core.tool_runtime import ToolCallDispatcher
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
 from Module.tool import PluginContext
@@ -138,10 +138,10 @@ def _tc(id_="c1", name="echo", args="{}"):
 async def test_submit_and_dispatch():
     """单任务: submit → Worker 执行 → Future 返回结果。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, num_workers=2, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=2, checkpoint_path=None)
     await sched.start()
 
-    t = Task.new_tool_call("parent-1", "echo", {"msg": "hello"})
+    t = QueuedToolCall.new_tool_call("parent-1", "echo", {"msg": "hello"})
     fut = t.get_future()
     await sched.submit(t)
 
@@ -158,7 +158,7 @@ async def test_submit_and_dispatch():
 async def test_dispatch_tool_calls_parallel():
     """3 个工具并行 dispatch → 全部成功。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, num_workers=5, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=5, checkpoint_path=None)
     await sched.start()
 
     calls = [
@@ -198,12 +198,12 @@ async def test_priority_ordering():
 
     tm = ToolAdapter([OrderedPlugin], session_id="test")
     await tm.start()
-    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
-    t_low = Task.new_tool_call("p1", "echo", {"msg": "low"}, priority=9)
-    t_high = Task.new_tool_call("p1", "echo", {"msg": "high"}, priority=0)
-    t_mid = Task.new_tool_call("p1", "echo", {"msg": "mid"}, priority=5)
+    t_low = QueuedToolCall.new_tool_call("p1", "echo", {"msg": "low"}, priority=9)
+    t_high = QueuedToolCall.new_tool_call("p1", "echo", {"msg": "high"}, priority=0)
+    t_mid = QueuedToolCall.new_tool_call("p1", "echo", {"msg": "mid"}, priority=5)
 
     f_low = t_low.get_future()
     f_high = t_high.get_future()
@@ -224,12 +224,12 @@ async def test_priority_ordering():
 async def test_worker_pool_saturation():
     """提交 10 个任务 > 5 个 worker，全部完成。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, num_workers=5, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=5, checkpoint_path=None)
     await sched.start()
 
     futures = []
     for i in range(10):
-        t = Task.new_tool_call("p1", "echo", {"msg": str(i)})
+        t = QueuedToolCall.new_tool_call("p1", "echo", {"msg": str(i)})
         futures.append(t.get_future())
         await sched.submit(t)
 
@@ -249,7 +249,7 @@ async def test_worker_pool_saturation():
 async def test_dispatch_tool_calls_mixed_results():
     """dispatch 混合: 成功 + 失败 + 异常。"""
     tm = await _make_multi_manager()
-    sched = TaskScheduler(tool_executor=tm, num_workers=3, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=3, checkpoint_path=None)
     await sched.start()
 
     calls = [
@@ -276,7 +276,7 @@ async def test_dispatch_tool_calls_mixed_results():
 async def test_dispatch_tool_calls_unknown_tool():
     """dispatch 未注册工具 → ToolResult.fail。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
     calls = [
@@ -294,7 +294,7 @@ async def test_dispatch_tool_calls_unknown_tool():
 async def test_dispatch_tool_calls_empty():
     """空 calls 列表 → 空结果。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
     results = await sched.dispatch_tool_calls("p1", [])
@@ -322,10 +322,10 @@ async def test_call_id_threaded_to_worker_ctx():
             return ToolResult.ok(name=tool_name, content="ok", duration_ms=0.0)
 
     # payload 线程化：new_tool_call 携带 call_id
-    t = Task.new_tool_call("p1", "echo", {"msg": "a"}, call_id="tc_x")
+    t = QueuedToolCall.new_tool_call("p1", "echo", {"msg": "a"}, call_id="tc_x")
     assert t.payload["call_id"] == "tc_x"
 
-    sched = TaskScheduler(tool_executor=_RecordingExecutor(), num_workers=1,
+    sched = ToolCallDispatcher(tool_executor=_RecordingExecutor(), num_workers=1,
                           checkpoint_path=None)
     await sched.start()
     try:
@@ -345,15 +345,15 @@ async def test_call_id_threaded_to_worker_ctx():
 async def test_cancel_removes_future():
     """cancel → Future 传播 CancelledError。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, num_workers=2, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=2, checkpoint_path=None)
     await sched.start()
 
-    t = Task.new_tool_call("p1", "echo", {"msg": "x"})
+    t = QueuedToolCall.new_tool_call("p1", "echo", {"msg": "x"})
     fut = t.get_future()
     await sched.submit(t)
 
     sched.cancel(t.id)
-    assert t.status == TaskStatus.CANCELLED
+    assert t.status == QueuedToolCallState.CANCELLED
 
     with pytest.raises(asyncio.CancelledError):
         await fut
@@ -366,12 +366,12 @@ async def test_cancel_removes_future():
 async def test_cancel_cascades_to_children():
     """cancel 父任务 → 级联取消所有子任务。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, num_workers=2, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=2, checkpoint_path=None)
     await sched.start()
 
-    parent = Task(id="root", type=TaskType.TOOL_CALL)  # type: ignore[reportCallIssue]
-    child = Task.new_tool_call("root", "echo", {"msg": "c"})
-    grandchild = Task.new_tool_call(child.id, "echo", {"msg": "gc"})
+    parent = QueuedToolCall(id="root", type=QueuedToolCallKind.TOOL_CALL)  # type: ignore[reportCallIssue]
+    child = QueuedToolCall.new_tool_call("root", "echo", {"msg": "c"})
+    grandchild = QueuedToolCall.new_tool_call(child.id, "echo", {"msg": "gc"})
     child.children_ids = [grandchild.id]
     parent.children_ids = [child.id]
     sched._tasks["root"] = parent
@@ -379,9 +379,9 @@ async def test_cancel_cascades_to_children():
     sched._tasks[grandchild.id] = grandchild
 
     sched.cancel("root")
-    assert parent.status == TaskStatus.CANCELLED
-    assert child.status == TaskStatus.CANCELLED
-    assert grandchild.status == TaskStatus.CANCELLED
+    assert parent.status == QueuedToolCallState.CANCELLED
+    assert child.status == QueuedToolCallState.CANCELLED
+    assert grandchild.status == QueuedToolCallState.CANCELLED
 
     await sched.stop()
 
@@ -392,22 +392,22 @@ async def test_cancel_during_execution():
     """执行中 cancel → Worker task 被取消，Future 传播 CancelledError。"""
     barrier = asyncio.Event()
     tm = await _make_sleep_manager(barrier)
-    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
-    t = Task.new_tool_call("p1", "waiter", {})
+    t = QueuedToolCall.new_tool_call("p1", "waiter", {})
     fut = t.get_future()
     await sched.submit(t)
 
     # 等待 worker 开始执行（status 变为 DISPATCHED）
     for _ in range(100):
-        if t.status == TaskStatus.DISPATCHED:
+        if t.status == QueuedToolCallState.DISPATCHED:
             break
         await asyncio.sleep(0.01)
-    assert t.status == TaskStatus.DISPATCHED, "worker should have started"
+    assert t.status == QueuedToolCallState.DISPATCHED, "worker should have started"
 
     sched.cancel(t.id)
-    assert t.status == TaskStatus.CANCELLED
+    assert t.status == QueuedToolCallState.CANCELLED
 
     with pytest.raises(asyncio.CancelledError):
         await fut
@@ -423,7 +423,7 @@ async def test_dispatch_tool_calls_cancelled():
     """dispatch 期间取消 → 所有子任务被 cancel。"""
     barrier = asyncio.Event()
     tm = await _make_sleep_manager(barrier)
-    sched = TaskScheduler(tool_executor=tm, num_workers=2, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=2, checkpoint_path=None)
     await sched.start()
 
     calls = [
@@ -477,10 +477,10 @@ async def test_tool_retries_on_failure():
     tm = ToolAdapter([FlakyPlugin], session_id="test")
     await tm.start()
 
-    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
-    t = Task.new_tool_call("p1", "flaky", {})
+    t = QueuedToolCall.new_tool_call("p1", "flaky", {})
     fut = t.get_future()
     await sched.submit(t)
 
@@ -515,10 +515,10 @@ async def test_tool_gives_up_after_max_retries():
     tm = ToolAdapter([FailerPlugin], session_id="test")
     await tm.start()
 
-    sched = TaskScheduler(tool_executor=tm, num_workers=1, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
 
-    t = Task.new_tool_call("p1", "failer", {})
+    t = QueuedToolCall.new_tool_call("p1", "failer", {})
     t.max_retries = 1
     fut = t.get_future()
     await sched.submit(t)
@@ -532,7 +532,7 @@ async def test_tool_gives_up_after_max_retries():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 四、Task Tree
+# 四、QueuedToolCall Tree
 # ═══════════════════════════════════════════════════════════════════
 
 @pytest.mark.service
@@ -540,11 +540,11 @@ async def test_tool_gives_up_after_max_retries():
 async def test_get_tree():
     """get_tree 返回嵌套结构。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=None)
     await sched.start()
 
-    t = Task.new_tool_call("p1", "echo", {"msg": "t"})
-    child = Task.new_tool_call(t.id, "echo", {"msg": "c"})
+    t = QueuedToolCall.new_tool_call("p1", "echo", {"msg": "t"})
+    child = QueuedToolCall.new_tool_call(t.id, "echo", {"msg": "c"})
     t.children_ids.append(child.id)
     sched._tasks[t.id] = t
     sched._tasks[child.id] = child
@@ -562,12 +562,12 @@ async def test_get_tree():
 async def test_get_tree_nested():
     """get_tree 三层嵌套结构。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=None)
     await sched.start()
 
-    root = Task.new_tool_call("p1", "echo", {"msg": "r"})
-    mid = Task.new_tool_call(root.id, "echo", {"msg": "m"})
-    leaf = Task.new_tool_call(mid.id, "echo", {"msg": "l"})
+    root = QueuedToolCall.new_tool_call("p1", "echo", {"msg": "r"})
+    mid = QueuedToolCall.new_tool_call(root.id, "echo", {"msg": "m"})
+    leaf = QueuedToolCall.new_tool_call(mid.id, "echo", {"msg": "l"})
     mid.children_ids = [leaf.id]
     root.children_ids = [mid.id]
     for t in [root, mid, leaf]:
@@ -584,7 +584,7 @@ async def test_get_tree_nested():
 async def test_get_tree_nonexistent():
     """get_tree 查不存在的 id → 空 dict。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=None)
     await sched.start()
     assert sched.get_tree("nonexistent") == {}
     await sched.stop()
@@ -603,9 +603,9 @@ async def test_checkpoint_save_and_restore():
     cp = str(Path(tmpdir) / "cp.json")
 
     try:
-        sched1 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
+        sched1 = ToolCallDispatcher(tool_executor=tm, checkpoint_path=cp)
         await sched1.start()
-        t = Task(id="bg-1", type=TaskType.BACKGROUND, status=TaskStatus.PENDING,
+        t = QueuedToolCall(id="bg-1", type=QueuedToolCallKind.BACKGROUND, status=QueuedToolCallState.PENDING,
                  payload={"msg": "persist"}, run_in_background=True)  # type: ignore[reportCallIssue]
         sched1._tasks[t.id] = t
         sched1._save_checkpoint()
@@ -613,11 +613,11 @@ async def test_checkpoint_save_and_restore():
 
         assert Path(cp).is_file()
 
-        sched2 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
+        sched2 = ToolCallDispatcher(tool_executor=tm, checkpoint_path=cp)
         sched2._restore_checkpoint()
         restored = sched2._tasks.get("bg-1")
         assert restored is not None
-        assert restored.type == TaskType.BACKGROUND
+        assert restored.type == QueuedToolCallKind.BACKGROUND
         assert restored.payload["msg"] == "persist"  # type: ignore[reportGeneralTypeIssues]
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -631,16 +631,16 @@ async def test_checkpoint_multiple_tasks():
     cp = str(Path(tmpdir) / "cp2.json")
 
     try:
-        sched1 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
+        sched1 = ToolCallDispatcher(tool_executor=tm, checkpoint_path=cp)
         await sched1.start()
         for i in range(3):
-            t = Task.new_background(payload={"idx": i})
+            t = QueuedToolCall.new_background(payload={"idx": i})
             t.id = f"bg-{i}"
             sched1._tasks[t.id] = t
         sched1._save_checkpoint()
         await sched1.stop()
 
-        sched2 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
+        sched2 = ToolCallDispatcher(tool_executor=tm, checkpoint_path=cp)
         sched2._restore_checkpoint()
         assert sched2._tasks["bg-0"].payload["idx"] == 0  # type: ignore[reportGeneralTypeIssues]
         assert sched2._tasks["bg-1"].payload["idx"] == 1  # type: ignore[reportGeneralTypeIssues]
@@ -659,14 +659,14 @@ async def test_checkpoint_ignores_non_background():
     cp = str(Path(tmpdir) / "cp3.json")
 
     try:
-        sched = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
+        sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=cp)
         await sched.start()
-        t = Task.new_tool_call("p1", "echo", {"msg": "x"})
+        t = QueuedToolCall.new_tool_call("p1", "echo", {"msg": "x"})
         sched._tasks[t.id] = t
         sched._save_checkpoint()
         await sched.stop()
 
-        sched2 = TaskScheduler(tool_executor=tm, checkpoint_path=cp)
+        sched2 = ToolCallDispatcher(tool_executor=tm, checkpoint_path=cp)
         sched2._restore_checkpoint()
         assert len(sched2._tasks) == 0
     finally:
@@ -678,11 +678,11 @@ async def test_checkpoint_ignores_non_background():
 async def test_checkpoint_no_path():
     """无 checkpoint_path 时不崩溃。"""
     tm = await _make_manager()
-    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=None)
     await sched.start()
     sched._save_checkpoint()  # 不应抛异常
 
-    t = Task(id="t1", type=TaskType.BACKGROUND, status=TaskStatus.PENDING,
+    t = QueuedToolCall(id="t1", type=QueuedToolCallKind.BACKGROUND, status=QueuedToolCallState.PENDING,
              payload={}, run_in_background=True)  # type: ignore[reportCallIssue]
     sched._tasks[t.id] = t
     sched._save_checkpoint()  # 仍不应抛异常
@@ -695,16 +695,16 @@ async def test_checkpoint_no_path():
 # 五.5、_prune_tasks — 终态任务清理
 # ═══════════════════════════════════════════════════════════════════
 
-def _make_terminal_task(tid: str, children: list[str] | None = None) -> Task:
+def _make_terminal_task(tid: str, children: list[str] | None = None) -> QueuedToolCall:
     """创建一个终态（COMPLETED）任务。"""
-    return Task(id=tid, type=TaskType.BACKGROUND, status=TaskStatus.COMPLETED,
+    return QueuedToolCall(id=tid, type=QueuedToolCallKind.BACKGROUND, status=QueuedToolCallState.COMPLETED,
                 payload={}, children_ids=children or [],
                 run_in_background=True)  # type: ignore[reportCallIssue]
 
 
-def _make_active_task(tid: str, children: list[str] | None = None) -> Task:
+def _make_active_task(tid: str, children: list[str] | None = None) -> QueuedToolCall:
     """创建一个活跃（DISPATCHED）任务。"""
-    return Task(id=tid, type=TaskType.BACKGROUND, status=TaskStatus.DISPATCHED,
+    return QueuedToolCall(id=tid, type=QueuedToolCallKind.BACKGROUND, status=QueuedToolCallState.DISPATCHED,
                 payload={}, children_ids=children or [],
                 run_in_background=True)  # type: ignore[reportCallIssue]
 
@@ -713,7 +713,7 @@ def _make_active_task(tid: str, children: list[str] | None = None) -> Task:
 def test_prune_removes_terminal_without_active_children():
     """终态任务无活跃子任务 → 被删除。"""
     tm = _make_sync_manager()
-    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=None)
     t = _make_terminal_task("t1")
     sched._tasks["t1"] = t
     sched._prune_tasks()
@@ -724,7 +724,7 @@ def test_prune_removes_terminal_without_active_children():
 def test_prune_keeps_active_task():
     """活跃任务 → 保留。"""
     tm = _make_sync_manager()
-    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=None)
     t = _make_active_task("t1")
     sched._tasks["t1"] = t
     sched._prune_tasks()
@@ -735,7 +735,7 @@ def test_prune_keeps_active_task():
 def test_prune_keeps_terminal_with_active_child():
     """终态父任务有活跃子任务 → 保留（子任务还在跑）。"""
     tm = _make_sync_manager()
-    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=None)
     parent = _make_terminal_task("parent", children=["child"])
     child = _make_active_task("child")
     sched._tasks["parent"] = parent
@@ -749,7 +749,7 @@ def test_prune_keeps_terminal_with_active_child():
 def test_prune_removes_all_when_all_terminal():
     """全部终端且无活跃子 → 全部删除。"""
     tm = _make_sync_manager()
-    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=None)
     for i in range(5):
         sched._tasks[f"t{i}"] = _make_terminal_task(f"t{i}")
     sched._prune_tasks()
@@ -760,7 +760,7 @@ def test_prune_removes_all_when_all_terminal():
 def test_prune_removes_terminal_parent_when_child_also_terminal():
     """父终态 + 子终态 → 父子都删除。"""
     tm = _make_sync_manager()
-    sched = TaskScheduler(tool_executor=tm, checkpoint_path=None)
+    sched = ToolCallDispatcher(tool_executor=tm, checkpoint_path=None)
     parent = _make_terminal_task("parent", children=["child"])
     child = _make_terminal_task("child")
     sched._tasks["parent"] = parent
@@ -1029,7 +1029,7 @@ class TestCheckpoint:
         """无 pending 任务 → 删除旧 checkpoint（防重启重放已执行任务）。"""
         cp = str(tmp_path / "sched.json")
         Path(cp).write_text('{"version": 1, "tasks": []}')
-        sched = TaskScheduler(checkpoint_path=cp)
+        sched = ToolCallDispatcher(checkpoint_path=cp)
 
         sched._save_checkpoint()
 
@@ -1038,10 +1038,10 @@ class TestCheckpoint:
     def test_save_skips_non_serializable_payload(self, tmp_path):
         """后台任务 payload 含不可序列化值（set 模拟 coro）→ 不写入 checkpoint。"""
         cp = str(tmp_path / "sched.json")
-        sched = TaskScheduler(checkpoint_path=cp)
+        sched = ToolCallDispatcher(checkpoint_path=cp)
 
-        t = Task.new_background(payload={"coro": set()})
-        t.status = TaskStatus.PENDING
+        t = QueuedToolCall.new_background(payload={"coro": set()})
+        t.status = QueuedToolCallState.PENDING
         sched._tasks[t.id] = t
 
         sched._save_checkpoint()
@@ -1053,7 +1053,7 @@ class TestCheckpoint:
         """损坏文件 → 隔离（warning 不阻断），无任务恢复。"""
         cp = str(tmp_path / "sched.json")
         Path(cp).write_text("{not valid json")
-        sched = TaskScheduler(checkpoint_path=cp, num_workers=0)
+        sched = ToolCallDispatcher(checkpoint_path=cp, num_workers=0)
 
         sched._restore_checkpoint()
 
@@ -1063,7 +1063,7 @@ class TestCheckpoint:
         """version != 1 → 隔离不恢复。"""
         cp = str(tmp_path / "sched.json")
         Path(cp).write_text('{"version": 99, "tasks": []}')
-        sched = TaskScheduler(checkpoint_path=cp, num_workers=0)
+        sched = ToolCallDispatcher(checkpoint_path=cp, num_workers=0)
 
         sched._restore_checkpoint()
 

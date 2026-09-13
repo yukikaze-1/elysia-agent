@@ -262,7 +262,7 @@ class FileCleaner:
     """
 
     # data/ 下固定的对话侧持久化文件（对应 paths.ProjectPath 同名成员）。
-    # scheduler_checkpoint.json 由 TaskScheduler 写入（agent.py）。
+    # scheduler_checkpoint.json 由 ToolCallDispatcher 写入（agent.py）。
     _FIXED_FILES: tuple[str, ...] = (
         "token_usage_pending.jsonl",
         "scheduler_checkpoint.json",

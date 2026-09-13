@@ -14,7 +14,7 @@
   随 owner 走。全局单例会让「谁该为这个协程负责」重新变得不可回答。
 - **不持久化、不进任务中心、不经 WorkflowEngine**。这里治理的是 *asyncio 协程* 的
   运行时资源，与产品语义的「后台任务」无关——后者在本仓已有专名：
-  ``core/task``（即时工具调度）、``WorkflowEngine``（长流程）、
+  ``core/tool_runtime``（即时工具调度）、``WorkflowEngine``（长流程）、
   ``Agent._background_tasks`` / ``_BackgroundTaskEntry``（产品任务登记）。
   类名因此**刻意避开**评估稿里的 ``BackgroundTaskSet``：在本仓读作「后台任务集合」
   会直接与 ``_background_tasks`` 撞义。
