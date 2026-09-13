@@ -122,7 +122,8 @@
 | **S2-D4** 硬约束无执行点（预算无看门狗 + 节点级超时没人读）| ✅ 已修 | `179781ff` |
 | **S2-B6** 幂等证据探测 fail-open → 重复 generation | ✅ 已修 | `f7e92aca` |
 | **S2-C1** `retryable` 的拒绝被落成终态并逐字重放 | ✅ 已修（**行为变更**）| 见下 |
-| **S2-C2** `mark_stale` TOCTOU + 返回值造假 + 默认 limit | ✅ 已修 | 见下 |
+| **S2-C2** `mark_stale` TOCTOU + 返回值造假 + 默认 limit | ✅ 已修 | `bc88353e` |
+| **S2-C3** 服务开关三态四个真相源（切会话不重放）| ✅ 已修 | `fe28b7e2` |
 
 > **S1 已全部处置**：10 条 S1 中 9 条已修，剩 `CR-01` 属运维动作（轮换凭据），
 > 代码侧无从代劳。S2 关键项 `CR-12`/`CR-13` 已修。
@@ -280,7 +281,7 @@ app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取
 ### 0.4.3 S1 收口轮（2026-09-13）：CR-02 / CR-05 / CR-06 / CR-08 / CR-11 + C + CR-12 / CR-13
 
 同一天连续四批，覆盖**全部剩余 S1**（除 `CR-01` 运维动作）与两条关键 S2。
-`make test-quick` 4536 → **4749 passed**（+213），收集数 4652 → **4806**。每一项都逐条做了「先证明守卫能抓到违规」
+`make test-quick` 4536 → **4753 passed**（+217），收集数 4652 → **4810**；另有 `-m "not unit and not service"`（quick 排除的 55 条）**48 passed / 7 skipped**——该集合此前从未被跑过，见下 §0.4.5。每一项都逐条做了「先证明守卫能抓到违规」
 的反证，并在下方记录**反证本身暴露出的问题**（这部分比通过项更有信息量）。
 
 | 批次 | 提交 | 内容 |
@@ -356,11 +357,11 @@ app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取
 **S3-09 的反证第一次是全绿的**（改动没有测试覆盖），补 6 项后才转红——「反证全绿」
 不是"守卫很强"，而是"守卫没装在改动上"。这条已经出现两次（另一次在 CR-11）。
 
-**F 批已做 21 项**：S3-03 / S2-A1 / S2-A3 / S3-09（`7b7802a4`）、
+**F 批已做 22 项**：S3-03 / S2-A1 / S2-A3 / S3-09（`7b7802a4`）、
 S2-F4 / S2-B5 / S2-4（`3d764b8d`）、S2-G1（`76a07212`）、S2-B3/B4（`dc7918b2`）、
 S2-B1/B2（`c4129197`）、**S2-D5/D7/D8（`2a751d10`）、S2-D6（`4f88c2ad`）、
 S2-D2 + S2-D3①（`b5953d30`）、S2-D4（`179781ff`）、S2-B6（`f7e92aca`）、
-S2-C1/C2（见下）**。
+S2-C1/C2（`bc88353e`）、S2-C3（`fe28b7e2`）**。
 
 **D 系列的共同点值得记**：六项里有 **四项是"有兜底、无来源"或"两条分支不一致"**——
 `MISSING_DEPENDENCY` 有 fatal 分类但产生它的分支恒不可达；`error`/`error_code` 有字段
@@ -368,11 +369,22 @@ S2-C1/C2（见下）**。
 分支一个合并状态一个丢弃。**"声明了但到不了"比"没声明"更难发现**，因为读代码时
 每一处看起来都对。
 
+### §0.4.5 流程教训：`test-quick` 的 marker 过滤是视野边界
+
+`make test-quick` 只跑 `unit or service`，**55 条 slow/integration 从未进入日常回路**。
+CR-13 给 `_run_hitl` 加了第 4 个位置参数，`core/tests/test_phase2.py` 里标了
+`@pytest.mark.slow` 的猴补丁替身只收 3 个 → `TypeError`；此后 4 次全量 quick
+（4691/4710/4738/4749）**全部看不见它**，直到本次修 S2-C3 顺手跑到才暴露。
+
+**规则**：改公共签名（函数/方法增删参数）后，除 `make test-quick` 外必须额外跑
+`pytest -m "not unit and not service" -q`（约 1 分钟）确认被 marker 排除的集合。
+替身（mock/猴补丁）与真实签名不同步时，失败只会在**真的走到那条路径**时出现。
+
 **F 批剩余（按报告 P1→P3 清单）**：S2-A1 彻底版（关停时把批次**落盘**而非只 requeue）、
 **S2-D3②③**（重试退避 + 幂等键 + mutation 工具默认不重试，需幂等键基建）、
 **S2-D3②③**（重试退避 + 幂等键；mutation 工具默认不重试）、**S2-D4②③**
 （`_run_and_cleanup` 外层 `wait_for` 兜底；`max_mutations` 计数器 + `MUTATION_LIMIT_REACHED`
-生产者）、S2-D3②③、S2-C3（服务开关四真相源）、S2-E2~E5、S2-F1/F2、
+生产者）、S2-D3②③、S2-E2~E5、S2-F1/F2、
 S2-5/6/7/8/9/10（`wire_dict` JSON 归一化 / `coerce` Union 解包 / 沙盒 `.resolve()` /
 `start.sh` flock / compose 拆卷 + healthcheck / 版本比对 + CI 装锁）、S3 系列。
 
