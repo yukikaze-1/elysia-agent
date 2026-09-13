@@ -66,7 +66,7 @@ bash scripts/start.sh --skip-preflight  # 显式跳过预检（降级，慎用�
 
 打开浏览器访问 **`http://localhost:8765`** —— v1 网页聊天默认停用（`/` 404），Debug 仪表盘 `/debug` 可用（需已构建前端，`static/debug.html` 存在）；`SERVE_CHAT=1`（env）可恢复浏览器聊天。日志输出到 `log/` 目录（主日志 `app.log`，全量 `app-debug.log`。详见 `log/README.md`）。停止：`Ctrl+C`。
 
-Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板，详见 [`static/debug.md`](static/debug.md)。数据面 `/debug/api/*` 属管理面：配了 `SERVER_AUTH_TOKEN` 时页面会弹**凭据闸门**（填同一个值即可；存 `sessionStorage`、不进 URL、不落日志），未配则回环开发直接放行。
+Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板。**使用说明（怎么打开、三个 Tab、16 个面板各看什么、典型排障流程）见 [`static/debug.md`](static/debug.md)**。数据面 `/debug/api/*` 属管理面：配了 `SERVER_AUTH_TOKEN` 时页面会弹**凭据闸门**（填同一个值即可；存 `sessionStorage`、不进 URL、不落日志），未配则回环开发直接放行。
 
 ### 关键文件
 
@@ -81,7 +81,7 @@ Debug 面板：**`http://localhost:8765/debug`** — 内部状态监控仪表板
 | `.model_cache/` | 嵌入模型（`BAAI/bge-large-zh-v1.5/`，约 1.3GB） |
 | `frontend/` | Vue 3 前端源码（Vite + Pinia + TypeScript，含 Debug 应用）。详见 [frontend/README.md](frontend/README.md) |
 | `static/` | Vite 构建产物 + 非代码资源（由 aiohttp serve） |
-| `static/debug.md` | Debug 面板完整文档（标签页、API、技术实现） |
+| `static/debug.md` | **Debug 面板使用说明**（快速开始 / 凭据闸门 / 三个 Tab / 16 面板逐条 / 排障流程 / 已知限制） |
 
 > `scripts/download_model.py` 将模型下载到 `.model_cache/`（默认官方 HuggingFace + 固定 revision + sha256 校验；第三方镜像经 `HF_MIRROR` 显式 opt-in）。运行时按 `MODEL_CACHE_DIR` → `.model_cache/` → `~/.cache/huggingface/hub/` 顺序查找。
 

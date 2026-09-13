@@ -118,7 +118,15 @@ core/input/debug_routes/ — /debug/api 路由注册（package，7 modules）
 
 ## 调试
 
-访问 `http://localhost:8765/debug` — 仪表板入口。每个面板右上角有刷新按钮，数据 2s 自动轮询。
+访问 `http://localhost:8765/debug` — 仪表板入口，数据 2s 自动轮询（**仅「概览」Tab**；
+切走即停，失败按指数退避到 30s）。
+
+**面板上没有刷新按钮**——本节此前写「每个面板右上角有刷新按钮」，与前端实际形态不符
+（2026-09-12 核实修正）。「数据库」Tab 的刷新靠各面板内的搜索 / 翻页，「任务」Tab 走
+SSE 实时流（打开期间服务端才启动 500ms 快照轮询）。
+
+完整使用说明（三个 Tab、16 个面板逐条、凭据闸门、典型排障流程、已知限制）见
+[`static/debug.md`](../../static/debug.md)。
 
 ---
 
@@ -129,5 +137,5 @@ core/input/debug_routes/ — /debug/api 路由注册（package，7 modules）
 | [项目 README](../../README.md) | 快速开始 + 完整文档导航 |
 | [core/README.md](../README.md) | Core 层总览 |
 | [docs/architecture.md](../../docs/architecture.md) | 完整架构 |
-| [static/debug.md](../../static/debug.md) | 前端 Debug 面板说明 |
+| [static/debug.md](../../static/debug.md) | **前端 Debug 面板使用说明**（Tab / 面板 / 排障流程） |
 | [core/agent/README.md](../agent/README.md) | Agent — debug 数据的所有者 |
