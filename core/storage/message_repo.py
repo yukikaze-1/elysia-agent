@@ -226,6 +226,25 @@ class MessageRepository(Repository):
 
     # ---- core operations ----
 
+    def _require_db(self, op: str) -> DocumentDBBackend:
+        """历史**读**路径的 fail-closed 守卫（S2-E5）。
+
+        Mongo 离线时这些方法原先返回空页/0，REST 层再回 `200 {"messages":[]}`——
+        而同一系统的 `/ready` 探针是 **fail-closed**（503）。**同一系统对"存储不可用"
+        给出两种相反信号**：用户看到"历史空了"且无错误、不重试，甚至可能据此误删会话。
+
+        故意只覆盖**面向用户的历史读取**（分页/游标/计数/搜索/上下文）——prompt 构建
+        等内部只读路径离线时降级为空是**有意的**（不阻塞对话），不在此列。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                f"MessageRepository 未连接——{op} 无法判定，"
+                f"不得把「存储不可用」报成「没有消息」")
+        return self._db
+
     async def append(self, session_id: SessionId, msg: Message) -> None:
         """追加一条消息到永久归档。
 
@@ -322,15 +341,17 @@ class MessageRepository(Repository):
             limit: 每页条数，默认 20。
 
         Returns:
-            (消息列表, has_more) 元组（按 _id 降序）。若数据库不可用返回 ([], False)。
+            (消息列表, has_more) 元组（按 _id 降序）。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接（S2-E5——不得报成"没有消息"）。
         """
-        if self._db is None:
-            return [], False
+        db = self._require_db("query_page")
         filter_expr: dict = {"session_id": session_id}
         if before is not None:
             oid = ObjectId(before) if isinstance(before, str) else before
             filter_expr["_id"] = {"$lt": oid}
-        docs = await self._db.find(COLLECTION, filter_expr, sort=[("_id", -1)], limit=limit + 1)
+        docs = await db.find(COLLECTION, filter_expr, sort=[("_id", -1)], limit=limit + 1)
         has_more = len(docs) > limit
         if has_more:
             docs = docs[:limit]
@@ -394,12 +415,14 @@ class MessageRepository(Repository):
             limit: 每页条数，默认 20。
 
         Returns:
-            (锚点之后的消息列表, has_more) 元组（按 _id 升序）。数据库不可用时返回 ([], False)。
+            (锚点之后的消息列表, has_more) 元组（按 _id 升序）。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接（S2-E5——不得报成"没有消息"）。
         """
-        if self._db is None:
-            return [], False
+        db = self._require_db("query_after")
         filter_expr = {"session_id": session_id, "_id": {"$gt": after_oid}}
-        docs = await self._db.find(COLLECTION, filter_expr, sort=[("_id", 1)], limit=limit + 1)
+        docs = await db.find(COLLECTION, filter_expr, sort=[("_id", 1)], limit=limit + 1)
         has_more = len(docs) > limit
         if has_more:
             docs = docs[:limit]
@@ -505,11 +528,13 @@ class MessageRepository(Repository):
             session_id: 会话 ID。
 
         Returns:
-            消息总数。若数据库不可用返回 0。
+            消息总数。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接（S2-E5——不得报成"0 条"）。
         """
-        if self._db is None:
-            return 0
-        return await self._db.count(COLLECTION, {"session_id": session_id})
+        db = self._require_db("count_by_session")
+        return await db.count(COLLECTION, {"session_id": session_id})
 
     async def count(self) -> int:
         """返回全部消息总数。

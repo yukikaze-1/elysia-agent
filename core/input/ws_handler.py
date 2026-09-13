@@ -227,13 +227,40 @@ async def _emit_state_snapshot(agent: "Agent", ws: "web.WebSocketResponse") -> N
         logger.debug("emit state snapshot 失败", exc_info=True)
 
 
+#: 连接收尾时留给 v1 尾段转写的预算（秒）。远小于 `STT_TIMEOUT=30.0`——
+#: 那个是**单次调用**上限，不是"连接收尾可接受阻塞时间"（S2-E3）。
+_CLOSE_FLUSH_BUDGET_S = 2.0
+
+
+def _ws_response_kwargs() -> dict:
+    """WS 握手参数（提取为函数：测试直接调用它，避免复制参数导致漂移）。
+
+    S2-E4：**显式 `compress=False`**。不传它时 aiohttp 默认 `compress=True`，会与
+    请求压缩的客户端协商 `permessage-deflate`；实测该组合在**空闲约 75s 后的第一帧**
+    上被判 `Received frame with non-zero reserved bits` 并以关闭码 1002 断连
+    （存档：docs/review/archive/2026-08/2026-08-14-Windows-Electron-第三次真实联调结果.md
+    的 A/B：默认压缩 → 1002，客户端 `perMessageDeflate:false` → 1000）。
+
+    若那一帧是 `text`，用户消息**从未到达后端**，前端只会看到 ACK 超时；连接被 1002
+    关闭重连时，语音会话与 desktop 注册全部重建。此前只在 Electron 侧规避，后端纵深
+    防护一直没落地——而**浏览器 WebSocket API 无法关闭该扩展**，所以必须在服务端关。
+    不影响 wire 内容（只是不再压缩）。
+    """
+    return {
+        "max_msg_size": 16 * 1024 * 1024,
+        "heartbeat": 30,
+        "receive_timeout": 60,
+        "compress": False,
+    }
+
+
 async def _open_ws_connection(
     request: web.Request,
     agent: "Agent",
     wake_word_enabled: bool,
 ) -> _WsConnection:
     """握手、初始帧回放、voice/audio 装配——连接级 setup 全部收口在此。"""
-    ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024, heartbeat=30, receive_timeout=60)
+    ws = web.WebSocketResponse(**_ws_response_kwargs())
     await ws.prepare(request)
 
     proto_header = request.headers.get("X-Protocol-Version", "")
@@ -465,7 +492,23 @@ async def _close_ws_connection(conn: _WsConnection, agent: "Agent") -> None:
 
     try:
         if conn.audio_buf:
-            await conn.audio_buf.flush()
+            # S2-E3③：**收尾预算远小于单次 STT 上限**。`flush()` 内部是
+            # `wait_for(stt_transcribe, 30.0)`——30s 是"单次调用"上限，不是
+            # "连接收尾可接受阻塞时间"的预算。收尾路径必须快速让出：超预算即放弃
+            # 尾段（与今天超时丢段的结果一致，但不再拖住停止按钮与停机）。
+            try:
+                await asyncio.wait_for(
+                    conn.audio_buf.flush(), timeout=_CLOSE_FLUSH_BUDGET_S)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "WS 连接关闭：尾段转写超过 %.0fs 预算，放弃该段（不阻塞收尾）",
+                    _CLOSE_FLUSH_BUDGET_S)
+                # S2-E2：放弃尾段时**显式释放缓冲**——否则那几十 MB PCM 会一直挂在
+                # AudioBuffer 上直到对象被 GC（连接对象可能被引用得更久）。
+                # **只在放弃路径释放**：放在 `finally` 里会在取消路径上执行额外语句，
+                # 一旦对象没有该方法就抛 AttributeError，把最初的 CancelledError
+                # **顶掉**（实测把 E1 的"取消也不得泄漏 channel"测试打红）。
+                conn.audio_buf.release()
         if conn.voice_mgr is not None:
             await conn.voice_mgr.close()
     except Exception:
@@ -522,7 +565,14 @@ async def handle_ws(
     try:
         await _run_ws_message_loop(conn, request, agent)
     except asyncio.CancelledError:
-        pass
+        # S2-E3：**不再吞掉取消**。原先这里是 `pass`，取消被吃掉后仍继续执行
+        # `finally` 里的清理，而清理的第一个 await 就是 `audio_buf.flush()`——
+        # 它内部 `wait_for(stt_transcribe, 30.0)`，于是"停止按钮/停机"最长 30s
+        # 才走到 `remove_channel`；停机时每个持有音频段的连接把进程退出各拖长 ≤30s，
+        # 期间 `_ws_active` 不减 → 新连接按 CONNECTION_LIMITED 503 被拒。
+        # 清理仍由 finally 负责（那里另有收尾预算，见 `_close_ws_connection`）。
+        logger.info("WS 消息循环被取消，交由 finally 收尾: %s", conn.client_id)
+        raise
     finally:
         await _close_ws_connection(conn, agent)
     return conn.ws

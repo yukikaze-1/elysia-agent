@@ -222,11 +222,20 @@ class TestMessageRepositoryBatch3:
         assert len(messages) == 20
         assert has_more is False
 
-    def test_query_page_returns_empty_when_db_none(self):
+    def test_query_page_raises_when_db_none(self):
+        """S2-E5：**历史读路径 fail-closed**——"查不了"不得报成"没有消息"。
+
+        原测试断言返回 `([], False)`，把缺陷写成了预期：REST 层据此回
+        `200 {"messages":[],"has_more":false,"total":0}`，而同一系统的 `/ready`
+        对同一事实报 503——用户看到"历史空了"且无错误、不重试，甚至可能据此误删会话。
+        """
+        from core.storage.base import StorageUnavailableError
+
         repo = MessageRepository(db=None)
-        messages, has_more = asyncio.run(repo.query_page("sid"))
-        assert messages == []
-        assert has_more is False
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.query_page("sid"))
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.count_by_session("sid"))
 
     def test_query_after_anchor_ascending(self):
         from core.storage.tests._fake_documentdb import FakeDocumentDBBackend

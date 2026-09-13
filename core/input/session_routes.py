@@ -12,7 +12,7 @@ import re
 import uuid
 from datetime import date
 from zoneinfo import ZoneInfo
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -679,6 +679,21 @@ async def sessions_messages_handler(request: web.Request) -> web.Response:
     if not await _session_exists(agent, sid):
         return _error_response("SESSION_NOT_FOUND", f"会话不存在: {sid}", 404)
     limit = _parse_limit(request, default=50, cap=200)
+    try:
+        return await _messages_page(agent, sid, request, limit)
+    except StorageUnavailableError:
+        # S2-E5：存储不可用**必须**与 `/ready` 的 fail-closed 语义一致。
+        # 原先这里回 `200 {"messages":[],"has_more":false,"total":0}`——用户看到
+        # "历史空了"且无错误、不重试，甚至可能据此误删会话；而同一系统的就绪探针
+        # 对同一事实报 503。同一系统对"存储不可用"给出两种相反信号。
+        logger.warning("会话历史读取失败：存储不可用 sid=%s", sid)
+        return _error_response(
+            "STORAGE_UNAVAILABLE", "存储暂不可用，无法读取历史", 503, retryable=True)
+
+
+async def _messages_page(agent: Any, sid: str, request: web.Request,
+                         limit: int) -> web.Response:
+    """历史分页主体（拆出以便统一捕获存储不可用，S2-E5）。"""
     after = request.query.get("after", "").strip() or None
     if after:
         try:

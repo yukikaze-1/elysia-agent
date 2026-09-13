@@ -18,7 +18,9 @@
 
 import base64
 from datetime import datetime
-from unittest.mock import AsyncMock
+import json
+from unittest import mock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -2073,3 +2075,67 @@ class TestCharacterSnapshotCauseDiagnostics:
             row = next(s for s in (await resp.json())["sessions"]
                        if s["conversationId"] == "conv_wire_probe")
             assert "character" not in row, f"{cause} 不得改变 wire 形状"
+
+
+# ══════════════════════════════════════════════════════════════════
+# S2-E5：历史接口的 fail-closed 语义必须与 /ready 一致
+# ══════════════════════════════════════════════════════════════════
+
+class TestHistoryReadIsFailClosed:
+    """Mongo 离线时 `GET /api/sessions/{id}/messages` 原先返回
+    `200 {"messages":[],"has_more":false,"total":0}`，而同一系统的 `/ready` 探针是
+    **fail-closed**（503）——**同一系统对"存储不可用"给出两种相反信号**。
+    用户看到"历史空了"且无错误、不重试，甚至可能据此误删会话。
+
+    对照：`session_repo` 离线抛 `StorageUnavailableError`、附件走 503。
+    """
+
+    @pytest.mark.asyncio
+    async def test_storage_unavailable_returns_503_not_empty_page(self):
+        from core.storage.base import StorageUnavailableError
+        from core.input.session_routes import sessions_messages_handler
+
+        repo = MagicMock()
+        repo.query_page = AsyncMock(
+            side_effect=StorageUnavailableError("MongoDB 未连接"))
+        agent = MagicMock()
+        agent.message_repo = repo
+
+        request = MagicMock()
+        request.app = {"agent": agent}
+        request.match_info = {"conversationId": "conv_1"}
+        request.query = {}
+
+        with mock.patch("core.input.session_routes._session_exists",
+                        new=AsyncMock(return_value=True)):
+            resp = await sessions_messages_handler(request)
+
+        assert resp.status == 503, (
+            f"存储不可用必须 503（与 /ready 一致），实得 {resp.status}")
+        body = json.loads(resp.body.decode())
+        assert body["code"] == "STORAGE_UNAVAILABLE", body
+        assert body["retryable"] is True
+
+    @pytest.mark.asyncio
+    async def test_normal_empty_history_still_200(self):
+        """回归网：**真的没有消息**仍然是 200 空页（不能把两种情况混为一谈）。"""
+        from core.input.session_routes import sessions_messages_handler
+
+        repo = MagicMock()
+        repo.query_page = AsyncMock(return_value=([], False))
+        repo.count_by_session = AsyncMock(return_value=0)
+        agent = MagicMock()
+        agent.message_repo = repo
+
+        request = MagicMock()
+        request.app = {"agent": agent}
+        request.match_info = {"conversationId": "conv_1"}
+        request.query = {}
+
+        with mock.patch("core.input.session_routes._session_exists",
+                        new=AsyncMock(return_value=True)):
+            resp = await sessions_messages_handler(request)
+
+        assert resp.status == 200
+        body = json.loads(resp.body.decode())
+        assert body["messages"] == [] and body["total"] == 0

@@ -82,6 +82,17 @@ class AudioBuffer:
 
     # 最小片段时长（秒），更短的片段大概率是噪声
     MIN_SEGMENT_SECONDS = 0.3
+    #: 单个 VAD 段的最大时长（秒）——**必须有上界**（S2-E2）。
+    #: 段结束的唯一条件是"≥`silence_duration` 静音"；持续人声/电视/外放回声/采集卡死
+    #: 时 `_chunks` 会线性增长，最终被 `b"".join()` 成**一个**巨型 WAV 一次性送 STT，
+    #: 而 `_process_segment` 只给 30s 超时、超时**整段丢弃**——十几分钟对话一次性
+    #: 静默消失（只留一行 warning）。同仓 RECORDING 模式有 `MAX_RECORDING_SECONDS`，
+    #: VAD 路径此前一个闸门都没有：**同一风险在两条语音路径上不对称**。
+    MAX_SEGMENT_SECONDS = 60.0
+    #: 单个 VAD 段的最大字节数（PCM，16bit 单声道 → 秒数 × 采样率 × 2）。
+    #: 与秒数上限互为冗余：采样率变更或非常规 chunk 尺寸时仍能兜住。
+    def _max_segment_bytes(self) -> int:
+        return int(self._sample_rate * self.MAX_SEGMENT_SECONDS * 2)
     # WOKEN 超时 —— 唤醒词后用户须在该秒数内开始说话
     WOKEN_TIMEOUT = 5.0
     # 触发打断前所需的连续语音块数（避免
@@ -262,6 +273,18 @@ class AudioBuffer:
                 self._chunks.append(chunk)
             self._speech_chunk_count += 1
 
+            # S2-E2：**超限主动切段**，而不是让它长到 STT 超时后整段丢弃。
+            # 切段把已缓冲的音频立刻送去转写（有界、可交付），
+            # 用户看到的是"分段识别"，而不是"说了十分钟什么都没有"。
+            if self._buffered_bytes() >= self._max_segment_bytes():
+                logger.warning(
+                    "VAD 段达到上限 %.0fs（%d bytes）——主动切段转写，"
+                    "避免无界缓冲与超时整段丢失",
+                    self.MAX_SEGMENT_SECONDS, self._buffered_bytes())
+                await self._process_segment()
+                # 切段后当前 chunk 已入上一段；新段从下一帧开始（_speaking 已复位）
+                return
+
             # 首次语音时 WOKEN → LISTENING
             if self._wake_state == WakeState.WOKEN:
                 self._wake_state = WakeState.LISTENING
@@ -282,6 +305,15 @@ class AudioBuffer:
                 self._chunks.append(chunk)  # 连同首个网络静音块一并交 STT
             elif now - self._silence_start >= self._silence_dur:
                 await self._process_segment()
+
+    def _buffered_bytes(self) -> int:
+        """当前累积的原始 PCM 字节数（不含 VAD 检测残帧）。"""
+        return sum(len(c) for c in self._chunks)
+
+    def release(self) -> None:
+        """释放缓冲（连接收尾调用）——S2-E2：`_chunks` 此前没有任何显式释放点。"""
+        self._chunks.clear()
+        self._vad_remainder = b""
 
     async def flush(self) -> None:
         """强制处理任何剩余的缓冲音频。"""
