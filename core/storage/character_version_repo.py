@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.schema.types import SessionId
 from core.schema.compression import CompressionTrigger, VersionEntry
-from core.storage.base import Repository
+from core.storage.base import Repository, StorageUnavailableError
 
 if TYPE_CHECKING:
     from core.schema.types import IsoTimestamp
@@ -184,12 +184,16 @@ class CharacterVersionRepository(Repository):
             content_type: 内容类型标识，默认 "l2"。
 
         Returns:
-            新版本号。若数据库不可用返回 0。
+            新版本号。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接（S3-11——原先静默返回 0，调用方
+                无法区分"没写进去"与"版本号就是 0"，于是 L2 已变而无版本记录、
+                C6 不刷新，且因为处理计数已推进而**永不重试**）。
         """
-        if self._db is None:
-            return 0
+        db = self._require_connected("append_version")
         # 计算下一个版本号 — 必须加 content_type 过滤
-        docs = await self._db.find(
+        docs = await db.find(
             COLLECTION,
             {"session_id": session_id, "content_type": content_type},
             sort=[("version", -1)],
@@ -207,8 +211,20 @@ class CharacterVersionRepository(Repository):
         }
         logger.info("CharacterVersionRepository append_version: session_id=%s, content_type=%s, version=%d, trigger=%s, text_len=%d",
                     session_id, content_type, next_version, trigger.value, len(text))
-        await self._db.insert_one(COLLECTION, doc)
+        await db.insert_one(COLLECTION, doc)
         return next_version
+
+    def _require_connected(self, op: str) -> DocumentDBBackend:
+        """连接守卫（S3-11）——离线时抛出而非静默返回默认值。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                f"CharacterVersionRepository 未连接——{op} 无法执行，"
+                f"不得静默成功")
+        return self._db
 
     async def list_versions(
         self, session_id: SessionId, *,

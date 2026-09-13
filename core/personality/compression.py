@@ -73,7 +73,7 @@ class CompressionManager:
 
     async def _save_version(self, text: str, changes: list[str],
                             trigger: "CompressionTrigger",
-                            *, content_type: str = "l2") -> None:
+                            *, content_type: str = "l2") -> bool:
         """写一条版本历史——**L2/C6 的唯一写入点**（S3-21）。
 
         为什么提取：写入原先内联在两处（L2 压缩、C6 刷新），键各写各的；读侧又有
@@ -85,18 +85,39 @@ class CompressionManager:
             changes: 变更摘要。
             trigger: 触发来源（压缩/首刷/手动回滚等）。
             content_type: "l2" 或 "c6"。
+
+        Returns:
+            True = 版本确实写入；False = 未写入（repo 未配置 / 存储不可用 / 返回 0）。
+            **调用方必须据此决定是否推进"已处理"计数**——否则 L2 已变而无版本记录、
+            且因为计数已推进而永不重试。
         """
         if self._version_repo is None:
+            # **未配置** ≠ **写失败**：没启用版本历史的部署里这条链本来就不存在，
+            # 若按"未完成"处理，`compression_last_count` 永不推进 → 每来一批新条目
+            # 就重跑一次压缩 LLM（纯浪费）。只有"配了却写不进去"才算链断裂。
             logger.info("CompressionManager: version_repo 未配置，版本历史未保存")
-            return
-        await self._version_repo.append_version(
-            session_id=self._version_key(),
-            text=text,
-            timestamp=now_iso(),
-            trigger=trigger,
-            change_summary=changes,
-            content_type=content_type,
-        )
+            return True
+        try:
+            written = await self._version_repo.append_version(
+                session_id=self._version_key(),
+                text=text,
+                timestamp=now_iso(),
+                trigger=trigger,
+                change_summary=changes,
+                content_type=content_type,
+            )
+        except Exception:
+            # S3-11：版本写入失败**不能再静默**——它与 L2/C6 的一致性是一整条链
+            logger.warning(
+                "CompressionManager: 版本历史写入失败（L2 已更新但无版本记录）",
+                exc_info=True)
+            return False
+        if written < 1:
+            logger.warning(
+                "CompressionManager: 版本历史未写入（append_version 返回 %s）——"
+                "存储不可用时不得当作成功", written)
+            return False
+        return True
 
     def _version_key(self) -> "SessionId":
         """L2/C6 版本历史的键——与 `CharacterEngine.version_key` **同一来源**（S3-21）。
@@ -281,20 +302,39 @@ class CompressionManager:
         changes_raw = _extract_tag(text, "changes")
         changes = [c.strip("- ") for c in changes_raw.strip().split("\n") if c.strip()]
 
-        # 更新 L2
+        # 更新 L2（用户可见的即时变化）
         self._state.self_l2 = new_self
+        # 时间戳**照常推进**：它是节流阀，不推进会导致每轮都重跑一次压缩 LLM。
         self._state.compression_last_at = time.time()
-        self._state.compression_last_count = len(history)
 
         logger.info("CompressionManager: L3→L2 压缩完成 (%d chars, %.0f ms, %d 条改动)",
                     len(new_self), elapsed_ms, len(changes))
 
         # 写版本历史（S3-21：唯一写入点，键与读侧同源）
-        await self._save_version(new_self, changes, trigger)
+        version_ok = await self._save_version(new_self, changes, trigger)
 
         # 触发 C6 刷新（通过回调，确保 engine 委托方法的 mock 可拦截）
+        c6_ok = True
         if _refresh_cb is not None:
-            await _refresh_cb()
+            try:
+                await _refresh_cb()
+            except Exception:
+                c6_ok = False
+                logger.warning(
+                    "CompressionManager: C6 刷新失败（C6 与 L2 可能不一致）",
+                    exc_info=True)
+
+        # S3-11：`compression_last_count` **只在整条链完成后**才推进。
+        # 原先它在写版本**之前**推进，于是版本 repo 离线（append_version 静默返回 0）
+        # 或 C6 刷新抛错时：**L2 已变、无版本记录、C6 未刷新，且计数已推进 → 永不重试**。
+        # 不推进 `last_count` 的代价只是"下一批新条目到来时会再压缩一次"，而
+        # `last_at` 已经推进，所以不会变成热循环——这是**有界的重试**。
+        if version_ok and c6_ok:
+            self._state.compression_last_count = len(history)
+        else:
+            logger.warning(
+                "CompressionManager: L2 演化链未完成（version_ok=%s c6_ok=%s）——"
+                "保留处理计数，下一批条目到来时重试", version_ok, c6_ok)
 
     async def _refresh_c6(self) -> None:
         """L2 更新后刷新 C6 说话风格。LLM 编辑模式 + 版本历史。失败不阻塞。"""

@@ -4,9 +4,12 @@
 **开发者本机生产库**。故请求根 conftest 的 `fake_storage` fixture 把该连接重定向到内存
 `FakeDocumentDBBackend`（见 core/tests/_real_db_guard.py）。
 """
+import asyncio
+
 import pytest
 import pytest_asyncio
 from core.schema.types import SessionId
+from core.storage.character_version_repo import CharacterVersionRepository
 from core.schema.compression import CompressionTrigger
 
 COLLECTION = "character_versions"
@@ -327,3 +330,39 @@ class TestCharacterVersionRepoConnectFallback:
         ok = await repo.connect()
         assert ok is True
         assert backend.ensure_index.call_args.kwargs.get("unique") is True
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-11：append_version 必须 fail-closed
+# ══════════════════════════════════════════════════════════════════
+
+class TestAppendVersionFailClosed:
+    """`append_version` 原先 `_db is None → return 0`（静默）。
+
+    调用方（`CompressionManager` 的 L2 演化链）据此无法区分"没写进去"与"版本号就是
+    0"，于是 **L2 已变、无版本记录、C6 不刷新，且处理计数已推进 → 永不重试**。
+    同仓的 `list_versions` / `get_version` 读路径本来就返回空，写路径必须 fail-closed。
+    """
+
+    def test_append_version_raises_when_db_none(self):
+        from core.storage.base import StorageUnavailableError
+
+        repo = CharacterVersionRepository(db=None)
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.append_version(
+                session_id=SessionId("sid"), text="t", timestamp="2026-01-01T00:00:00Z",
+                trigger=CompressionTrigger.COMPRESSION, change_summary=[]))
+
+    def test_write_path_uses_connection_guard(self):
+        """结构性：写路径必须走守卫，而不是自己判 None 后返回默认值。"""
+        import ast
+        import pathlib
+
+        src = pathlib.Path("core/storage/character_version_repo.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  and n.name == "append_version")
+        body = ast.dump(fn)
+        assert "_require_connected" in body, (
+            "append_version 未走连接守卫——又会退回静默返回 0")

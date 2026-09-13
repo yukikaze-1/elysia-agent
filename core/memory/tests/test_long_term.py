@@ -1,6 +1,7 @@
 """LongTermMemory: connect 日志级别 + health_check 重连 + PK匹配 + clear_all 测试。"""
 import logging
 import pytest
+import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from core.memory.long_term import LongTermMemory, MemoryEntry
@@ -624,3 +625,122 @@ class TestMaxAgeDaysDeliberatelyInert:
         assert ltm._get_by_id(MemoryId("mem_oldest")) is None  # noqa: SLF001
         assert ltm._get_by_id(MemoryId("mem_older")) is not None  # noqa: SLF001
         assert ltm._get_by_id(MemoryId("mem_newest")) is not None  # noqa: SLF001
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-10：更新文本时旧向量删不掉 → 必须记 tombstone
+# ══════════════════════════════════════════════════════════════════
+
+class TestUpdateTextTombstonesOldVector:
+    """`update_text` 插入新向量后会删旧向量，但删除失败**只 `logger.debug`**——
+    不记 tombstone、不落 journal。
+
+    同仓另三条删除路径（`delete` / `mark_absorbed` / `_evict_overflow`）都记
+    `_pending_deletes` 并持久化，**只有它漏了**。后果：旧向量带着**同一 entry_id**
+    留在 Milvus → rerank 同时看到新旧两行，而 `_load_from_milvus` 按"先到者胜"去重
+    → 重启后**旧文本静默复活**（记忆回滚）。
+    """
+
+    def _ltm(self, *, delete_ok: bool):
+        from core.memory.long_term import LongTermMemory, MemoryEntry
+        from core.schema.memory import MemoryType
+        from core.schema.types import MemoryId
+
+        ltm = LongTermMemory.__new__(LongTermMemory)
+        ltm._repo = MagicMock()
+        ltm._repo.insert = AsyncMock(return_value=[999])
+        ltm._repo.delete = AsyncMock(return_value=(1 if delete_ok else 0))
+        ltm._entries = [MemoryEntry(
+            id=MemoryId("m1"), text="旧文本", memory_type=MemoryType.NOTE,
+            poignancy=5, timestamp=0.0,
+        )]
+        ltm._entries[0]._milvus_pk = 111          # noqa: SLF001
+        ltm._dirty_ids = set()
+        ltm._pending_deletes = {}
+        ltm._absorbed_ids = set()
+        ltm._write_lock = asyncio.Lock()
+        ltm._save_pending_deletes = MagicMock()
+        ltm._save_pending_syncs = MagicMock()
+        ltm._embedding_provider = MagicMock()
+        ltm._embedding_provider.embed = AsyncMock(return_value=[0.1, 0.2])
+        return ltm
+
+    @pytest.mark.asyncio
+    async def test_delete_failure_records_tombstone(self, caplog):
+        """**核心**：删除返回 0（没删掉）→ 必须登记 tombstone + 持久化 + 可见告警。"""
+        import logging
+
+        ltm = self._ltm(delete_ok=False)
+        with caplog.at_level(logging.WARNING):
+            ok = await ltm.update_text("m1", "新文本")
+
+        assert ok is True
+        assert ltm._pending_deletes.get("m1") == 111, (      # noqa: SLF001
+            "旧向量没删掉却没记账——它会在重启后把旧文本带回来")
+        ltm._save_pending_deletes.assert_called()            # noqa: SLF001
+        assert any(r.levelno >= logging.WARNING for r in caplog.records), \
+            "删除失败必须在默认级别可见（原先是 logger.debug）"
+
+    @pytest.mark.asyncio
+    async def test_delete_exception_records_tombstone(self):
+        """异常路径同样要记账（不只是返回值 < 1）。"""
+        ltm = self._ltm(delete_ok=True)
+        ltm._repo.delete = AsyncMock(side_effect=RuntimeError("milvus down"))
+
+        await ltm.update_text("m1", "新文本")
+
+        assert ltm._pending_deletes.get("m1") == 111        # noqa: SLF001
+        ltm._save_pending_deletes.assert_called()           # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_successful_delete_records_nothing(self):
+        """回归网：旧向量删干净 → 不记 tombstone（否则会误删已重建条目）。"""
+        ltm = self._ltm(delete_ok=True)
+
+        await ltm.update_text("m1", "新文本")
+
+        assert ltm._pending_deletes == {}                   # noqa: SLF001
+        ltm._save_pending_deletes.assert_not_called()       # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_all_four_delete_paths_record_tombstones(self):
+        """**结构性守卫**：四条删除路径都必须在失败时记 `_pending_deletes`。
+
+        逐路径断言而不是只测 `update_text`：这个缺陷的形状就是"三条有、一条没有"，
+        只测被修的那条挡不住下一条被漏掉。
+        """
+        import ast
+        import pathlib
+
+        src = pathlib.Path("core/memory/long_term.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+
+        # 收集每个函数里是否出现 _pending_deletes 赋值
+        recorders: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body = ast.dump(node)
+            if "_pending_deletes" in body:
+                recorders.add(node.name)
+
+        #: 可代为登记的 helper（调用它等于记账）。列出名字而不是只看直接赋值——
+        #: 否则"把记账提取成 helper"这个**改进**反而会让守卫变红。
+        recorder_helpers = {"_tombstone_old_pk"}
+
+        def _records(fn: str) -> bool:
+            node = next(
+                (n for n in ast.walk(tree)
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == fn),
+                None)
+            if node is None:
+                return False
+            body = ast.dump(node)
+            if "_pending_deletes" in body:
+                return True
+            return any(h in body for h in recorder_helpers)
+
+        for fn in ("delete", "mark_absorbed", "_evict_overflow", "update_text"):
+            assert _records(fn), (
+                f"{fn} 未登记 tombstone —— 同仓四条删除路径必须一致（S3-10 的形状是"
+                f"「三条有、一条没有」）")

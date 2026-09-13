@@ -389,6 +389,24 @@ class LongTermMemory:
         except Exception:
             logger.warning("写入 memory pending-syncs journal 失败", exc_info=True)
 
+    def _tombstone_old_pk(self, entry_id: MemoryId, old_pk: int) -> None:
+        """把删不掉的旧向量登记为 tombstone，待重连/重启清理（S3-10）。
+
+        四条删除路径（`delete` / `mark_absorbed` / `_evict_overflow` / `update_text`）
+        必须一致：**删不掉就记账**。记账文件持久化，所以"这次没删掉"不会随进程退出
+        一起消失——否则旧向量会一直躺在库里、在与新向量竞争时把旧文本带回来。
+
+        Args:
+            entry_id: 条目 ID（tombstone 的键，同条目重复登记时以最新 pk 为准）。
+            old_pk: 需要删除的 Milvus 主键。
+        """
+        self._pending_deletes[entry_id] = old_pk
+        self._save_pending_deletes()
+        logger.warning(
+            "LongTermMemory update_text: 旧向量删除失败，已登记 tombstone "
+            "entry_id=%s old_pk=%s（重连后清理；否则旧文本可能在重启后复活）",
+            entry_id, old_pk)
+
     async def _apply_pending_deletes(self) -> None:
         """重连/重启后清理离线删除的 Milvus 旧行（尽力而为，失败保留待下次）。"""
         if self._repo is None or not self._pending_deletes:
@@ -771,10 +789,19 @@ class LongTermMemory:
                                     logger.info("LongTermMemory update_text: entry_id=%s, old_pk=%s, new_pk=%s",
                                                 entry_id, old_pk, pk_list[0])
                                     # 新向量插入成功后才删除旧向量
+                                    #
+                                    # S3-10：删除失败**必须记 tombstone**（与
+                                    # `delete()` / `mark_absorbed()` / `_evict_overflow()`
+                                    # 三处一致）。原先只 `logger.debug` → 旧向量带着
+                                    # **同一 entry_id** 留在 Milvus：rerank 同时看到新旧两行，
+                                    # 而 `_load_from_milvus` 按"先到者胜"去重 → 重启后
+                                    # **旧文本静默复活**（记忆回滚）。
                                     try:
-                                        await self._repo.delete([old_pk])
+                                        deleted = await self._repo.delete([old_pk])
+                                        if deleted < 1:
+                                            self._tombstone_old_pk(entry_id, old_pk)
                                     except Exception:
-                                        logger.debug("Milvus delete old pk failed for update %s", entry_id, exc_info=True)
+                                        self._tombstone_old_pk(entry_id, old_pk)
                                 else:
                                     # 插入返回空 → 标记脏，保留旧向量
                                     self._dirty_ids.add(entry_id)

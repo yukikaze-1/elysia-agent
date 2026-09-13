@@ -252,3 +252,100 @@ class TestVersionHistoryRoundTrip:
         wrong = SessionId("conv_some_conversation")
         assert await repo.list_versions(wrong, content_type="l2") == []
         assert await repo.count_versions(wrong, content_type="l2") == 0
+
+
+# ══════════════════════════════════════════════════════════════════
+# S3-11：L2 演化链未完成时不得推进"已处理"计数
+# ══════════════════════════════════════════════════════════════════
+
+class TestEvolutionChainCompleteness:
+    """`_compress` 的链是「改内存 L2 → 写版本历史 → 刷 C6」，而
+    `compression_last_count` 原先在**写版本之前**就推进了。
+
+    于是版本 repo 离线（`append_version` 静默返回 0）或 C6 刷新抛错时：
+    **L2 已变、无版本记录、C6 未刷新，且因为计数已推进而永不重试**。
+    而"C6 与 L2 一致"正是这条联动的存在理由。
+    """
+
+    def _engine(self, *, version_repo="ok", c6="ok"):
+        """构造能走到"链尾"的 engine（LLM/模板都打桩）。"""
+        from core.personality.engine import CharacterEngine
+        from core.schema.character import CharacterState
+
+        state = CharacterState(session_id="test-sid")
+        state.state_history = [
+            {"timestamp": f"2026-01-0{i}", "summary": f"s{i}", "trigger": "t"}
+            for i in range(1, 6)
+        ]
+
+        pm = MagicMock()
+        pm.render_macro.return_value = "prompt"
+        llm = AsyncMock()
+        result = MagicMock()
+        result.text = "<new_self>新的自我</new_self>\n<changes>- 变化一</changes>"
+        llm.think = AsyncMock(return_value=result)
+
+        if version_repo == "ok":
+            repo = MagicMock()
+            repo.append_version = AsyncMock(return_value=1)
+        elif version_repo == "down":
+            repo = MagicMock()
+            repo.append_version = AsyncMock(side_effect=RuntimeError("mongo down"))
+        else:
+            repo = None
+
+        cm = CompressionManager(
+            llm=llm, state=state, character_name="E", l1_core="L1",
+            pm=pm, version_repo=repo, character_config=MagicMock(),
+        )
+        cm._refresh_c6 = (                                  # noqa: SLF001
+            AsyncMock() if c6 == "ok"
+            else AsyncMock(side_effect=RuntimeError("template boom")))
+
+        # engine 只做委托——链的编排在 CompressionManager 里
+        engine = MagicMock()
+        engine._state = state                              # noqa: SLF001
+        engine._compression = cm                           # noqa: SLF001
+        return engine, state
+
+    @pytest.mark.asyncio
+    async def test_happy_path_advances_counter(self):
+        """回归网：链完整 → 正常推进计数。"""
+        engine, state = self._engine()
+        await engine._compression._compress(_refresh_cb=engine._compression._refresh_c6)   # noqa: SLF001
+        assert state.self_l2 == "新的自我"
+        assert state.compression_last_count == 5
+
+    @pytest.mark.asyncio
+    async def test_version_write_failure_keeps_counter(self, caplog):
+        """**核心**：版本写失败 → 不推进计数（下一批条目到来时重试）。"""
+        import logging
+
+        engine, state = self._engine(version_repo="down")
+
+        with caplog.at_level(logging.WARNING):
+            await engine._compression._compress(_refresh_cb=engine._compression._refresh_c6)   # noqa: SLF001
+
+        assert state.self_l2 == "新的自我", "L2 的即时变化保留（用户可见）"
+        assert state.compression_last_count == 0, (
+            "链未完成却推进了计数 → 版本记录永远不会补上")
+        assert state.compression_last_at > 0, "时间戳仍要推进（否则变成热循环）"
+        assert any("未完成" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_c6_refresh_failure_keeps_counter(self):
+        """C6 刷新失败同样算链未完成——C6 与 L2 不一致正是这条联动要防的。"""
+        engine, state = self._engine(c6="down")
+        await engine._compression._compress(_refresh_cb=engine._compression._refresh_c6)   # noqa: SLF001
+        assert state.compression_last_count == 0
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_repo_is_not_a_failure(self):
+        """**对照**：没配置版本历史的部署里这条链不存在，必须照常推进计数。
+
+        否则每来一批新条目就重跑一次压缩 LLM（纯浪费）——本用例第一版就是这么
+        把 `test_compress_updates_self_l2` 打红的。
+        """
+        engine, state = self._engine(version_repo=None)
+        await engine._compression._compress(_refresh_cb=engine._compression._refresh_c6)   # noqa: SLF001
+        assert state.compression_last_count == 5
