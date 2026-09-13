@@ -187,10 +187,24 @@ class TestSchemaDriftStep:
         from core.agent._lifecycle_persistence import _LifecyclePersistence
         from core.storage.schema_drift import EXPECTED_INDEXES
 
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
         backend = MagicMock()
-        backend.list_indexes = AsyncMock(side_effect=lambda coll: [
-            {"name": "_id_"}, *[{"name": n} for n in EXPECTED_INDEXES[coll]],
-        ])
+
+        def _fake_indexes(coll: str) -> list[dict]:
+            """"干净"的库必须**连选项也对**——S2-B1 起选项冲突会被报出来。
+
+            只给名字不给选项的假库，在声明了 unique/TTL 的索引上就是"选项不符"，
+            不再算干净（如实的判据变了，fixture 必须跟着变）。
+            """
+            out = [{"name": "_id_"}]
+            for name in EXPECTED_INDEXES[coll]:
+                idx: dict = {"name": name}
+                idx.update(EXPECTED_INDEX_OPTIONS.get(coll, {}).get(name, {}))
+                out.append(idx)
+            return out
+
+        backend.list_indexes = AsyncMock(side_effect=_fake_indexes)
         repo = MagicMock()
         repo.backend = backend
 

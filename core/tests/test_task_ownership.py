@@ -12,6 +12,8 @@ import os
 
 import pytest
 
+from Module.tool.protocol import ToolResult
+
 os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 
 pytestmark = pytest.mark.service
@@ -261,7 +263,11 @@ class TestReminderOwnership:
         result = await plugin.execute(
             ctx=_Ctx(), params=plugin.param_model(message="x", delay_seconds=60),  # type: ignore[arg-type]
         )
-        assert "失败" in result, f"关停后不应谎报成功：{result}"
+        # S2-G1：失败必须是显式 `ToolResult.fail`——裸错误字符串会被 `_wrap_result`
+        # 一律标成 success=True，前端显示成功卡片、LLM 也看不到失败。
+        assert isinstance(result, ToolResult), f"关停后应返回显式失败：{result!r}"
+        assert result.success is False, f"关停后不应谎报成功：{result!r}"
+        assert "失败" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_reminder_fires_when_due(self):
