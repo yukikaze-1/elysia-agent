@@ -30,6 +30,7 @@ P0-01 加固（2026-08-10 全项目 review）：
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,26 @@ def _quarantine_dest(kind: str, stored_name: str) -> Path:
     return _quarantine_root() / kind / stored_name
 
 
+def available_kinds() -> set[str]:
+    """存在且是目录的 kind 目录集合（S2-B3）。
+
+    **为什么要这个**：规则 2 的判据是"记录 active 但 `path.is_file()` 为假 → 软删"。
+    当**整个 kind 目录不存在**时（典型：`mongorestore` 恢复了数据库但没恢复
+    `data/uploads` 卷——只备份了 DB，或挂载点没起来），所有 active 记录都命中 →
+    全部软删 → 24h 后规则 1 连带把记录物理删掉，**附件记录不可逆全损**。
+    更糟的是记录删掉后即使文件恢复，规则 4 会把它们当"磁盘孤儿"隔离并在 7 天后
+    物理删。规则 4 本来就有目录存在性守卫——规则 1/2/3 没有，这个不对称就是缺口。
+    """
+    root = ProjectPath.DATA_UPLOADS.resolve()
+    return {kind for kind in KINDS if (root / kind).is_dir()}
+
+
+def _kind_available(doc: dict[str, Any], available: set[str]) -> bool:
+    """该记录所属 kind 的目录是否存在（不存在时不得对它做任何破坏性操作）。"""
+    kind = doc.get("kind")
+    return bool(kind) and kind in available
+
+
 def _file_path(doc: dict[str, Any]) -> Path | None:
     """由附件记录计算落盘路径。缺 kind/stored_name 时返回 None。"""
     kind = doc.get("kind")
@@ -109,13 +130,21 @@ async def _run_rule1_deleted(
     deleted_cutoff: datetime,
     dry_run: bool,
     stats: dict[str, Any],
+    available: set[str],
 ) -> None:
-    """规则 1：软删超保留期 → 隔离文件 + 删记录。"""
+    """规则 1：软删超保留期 → 隔离文件 + 删记录。
+
+    S2-B3：kind 目录不存在时跳过该记录——"文件不在"在这种环境下说明不了任何事，
+    而删记录是不可逆的。
+    """
     for doc in deleted:
         aid = doc.get("attachment_id")
         kind = doc.get("kind")
         deleted_at = doc.get("deleted_at")
         if not aid or not deleted_at:
+            continue
+        if not _kind_available(doc, available):
+            stats["skipped_missing_dir"] += 1
             continue
         try:
             if _parse_iso(deleted_at) >= deleted_cutoff:
@@ -147,11 +176,19 @@ async def _run_rule2_missing_files(
     soft_deleted_ids: set[str],
     dry_run: bool,
     stats: dict[str, Any],
+    available: set[str],
 ) -> None:
-    """规则 2：active 记录磁盘文件缺失 → 条件软删 + warning。"""
+    """规则 2：active 记录磁盘文件缺失 → 条件软删 + warning。
+
+    S2-B3：**kind 目录不存在时整类跳过**——否则"整个目录没了"会被逐条读成
+    "每个文件都丢了"，把环境事故放大成不可逆的全量数据删除。
+    """
     for doc in active:
         aid = doc.get("attachment_id")
         if not aid or aid in soft_deleted_ids:
+            continue
+        if not _kind_available(doc, available):
+            stats["skipped_missing_dir"] += 1
             continue
         path = _file_path(doc)
         if path is None or path.is_file():
@@ -177,14 +214,22 @@ async def _run_rule3_unreferenced(
     unreferenced_retention_days: int,
     dry_run: bool,
     stats: dict[str, Any],
+    available: set[str],
 ) -> None:
-    """规则 3：未关联（ref_count=0）超保留期 → 条件软删。"""
+    """规则 3：未关联（ref_count=0）超保留期 → 条件软删。
+
+    S2-B3：同样受 kind 目录守卫——它的判据不含文件存在性，但"uploads 整体不在"
+    时应按环境异常处理，而不是照常删记录。
+    """
     for doc in unref_candidates:
         aid = doc.get("attachment_id")
         if not aid or aid in soft_deleted_ids:
             continue
         if doc.get("status") != STATUS_ACTIVE:
             continue  # 仅处理仍 active 的未关联记录
+        if not _kind_available(doc, available):
+            stats["skipped_missing_dir"] += 1
+            continue
         if dry_run:
             stats["soft_deleted"] += 1
             continue
@@ -204,8 +249,19 @@ async def _run_rule4_orphans(
     deleted: list[dict],
     dry_run: bool,
     stats: dict[str, Any],
+    scan_started_at: float,
 ) -> bool:
     """规则 4：磁盘孤儿（四 kind 目录有文件但无记录）→ 复核后隔离。
+
+    S2-B4：隔离前加**时间窗**——只处理 `mtime` 早于本轮扫描开始时刻的文件。
+    上传的顺序是"先 `write_bytes` 落文件、后 `repo.create` 写记录"，两者之间存在
+    真实窗口；原实现靠"逐文件复核 DB"只**缩小**了窗口而非闭合它：复核发生在窗口
+    内时必然拿不到记录 → 文件被移进 `.quarantine`、7 天后物理删，而记录却是
+    `active + ref_count>0`，规则 1/2 永远不会处理它——**静默坏掉的附件**。
+
+    Args:
+        scan_started_at: 本轮扫描开始时刻（`time.time()`）。晚于它落盘的文件
+            视为并发上传，留到下一轮。
 
     Returns:
         True=完成；False=复核时 Mongo 离线，已置 skipped 并中止。
@@ -224,6 +280,13 @@ async def _run_rule4_orphans(
                 continue
             if (kind, f.name) in known:
                 continue  # 有记录对应——非孤儿
+            # S2-B4：扫描开始之后落盘 → 并发上传窗口内，本轮不碰（下轮再判）
+            try:
+                if f.stat().st_mtime >= scan_started_at:
+                    stats["orphans_deferred"] += 1
+                    continue
+            except OSError:
+                continue  # 取不到时间戳就不冒险
             # 逐文件复核数据库：闭合扫描期间新建引用/记录窗口（P0-01）。
             # 复核失败 → fail-closed 中止孤儿清理，不冒险隔离。
             try:
@@ -303,19 +366,41 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
 
     Returns:
         统计 dict：{"deleted_files": int, "soft_deleted": int,
-        "orphans_removed": int, "quarantine_purged": int, "skipped": bool}。
+        "orphans_removed": int, "orphans_deferred": int, "quarantine_purged": int,
+        "skipped": bool, "skipped_missing_dir": int}。
         Mongo 离线或查询/复核失败时 skipped=True。dry_run 下各计数表示候选数。
     """
     stats: dict[str, Any] = {
         "deleted_files": 0,
         "soft_deleted": 0,
         "orphans_removed": 0,
+        "orphans_deferred": 0,
         "quarantine_purged": 0,
         "skipped": False,
+        # S2-B3：因 kind 目录缺失而跳过的记录数（>0 说明环境异常，需人工介入）
+        "skipped_missing_dir": 0,
     }
+    # 时间窗基准（S2-B4）与扫描起点同源：晚于此刻落盘的文件一律留到下一轮
+    scan_started_at = time.time()
     now = datetime.now(timezone.utc)
     deleted_cutoff = now - timedelta(hours=deleted_retention_hours)
     unref_cutoff = now - timedelta(days=unreferenced_retention_days)
+
+    available = available_kinds()
+    if not available:
+        # S2-B3：uploads 树下没有任何 kind 目录 → 全量判"文件缺失"会把环境事故
+        # 放大成不可逆的全量记录删除。**一条都不动**。
+        logger.error(
+            "附件 GC 跳过：data/uploads 下没有任何 kind 目录（%s）——"
+            "疑似 mongorestore 恢复了数据库但未恢复 uploads 卷。"
+            "本轮不做任何删除。", sorted(KINDS))
+        stats["skipped"] = True
+        return stats
+    missing = sorted(set(KINDS) - available)
+    if missing:
+        logger.error(
+            "附件 GC：kind 目录缺失 %s——这些 kind 的记录本轮一律跳过（不软删、"
+            "不删记录、不隔离），请确认 uploads 卷是否完整", missing)
 
     try:
         active = await repo.find_by_status(STATUS_ACTIVE)
@@ -332,16 +417,19 @@ async def run_attachment_gc(repo: Any, *, deleted_retention_hours: int = 24,
         return stats
 
     try:
-        await _run_rule1_deleted(repo, deleted, deleted_cutoff, dry_run, stats)
+        await _run_rule1_deleted(repo, deleted, deleted_cutoff, dry_run, stats,
+                                 available)
 
         # 已软删记录集合——避免规则 2/3 重复计数同一条
         soft_deleted_ids: set[str] = set()
-        await _run_rule2_missing_files(repo, active, soft_deleted_ids, dry_run, stats)
+        await _run_rule2_missing_files(repo, active, soft_deleted_ids, dry_run, stats,
+                                       available)
         await _run_rule3_unreferenced(
             repo, unref_candidates, soft_deleted_ids,
-            unreferenced_retention_days, dry_run, stats,
+            unreferenced_retention_days, dry_run, stats, available,
         )
-        if not await _run_rule4_orphans(repo, active, deleted, dry_run, stats):
+        if not await _run_rule4_orphans(repo, active, deleted, dry_run, stats,
+                                        scan_started_at):
             return stats
         _run_rule5_quarantine(now, quarantine_retention_hours, dry_run, stats)
     except StorageUnavailableError:

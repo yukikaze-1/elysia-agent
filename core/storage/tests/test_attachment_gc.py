@@ -72,7 +72,15 @@ def _run(coro):
 
 @pytest.fixture
 def uploads(tmp_path, monkeypatch):
-    """把 ProjectPath.DATA_UPLOADS 指到临时目录（ELYSIA_PATH_DATA_UPLOADS 覆盖）。"""
+    """把 ProjectPath.DATA_UPLOADS 指到临时目录（ELYSIA_PATH_DATA_UPLOADS 覆盖）。
+
+    **必须建出四个 kind 目录**：现实中它们总是存在（首次上传即创建），而 GC 在
+    "整个 kind 目录不存在"时会整类跳过（S2-B3，防 mongorestore 只恢复了 DB 时
+    把全量记录当"文件缺失"删掉）。fixture 若不建模这一点，"记录缺文件 → 软删"
+    这条规则就永远测不到——守卫会在 fixture 的不真实前提上静默失效。
+    """
+    for kind in ("audio", "file", "image", "video"):
+        (tmp_path / kind).mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS", str(tmp_path))
     return tmp_path
 
@@ -506,3 +514,92 @@ class TestMongoOffline:
         assert result["soft_deleted"] == 0
         assert result["orphans_removed"] == 0
         assert any("跳过" in r.getMessage() for r in caplog.records)
+
+
+# ══════════════════════════════════════════════════════════════════
+# S2-B3：kind 目录整体缺失 = 环境事故，不得放大成不可逆全量删除
+# ══════════════════════════════════════════════════════════════════
+
+class TestMissingKindDirectoryGuard:
+    """`mongorestore` 只恢复 DB、没恢复 uploads 卷时，规则 2 会把**所有** active
+    记录判成"文件缺失"→ 全部软删 → 24h 后规则 1 物理删记录 → **附件记录不可逆
+    全损**；且记录删掉后即使文件恢复，规则 4 会把它们当磁盘孤儿隔离并在 7 天后
+    物理删。规则 4 本来就有目录存在性守卫，规则 1/2/3 没有——这个不对称是缺口。
+    """
+
+    def test_no_kind_dir_at_all_skips_entire_run(self, tmp_path, monkeypatch, caplog):
+        """一条 kind 目录都没有 → 整轮跳过、**零删除**，并记 ERROR 说明原因。"""
+        monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS", str(tmp_path))  # 不建任何 kind 目录
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        for aid in ("att_1", "att_2", "att_3"):
+            _run(repo.create(_doc(attachment_id=aid, kind="image",
+                                  stored_name=f"{aid}.png", ref_count=0, refs=[])))
+
+        with caplog.at_level(logging.ERROR):
+            result = _run(run_attachment_gc(repo))
+
+        assert result["skipped"] is True
+        assert result["soft_deleted"] == 0 and result["deleted_files"] == 0
+        for aid in ("att_1", "att_2", "att_3"):
+            assert _run(repo.get(aid))["status"] == STATUS_ACTIVE, "记录一条都不能动"
+        assert any("没有任何 kind 目录" in r.getMessage() for r in caplog.records)
+
+    def test_partial_kind_dir_missing_skips_only_that_kind(self, uploads, caplog):
+        """只有一个 kind 目录缺失 → 只跳过该 kind 的记录，其余照常。"""
+        import shutil
+
+        shutil.rmtree(uploads / "image")          # image 目录消失，其余三个还在
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _run(repo.create(_doc(attachment_id="att_img", kind="image",
+                              stored_name="a.png", ref_count=0, refs=[])))
+        _run(repo.create(_doc(attachment_id="att_file", kind="file",
+                              stored_name="b.bin", ref_count=0, refs=[])))
+
+        with caplog.at_level(logging.ERROR):
+            result = _run(run_attachment_gc(repo))
+
+        assert result["skipped_missing_dir"] >= 1
+        assert result["skipped"] is False, "部分缺失不是整轮跳过"
+        assert _run(repo.get("att_img"))["status"] == STATUS_ACTIVE, "缺失 kind 不动"
+        assert _run(repo.get("att_file"))["status"] == STATUS_DELETED, "存在的 kind 照常"
+        assert any("kind 目录缺失" in r.getMessage() for r in caplog.records)
+
+
+# ══════════════════════════════════════════════════════════════════
+# S2-B4：并发上传窗口 —— 扫描开始后落盘的文件不得被当孤儿隔离
+# ══════════════════════════════════════════════════════════════════
+
+class TestOrphanTimeWindow:
+    """上传顺序是"先落文件、后写记录"，两者之间存在真实窗口。原实现只靠"逐文件
+    复核 DB"**缩小**窗口而非闭合它：复核落在窗口内时必然拿不到记录 → 文件被隔离、
+    7 天后物理删，而记录是 `active + ref_count>0`——规则 1/2 永远不会处理它。
+    """
+
+    def test_file_newer_than_scan_is_deferred(self, uploads, monkeypatch):
+        """mtime 晚于扫描起点 → 本轮不隔离。"""
+        import core.storage.attachment_gc as gc
+
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        _write(uploads, "image/inflight.png")      # 刚落盘、记录还没写
+
+        # 把扫描起点设在文件 mtime 之前 → 该文件属"并发窗口内"
+        monkeypatch.setattr(gc.time, "time", lambda: 0.0)
+        result = _run(run_attachment_gc(repo))
+
+        assert result["orphans_removed"] == 0
+        assert result["orphans_deferred"] >= 1
+        assert (uploads / "image" / "inflight.png").exists(), "文件必须留在原处"
+        assert not (uploads / ".quarantine" / "image" / "inflight.png").exists()
+
+    def test_old_orphan_still_removed(self, uploads):
+        """回归网：早于扫描起点的真孤儿照常隔离（守卫不能把功能关掉）。"""
+        repo = AttachmentRepository(db=FakeDocumentDBBackend())
+        p = uploads / "image" / "stale.png"
+        p.write_bytes(b"x")
+        os.utime(p, (time.time() - 3600, time.time() - 3600))   # 一小时前
+
+        result = _run(run_attachment_gc(repo))
+
+        assert result["orphans_removed"] >= 1
+        assert not p.exists()
+        assert (uploads / ".quarantine" / "image" / "stale.png").exists()
