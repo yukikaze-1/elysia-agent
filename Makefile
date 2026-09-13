@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth check-timeouts check-contract
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth check-timeouts check-contract check-secrets check-secrets-history
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest

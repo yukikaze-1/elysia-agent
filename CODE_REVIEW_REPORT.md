@@ -512,6 +512,8 @@ owner 指定「做 §0.4.7 待办全景 A 组的全部，除 #41/#44/#45/#46」�
 
 **触发**：owner 反馈 CI 两个 job（quick / normal）同一条用例失败——
 `scripts/tests/test_check_secrets.py::test_end_to_end_catches_the_real_historical_leak`
+（该用例**已重组**为三条：`test_end_to_end_history_mode_catches_leak_deleted_from_the_tree`
+/ `test_shallow_checkout_refuses_to_report_green` / `test_real_repo_full_history_verdict_is_faithful`）
 断言"全历史必须命中 2026-06 那次泄露"，实得 `returncode == 0`（打印"✓ secret scanning 通过"）。
 
 **先定性**：那次 CI 跑的是 `334e3a8`——本轮 10 个提交**尚未推送**（本机无 push 凭据）。
