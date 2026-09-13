@@ -82,6 +82,13 @@ _EMPTY_RESPONSE_FALLBACK = "抱歉，我刚才走神了，你能再说一遍吗�
 # 超阈值升 error，避免「走神」回复静默刷屏不升级告警。
 _EMPTY_RESPONSE_THRESHOLD = 5
 
+# 工具轮次触顶（CR-11）：`range(MAX_TOOL_ROUNDS + 1)` 是「N 轮执行工具 + 1 轮收尾」，
+# 收尾轮（round_num == MAX_TOOL_ROUNDS）若 LLM 仍请求工具，这些调用不会被
+# `_execute_tool_round` 执行。此时必须显式留痕——原先该分支没有任何 else，
+# 工具名、轮次、被丢弃的调用全部零痕迹；若该轮又恰好无文本，用户收到的是
+# **彻底的空回复**（空响应守卫的条件是 `not raw_tool_calls`，此处不成立）。
+_TOOL_LIMIT_FALLBACK = "抱歉，我这轮调用工具的次数用完了，还没得出结果。你能把需求再说明确一些吗？"
+
 # Task 8（B1 闭环）：binding 缺 instance_id 时回退内置 Elysia 的 default instance。
 # DEFAULT_INSTANCE_ID 是「无 binding → 哪个 instance」的兜底；DEFAULT_CHARACTER_ID 仅
 # 供 Task 11 agent 构造默认会话 binding 用（本批 character_id 权威来自 runtime.definition，
@@ -783,14 +790,21 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self,
         empty_retried: bool,
         messages: list[dict],
+        can_retry: bool = True,
     ) -> tuple[str, str, list[str], bool]:
         """空响应守卫：首空注入 nudge 重试；仍空发兜底回复。
+
+        Args:
+            empty_retried: 本回合是否已用过一次 nudge 重试。
+            messages: 回合局部消息列表（nudge 追加于此）。
+            can_retry: 是否还有剩余轮次可重试。末轮传 False——否则 `continue`
+                会耗尽 ReAct 循环，`process()` 无收尾地返回，用户什么都收不到。
 
         Returns:
             (public_text, acc_text, all_sentences, retry)：retry=True 时调用方
             continue；否则返回兜底文本。
         """
-        if not empty_retried:
+        if not empty_retried and can_retry:
             logger.warning("LLM 返回空响应（无文本、无工具调用），注入 nudge 重试一次")
             messages.append({"role": "system", "content": _EMPTY_RESPONSE_NUDGE})
             return "", "", [], True
@@ -863,7 +877,14 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         await self._start_turn_tracking(messages, tool_defs)
 
         # 2. ReAct 循环
+        # 轮次预算：`range(MAX_TOOL_ROUNDS + 1)` = N 轮「执行工具」+ 1 轮「收尾」。
+        # 两个边界的语义不同（跑几轮 vs 执行几轮），收尾轮触顶时走下面的 else 分支。
         empty_retried = False
+        # 循环变量前置绑定：下面的 `for ... else` 防御网要用到它们，
+        # 且不能让"循环耗尽"退化成 NameError。
+        acc_text, raw_tool_calls, speaking_started, all_sentences = "", [], False, []
+        iv_think, blocks, public_text = "", [], ""
+        round_num = 0
         try:
             for round_num in range(self.MAX_TOOL_ROUNDS + 1):
                 self._phase = TurnPhase.STREAMING
@@ -877,9 +898,13 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 # 空 LLM 响应守卫：无文本、无工具调用 → 注入 nudge 重试一次；
                 # 重试后仍空 → 兜底回复（同时注入 all_sentences，保证 session 归档
                 # 与前端显示的文本一致——build_parts([]) 会产出空 parts）。
+                # `can_retry` 必须参与判定：末轮重试的 `continue` 会直接耗尽循环，
+                # 让本方法静默 `return None`（无收尾、无输出、无 typing 关闭）。
                 if not raw_tool_calls and not public_text.strip():
                     public_text, acc_text, all_sentences, retry = \
-                        self._resolve_empty_response(empty_retried, messages)
+                        self._resolve_empty_response(
+                            empty_retried, messages,
+                            can_retry=round_num < self.MAX_TOOL_ROUNDS)
                     if retry:
                         empty_retried = True
                         continue
@@ -896,10 +921,40 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                     messages.append({"role": "system", "content": "[TOOL_EXECUTED]"})
                     continue
 
+                if raw_tool_calls:
+                    # CR-11：收尾轮仍请求工具 —— 这些调用不会被执行，必须响亮失败。
+                    # 不注入 nudge 到 messages：本方法随后即 return，`messages` 是
+                    # 回合局部量，注入无任何消费者（那才是真正的"说谎"）。
+                    names = ", ".join(
+                        str(tc.get("function", {}).get("name") or "?")
+                        for tc in raw_tool_calls)
+                    logger.warning(
+                        "工具调用轮次触顶 (MAX_TOOL_ROUNDS=%d)：第 %d 轮请求的 %d 个"
+                        "工具调用未执行 — %s",
+                        self.MAX_TOOL_ROUNDS, round_num, len(raw_tool_calls), names)
+                    if not public_text.strip():
+                        # 该轮只有 tool_calls、无文本 → 不兜底就是彻底的空回复
+                        public_text = acc_text = _TOOL_LIMIT_FALLBACK
+                        all_sentences = [_TOOL_LIMIT_FALLBACK]
+
                 self._phase = TurnPhase.FINALIZING
                 await self._finalize_turn(
                     acc_text, all_sentences, iv_think, speaking_started, user_message,
                     round_num, blocks, public_text,
+                    conversation_id=conversation_id, session=session)
+                return
+            else:
+                # 防御网：循环自然耗尽 = 本轮没有任何收尾，用户什么都收不到。
+                # 当前所有 `continue` 均以「还有剩余轮次」为条件，故不可达；
+                # 但一旦有人再加一条无条件 `continue`，这里是唯一兜底——宁可
+                # 发一句兜底文案，也不能让整轮凭空消失。
+                logger.error(
+                    "ReAct 循环耗尽且未收尾（round_num=%d/%d）——发兜底回复",
+                    round_num, self.MAX_TOOL_ROUNDS)
+                await self._finalize_turn(
+                    _EMPTY_RESPONSE_FALLBACK, [_EMPTY_RESPONSE_FALLBACK], iv_think,
+                    speaking_started, user_message, round_num, blocks,
+                    public_text or _EMPTY_RESPONSE_FALLBACK,
                     conversation_id=conversation_id, session=session)
                 return
 
