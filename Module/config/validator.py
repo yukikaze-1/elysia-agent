@@ -133,7 +133,17 @@ class Validator:
                 origin = get_origin(expected_type)
                 if origin is not None and origin in (Union, types.UnionType):
                     # Optional[X] = Union[X, None]；X | None 即 UnionType
-                    check_types = [t for t in get_args(expected_type) if t is not type(None)]
+                    #
+                    # S2-10：**每个分支还要再解包一层 origin**。`isinstance` 不接受带下标的
+                    # 泛型——`Optional[List[str]]` 的 `List[str]` 会让
+                    # `isinstance(value, List[str])` 抛
+                    # `TypeError: Subscripted generics cannot be used with class and
+                    # instance checks`，即 env 覆盖这类字段时**启动直接崩**。
+                    # 取容器类型（List[str] → list、Dict[str,int] → dict）才可判定。
+                    check_types = [
+                        get_origin(t) or t
+                        for t in get_args(expected_type) if t is not type(None)
+                    ]
                     if not any(isinstance(value, t) for t in check_types):
                         errors.append(ConfigTypeError(class_name, field_name, expected_type, value))
                         continue

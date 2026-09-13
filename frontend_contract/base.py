@@ -1,6 +1,6 @@
 """契约模型基类 + TsNull marker（零依赖，仅 pydantic）。"""
 from typing import Annotated, Any, get_origin, get_args
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from pydantic.fields import FieldInfo
 
 
@@ -53,6 +53,10 @@ class ContractModel(BaseModel):
     - by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）
     - ts_null 标记字段：None 时补显式 null
     - 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict
+    - **最终一遍 JSON 归一化**：`wire_dict()` 的契约是"可直接 `json.dumps` 的 wire
+      字典"。递归时用 `self.__dict__` 的**原始值**覆盖 `model_dump(mode="json")` 的
+      结果，会把 `datetime` / `Decimal` / `UUID` / `set` 等非 JSON 原生值原样放回
+      （S2-5：`metadata` 里一个 `datetime` → 帧静默丢失 / REST 500）。
     """
 
     def wire_dict(self) -> dict[str, Any]:
@@ -86,4 +90,8 @@ class ContractModel(BaseModel):
                     v.wire_dict() if isinstance(v, ContractModel) else v
                     for v in value
                 ]
-        return data
+        # S2-5：上面几支用的是 `self.__dict__` 的原始值（为了能识别 ContractModel
+        # 实例并递归），因此 `model_dump(mode="json")` 的归一化会被覆盖掉一部分。
+        # 收口一遍：把残留的非 JSON 原生值（datetime/Decimal/UUID/set/Enum 等）
+        # 归一化。已归一化的值不受影响（str/int/dict 原样通过）。
+        return TypeAdapter(Any).dump_python(data, mode="json")

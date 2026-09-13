@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+from typing import Dict, List, Optional, Union
 import tempfile
 from pathlib import Path
 
@@ -703,3 +704,110 @@ def test_safe_get_type_hints_propagates_unexpected():
     with patch.object(typing, "get_type_hints", side_effect=KeyError("boom")):
         with pytest.raises(KeyError):
             safe_get_type_hints(int)
+
+
+class TestCoerceGenericUnpacking:
+    """S2-10：`coerce` 的解包条件必须区分 `Union` 与普通泛型。
+
+    原实现"只要 `__origin__` 非空就取 `__args__[0]`"——对 `List[str]` 来说
+    `__args__[0]` 是**元素类型 `str`**，于是 `List[str]` / `Dict[str, int]` /
+    `list[str]` 全被当成 `str`，env 覆盖**原样返回字符串**（该是 list 的地方拿到 str）。
+    `Optional[List[str]]` 更绕：先取到 `List[str]` 泛型本身，它不是 `list`，同样落进
+    `str` 分支。
+    """
+
+    @pytest.mark.parametrize("annotation,raw,expected", [
+        (List[str], '["a","b"]', ["a", "b"]),
+        (Optional[List[str]], '["x"]', ["x"]),
+        (list[str], '["a"]', ["a"]),
+        (Dict[str, int], '{"k":1}', {"k": 1}),
+        (Optional[Dict[str, int]], '{"m":2}', {"m": 2}),
+        (list, '["bare"]', ["bare"]),
+        (dict, '{"b":1}', {"b": 1}),
+    ])
+    def test_container_generics_parse_as_containers(self, annotation, raw, expected):
+        from Module.config.loader import EnvManager
+
+        assert EnvManager.coerce(raw, annotation) == expected
+
+    @pytest.mark.parametrize("annotation,raw,expected", [
+        (Optional[int], "42", 42),
+        (Optional[float], "3.5", 3.5),
+        (Optional[bool], "true", True),
+        (Optional[str], "hi", "hi"),
+        (Union[int, str], "7", 7),        # 文档承诺：取第一个非 None 类型
+    ])
+    def test_optional_scalars_unchanged(self, annotation, raw, expected):
+        """回归网：标量 `Optional[X]` 行为不变。"""
+        from Module.config.loader import EnvManager
+
+        assert EnvManager.coerce(raw, annotation) == expected
+
+    def test_env_override_reaches_dataclass_field(self, tmp_path, monkeypatch):
+        """端到端：`list[str]` 字段的 env 覆盖必须真的落成 list。"""
+        from Module.config.loader import ConfigLoader
+
+        @dataclasses.dataclass
+        class _Cfg:
+            tags: List[str] = dataclasses.field(default_factory=list)
+            limits: Optional[Dict[str, int]] = None
+
+        monkeypatch.setenv("TAGS", '["a","b"]')
+        monkeypatch.setenv("LIMITS", '{"n":3}')
+
+        cfg = ConfigLoader(_Cfg, env_path=str(tmp_path / "none.env")).load()
+
+        assert cfg.tags == ["a", "b"], f"env 覆盖没解析：{cfg.tags!r}"
+        assert cfg.limits == {"n": 3}, f"env 覆盖没解析：{cfg.limits!r}"
+
+
+class TestOptionalContainerValidation:
+    """S2-10 第二层：validator 的 `Optional[X]` 分支对**带下标的泛型**做 `isinstance`
+    会抛 `TypeError: Subscripted generics cannot be used with class and instance checks`。
+
+    `Optional[List[str]]` / `Optional[Dict[str, int]]` 这类字段一旦有非 None 值
+    （典型来源就是 **env 覆盖**）→ **启动直接崩**。每个分支必须再解包一层 origin。
+    """
+
+    def test_optional_container_passes_validation(self, tmp_path, monkeypatch):
+        from Module.config.loader import ConfigLoader
+
+        @dataclasses.dataclass
+        class _Cfg:
+            tags: Optional[List[str]] = None
+            limits: Optional[Dict[str, int]] = None
+
+        monkeypatch.setenv("TAGS", '["a"]')
+        monkeypatch.setenv("LIMITS", '{"n":1}')
+
+        cfg = ConfigLoader(_Cfg, env_path=str(tmp_path / "none.env")).load()
+        assert cfg.tags == ["a"]
+        assert cfg.limits == {"n": 1}
+
+    def test_wrong_container_type_is_reported_not_crashed(self, tmp_path):
+        """类型不符要报 `ConfigTypeError`，而不是把 TypeError 冒到启动路径上。"""
+        from Module.config.errors import ConfigTypeError
+        from Module.config.loader import ConfigLoader
+
+        @dataclasses.dataclass
+        class _Cfg:
+            tags: Optional[List[str]] = None
+
+        cfg_class = _Cfg
+        # 直接构造错误类型再走校验：绕过 coerce，模拟 YAML/代码路径传入错误值
+        instance = cfg_class(tags="not-a-list")     # type: ignore[arg-type]
+        from Module.config.validator import Validator
+
+        errors = Validator.validate(instance)
+        assert any(isinstance(e, ConfigTypeError) for e in errors), errors
+
+    def test_bare_optional_still_validates(self):
+        """回归网：`Optional[int]` 等的判定不变。"""
+        from Module.config.validator import Validator
+
+        @dataclasses.dataclass
+        class _Cfg:
+            n: Optional[int] = None
+
+        assert Validator.validate(_Cfg(n=3)) == []
+        assert Validator.validate(_Cfg(n="x"))       # type: ignore[arg-type]

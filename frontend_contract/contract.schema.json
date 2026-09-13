@@ -7340,7 +7340,7 @@
       ]
     },
     "ContractModel": {
-      "description": "契约模型基类：wire_dict() 统一序列化。\n\n- exclude_none=True：可缺省字段（None）缺省省略\n- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）\n- ts_null 标记字段：None 时补显式 null\n- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict",
+      "description": "契约模型基类：wire_dict() 统一序列化。\n\n- exclude_none=True：可缺省字段（None）缺省省略\n- by_alias=True：wire 键按 serialization_alias/alias 发射（如 _id）\n- ts_null 标记字段：None 时补显式 null\n- 嵌套递归：字段值为 ContractModel / dict[str, ContractModel] 时递归 wire_dict\n- **最终一遍 JSON 归一化**：`wire_dict()` 的契约是\"可直接 `json.dumps` 的 wire\n  字典\"。递归时用 `self.__dict__` 的**原始值**覆盖 `model_dump(mode=\"json\")` 的\n  结果，会把 `datetime` / `Decimal` / `UUID` / `set` 等非 JSON 原生值原样放回\n  （S2-5：`metadata` 里一个 `datetime` → 帧静默丢失 / REST 500）。",
       "properties": {},
       "title": "ContractModel",
       "type": "object"
@@ -25403,6 +25403,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "b9b93dda66b34b9c",
+  "schemaHash": "2c3345d55d76a53a",
   "transportVersion": "2"
 }

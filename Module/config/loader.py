@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, Union, get_args, get_origin
 
 import yaml
 
@@ -66,14 +66,23 @@ class EnvManager:
         Returns:
             转换后的值。
         """
-        origin = getattr(target_type, "__origin__", None)
-        base_type = origin if origin is not None else target_type
-        # 解包 Optional[X] / Union[X, ...] → 第一个非 None 类型
-        if origin is not None:
-            args = getattr(target_type, "__args__", ())
-            non_none = [a for a in args if a is not type(None)]  # noqa: E721
-            if non_none:
-                base_type = non_none[0]
+        # S2-10：解包条件必须**区分 Union 与普通泛型**。
+        # 原实现是"只要 `__origin__` 非空就走解包、取 `__args__` 的第一个"——对
+        # `List[str]` 来说 `__args__[0]` 是**元素类型 str**，于是 `List[str]` /
+        # `Dict[str, int]` / `list[str]` 全部被当成 `str` 处理，env 覆盖原样返回**字符串**
+        # （该是 list 的地方拿到 str → 启动期类型错乱）。`Optional[List[str]]` 更绕：
+        # 先取到 `List[str]` 这个泛型本身，而它又不是 `list`，同样落进 `str` 分支。
+        origin = get_origin(target_type)
+        if origin is Union:
+            # Optional[X] / Union[X, ...] → 取第一个非 None 类型，**并继续解包它的 origin**
+            non_none = [a for a in get_args(target_type) if a is not type(None)]  # noqa: E721
+            inner = non_none[0] if non_none else target_type
+            base_type = get_origin(inner) or inner
+        elif origin is not None:
+            # 普通泛型：容器类型才是目标（List[str] → list、Dict[str, int] → dict）
+            base_type = origin
+        else:
+            base_type = target_type
 
         if base_type is bool:
             lowered = value_str.lower()
