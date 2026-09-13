@@ -135,6 +135,8 @@
 | **S2-6** 沙盒 containment 词法比较 → `..` 逃逸 / symlink 误拒 | ✅ 已修 | `3c922165` |
 | **S2-7** `start.sh` 无并发守卫 | ✅ 已修 | `3c922165` |
 | **S2-8** compose 缺 healthcheck / `depends_on` 不等就绪（拆卷已有）| ✅ 已修 | `3c922165` |
+| **S2-9** 依赖锁不做版本比对 / 依赖无上限 / CI 与锁的关系未定义 | ✅ 已修 | `f733ab54` |
+| **S2-9** 镜像升级 | ⛔ **未验证**（本环境 Docker Hub 不可达）| 见下 |
 
 > **S1 已全部处置**：10 条 S1 中 9 条已修，剩 `CR-01` 属运维动作（轮换凭据），
 > 代码侧无从代劳。S2 关键项 `CR-12`/`CR-13` 已修。
@@ -292,7 +294,7 @@ app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取
 ### 0.4.3 S1 收口轮（2026-09-13）：CR-02 / CR-05 / CR-06 / CR-08 / CR-11 + C + CR-12 / CR-13
 
 同一天连续四批，覆盖**全部剩余 S1**（除 `CR-01` 运维动作）与两条关键 S2。
-`make test-quick` 4536 → **4802 passed**（+266），收集数 4652 → **4866**；另有 `-m "not unit and not service"`（quick 排除的 61 条）**54 passed / 7 skipped**——该集合此前从未被跑过，见下 §0.4.5。每一项都逐条做了「先证明守卫能抓到违规」
+`make test-quick` 4536 → **4814 passed**（+278），收集数 4652 → **4878**；另有 `-m "not unit and not service"`（quick 排除的 61 条）**54 passed / 7 skipped**——该集合此前从未被跑过，见下 §0.4.5。每一项都逐条做了「先证明守卫能抓到违规」
 的反证，并在下方记录**反证本身暴露出的问题**（这部分比通过项更有信息量）。
 
 | 批次 | 提交 | 内容 |
@@ -368,11 +370,11 @@ app.log:  [I] core.memory.consolidator: [006] Consolidation: 12 turns → 提取
 **S3-09 的反证第一次是全绿的**（改动没有测试覆盖），补 6 项后才转红——「反证全绿」
 不是"守卫很强"，而是"守卫没装在改动上"。这条已经出现两次（另一次在 CR-11）。
 
-**F 批已做 33 项**：S3-03 / S2-A1 / S2-A3 / S3-09（`7b7802a4`）、
+**F 批已做 34 项**（+1 项未验证：镜像升级）：S3-03 / S2-A1 / S2-A3 / S3-09（`7b7802a4`）、
 S2-F4 / S2-B5 / S2-4（`3d764b8d`）、S2-G1（`76a07212`）、S2-B3/B4（`dc7918b2`）、
 S2-B1/B2（`c4129197`）、**S2-D5/D7/D8（`2a751d10`）、S2-D6（`4f88c2ad`）、
 S2-D2 + S2-D3①（`b5953d30`）、S2-D4（`179781ff`）、S2-B6（`f7e92aca`）、
-S2-C1/C2（`bc88353e`）、S2-C3（`fe28b7e2`）、**S2-E2~E5（`d512d6d6`）、S2-F1/F2（`7897584b`）、S2-5/S2-10（`a148460c`）、S2-6/7/8（`3c922165`）**。
+S2-C1/C2（`bc88353e`）、S2-C3（`fe28b7e2`）、**S2-E2~E5（`d512d6d6`）、S2-F1/F2（`7897584b`）、S2-5/S2-10（`a148460c`）、S2-6/7/8（`3c922165`）、S2-9（`f733ab54`）**。
 
 **D 系列的共同点值得记**：六项里有 **四项是"有兜底、无来源"或"两条分支不一致"**——
 `MISSING_DEPENDENCY` 有 fatal 分类但产生它的分支恒不可达；`error`/`error_code` 有字段
@@ -391,12 +393,32 @@ CR-13 给 `_run_hitl` 加了第 4 个位置参数，`core/tests/test_phase2.py` 
 `pytest -m "not unit and not service" -q`（约 1 分钟）确认被 marker 排除的集合。
 替身（mock/猴补丁）与真实签名不同步时，失败只会在**真的走到那条路径**时出现。
 
+### §0.4.6 未能验证的项：MinIO 镜像升级
+
+`docker-compose.yml` 的 MinIO 镜像仍是 `RELEASE.2023-03-20T20-16-18Z`（2023 年）。
+升级本身是一行改动，但**本环境无法验证**：
+
+```
+docker pull minio/minio:RELEASE.2025-04-22T22-12-26Z
+→ failed to resolve reference ... proxyconnect tcp: lookup YOMU.local: no such host
+```
+
+MinIO 后面挂着 **Milvus 的对象存储**（`minio_data` 卷）——盲升 tag 等于拿用户数据试。
+**因此没有改 tag**，改为登记为"升级候选"并加镜像 pin 策略守卫。
+
+要完成该项，需要在能访问 registry 的机器上：
+
+1. `docker compose --profile dev pull minio`（先备份 `minio_data` 卷）；
+2. `docker compose --profile dev up -d`，确认 `healthcheck` 变 healthy；
+3. 跑一次 Milvus 读写（`make test-quick` 覆盖 LTM 读写路径）；
+4. 通过后再更新 compose 与本节。
+
 **F 批剩余（按报告 P1→P3 清单）**：S2-A1 彻底版（关停时把批次**落盘**而非只 requeue）、
 **S2-D3②③**（重试退避 + 幂等键 + mutation 工具默认不重试，需幂等键基建）、
 **S2-D3②③**（重试退避 + 幂等键；mutation 工具默认不重试）、**S2-D4②③**
 （`_run_and_cleanup` 外层 `wait_for` 兜底；`max_mutations` 计数器 + `MUTATION_LIMIT_REACHED`
 生产者）、S2-D3②③、S2-F1/F2、
-**S2-9**（版本比对 + CI 装锁 + 依赖上限）、S3 系列。
+S3 系列。
 
 **已知遗留（本批未做，非疏漏）**：
 
