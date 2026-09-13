@@ -1,33 +1,41 @@
 # 核心依赖（必需——缺少则应用无法启动）
-aiohttp>=3.9
-httpx>=0.27
-openai>=1.0
-python-dotenv>=1.0
-Jinja2>=3.1
-PyYAML>=6.0
-pydantic>=2.0
-networkx>=3.0
-psutil>=5.9
-filetype>=1.2
+#
+# S2-9：**每个依赖都声明上限**（`<下一个大版本`）。理由不是洁癖，而是这个项目的
+# 实际形状：`environment.lock.yml` 只在有人跑 `make lock-env` 时更新，而 CI 安装的是
+# **本文件**（浮动）。没有上限时，某个依赖发大版本会在 CI 里静默换掉实现——
+# 本地（按锁）与 CI（按本文件）跑的是两套代码，而门禁只保证"锁里有 pin"。
+# 上限只设在**已知会破坏**的大版本处（pydantic 2→3、aiohttp 3→4、httpx 0.x→1.0
+# 这类 API 断代），不是随手写 `<999`：`check_env_lock.py` 会校验锁满足这些声明，
+# 抬上限/换大版本时锁不同步就会红。
+aiohttp>=3.9,<4
+httpx>=0.27,<1
+openai>=1.0,<3
+python-dotenv>=1.0,<2
+Jinja2>=3.1,<4
+PyYAML>=6.0,<7
+pydantic>=2.0,<3
+networkx>=3.0,<4
+psutil>=5.9,<8
+filetype>=1.2,<2
 # 用户身份时区投影（C5 感官时间按 UserIdentity.timezone 渲染）。Linux/macOS 走系统
 # zoneinfo 即可，Windows 无系统时区库，须由此包提供——缺失时 sensory 回退本地时间。
 tzdata>=2024.1
 
 # 数据库
-pymilvus>=2.4
-motor>=3.5
+pymilvus>=2.4,<4
+motor>=3.5,<4
 
 # 嵌入（可选——HuggingFace 本地嵌入）
-sentence-transformers>=2.7
-langchain-huggingface>=0.3
-torch>=2.0
-numpy>=1.24
+sentence-transformers>=2.7,<6
+langchain-huggingface>=0.3,<2
+torch>=2.0,<3
+numpy>=1.24,<3
 
 # 工具（可选）
-tavily-python>=0.5
+tavily-python>=0.5,<1
 
 # STT/VAD（audio_buffer 顶层 import，必需——包名是 webrtcvad，不是 webrtc-vad）
-webrtcvad>=2.0.10
+webrtcvad>=2.0.10,<3
 # webrtcvad 依赖 pkg_resources，setuptools>=83 已移除 → 钉住 <81（N5095 部署实录）
 setuptools<81
 
@@ -38,4 +46,4 @@ setuptools<81
 # 测试超时（P2）：pytest.ini 的全局 `timeout` 依赖本插件；缺它时无界 `await`
 # 回归会永久挂死本地 `make test-full`，CI 也只能等 job 级 15–45 分钟超时。
 # 置此（而非 requirements-dev.txt）因 CI pr-gate 只安装 requirements.txt。
-pytest-timeout>=2.4
+pytest-timeout>=2.4,<3

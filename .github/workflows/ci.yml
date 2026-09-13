@@ -44,6 +44,17 @@ jobs:
           python-version: '3.12'
       - name: Install runtime + dev deps (clean-room, 无真实凭据)
         # CPU-only torch 快速安装（CUDA/GPU 只在受信 push job）；一次全新安装，结果确定
+        #
+        # S2-9「CI 装锁」的结论：**CI 不直接消费 environment.lock.yml**。那份锁是
+        # `conda env export`，含 linux-64 专用 conda 包（build string 形如 `=he532380_0`）
+        # 与生成机 prefix，GitHub runner 上没有 conda、也重放不了这些条目。
+        # 取而代之的是三道**可执行**约束（都在本 job 里）：
+        #   ① Dependency lock drift check（下两步）：声明必须被锁满足 + 版本比对；
+        #   ② requirements.txt 的每个依赖都带 `上限`（test_check_env_lock.py 断言），
+        #      所以"按本文件装"不会跨大版本静默换实现；
+        #   ③ pip-audit 扫已知漏洞。
+        # 换句话说：**锁是复现本机环境的凭据，CI 是"声明范围内的干净安装"**——
+        # 两者由上面 ①② 的版本比对绑在一起，而不是假装 CI 装了锁。
         run: |
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
