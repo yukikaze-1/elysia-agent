@@ -10,7 +10,8 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
-from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
+from Module._common.error_type import ErrorType
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter, tool_failure, ToolResult
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 
@@ -125,7 +126,7 @@ class WebSearchPlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: WebSearchParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """搜索互联网，返回相关网页的标题、URL 和摘要。
 
         Args:
@@ -243,7 +244,7 @@ class WebFetchPlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: WebFetchParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """抓取并解析指定网页的文本内容。
 
         Args:
@@ -256,7 +257,7 @@ class WebFetchPlugin(ToolPlugin):
         """
         url = params.url
         if not url.startswith(("http://", "https://")):
-            return f"无效的 URL: {url}"
+            return tool_failure(f"无效的 URL: {url}", error_type=ErrorType.INVALID_ARGUMENT)
 
         try:
             # D2/P1-15：出站走统一守卫 transport（每跳 SSRF 校验 + 跨源剥敏感头），
@@ -274,20 +275,25 @@ class WebFetchPlugin(ToolPlugin):
                     # 先按可信 Content-Length 快速拒绝（防大响应早缓冲）
                     clen = resp.headers.get("content-length")
                     if clen and clen.isdigit() and int(clen) > self.safety.max_response_bytes:
-                        return (f"响应过大 ({clen} bytes)，"
-                                f"上限 {self.safety.max_response_bytes} bytes")
+                        return tool_failure(
+                            f"响应过大 ({clen} bytes)，"
+                            f"上限 {self.safety.max_response_bytes} bytes",
+                            error_type=ErrorType.TOOL_ERROR)
                     resp.raise_for_status()
                     content_type = resp.headers.get("content-type", "")
                     if "text/html" not in content_type and "text/plain" not in content_type:
-                        return f"不支持的内容类型: {content_type}"
+                        return tool_failure(f"不支持的内容类型: {content_type}",
+                                     error_type=ErrorType.INVALID_ARGUMENT)
                     # 流式累计硬上限（防 chunked/伪造 length/压缩放大撑爆内存，P2-05）
                     chunks: list[bytes] = []
                     total = 0
                     async for chunk in resp.aiter_bytes():
                         total += len(chunk)
                         if total > self.safety.max_response_bytes:
-                            return (f"响应超过 {self.safety.max_response_bytes} bytes，"
-                                    "已中止抓取")
+                            return tool_failure(
+                                f"响应超过 {self.safety.max_response_bytes} bytes，"
+                                "已中止抓取",
+                                error_type=ErrorType.TOOL_ERROR)
                         chunks.append(chunk)
                     body = b"".join(chunks)
                     text = _extract_text(body.decode("utf-8", errors="replace"))
@@ -295,9 +301,9 @@ class WebFetchPlugin(ToolPlugin):
                         return "（页面无文本内容）"
                     return text
         except httpx.HTTPStatusError as e:
-            return f"HTTP 错误: {e.response.status_code}"
+            return tool_failure(f"HTTP 错误: {e.response.status_code}", error_type=ErrorType.NETWORK_ERROR)
         except SSRFError:
             # D2/P1-15：统一消息不泄露内部解析 IP
-            return "抓取失败: 目标地址被拒绝"
+            return tool_failure("抓取失败: 目标地址被拒绝", error_type=ErrorType.PERMISSION_DENIED)
         except Exception as e:
-            return f"抓取失败: {e}"
+            return tool_failure(f"抓取失败: {e}", error_type=ErrorType.NETWORK_ERROR)

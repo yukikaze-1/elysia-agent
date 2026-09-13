@@ -4,7 +4,9 @@ import pytest
 from unittest.mock import MagicMock
 
 from core.tools.runtime_config.plugin import RuntimeConfigPlugin, RuntimeConfigParams
-from Module.tool.protocol import ToolContext
+from Module.tool.protocol import ToolContext, ToolResult, ErrorType
+
+from core.tools.tests._failure_helpers import assert_failed
 
 pytestmark = pytest.mark.unit
 
@@ -309,7 +311,7 @@ class TestRuntimeConfigPlugin:
         params = RuntimeConfigParams(query="tasks")
         result = await plugin.execute(ctx=base_ctx, params=params)
 
-        assert "WorkflowEngine 不可用" in result
+        assert_failed(result, contains="WorkflowEngine 不可用")
 
     # ── RuntimeConfigParams ──────────────────────────────────────
 

@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 
 from paths import ProjectPath
 
-from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
+from Module._common.error_type import ErrorType
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter, tool_failure, ToolResult
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 
@@ -59,7 +60,7 @@ class ReadFilePlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: ReadFileParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """读取指定文件的内容。
 
         Args:
@@ -74,16 +75,20 @@ class ReadFilePlugin(ToolPlugin):
         resolved = Path(path)
 
         if not resolved.exists():
-            return f"路径不存在: {path}"
+            return tool_failure(f"路径不存在: {path}",
+                                error_type=ErrorType.INVALID_ARGUMENT)
         if not resolved.is_file():
-            return f"不是文件: {path}"
+            return tool_failure(f"不是文件: {path}",
+                                error_type=ErrorType.INVALID_ARGUMENT)
 
         try:
             fsize = resolved.stat().st_size
             if fsize > self.safety.max_file_bytes:
-                return f"文件过大 ({fsize} bytes)，最大允许 {self.safety.max_file_bytes} bytes"
+                return tool_failure(
+                    f"文件过大 ({fsize} bytes)，最大允许 {self.safety.max_file_bytes} bytes",
+                    error_type=ErrorType.INVALID_ARGUMENT)
         except OSError as e:
-            return f"无法读取文件信息: {e}"
+            return tool_failure(f"无法读取文件信息: {e}", error_type=ErrorType.TOOL_ERROR)
 
         try:
             with open(resolved, "r", encoding="utf-8") as f:
@@ -101,9 +106,9 @@ class ReadFilePlugin(ToolPlugin):
                     result_lines.append(f"{i+1:4d} | {line.rstrip()}")
                 total = i + 1
         except UnicodeDecodeError:
-            return f"无法读取（可能是二进制文件）: {path}"
+            return tool_failure(f"无法读取（可能是二进制文件）: {path}", error_type=ErrorType.INVALID_ARGUMENT)
         except Exception as e:
-            return f"读取失败: {e}"
+            return tool_failure(f"读取失败: {e}", error_type=ErrorType.TOOL_ERROR)
 
         output = "\n".join(result_lines)
         if not output.strip():
@@ -141,7 +146,7 @@ class ListDirPlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: ListDirParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """列出目录中的文件和子目录。
 
         Args:
@@ -156,9 +161,11 @@ class ListDirPlugin(ToolPlugin):
         resolved = Path(path)
 
         if not resolved.exists():
-            return f"路径不存在: {path}"
+            return tool_failure(f"路径不存在: {path}",
+                                error_type=ErrorType.INVALID_ARGUMENT)
         if not resolved.is_dir():
-            return f"不是目录: {path}"
+            return tool_failure(f"不是目录: {path}",
+                                error_type=ErrorType.INVALID_ARGUMENT)
 
         depth = max(1, min(params.depth, self.safety.max_dir_depth))
         allow_symlinks = self.safety.allow_symlinks
@@ -257,7 +264,7 @@ class WriteFilePlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: WriteFileParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """在安全目录下写入文件。
 
         Args:
@@ -280,14 +287,18 @@ class WriteFilePlugin(ToolPlugin):
         # D1/P1-14 + P2-05：is_relative_to 替代 startswith（sibling 逃逸）；
         # 检查待写内容的真实 UTF-8 字节数（新建文件当前大小 0 会绕过 max_file_bytes）
         if not resolved.is_relative_to(write_dir):
-            return f"拒绝写入: 路径 '{params.path}' 越过了 sandbox 边界"
+            return tool_failure(
+                f"拒绝写入: 路径 '{params.path}' 越过了 sandbox 边界",
+                error_type=ErrorType.PERMISSION_DENIED)
         try:
             content_bytes = params.content.encode("utf-8")
         except UnicodeEncodeError:
-            return "写入失败: 内容无法编码为 UTF-8"
+            return tool_failure("写入失败: 内容无法编码为 UTF-8", error_type=ErrorType.INVALID_ARGUMENT)
         if len(content_bytes) > self.safety.max_file_bytes:
-            return (f"内容过大 ({len(content_bytes)} bytes)，"
-                    f"最大允许 {self.safety.max_file_bytes} bytes")
+            return tool_failure(
+                f"内容过大 ({len(content_bytes)} bytes)，"
+                f"最大允许 {self.safety.max_file_bytes} bytes",
+                error_type=ErrorType.INVALID_ARGUMENT)
 
         resolved.parent.mkdir(parents=True, exist_ok=True)
 
@@ -297,4 +308,4 @@ class WriteFilePlugin(ToolPlugin):
             size = resolved.stat().st_size
             return f"已写入 {resolved.name} ({size} bytes)"
         except Exception as e:
-            return f"写入失败: {e}"
+            return tool_failure(f"写入失败: {e}", error_type=ErrorType.TOOL_ERROR)

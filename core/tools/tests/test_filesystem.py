@@ -2,7 +2,7 @@
 
 import pytest
 
-from Module.tool.protocol import ToolContext
+from Module.tool.protocol import ToolContext, ToolResult, ErrorType
 
 from core.tools.filesystem.plugin import (
     _format_size,
@@ -11,6 +11,8 @@ from core.tools.filesystem.plugin import (
     ListDirPlugin,
     ListDirParams,
 )
+
+from core.tools.tests._failure_helpers import assert_failed
 
 pytestmark = pytest.mark.service
 
@@ -87,7 +89,7 @@ class TestReadFilePlugin:
             params=ReadFileParams(path=path),
         )
 
-        assert "路径不存在" in result
+        assert_failed(result, contains="路径不存在")
 
     @pytest.mark.asyncio
     async def test_not_a_file_when_path_is_directory(self, tmp_path):
@@ -99,7 +101,7 @@ class TestReadFilePlugin:
             params=ReadFileParams(path=str(tmp_path)),
         )
 
-        assert "不是文件" in result
+        assert_failed(result, contains="不是文件")
 
     # ── 边界情况 ──
 
@@ -117,7 +119,7 @@ class TestReadFilePlugin:
             params=ReadFileParams(path=str(file)),
         )
 
-        assert "二进制文件" in result
+        assert_failed(result, contains="二进制文件")
 
     @pytest.mark.asyncio
     async def test_empty_file(self, tmp_path):
@@ -239,7 +241,7 @@ class TestListDirPlugin:
             params=ListDirParams(path=path),
         )
 
-        assert "路径不存在" in result
+        assert_failed(result, contains="路径不存在")
 
     @pytest.mark.asyncio
     async def test_not_a_directory_when_path_is_file(self, tmp_path):
@@ -254,7 +256,7 @@ class TestListDirPlugin:
             params=ListDirParams(path=str(file)),
         )
 
-        assert "不是目录" in result
+        assert_failed(result, contains="不是目录")
 
     # ── 递归深度 ──
 

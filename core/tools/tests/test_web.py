@@ -3,7 +3,9 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from Module.tool.protocol import ToolContext
+from Module.tool.protocol import ToolContext, ToolResult, ErrorType
+
+from core.tools.tests._failure_helpers import assert_failed
 
 pytestmark = pytest.mark.service
 
@@ -278,7 +280,7 @@ class TestWebFetchPlugin:
         result = asyncio.run(
             plugin.execute(ctx=ctx, emit=None, params=WebFetchParams(url="ftp://example.com/file"))
         )
-        assert "无效的 URL" in result
+        assert_failed(result, contains="无效的 URL")
 
     def test_rejects_plain_string_not_url(self):
         """非 URL 字符串返回"无效的 URL"。"""
@@ -290,7 +292,7 @@ class TestWebFetchPlugin:
         result = asyncio.run(
             plugin.execute(ctx=ctx, emit=None, params=WebFetchParams(url="not-a-url"))
         )
-        assert "无效的 URL" in result
+        assert_failed(result, contains="无效的 URL")
 
     def test_successful_html_fetch_returns_extracted_text(self):
         """成功抓取 HTML 页面返回提取后的纯文本。"""
@@ -354,7 +356,7 @@ class TestWebFetchPlugin:
             result = asyncio.run(
                 plugin.execute(ctx=ctx, emit=None, params=WebFetchParams(url="https://example.com/404"))
             )
-            assert "HTTP 错误" in result
+            assert_failed(result, contains="HTTP 错误")
 
     def test_non_html_content_type_returns_unsupported_message(self):
         """非 HTML 内容类型返回"不支持的内容类型"。"""
@@ -373,7 +375,7 @@ class TestWebFetchPlugin:
             result = asyncio.run(
                 plugin.execute(ctx=ctx, emit=None, params=WebFetchParams(url="https://example.com/api/data"))
             )
-            assert "不支持的内容类型" in result
+            assert_failed(result, contains="不支持的内容类型")
 
     def test_empty_page_returns_no_content_message(self):
         """空页面或无文本内容返回提示信息。"""
@@ -427,7 +429,7 @@ class TestWebFetchSSRF:
             plugin.execute(ctx=ctx, emit=None,
                            params=WebFetchParams(url="http://127.0.0.1/secret"))
         )
-        assert "目标地址被拒绝" in result
+        assert_failed(result, contains="目标地址被拒绝")
 
     def test_rejects_localhost_hostname(self):
         """localhost → 拒绝（DNS 解析到 loopback）。"""
@@ -440,4 +442,4 @@ class TestWebFetchSSRF:
             plugin.execute(ctx=ctx, emit=None,
                            params=WebFetchParams(url="http://localhost/secret"))
         )
-        assert "目标地址被拒绝" in result
+        assert_failed(result, contains="目标地址被拒绝")

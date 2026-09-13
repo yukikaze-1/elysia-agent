@@ -555,6 +555,23 @@ class MediaItem:
 # ToolResult — 执行结果
 # ---------------------------------------------------------------------------
 
+def tool_failure(error: str, *, error_type: "ErrorType | None" = None) -> ToolResult:
+    """插件失败返回的统一构造（S2-G1）。
+
+    **为什么需要它**：8 个后端插件的失败路径此前都 `return "…失败…"`（返回错误
+    **字符串**），而 `SafetyPipeline._wrap_result` 对非 `ToolResult` 的返回值一律
+    `ToolResult.ok(...)` → 失败被标成 `success=True`。四层信号同时失真：
+
+    1. `protocol` 的 LLM 纠错指令**从不生成** → LLM 看不到失败，反复重试同一调用；
+    2. v2 `tool.completed{success:true}` → **前端显示成功卡片**、无 error；
+    3. `ToolResultMessage.success=True` 落库 → 复盘看不到失败；
+    4. debug 面板与工具统计全部失真。
+
+    `name` 留空：`_wrap_result` 会用运行时工具名回填。
+    """
+    return ToolResult.fail(name="", error=error, error_type=error_type)
+
+
 @dataclass
 class ToolResult:
     """工具执行结果。success=False 时 error 包含失败原因。

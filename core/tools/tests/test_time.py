@@ -2,9 +2,11 @@
 
 import pytest
 
-from Module.tool.protocol import ToolContext
+from Module.tool.protocol import ToolContext, ToolResult, ErrorType
 
 from core.tools.time.plugin import TimePlugin, TimeParams
+
+from core.tools.tests._failure_helpers import assert_failed
 
 pytestmark = pytest.mark.unit
 
@@ -57,13 +59,13 @@ class TestTimePlugin:
     async def test_invalid_offset_returns_error_message(self):
         """无效偏移 '+abc' 返回错误信息。"""
         result = await _run(timezone="+abc", fmt="iso")
-        assert "无效的时区偏移" in result, f"应返回无效偏移错误，实际: {result}"
+        assert_failed(result, contains="无效的时区偏移")
 
     @pytest.mark.asyncio
     async def test_invalid_iana_timezone_returns_error(self):
         """无效 IANA 时区 'Mars/Olympus' 返回错误信息。"""
         result = await _run(timezone="Mars/Olympus", fmt="iso")
-        assert "无效的时区名称" in result, f"应返回无效时区错误，实际: {result}"
+        assert_failed(result, contains="无效的时区名称")
 
     @pytest.mark.asyncio
     async def test_valid_iana_timezone_asia_shanghai(self):

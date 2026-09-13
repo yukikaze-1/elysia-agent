@@ -10,7 +10,8 @@ except ImportError:
     HAS_ZONEINFO = False
 
 from pydantic import BaseModel, Field
-from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
+from Module._common.error_type import ErrorType
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter, tool_failure, ToolResult
 from Module.tool.safety import SafetyProfile
 
 
@@ -34,7 +35,7 @@ class TimePlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: TimeParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """获取当前日期和时间。
 
         Args:
@@ -53,16 +54,21 @@ class TimePlugin(ToolPlugin):
                 hours = int(tz_str)
                 tz = timezone(timedelta(hours=hours))
             except ValueError:
-                return f"无效的时区偏移: {tz_str}，请使用如 '+8' 或 'UTC'"
+                return tool_failure(
+                    f"无效的时区偏移: {tz_str}，请使用如 '+8' 或 'UTC'",
+                    error_type=ErrorType.INVALID_ARGUMENT)
         elif tz_str == "UTC":
             tz = timezone.utc
         else:
             if not HAS_ZONEINFO:
-                return "时区功能不可用（缺少 zoneinfo 模块）"
+                return tool_failure("时区功能不可用（缺少 zoneinfo 模块）",
+                            error_type=ErrorType.UNAVAILABLE)
             try:
                 tz = _zoneinfo.ZoneInfo(tz_str)
             except Exception:
-                return f"无效的时区名称: '{tz_str}'，请使用 'UTC'、'Asia/Shanghai' 或 '+8'"
+                return tool_failure(
+                    f"无效的时区名称: '{tz_str}'，请使用 'UTC'、'Asia/Shanghai' 或 '+8'",
+                    error_type=ErrorType.INVALID_ARGUMENT)
 
         now = datetime.now(tz)
 

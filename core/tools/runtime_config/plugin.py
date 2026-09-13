@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
-from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
+from Module._common.error_type import ErrorType
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter, tool_failure, ToolResult
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 
@@ -39,7 +40,7 @@ class RuntimeConfigPlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: RuntimeConfigParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """查看当前运行时配置。
 
         Args:
@@ -59,7 +60,9 @@ class RuntimeConfigPlugin(ToolPlugin):
         elif query == "network":
             return self._render_network(ctx)
         elif query == "tasks":
-            return await self._render_tasks_detail(ctx)
+            # S2-G1：这一路径下 tasks 段**就是**完整结果，查询失败即工具级失败
+            # （而 `query=all` 里它只是若干段之一，失败降级为一行说明）。
+            return await self._section_tasks_detail(ctx, strict=True)
         elif query == "all":
             return await self._render_all(ctx)
         else:
@@ -275,15 +278,30 @@ class RuntimeConfigPlugin(ToolPlugin):
         except Exception:
             return ""
 
-    async def _section_tasks_detail(self, ctx: ToolContext) -> str:
-        """活跃任务详情——每个任务一行。"""
+    async def _section_tasks_detail(
+        self, ctx: ToolContext, *, strict: bool = False,
+    ) -> str | ToolResult:
+        """活跃任务详情——每个任务一行。
+
+        Args:
+            ctx: 工具调用上下文。
+            strict: True 时把"查询失败"升级为 `ToolResult.fail`。仅用于
+                `query=tasks`（该段即完整结果）；`query=all` 下它只是若干段之一，
+                失败降级成一行说明，其余配置照常返回（S2-G1）。
+        """
         ts = ctx.get("_task_system")
         if ts is None:
+            if strict:
+                return tool_failure("📋 后台任务: WorkflowEngine 不可用",
+                                    error_type=ErrorType.UNAVAILABLE)
             return "📋 后台任务: WorkflowEngine 不可用"
 
         try:
             active = await ts.list_active_tasks()
         except Exception as e:
+            if strict:
+                return tool_failure(f"📋 后台任务: 查询失败 ({e})",
+                                    error_type=ErrorType.TOOL_ERROR)
             return f"📋 后台任务: 查询失败 ({e})"
 
         if not active:
@@ -371,9 +389,6 @@ class RuntimeConfigPlugin(ToolPlugin):
         """渲染网络权限详情（query="network" 入口）。"""
         return self._section_network(ctx)
 
-    async def _render_tasks_detail(self, ctx: ToolContext) -> str:
-        return await self._section_tasks_detail(ctx)
-
     async def _render_all(self, ctx: ToolContext) -> str:
         """全量输出——所有 section。"""
         sections = [
@@ -387,8 +402,9 @@ class RuntimeConfigPlugin(ToolPlugin):
             "",
             await self._section_process(ctx),
         ]
-        tasks = await self._section_tasks_detail(ctx)
-        sections.append(tasks)
+        tasks = await self._section_tasks_detail(ctx)   # 非 strict → 恒为 str
+        # 兼容两种返回：若将来有人在此传 strict，失败文本仍进段落而不是被静默丢掉
+        sections.append(tasks if isinstance(tasks, str) else (tasks.error or ""))
         token_section = await self._section_token_usage(ctx)
         if token_section:
             sections.append(token_section)

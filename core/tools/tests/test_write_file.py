@@ -2,10 +2,12 @@
 
 import pytest
 
-from Module.tool.protocol import ToolContext
+from Module.tool.protocol import ToolContext, ToolResult, ErrorType
 from Module.tool.safety import SafetyProfile
 
 from core.tools.filesystem.plugin import WriteFilePlugin, WriteFileParams
+
+from core.tools.tests._failure_helpers import assert_failed
 
 pytestmark = pytest.mark.service
 
@@ -85,7 +87,7 @@ class TestWriteFilePlugin:
             params=WriteFileParams(path="escape.txt", content="bad"),
         )
 
-        assert "拒绝写入" in result
+        assert_failed(result, contains="拒绝写入")
         assert not outside_path.exists()
 
     @pytest.mark.asyncio
@@ -103,7 +105,7 @@ class TestWriteFilePlugin:
             params=WriteFileParams(path="../escaped.txt", content="bad"),
         )
 
-        assert "拒绝写入" in result
+        assert_failed(result, contains="拒绝写入")
 
     # ── 父目录创建 ──
 
@@ -288,7 +290,7 @@ class TestWriteFileHardening:
             params=WriteFileParams(path="new.txt", content="九个字节的内容"),
         )
 
-        assert "过大" in result  # 内容 UTF-8 超 8 bytes → 拒绝且不落盘
+        assert_failed(result, contains="过大")
         assert not (sandbox / "new.txt").exists()
 
     @pytest.mark.asyncio
@@ -306,5 +308,5 @@ class TestWriteFileHardening:
             params=WriteFileParams(path="secret.txt", content="x"),
         )
 
-        assert "越过了 sandbox" in result
+        assert_failed(result, contains="越过了 sandbox")
         assert not (evil / "secret.txt").exists()

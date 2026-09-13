@@ -6,7 +6,8 @@ import uuid
 
 from pydantic import BaseModel, Field
 from Module._common.task_scope import AsyncTaskScope
-from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
+from Module._common.error_type import ErrorType
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter, tool_failure, ToolResult
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 from Module.workflow_contract.schema import WorkflowId
@@ -53,7 +54,7 @@ class SetReminderPlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: ReminderParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """设置定时提醒，在指定秒数后通知用户。
 
         延迟到期后通过 EventBus 投递 TaskResultData 事件，
@@ -95,5 +96,5 @@ class SetReminderPlugin(ToolPlugin):
         except Exception as e:
             # spawn 在被拒（作用域已关闭）或无事件循环时抛——两种情况都不该对
             # 用户谎报「已设置」：工具返回值是用户唯一能看到的结果面。
-            return f"设置提醒失败: {e}"
+            return tool_failure(f"设置提醒失败: {e}", error_type=ErrorType.TOOL_ERROR)
         return f"已设置提醒，{params.delay_seconds} 秒后通知: {params.message}"

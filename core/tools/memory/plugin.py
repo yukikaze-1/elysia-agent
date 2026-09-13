@@ -4,7 +4,8 @@ import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
-from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter
+from Module._common.error_type import ErrorType
+from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter, tool_failure, ToolResult
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
 from core.schema.memory import MemoryType
@@ -26,7 +27,7 @@ class MemorySearchPlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: SearchMemoryParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """在长期记忆中搜索相关信息。
 
         Args:
@@ -39,7 +40,7 @@ class MemorySearchPlugin(ToolPlugin):
         """
         memory = ctx.get("memory")
         if memory is None:
-            return "记忆系统当前不可用。"
+            return tool_failure("记忆系统当前不可用。", error_type=ErrorType.UNAVAILABLE)
 
         try:
             results = await memory.search(
@@ -47,7 +48,7 @@ class MemorySearchPlugin(ToolPlugin):
             )
         except Exception as e:
             logger.warning("search_memory 失败: %s", e)
-            return f"搜索记忆时出错: {e}"
+            return tool_failure(f"搜索记忆时出错: {e}", error_type=ErrorType.TOOL_ERROR)
 
         if not results:
             return "未找到相关记忆。"
@@ -86,7 +87,7 @@ class MemorySavePlugin(ToolPlugin):
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: SaveMemoryParams,
-    ) -> str:
+    ) -> str | ToolResult:
         """将重要信息保存到长期记忆库。
 
         Args:
@@ -101,17 +102,19 @@ class MemorySavePlugin(ToolPlugin):
         mem_type = MemoryType.try_coerce(params.type)
         if mem_type is None:
             allowed = ", ".join(t.value for t in MemoryType)
-            return f"无效的记忆类型 '{params.type}'，允许: {allowed}"
+            return tool_failure(
+                f"无效的记忆类型 '{params.type}'，允许: {allowed}",
+                error_type=ErrorType.INVALID_ARGUMENT)
 
         memory = ctx.get("memory")
         if memory is None:
-            return "记忆系统当前不可用。"
+            return tool_failure("记忆系统当前不可用。", error_type=ErrorType.UNAVAILABLE)
 
         content = params.content
         try:
             await memory.insert(content, type=mem_type.value)
         except Exception as e:
             logger.warning("save_memory 失败: %s", e)
-            return f"保存记忆时出错: {e}"
+            return tool_failure(f"保存记忆时出错: {e}", error_type=ErrorType.TOOL_ERROR)
 
         return f"已保存 {mem_type.value} 类型记忆: {content[:200]}"

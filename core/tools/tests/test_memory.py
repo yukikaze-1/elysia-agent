@@ -3,13 +3,16 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from Module.tool.protocol import ToolContext
+from Module._common.error_type import ErrorType
+from Module.tool.protocol import ToolContext, ToolResult
 from core.tools.memory.plugin import (
     MemorySearchPlugin,
     SearchMemoryParams,
     MemorySavePlugin,
     SaveMemoryParams,
 )
+
+from core.tools.tests._failure_helpers import assert_failed
 
 pytestmark = pytest.mark.service
 
@@ -37,7 +40,12 @@ class TestMemorySearchPlugin:
         """当 ctx.services 中没有 "memory" 时，返回 不可用。"""
         params = SearchMemoryParams(query="测试")
         result = await plugin.execute(ctx=ctx_without_memory, params=params)
-        assert result == "记忆系统当前不可用。"
+        # S2-G1：失败必须是 ToolResult.fail——返回裸字符串会被 _wrap_result
+        # 一律标成 success=True，四层信号（LLM 纠错/前端卡片/落库/统计）同时失真。
+        assert isinstance(result, ToolResult)
+        assert result.success is False
+        assert result.error == "记忆系统当前不可用。"
+        assert result.error_type is ErrorType.UNAVAILABLE
 
     @pytest.mark.asyncio
     async def test_no_results_returns_not_found(self, plugin: MemorySearchPlugin):
@@ -86,7 +94,9 @@ class TestMemorySearchPlugin:
 
         params = SearchMemoryParams(query="anything")
         result = await plugin.execute(ctx=self.make_ctx(mock_memory), params=params)
-        assert result == "搜索记忆时出错: 数据库连接失败"
+        assert isinstance(result, ToolResult) and result.success is False
+        assert result.error == "搜索记忆时出错: 数据库连接失败"
+        assert result.error_type is ErrorType.TOOL_ERROR
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -114,10 +124,10 @@ class TestMemorySavePlugin:
         mock_memory = AsyncMock()
         params = SaveMemoryParams(content="something", type="invalid_type")
         result = await plugin.execute(ctx=self.make_ctx(mock_memory), params=params)
-        assert "无效的记忆类型" in result
-        assert "invalid_type" in result
-        assert "Fact" in result      # 错误消息含 TitleCase 词表
-        assert "Event" in result
+        assert_failed(result, contains="无效的记忆类型")
+        assert "invalid_type" in (result.error or "")
+        assert "Fact" in (result.error or "")      # 错误消息含 TitleCase 词表
+        assert "Event" in (result.error or "")
         mock_memory.insert.assert_not_called()
 
     # ── 不可用 ──
@@ -129,7 +139,12 @@ class TestMemorySavePlugin:
         """当 ctx.services 中没有 "memory" 时，返回 不可用。"""
         params = SaveMemoryParams(content="测试", type="fact")
         result = await plugin.execute(ctx=ctx_without_memory, params=params)
-        assert result == "记忆系统当前不可用。"
+        # S2-G1：失败必须是 ToolResult.fail——返回裸字符串会被 _wrap_result
+        # 一律标成 success=True，四层信号（LLM 纠错/前端卡片/落库/统计）同时失真。
+        assert isinstance(result, ToolResult)
+        assert result.success is False
+        assert result.error == "记忆系统当前不可用。"
+        assert result.error_type is ErrorType.UNAVAILABLE
 
     # ── 正常保存 ──
 
@@ -154,7 +169,9 @@ class TestMemorySavePlugin:
 
         params = SaveMemoryParams(content="测试内容", type="note")
         result = await plugin.execute(ctx=self.make_ctx(mock_memory), params=params)
-        assert result == "保存记忆时出错: 写入失败"
+        assert isinstance(result, ToolResult) and result.success is False
+        assert result.error == "保存记忆时出错: 写入失败"
+        assert result.error_type is ErrorType.TOOL_ERROR
 
     # ── 所有有效类型 ──
 
