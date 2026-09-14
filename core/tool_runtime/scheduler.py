@@ -33,8 +33,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 工具执行超时 (秒) — **单次尝试**的上限（`_execute_tool` 内层 wait_for）。
+# 工具执行超时 (秒) — **单次尝试**的下限（`_execute_tool` 内层 wait_for 的默认值）。
 _TOOL_TIMEOUT = 60.0
+
+# 插件可声明更长的自有预算（`SafetyProfile.request_timeout`）。desktop/vision 按设计
+# 声明 **120s**（≥ 桥超时，否则往返会在 30s 被提前取消）；调度器此前一律用 60s 硬切，
+# 于是"设计好的 120s 路径"在 60s 被截断（S2-G2）。
+#
+# 这里声明"我们容许插件声明的最大值"，**由门禁交叉校验**：
+# `scripts/check_timeout_budget.py` 的 R4 扫描 `core/tools/**/plugin.py` 的
+# `request_timeout=` 实参，任何插件声明超过 `_MAX_PLUGIN_REQUEST_TIMEOUT` 即红——
+# 逼着这里同步抬上界，而不是静默截断（这类"两套独立声明、无人校验大小关系"
+# 正是 S2-A3/S2-G2/S2-R2-1 的共同成因）。
+_MAX_PLUGIN_REQUEST_TIMEOUT = 120.0
+
+# 管道自身开销余量（校验/审批/信号量/结果包装）——外层预算必须比插件预算宽一点，
+# 否则会在插件**刚好**用满自己的预算时把收尾切掉。
+_TIMEOUT_SLACK = 5.0
+
+# 单次尝试的**上界**：插件声明得再大也不超过它（超出部分由 R4 在门禁层拦下）。
+_MAX_TOOL_TIMEOUT = _MAX_PLUGIN_REQUEST_TIMEOUT + _TIMEOUT_SLACK
 
 # 单任务重试上限与退避上限——必须与 `QueuedToolCall` 的默认值/实现保持一致：
 # `max_retries` 默认 2（task.py），`retry_backoff_seconds()` 的 cap 为 30s。
@@ -42,8 +60,10 @@ _MAX_TASK_RETRIES = 2
 _RETRY_BACKOFF_CAP = 30.0
 
 # 单个工具调用从入队到终态的最坏耗时上界（秒）：
-#   首发 + max_retries 次重试，各 ≤ _TOOL_TIMEOUT，外加每次重试前的退避。
-_CALL_BUDGET = _TOOL_TIMEOUT * (1 + _MAX_TASK_RETRIES) + _RETRY_BACKOFF_CAP * _MAX_TASK_RETRIES
+#   首发 + max_retries 次重试，各 ≤ _MAX_TOOL_TIMEOUT，外加每次重试前的退避。
+# 用 `_MAX_TOOL_TIMEOUT`（而非 `_TOOL_TIMEOUT`）作基数：否则声明了 120s 的插件会在
+# 第三次重试中途被整体预算掐断——"外层 < 内层"的老问题换个位置复发。
+_CALL_BUDGET = _MAX_TOOL_TIMEOUT * (1 + _MAX_TASK_RETRIES) + _RETRY_BACKOFF_CAP * _MAX_TASK_RETRIES
 
 # `dispatch_tool_calls` 的整体等待上限（秒）。
 #
@@ -533,6 +553,25 @@ class ToolCallDispatcher:
         """终态任务移除 worker task 引用。"""
         task._worker_task = None
 
+    def _timeout_for(self, tool_name: str) -> float:
+        """单次尝试的超时预算——**尊重插件自己声明的 `request_timeout`**（S2-G2）。
+
+        - 未声明 → `_TOOL_TIMEOUT`（60s，与原先一致）；
+        - 声明了 → `插件预算 + 管道余量`，下限 `_TOOL_TIMEOUT`、上限 `_MAX_TOOL_TIMEOUT`。
+          desktop/vision 声明 120s → 实际 125s（此前被一律硬切在 60s）。
+
+        **不使用 getattr 兜底**：executor 必须实现 `declared_request_timeout`
+        （ToolAdapter 与 ToolControlManager 都有）。缺了就在这里 AttributeError 报出来——
+        静默退回 60s 正是本项要消除的"设计好的路径被悄悄截断"。
+        """
+        executor = self._tool_executor
+        if executor is None:
+            return _TOOL_TIMEOUT
+        declared = executor.declared_request_timeout(tool_name)
+        if declared is None:
+            return _TOOL_TIMEOUT
+        return min(_MAX_TOOL_TIMEOUT, max(_TOOL_TIMEOUT, declared + _TIMEOUT_SLACK))
+
     async def _execute_tool(self, task: QueuedToolCall) -> ToolResult:
         """执行工具子任务，含重试逻辑和超时保护。
 
@@ -550,6 +589,7 @@ class ToolCallDispatcher:
             raise RuntimeError("ToolExecutor 未注入，请先调用 Scheduler.start()")
         if self._tool_ctx is None:
             self._tool_ctx = ToolContext()
+        per_call_timeout = self._timeout_for(tool_name)
         while True:
             # 每调用克隆一次 ctx：thread LLM tool_call_id → ctx.call_id（D6-07），
             # 且调用内写 ctx.services 落在副本不污染共享 ctx（对齐 _execute_tools_directly 惯例）
@@ -559,14 +599,14 @@ class ToolCallDispatcher:
                     self._tool_executor.execute(
                         tool_name, ctx=ctx, **arguments,
                     ),
-                    timeout=_TOOL_TIMEOUT,
+                    timeout=per_call_timeout,
                 )
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:
                 result = ToolResult.fail(
                     name=tool_name,
-                    error=f"执行超时 ({_TOOL_TIMEOUT:.0f}s)",
+                    error=f"执行超时 ({per_call_timeout:.0f}s)",
                     error_type=ErrorType.TIMEOUT,
                 )
             except Exception as e:

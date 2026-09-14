@@ -326,6 +326,10 @@ async def test_call_id_threaded_to_worker_ctx():
     class _RecordingExecutor:
         """记录每次 execute 收到的 ctx.call_id（Mock ToolAdapter）。"""
 
+        def declared_request_timeout(self, tool_name):
+            """S2-G2：调度器会问每个工具声明的预算；Mock 无声明 → None（用默认）。"""
+            return None
+
         async def execute(self, tool_name, ctx, **kwargs):
             seen_call_ids.append(ctx.call_id)
             return ToolResult.ok(name=tool_name, content="ok", duration_ms=0.0)
@@ -721,8 +725,13 @@ def test_dispatch_budget_never_below_single_call_budget():
     assert _scheduler_mod._TOOL_TIMEOUT > 0
     assert _scheduler_mod._CALL_BUDGET > _scheduler_mod._TOOL_TIMEOUT
     assert _scheduler_mod._DISPATCH_TIMEOUT >= _scheduler_mod._CALL_BUDGET
+    # S2-G2：单次尝试的上界是"插件可声明的最大预算 + 管道余量"，
+    # 而不是 60s 下限——否则声明 120s 的插件会在重试中途被整体预算掐断。
+    assert _scheduler_mod._MAX_TOOL_TIMEOUT >= _scheduler_mod._TOOL_TIMEOUT
+    assert (_scheduler_mod._MAX_TOOL_TIMEOUT
+            == _scheduler_mod._MAX_PLUGIN_REQUEST_TIMEOUT + _scheduler_mod._TIMEOUT_SLACK)
     # 单调用预算必须真的覆盖 max_retries 次重试 + 退避
-    expect = (_scheduler_mod._TOOL_TIMEOUT * (1 + _scheduler_mod._MAX_TASK_RETRIES)
+    expect = (_scheduler_mod._MAX_TOOL_TIMEOUT * (1 + _scheduler_mod._MAX_TASK_RETRIES)
               + _scheduler_mod._RETRY_BACKOFF_CAP * _scheduler_mod._MAX_TASK_RETRIES)
     assert _scheduler_mod._CALL_BUDGET == expect
 
@@ -1242,3 +1251,51 @@ class TestSystemTickUnknownReason:
             assert any("time_of_day" in r.message for r in caplog.records)
         finally:
             await agent.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 单次调用预算：尊重插件自己声明的 request_timeout（S2-G2）
+# ═══════════════════════════════════════════════════════════════════
+
+class _DeclaredTimeoutExecutor:
+    """只回答"这个工具声明了多长预算"的最小 executor（运行时鸭子类型）。"""
+
+    def __init__(self, declared: float | None) -> None:
+        self._declared = declared
+
+    def declared_request_timeout(self, tool_name: str) -> float | None:
+        return self._declared
+
+
+@pytest.mark.service
+class TestPerCallTimeoutBudget:
+    """外层预算必须容得下插件自己声明的 `request_timeout`。
+
+    修前调度器一律 60s，把 desktop/vision **按设计声明**的 120s 硬切在 60s——
+    再叠加"取消被归一为业务结果"（#33b）就表现为"用户取消 + 任务标成功"。
+    """
+
+    @pytest.mark.service
+    def test_declared_budget_is_honoured_up_to_the_ceiling(self):
+        sched = ToolCallDispatcher(
+            tool_executor=_DeclaredTimeoutExecutor(120.0), num_workers=1)
+        assert sched._timeout_for("desktop.file.read") == _scheduler_mod._MAX_TOOL_TIMEOUT  # noqa: SLF001
+
+    @pytest.mark.service
+    def test_no_declaration_keeps_the_default(self):
+        sched = ToolCallDispatcher(
+            tool_executor=_DeclaredTimeoutExecutor(None), num_workers=1)
+        assert sched._timeout_for("web_fetch") == _scheduler_mod._TOOL_TIMEOUT  # noqa: SLF001
+
+    @pytest.mark.service
+    def test_small_declaration_never_shrinks_below_the_default(self):
+        """插件声明 5s 也不能把外层压到 5s——外层还包着校验/审批/信号量。"""
+        sched = ToolCallDispatcher(
+            tool_executor=_DeclaredTimeoutExecutor(5.0), num_workers=1)
+        assert sched._timeout_for("tiny") == _scheduler_mod._TOOL_TIMEOUT  # noqa: SLF001
+
+    @pytest.mark.service
+    def test_absurd_declaration_is_capped(self):
+        sched = ToolCallDispatcher(
+            tool_executor=_DeclaredTimeoutExecutor(9999.0), num_workers=1)
+        assert sched._timeout_for("greedy") == _scheduler_mod._MAX_TOOL_TIMEOUT  # noqa: SLF001

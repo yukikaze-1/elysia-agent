@@ -148,6 +148,39 @@ class TestTimeoutRules:
         bad = budget._check_invariants(budget._scan(tmp_path))
         assert bad and "陈旧登记" in bad[0]
 
+    # ── R4：插件声明的执行预算 ≤ 调度器上界（S2-G2）──
+
+    def _r4_repo(self, tmp_path: Path, declared: str) -> Path:
+        _write(tmp_path, "core/tool_runtime/scheduler.py",
+               "_MAX_PLUGIN_REQUEST_TIMEOUT = 120.0\n")
+        _write(tmp_path, "core/tools/demo/plugin.py",
+               "from Module.tool.safety import SafetyProfile\n\n"
+               f"safety = SafetyProfile(request_timeout={declared})\n")
+        return tmp_path
+
+    def test_r4_over_ceiling_is_red(self, budget, tmp_path):
+        """R4：插件声明超过调度器上界 → 红（这是"设计好的路径被悄悄截断"的拦截点）。"""
+        bad = budget._check_plugin_request_timeouts(
+            budget._scan(self._r4_repo(tmp_path, "300.0")))
+        assert bad and "> 调度器上界" in bad[0], bad
+
+    def test_r4_unresolvable_declaration_is_red(self, budget, tmp_path):
+        """无法静态解析 → 拒答（不许"判不了就放行"）。"""
+        bad = budget._check_plugin_request_timeouts(
+            budget._scan(self._r4_repo(tmp_path, 'float("120")')))
+        assert bad and "静态解析不到" in bad[0], bad
+
+    def test_r4_within_ceiling_passes(self, budget, tmp_path):
+        assert not budget._check_plugin_request_timeouts(
+            budget._scan(self._r4_repo(tmp_path, "120.0")))
+
+    def test_r4_no_declarations_at_all_is_refused(self, budget, tmp_path):
+        """扫描面失效（插件目录改名等）必须拒答——否则 R4 会静默变绿。"""
+        _write(tmp_path, "core/tool_runtime/scheduler.py",
+               "_MAX_PLUGIN_REQUEST_TIMEOUT = 120.0\n")
+        bad = budget._check_plugin_request_timeouts(budget._scan(tmp_path))
+        assert bad and "扫描面失效" in bad[0], bad
+
     def test_r3_unregistered_named_budget_is_red(self, budget, tmp_path, monkeypatch):
         """R3：新的具名预算常量没表态 → 红（这是"忘了写关系"的拦截点）。"""
         root = self._repo(tmp_path, '''

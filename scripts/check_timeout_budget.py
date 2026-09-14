@@ -52,6 +52,7 @@ R3 是这套门禁的关键：R1 与 R2 都只在有人**写下来**之后才生
 from __future__ import annotations
 
 import argparse
+import re
 import ast
 import sys
 from pathlib import Path
@@ -77,8 +78,15 @@ _INVARIANTS: list[tuple[str, str, str]] = [
     ),
     (
         "core/tool_runtime/scheduler.py::_CALL_BUDGET",
+        "core/tool_runtime/scheduler.py::_MAX_TOOL_TIMEOUT",
+        "S2-G2：单调用预算必须 ≥ 单次尝试的**上界**（= 插件可声明的最大预算 + 管道余量）。"
+        "用 60s 下限作基数会让声明 120s 的插件在第 3 次重试中途被整体预算掐断——"
+        "「外层 < 内层」换个位置复发",
+    ),
+    (
+        "core/tool_runtime/scheduler.py::_MAX_TOOL_TIMEOUT",
         "core/tool_runtime/scheduler.py::_TOOL_TIMEOUT",
-        "S3-02：单调用预算必须 > 单次尝试超时（1 次尝试装不下重试）",
+        "S2-G2：单次尝试的上界必须 ≥ 默认下限（否则上限会小于无条件生效的默认值）",
     ),
 ]
 
@@ -95,6 +103,15 @@ _LEAF_BUDGETS: dict[str, str] = {
 
 # `--list` 报告用：这些是"运行期才知道"的预算，静态解析不到，不算违规。
 _UNRESOLVED_NOTE = "运行期值（形参/实例属性/契约字段），静态不可解析——见 --list"
+
+# ── R4：插件声明的执行预算必须 ≤ 调度器容许的上界（S2-G2）──────────────────────
+# 背景：`SafetyProfile.request_timeout` 是**插件自己声明的**单次执行预算，而调度器的
+# 单次尝试上界是 `_MAX_TOOL_TIMEOUT`。两者是"两套独立声明、无人校验大小关系"的典型
+# ——desktop/vision 按设计声明 120s（≥ 桥超时），而调度器一律 60s 硬切，设计的路径
+# 在 60s 被悄悄截断。**R1–R3 都看不见它**：120 是经 `SafetyProfile(request_timeout=…)`
+# **字段**传进管道的，不是"具名常量直接当 timeout 实参"，所以 R3 的判据覆盖不到。
+_CEILING_REF = "core/tool_runtime/scheduler.py::_MAX_PLUGIN_REQUEST_TIMEOUT"
+_PLUGIN_RELPATH = re.compile(r"^core/tools/[^/]+/plugin\.py$")
 
 
 # ── AST 工具 ──────────────────────────────────────────────────────────────────
@@ -378,6 +395,49 @@ def _check_outer_registered(mods: dict[str, _Module]) -> tuple[list[str], list[s
     return bad, report
 
 
+def _check_plugin_request_timeouts(mods: dict[str, _Module]) -> list[str]:
+    """R4：每个插件的 `SafetyProfile(request_timeout=…)` 必须 ≤ 调度器上界。
+
+    值必须**静态可解析**（字面量或本文件内的数值常量）。解析不了就报违规——
+    在这里"无法判定"等于"可能已悄悄超过上界"，**拒答**而不是放行
+    （CLAUDE.md「门禁的三种假绿」③）。
+    """
+    ceiling = _resolve_ref(_CEILING_REF, mods)
+    if ceiling is None:
+        return [f"R4 无法判定：{_CEILING_REF} 解析不到——调度器的上界常量被改名或删除？"
+                f"（拒答，不报绿）"]
+    bad: list[str] = []
+    seen = 0
+    for rel, mod in sorted(mods.items()):
+        if not _PLUGIN_RELPATH.match(rel):
+            continue
+        for node in ast.walk(mod.tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Name) and func.id == "SafetyProfile"):
+                continue
+            for kw in node.keywords:
+                if kw.arg != "request_timeout":
+                    continue
+                seen += 1
+                value = _const_eval(kw.value, mod.consts)
+                if value is None:
+                    bad.append(f"R4 [{rel}:{node.lineno}] `request_timeout` 静态解析不到"
+                               f"（拒答）——改用字面量或本文件的数值常量，"
+                               f"否则无法校验它是否超过上界 {ceiling:g}s")
+                elif value > ceiling:
+                    bad.append(f"R4 [{rel}:{node.lineno}] 插件声明 request_timeout="
+                               f"{value:g}s > 调度器上界 {ceiling:g}s——"
+                               f"要么在 core/tool_runtime/scheduler.py 抬"
+                               f"`_MAX_PLUGIN_REQUEST_TIMEOUT`（并同步 _CALL_BUDGET/"
+                               f"_DISPATCH_TIMEOUT），要么调小插件预算")
+    if seen == 0:
+        bad.append("R4 未发现任何 `SafetyProfile(request_timeout=…)` 声明——"
+                   "扫描面失效（插件目录改名？），拒答而不是报绿")
+    return bad
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI 入口：违规 → 退出码 1。"""
     parser = argparse.ArgumentParser(description="超时预算门禁（#47 ①）")
@@ -390,7 +450,8 @@ def main(argv: list[str] | None = None) -> int:
     lexical = _check_lexical(mods)
     invariants = _check_invariants(mods)
     outer_bad, report = _check_outer_registered(mods)
-    bad = lexical + invariants + outer_bad
+    plugin_bad = _check_plugin_request_timeouts(mods)
+    bad = lexical + invariants + outer_bad + plugin_bad
 
     if args.list:
         print("具名预算盘点：")
@@ -412,7 +473,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"超时预算门禁通过：R1 词法嵌套递减 / R2 {len(_INVARIANTS)} 条登记不变量 / "
-          f"R3 具名预算全部表态（叶子 {len(_LEAF_BUDGETS)} 条）")
+          f"R3 具名预算全部表态（叶子 {len(_LEAF_BUDGETS)} 条）/ "
+          f"R4 插件声明预算 ≤ {_resolve_ref(_CEILING_REF, mods)}s")
     return 0
 
 

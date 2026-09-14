@@ -267,6 +267,10 @@ class ToolAdapter:
     # 门面**不做转发之外的加工**，以保证行为逐字节不变（评估 §5 批次 A 第 5 条：
     # 不改变任何 wire 或运行时行为）。
 
+    def declared_request_timeout(self, tool_name: str) -> float | None:
+        """插件声明的单次执行预算（透传 manager；调度器预算用，S2-G2）。"""
+        return self._manager.declared_request_timeout(tool_name)
+
     @property
     def tool_names(self) -> list[str]:
         """已注册工具名列表。

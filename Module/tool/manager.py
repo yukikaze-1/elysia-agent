@@ -509,6 +509,19 @@ class ToolManager:
             merged |= bucket
         return merged
 
+    def declared_request_timeout(self, tool_name: str) -> float | None:
+        """插件自己声明的单次执行预算（`SafetyProfile.request_timeout`）；无则 None。
+
+        调度器据此**尊重插件声明的预算**（S2-G2：desktop/vision 声明 120s ≥ 桥超时，
+        而外层一律 60s 会硬切掉设计好的路径）。容许的上界
+        （`scheduler._MAX_PLUGIN_REQUEST_TIMEOUT`）由 `make check-timeouts` 的 R4
+        与本文件的实际声明交叉校验——插件声明变大而调度器没跟上就是红灯。
+        """
+        plugin = self._plugins.get(tool_name)
+        safety = getattr(plugin, "safety", None)
+        declared = getattr(safety, "request_timeout", None)
+        return float(declared) if isinstance(declared, (int, float)) else None
+
     async def cancel_all(self, *, drain_timeout: float = 0.0) -> int:
         """取消所有 in-flight 工具执行任务（按 call_id 全量，C2/P1-13）。
 
