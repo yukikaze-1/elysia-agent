@@ -36,10 +36,23 @@ permissions:
 #     runner 上读取宿主 .env / API key / 执行任意代码。
 #   - push 到 main（受信 ref）才允许 self-hosted + 宿主 Elysia env + 真实 .env。
 #   - 策略由 scripts/check_ci_isolation.py 静态强制（PR 可达 job 禁止
-#     self-hosted、禁止 /home/.../.env 引用、禁止 if 守卫引用未声明事件）；
+#     self-hosted、禁止 /home/.../.env 引用、禁止 if 守卫引用未声明事件、
+#     runs-on 必须可静态判定为 GitHub-hosted、self-hosted 清理必须密闭且受守卫）；
 #     违规即 CI 红。
 #   - 真实凭据外部 E2E 已移出本 workflow（见下），只在 `.github/workflows/nightly.yml`
 #     的受信手动触发里跑。
+#
+# 2026-09-14（Frontend 迁移批次）：`frontend` job 拆成 push / PR 两个——
+#   `frontend`    push → `[self-hosted, Linux, X64]`（本批次迁移目标）
+#   `frontend-pr` PR   → `ubuntu-latest`（**安全边界不变**，见该 job 上方说明）
+#   触发原因是账单（与 elysia-frontend 同源）：GitHub 账号额度/账单被卡后，托管
+#   runner 上的 job 根本不会被分发，本仓 Frontend job 因此完全无法启动
+#   （对端实测 run 34688140376：6 个托管 job 在 0～3 秒内失败，注解
+#   "The job was not started because recent account payments have failed or your
+#   spending limit needs to be increased"；自建 runner 不受影响）。
+#   **注意 PR 侧仍托管**：宿主上不存在隔离/临时/untrusted 的 PR runner，把 PR job
+#   放到持久 trusted runner 上等于让任意 PR 通过 `npm ci` 的 postinstall 脚本在
+#   宿主用户 yomu 下执行任意代码——这是明确拒绝的取舍，不是遗漏。
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -166,7 +179,17 @@ jobs:
               echo "FATAL: GITHUB_WORKSPACE 解析为 / ——拒绝清理"
               exit 1
             fi
-            find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+            # fail-closed：**显式**检查清理的退出码。实测 `find … -exec rm -rf -- {} +`
+            # 会把 rm 的失败传播成自己的非零退出（rm 返回 1 → find 退出 1），所以这一条
+            # 真能拦住「清理没做完」。不检查的话失败被静默忽略、脚本继续在**未清空的
+            # 持久 workspace** 上 fetch+checkout——而下面的 `Load .env` 明确依赖
+            # 「workspace 已清空」（残留的宿主 .env 会跨 job 泄漏）。
+            # 刻意不用 `set -e`：那会改变本 retry loop 的控制流（`git remote add` 撞已有
+            # origin、`git fetch` 网络抖动都是「允许失败」的命令；详见 nightly 同段注释）。
+            if ! find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; then
+              echo "FATAL: workspace 清理失败（$WS 未清空）——拒绝在残留目录上继续"
+              exit 1
+            fi
             if git init -q . &&
                (git remote add origin "$REPO_URL" || git remote set-url origin "$REPO_URL") &&
                git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
@@ -225,11 +248,129 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 
+  # ---- Frontend：唯一一处 push / PR 必须分流的 job（2026-09-14）---------------
+  #
+  # 为什么必须拆成两个 job 而不是一个加 `if:`：Frontend 是**两条路径都需要**的
+  # 检查，而两条路径的 runner 归属相反——
+  #   push（受信 ref）→ self-hosted：摆脱账单导致的「job 无法启动」；
+  #   PR（不受信）    → GitHub-hosted：`npm ci` 会执行依赖包的 postinstall 脚本，
+  #                     在持久 trusted runner 上等价于让 PR 作者以宿主用户 yomu
+  #                     执行任意代码。
+  # 单个 job 无法同时满足（`runs-on` 不支持按事件静态分流，而表达式形式的
+  # `runs-on` 恰恰是 scripts/check_ci_isolation.py 现在会**拒答**的形态）。
+  # 所以：两个 job、同一套 npm 步骤，`scripts/check_ci_isolation.py` 机械保证
+  # 「PR 侧永不 self-hosted」。
+  #
+  # 命名（刻意，勿"顺手统一"）：**PR 侧沿用原名** `Frontend (vue-tsc + build)`。
+  # 分支保护的 required status check 是按 job 名匹配的，且只在 PR 上评估——
+  # 把名字挪到 push 侧会让已配置的 required check 永远等不到上报，PR 卡死。
+  # push 侧因此取带后缀的新名。
+  #
+  # 为什么 push 侧不用 `actions/checkout` + `actions/setup-node`：
+  #   ① checkout 必须密闭（self-hosted workspace 跨 job 持久），复用 backend job
+  #      同一套清理方案；② 宿主已用 nvm 预装 Node — 见下面 "Pin Node" 步骤。
   frontend:
+    name: Frontend (vue-tsc + build, self-hosted)
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout (retry x4, hermetic clean)
+        # 与 backend job **同一套** checkout/清理方案（不另造第二套 shell）：
+        # 密闭清理含 dotfile/dotdir，写法理由见 backend job 里对该写法的详细注释。
+        shell: bash
+        env:
+          REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+        run: |
+          set -uo pipefail
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            echo "== checkout attempt ${attempt}/4 =="
+            WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE 未设置——拒绝在未知目录下清理}"
+            if [ "$WS" = "/" ]; then
+              echo "FATAL: GITHUB_WORKSPACE 解析为 / ——拒绝清理"
+              exit 1
+            fi
+            # fail-closed：显式检查清理退出码——理由与写法见 backend job 同段注释
+            # （含「为什么不用 `set -e`」）。清理没做完就继续 = 在未清空的工作区上跑 CI。
+            if ! find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; then
+              echo "FATAL: workspace 清理失败（$WS 未清空）——拒绝在残留目录上继续"
+              exit 1
+            fi
+            if git init -q . &&
+               (git remote add origin "$REPO_URL" || git remote set-url origin "$REPO_URL") &&
+               git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
+               git checkout --quiet --force refs/remotes/origin/target; then
+              echo "checkout succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "checkout failed on attempt ${attempt}"
+            if [ "$attempt" -ge 4 ]; then
+              echo "FATAL: checkout failed after 4 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+      # 本 job **刻意不加载 .env**：前端构建不需要任何凭据。
+      # 实测依据（本批次）：frontend/ 全目录无 `process.env` / `import.meta.env` /
+      # `VITE_*` 引用，vite.config.ts 的 proxy 目标与 base 全是字面量——所以
+      # `npm ci && npm run build` 在零宿主 secret 下可完整复现。少一个 .env 就少一条
+      # 凭据外泄路径（也是本 job 与 backend job 唯一有意义的差别）。
+      - name: Pin Node (用 runner 预装的 nvm 版本，不下载)
+        # 宿主用 nvm 管理 Node。runner 宿主进程的 PATH 由 `/home/yomu/actions-runner/.path`
+        # 决定，其首项是 **v26.1.0**（`nvm alias default` = 26，Current 线）；而本仓
+        # 前端工具链（Vite 8 / vue-tsc 3 / TS 6）与姊妹仓 elysia-frontend 的 `.nvmrc`
+        # 都钉在 **22.23.0**（LTS 线）——宿主已预装（`/home/yomu/.nvm/versions/node/`）。
+        # 所以这里只把它的 bin 前置到 PATH：**不引入 actions/setup-node、不下载**——
+        # Node/npm 已正确预装，重复安装只会每次 run 多一次网络往返与一个可失败的环节
+        # （build 实测（清空 node_modules 后）：22.23.0 = npm ci 2.6s + build 5.4s
+        # ≈ 8s；26.1.0 = 2.1s + 5.3s ≈ 7.4s，两者都能过——选 22 是为了拿 LTS 线 +
+        # 与前端仓同一个版本，让结果可复现）。
+        shell: bash
+        run: |
+          NODE_BIN="/home/yomu/.nvm/versions/node/v22.23.0/bin"
+          if [ ! -x "$NODE_BIN/node" ]; then
+            echo "FATAL: 期望预装的 Node 不在 $NODE_BIN/node"
+            echo "宿主 nvm 现有版本：$(ls -1 /home/yomu/.nvm/versions/node 2>/dev/null | tr '\n' ' ')"
+            echo "修复：在宿主 nvm 装回 22.23.0，或同步更新本步骤与本注释里的版本号"
+            exit 1
+          fi
+          echo "$NODE_BIN" >> "$GITHUB_PATH"
+      - name: Verify Node/npm (fail fast)
+        # runner 的 Node 由 nvm 管理，**会漂移**（`nvm alias default` 一改、或上面
+        # 那个版本被 uninstall，实际生效的就是另一个运行时）。所以把**实际生效**的
+        # 路径与版本显式打出来并断言主版本——漂移要红着停下，不能让构建结果悄悄
+        # 换一个运行时还报绿。
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "node: $(command -v node) $(node --version)"
+          echo "npm:  $(command -v npm) $(npm --version)"
+          case "$(node --version)" in
+            v22.*) ;;
+            *) echo "FATAL: 期望 Node v22.x，实际 $(node --version)"; exit 1 ;;
+          esac
+      - name: Install frontend deps
+        # 保持与迁移前**逐字等价**：仍是 `npm ci`（干净安装、严格按 package-lock.json）。
+        # 不改成 `npm install`、不复用上一轮残留的 node_modules——那会让 CI 结果
+        # 依赖 workspace 里恰好留着什么，不可复现。
+        run: cd frontend && npm ci
+      - name: Frontend type-check + build
+        # `npm run build` = `vue-tsc --noEmit && vite build`（见 frontend/package.json）：
+        # 类型检查与构建一条命令，语义与迁移前完全一致。不新增 gate、不跳过 typecheck。
+        run: cd frontend && npm run build
+
+  frontend-pr:
+    # PR 可达 job —— **必须**保持 GitHub-hosted（文件头信任边界）。步骤与 push 侧
+    # 逐字等价（checkout + setup-node 20 + npm ci + build）：迁移前后 PR 侧**行为
+    # 完全不变**，不是"降级成更弱的检查"。
+    # 该路径目前仍会因账单起不来（与迁移前一致）；要把 PR 侧也自建化，必须先有
+    # 独立的隔离 runner（ephemeral / 容器 / VM）——判据与完整理由见
+    # `scripts/check_ci_isolation.py` 的 docstring（第四条同时禁止用表达式
+    # `runs-on` 绕过静态判定，所以"按事件动态选 runner"这条路是故意堵死的）。
     name: Frontend (vue-tsc + build)
-    # 无需宿主 secret / self-hosted——GitHub-hosted 即可安全构建 v1 UI。
-    # 刻意**不加** `if:`：本 job 是 PR 可达的，加了 push-only guard 反而会让
-    # scripts/check_ci_isolation.py 把它当作受信 job 跳过检查（信任边界不能靠"跳过"）。
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

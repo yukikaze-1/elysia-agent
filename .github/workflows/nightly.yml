@@ -64,7 +64,13 @@ jobs:
               echo "FATAL: GITHUB_WORKSPACE 解析为 / ——拒绝清理"
               exit 1
             fi
-            find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+            # fail-closed：显式检查清理退出码——理由见 ci.yml backend job 同段注释。
+            # 这里尤其不能靠 `set -e`：retry loop 里 `git remote add`（撞已有 origin）与
+            # `git fetch`（网络抖动）都是允许失败的命令，`set -e` 会直接终止脚本。
+            if ! find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; then
+              echo "FATAL: workspace 清理失败（$WS 未清空）——拒绝在残留目录上继续"
+              exit 1
+            fi
             if git init -q . &&
                (git remote add origin "$REPO_URL" || git remote set-url origin "$REPO_URL") &&
                git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
@@ -118,7 +124,13 @@ jobs:
               echo "FATAL: GITHUB_WORKSPACE 解析为 / ——拒绝清理"
               exit 1
             fi
-            find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+            # fail-closed：显式检查清理退出码——理由见 ci.yml backend job 同段注释。
+            # 这里尤其不能靠 `set -e`：retry loop 里 `git remote add`（撞已有 origin）与
+            # `git fetch`（网络抖动）都是允许失败的命令，`set -e` 会直接终止脚本。
+            if ! find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; then
+              echo "FATAL: workspace 清理失败（$WS 未清空）——拒绝在残留目录上继续"
+              exit 1
+            fi
             if git init -q . &&
                (git remote add origin "$REPO_URL" || git remote set-url origin "$REPO_URL") &&
                git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&

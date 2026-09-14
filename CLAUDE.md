@@ -56,7 +56,9 @@ make pyright
 make check-arch
 # 或: python scripts/check_architecture.py [--list]
 
-# CI 信任边界门禁（PR 可达 job 禁 self-hosted / 禁宿主 .env 路径 / 禁死 job；默认扫全部 workflow）
+# CI 信任边界门禁（PR 可达 job 禁 self-hosted / 禁宿主 .env 路径 / 禁死 job /
+# 禁表达式 runs-on（无法静态判定就拒答）/ self-hosted 清理必须密闭、受守卫、
+# 且 fail-closed（显式检查清理退出码，`set -e` 不算）；默认扫全部 workflow）
 make check-ci-isolation
 ```
 
