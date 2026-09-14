@@ -30,6 +30,20 @@ def _character_event_kwargs(ctx: Any) -> dict[str, Any]:
     }
 
 
+# ── 发送预算（S2-H1）────────────────────────────────────────────────────────
+# 单通道单帧的写预算。**必须有界**：`send_json` 直连 aiohttp，客户端不读数据时
+# TCP 背压会让它**永久挂起**——而 `_broadcast` 是 LLM delta / TTS 音频 / 终结帧的
+# 必经之路，一个坏客户端会把**所有**连接（含健康客户端）的帧堵在同一队首：
+# `finish_turn` 不执行 → FSM 停在 SPEAKING 并抑制 VAD 打断。报告实测：裸 socket
+# 客户端握手后不读，`send_json` 3s 未返回。aiohttp 的 heartbeat/receive_timeout
+# 只清连接，**不会**让这个 await 返回。
+_CHANNEL_SEND_TIMEOUT = 5.0
+
+# 连续多少次超预算后摘除该通道。用**连续**计数（成功即清零），阈值 3 是为了不误杀
+# "偶发慢一帧"的客户端；越过它说明写端已无救，留着只会让之后**每一帧**再罚一次预算。
+_CHANNEL_FAILURE_LIMIT = 3
+
+
 class OutputManager:
     """输出管理器 — 多通道广播 + capability 过滤 + 流式协调。"""
 
@@ -41,6 +55,9 @@ class OutputManager:
         """
         self._logger = logger or get_caller_logger()
         self._channels: list[OutputChannel] = []
+        # S2-H1：通道 → **连续**超预算次数（成功即清零）。以通道对象为键；
+        # `remove_channel` 会同步清理，故不会随连接生命周期泄漏。
+        self._channel_failures: dict[OutputChannel, int] = {}
 
     # ---- Channel management ----
 
@@ -53,12 +70,17 @@ class OutputManager:
         self._channels.append(channel)
 
     def remove_channel(self, channel: OutputChannel) -> None:
-        """移除输出通道。
+        """移除输出通道（**幂等**）。
+
+        幂等是 S2-H1 摘除机制的前提：通道可能已被 `_evict_unresponsive` 摘掉，
+        连接层随后照自己的生命周期再移除一次——那不该抛 ValueError。
 
         Args:
             channel: 要移除的输出通道实例。
         """
-        self._channels.remove(channel)
+        if channel in self._channels:
+            self._channels.remove(channel)
+        self._channel_failures.pop(channel, None)
 
     @property
     def channels(self) -> list[OutputChannel]:
@@ -86,7 +108,12 @@ class OutputManager:
         Returns:
             过滤后的通道列表。
         """
-        result = channels if channels is not None else self._channels
+        # 恒返回**新列表**（S2-H1 顺带修正）：此前 `channels=None` 时直接把
+        # `self._channels` 本体交出去，调用方在遍历/等待期间一旦发生增删（例如
+        # `_evict_unresponsive` 摘除通道），它手里那份"快照"会跟着变——`_broadcast`
+        # 就曾因此拿到"结果数 > 目标数"（被 `zip(strict=True)` 当场抓住）。
+        # `.channels` 属性早已承诺"返回副本"，这里补齐同一保证。
+        result = list(channels) if channels is not None else list(self._channels)
         if capability is not None:
             result = [c for c in result if capability in c.capabilities]
         return result
@@ -106,14 +133,60 @@ class OutputManager:
         if not targets:
             return
         results = await asyncio.gather(
-            *(getattr(c, method)(*args, **kwargs) for c in targets),
+            *(self._send_within_budget(c, method, args, kwargs) for c in targets),
             return_exceptions=True,
         )
-        for c, result in zip(targets, results):
+        for c, result in zip(targets, results, strict=True):
             if isinstance(result, Exception):
                 self._logger.warning(
                     "broadcast %s to %s failed: %s", method, type(c).__name__, result
                 )
+
+    async def _send_within_budget(
+        self, channel: OutputChannel, method: str, args: tuple, kwargs: dict,
+    ) -> None:
+        """在发送预算内调用通道方法；超时按"该通道故障"处理（S2-H1）。
+
+        **与既有的异常隔离正交**：异常仍原样抛出、交给 `gather(return_exceptions=True)`
+        只记 warning（"单连接故障不应中断广播"不变）；这里补的是**挂起**——挂起的 await
+        不是异常，`return_exceptions=True` 拦不住它。
+
+        权衡（有意）：超时会 cancel 掉那次 `send_json`，理论上可能留下半写帧——所以
+        超时**不当作**"再试一次就好"，而是计数并在连续 `_CHANNEL_FAILURE_LIMIT` 次后
+        摘除该通道；连接层重连时会重新注册一个新通道对象。
+        """
+        try:
+            await asyncio.wait_for(
+                getattr(channel, method)(*args, **kwargs),
+                timeout=_CHANNEL_SEND_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            failures = self._channel_failures.get(channel, 0) + 1
+            self._channel_failures[channel] = failures
+            self._logger.warning(
+                "broadcast %s to %s 超预算（>%.1fs，连续第 %d 次）——该通道可能不读数据",
+                method, type(channel).__name__, _CHANNEL_SEND_TIMEOUT, failures,
+            )
+            if failures >= _CHANNEL_FAILURE_LIMIT:
+                self._evict_unresponsive(channel, method)
+        else:
+            self._channel_failures.pop(channel, None)   # "连续"的语义：成功即清零
+
+    def _evict_unresponsive(self, channel: OutputChannel, method: str) -> None:
+        """摘除连续超预算的通道（S2-H1）。
+
+        摘除而非"永久标记"：连接层重连时会**重新注册**新的通道对象，这比在管理器里
+        维护死连接名单更简单、也不会泄漏。`remove_channel` 已幂等，故连接层稍后再
+        来移除同一个通道是安全的。
+        """
+        self._channel_failures.pop(channel, None)
+        if channel in self._channels:
+            self._channels.remove(channel)
+            self._logger.error(
+                "已摘除连续 %d 次发送超预算的通道 %s（最后失败于 %s）——"
+                "它不再接收任何帧；客户端重连会重新注册",
+                _CHANNEL_FAILURE_LIMIT, type(channel).__name__, method,
+            )
 
     # ---- Public API ----
 
