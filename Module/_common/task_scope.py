@@ -47,6 +47,26 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def cancellation_is_external() -> bool:
+    """当前任务是否收到过取消请求——即取消来自**外部**，不是它自己收尾。
+
+    两种 `CancelledError` 必须区分（RC-10 的判据单源，`Module/tool/safety.py`
+    与 `Module/tool/manager.py` 都用它，勿各写一份）：
+
+    - 目标任务自身被取消（正常收尾）→ False，可当成业务结果；
+    - **调用方**自己被取消（外层 `wait_for` 超时 / 上层 stop）→ True，必须上抛。
+
+    判据是「当前任务是否收到过取消请求」：`wait_for` 只有在自己超时触发时才
+    `uncancel`，外来取消会原样上抛且 `cancelling()` 仍 > 0。**只认
+    `task.cancelled()` 是错的**——外取消同样会先把目标任务取消掉。
+
+    > 吞掉外部取消的后果不是"少抛一个异常"：`Timeout.__aexit__` 只在异常仍在
+    > 传播时才改抛 `TimeoutError`，于是超时被静默篡改成业务结果、重试分支被跳过。
+    """
+    current = asyncio.current_task()
+    return current is not None and current.cancelling() > 0
+
 #: ``drain()`` / ``aclose()`` 未显式给 timeout 时使用的默认总预算（秒）
 DEFAULT_DRAIN_TIMEOUT = 5.0
 
@@ -300,14 +320,10 @@ async def cancel_and_drain(
     try:
         await asyncio.wait_for(task, timeout=timeout)
     except asyncio.CancelledError:
-        # CancelledError 有两个来源，必须区分：
+        # CancelledError 有两个来源，必须区分（判据见 cancellation_is_external）：
         #   - 目标任务自身被取消（正常收尾）→ 返回 True；
         #   - **调用方**自己被取消（如 Agent.stop() 中途被取消）→ 必须上抛。
-        # 判据是「当前任务是否收到过取消请求」：wait_for 只有在自己的超时
-        # 触发时才会 uncancel，外来取消会原样上抛且 cancelling() 仍 > 0。
-        # 只认 task.cancelled() 是错的——外取消同样会先把目标任务取消掉。
-        current = asyncio.current_task()
-        if current is not None and current.cancelling() > 0:
+        if cancellation_is_external():
             raise
         return True
     except asyncio.TimeoutError:

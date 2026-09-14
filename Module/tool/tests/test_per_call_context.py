@@ -8,6 +8,7 @@ import pytest
 
 from Module.tool.manager import ToolManager
 from Module.tool.protocol import (
+    ErrorType,
     PluginContext,
     ToolContext,
     ToolPlugin,
@@ -115,9 +116,14 @@ class TestCallIdTaskTracking:
         assert len(tm._tasks) == 2  # noqa: SLF001
 
         await tm.cancel_all()
-        # 两个任务都被取消（safety 将 CancelledError 转为「用户取消」失败结果）
+        # 两个任务都被取消。**归一为结果的位置是 manager（子任务的拥有者）**，
+        # 不是 safety——后者是子任务，吞掉外部取消会让外层 wait_for 失去超时语义
+        # （S2-R2-1）。这里的语义是"调用方没被取消、只是我 cancel 了自己的子任务"。
         await asyncio.wait([t1, t2], timeout=1.0)
-        assert t1.result().success is False
+        for task in (t1, t2):
+            result = task.result()
+            assert result.success is False
+            assert result.error_type is ErrorType.CANCELLED
         assert t2.result().success is False
         assert "取消" in (t1.result().error or "")
         assert tm._tasks == {}  # noqa: SLF001

@@ -14,6 +14,7 @@ from typing import Any, AsyncIterator, Callable
 
 import yaml
 
+from Module._common.task_scope import cancellation_is_external
 from Module.output.manager import OutputManager
 from Module.tool.capability import Capability
 from Module.tool.protocol import (
@@ -256,6 +257,20 @@ class ToolManager:
         self._inflight.setdefault(name, set()).add(task)  # 供 reload 排空快照
         try:
             result = await task
+            self._record(result)
+            return result
+        except asyncio.CancelledError:
+            # S2-R2-1 的**归属划分**：本方法是这个执行任务的拥有者，取消有两种来源——
+            #   ① 我自己 cancel 掉的子任务（`cancel_all`/`cancel`，调用方并未被取消）
+            #      → 工具调用被取消是**正常结局**，归一为 CANCELLED 结果；
+            #   ② 调用方自身被取消（外层 `wait_for` 超时 / turn 收尾）→ **必须上抛**：
+            #      吞掉它会让 `wait_for` 失去超时语义（超时被伪报成"用户取消"、
+            #      `CANCELLED.is_retryable is False` 跳过重试、任务还会被标成成功）。
+            # 判据与 `Module/_common/task_scope.py::cancellation_is_external` 单源。
+            if cancellation_is_external():
+                raise
+            result = ToolResult.fail(
+                name=name, error="用户取消", error_type=ErrorType.CANCELLED)
             self._record(result)
             return result
         finally:

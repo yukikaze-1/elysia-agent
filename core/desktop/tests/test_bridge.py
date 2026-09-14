@@ -682,3 +682,54 @@ def test_map_terminal_nonempty_output_keeps_output():
                             output="o", executionSummary="s")
     _s, _rf, _e, tool_result = DesktopToolBridge._map_terminal(msg)
     assert tool_result.content == "o"
+
+
+# ============================================================================
+# 取消路径的登记清理（#33c / S2-R2-2）
+# ============================================================================
+
+class TestCancellationCleanup:
+    """取消（含调度器外层超时 cancel）也必须释放 `_dedup`/`_pending`。
+
+    修前：登记只在成功/超时/投递失败三条路径上清理，且**没有 `finally`**——取消会让
+    `CancelledError` 从 `await self._await_with_timeout(future)` 那一帧抛出、跳过全部
+    清理；而那个 future 被 `asyncio.shield` 保护（既不取消、也不 resolve）。
+    后果不止"泄漏一个对象"：同参重试会**命中 `_dedup` 并复用那个永不落定的
+    future**，于是不再向 Electron 投递任何 `tool.request`，直到进程重启。
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancel_releases_registrations_and_marks_repo(self):
+        repo, bridge, frames = _make_bridge(timeout=120.0)
+        task = asyncio.create_task(bridge.request_and_wait(call=_call()))
+        await _until(lambda: len(frames) == 1)
+        call_id = frames[0]["callId"]
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert bridge._pending == {}, "取消后不得残留 pending future"  # noqa: SLF001
+        assert bridge._dedup == {}, "取消后不得残留 dedup 键"          # noqa: SLF001
+        # repo 的 cancelled 标记是**尽力而为**（shield 出去、不等结果）
+        await _until(lambda: repo.calls[call_id]["status"] == "cancelled")
+
+    @pytest.mark.asyncio
+    async def test_retry_after_cancel_redelivers(self):
+        """核心后果：取消后同参重试必须**重新投递**，而不是复用陈旧 future。"""
+        _repo, bridge, frames = _make_bridge(timeout=120.0)
+        call = _call()
+
+        first = asyncio.create_task(bridge.request_and_wait(call=call))
+        await _until(lambda: len(frames) == 1)
+        first_call_id = frames[0]["callId"]
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
+        retry = asyncio.create_task(bridge.request_and_wait(call=call))
+        await _until(lambda: len(frames) == 2)   # 修前：停在 1，永久等待
+        assert frames[1]["callId"] != first_call_id, "重试必须是新 call（重新投递）"
+        retry.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await retry

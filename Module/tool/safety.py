@@ -31,6 +31,7 @@ def sanitize_session_id(session_id: str) -> str:
 
 from pydantic import ValidationError
 
+from Module._common.task_scope import cancellation_is_external
 from Module.tool.capability import Capability
 from Module.tool.protocol import ToolProgress
 
@@ -519,6 +520,12 @@ class SafetyPipeline:
                     error_type=ErrorType.TIMEOUT,
                 ))
             except asyncio.CancelledError:
+                if cancellation_is_external():
+                    # S2-R2-1：**不得**把外部取消归一为业务结果——吞掉它会让外层
+                    # `wait_for` 失去超时语义（见 _cancellation_is_external 注释），
+                    # 把"超时"伪报成"用户取消"、跳过重试、并把任务标成成功。
+                    raise
+                # 插件内部自取消（非本任务被取消）才是真正的业务结果
                 return _finish(ToolResult.fail(
                     name=name, error="用户取消",
                     error_type=ErrorType.CANCELLED,
@@ -629,6 +636,11 @@ class SafetyPipeline:
                     await gen.aclose()
                 except Exception:
                     pass  # aclose() 失败不应阻止返回取消结果
+            if cancellation_is_external():
+                # 与 execute() 同一口径（S2-R2-1）：外部取消必须原样上抛。
+                # 本方法当前**无生产调用方**（见报告"工具系统的重要正面结论"），
+                # 但两条路径的取消语义不得分叉。
+                raise
             yield ToolResult.fail(name=name, error="用户取消", error_type=ErrorType.CANCELLED)
         except Exception as e:
             yield ToolResult.fail(name=name, error=str(e), error_type=ErrorType.TOOL_ERROR)

@@ -36,6 +36,7 @@ wire 帧经契约层 `ToolRequestMessage`/`ToolStatusMessage`（frontend_contrac
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -191,79 +192,121 @@ class DesktopToolBridge:
         arguments_hash = call.get("arguments_hash") or ""
         key = self._dedup_key(tool_name, arguments_hash)
         lock = self._locks.setdefault(key, asyncio.Lock())
+        # #33c / S2-R2-2：本次调用在 `_dedup`/`_pending` 里登记的 callId
+        # （复用分支登记的是**已有** callId；新建分支登记新 callId）。
+        # 退出时按 owner 语义释放——**取消路径也必须释放**：调度器外层超时会 cancel
+        # 本协程，而 `_await_with_timeout` 用 `shield` 保护 future（既不取消它、也不
+        # resolve），陈旧登记于是永久留存 → 用户"再试一次"命中 `_dedup`、复用那个
+        # 永不落定的 future，**不再向 Electron 投递任何 tool.request**。
+        owner_id: str | None = None
 
-        async with lock:
-            # ① 幂等去重（锁内完成）：pending 命中复用 callId，不二次投递
-            existing_id = self._dedup.get(key)
-            if existing_id is not None:
-                existing = await self._repo.get(existing_id)
-                reuse_future = self._pending.get(existing_id)
-                if (existing is not None
-                        and is_active_desktop_call_state(existing.get("status"))
-                        and reuse_future is not None):
-                    # 复用原 future（锁内 await——同参并发串行化为一次投递）
-                    result = await self._await_with_timeout(reuse_future)
-                    if result is None:
-                        # 超时：清理登记 + mark expired（幂等——首方可能已标）
+        try:
+            async with lock:
+                # ① 幂等去重（锁内完成）：pending 命中复用 callId，不二次投递
+                existing_id = self._dedup.get(key)
+                if existing_id is not None:
+                    existing = await self._repo.get(existing_id)
+                    reuse_future = self._pending.get(existing_id)
+                    if (existing is not None
+                            and is_active_desktop_call_state(existing.get("status"))
+                            and reuse_future is not None):
+                        owner_id = existing_id
+                        # 复用原 future（锁内 await——同参并发串行化为一次投递）
+                        result = await self._await_with_timeout(reuse_future)
+                        if result is None:
+                            # 超时：清理登记 + mark expired（幂等——首方可能已标）
+                            self._pending.pop(existing_id, None)
+                            self._dedup.pop(key, None)
+                            await self._repo.mark(existing_id, status=STATUS_EXPIRED)
+                            return self._timeout_result(tool_name)
                         self._pending.pop(existing_id, None)
                         self._dedup.pop(key, None)
-                        await self._repo.mark(existing_id, status=STATUS_EXPIRED)
-                        return self._timeout_result(tool_name)
-                    self._pending.pop(existing_id, None)
+                        return result
+                    # 已终态/offline（或 future 异常缺失）：不参与去重，清除后按新调用处理
                     self._dedup.pop(key, None)
-                    return result
-                # 已终态/offline（或 future 异常缺失）：不参与去重，清除后按新调用处理
-                self._dedup.pop(key, None)
 
-            # ② 锁内建 call + repo.upsert（pending, expires_at=now+timeout）+ _dedup 登记
-            call_id = "call_" + uuid.uuid4().hex[:12]
-            now = now_iso()
-            doc = {
-                **call,
-                "call_id": call_id,
-                "status": STATUS_PENDING,
-                "target_connection": self._connection_id,
-                "created_at": now,
-                "expires_at": self._expires_iso(now, self._timeout),
-                "updated_at": now,
-                "result": None,
-                "error": None,
-            }
-            await self._repo.upsert(doc)
-            self._dedup[key] = call_id
-            future: asyncio.Future = asyncio.get_running_loop().create_future()
+                # ② 锁内建 call + repo.upsert（pending, expires_at=now+timeout）+ _dedup 登记
+                call_id = "call_" + uuid.uuid4().hex[:12]
+                now = now_iso()
+                doc = {
+                    **call,
+                    "call_id": call_id,
+                    "status": STATUS_PENDING,
+                    "target_connection": self._connection_id,
+                    "created_at": now,
+                    "expires_at": self._expires_iso(now, self._timeout),
+                    "updated_at": now,
+                    "result": None,
+                    "error": None,
+                }
+                await self._repo.upsert(doc)
+                self._dedup[key] = call_id
+                owner_id = call_id
+                future: asyncio.Future = asyncio.get_running_loop().create_future()
 
-            # ③ 先登记 future 再投递（顺序不可颠倒，防极速 result 竞态）
-            self._pending[call_id] = future
+                # ③ 先登记 future 再投递（顺序不可颠倒，防极速 result 竞态）
+                self._pending[call_id] = future
+                try:
+                    if self._deliver is None:
+                        raise RuntimeError("deliver 回调未绑定")
+                    await self._deliver(
+                        doc.get("target_connection"), self._build_request_frame(doc))
+                except Exception as e:  # noqa: BLE001 — 投递失败属预期路径，兜底清理
+                    logger.warning("DesktopToolBridge 投递失败 (call=%s): %s", call_id, e)
+                    self._pending.pop(call_id, None)
+                    self._dedup.pop(key, None)
+                    await self._repo.mark(
+                        call_id, status=STATUS_FAILED,
+                        error={"code": "DESKTOP_UNAVAILABLE", "message": "桌面工具请求投递失败"})
+                    return ToolResult.fail(
+                        name=tool_name, error="桌面客户端不可用", error_type=ErrorType.UNAVAILABLE)
+
+            # ④ 锁外 await 结果（超时由 _await_with_timeout 返回 None 表达）
+            result = await self._await_with_timeout(future)
+            if result is None:
+                # ⑤ 超时：锁内 mark expired + 清理登记
+                async with lock:
+                    self._pending.pop(call_id, None)
+                    self._dedup.pop(key, None)
+                    await self._repo.mark(call_id, status=STATUS_EXPIRED)
+                return self._timeout_result(tool_name)
+
+            # ⑥ 结果回传（handle_status/cancel_call 已 resolve future + 更新 repo）
+            self._pending.pop(call_id, None)
+            self._dedup.pop(key, None)
+            return result
+        except asyncio.CancelledError:
+            # 取消（含调度器外层超时）：尽力把 repo 标终态。取消上下文中 await 会
+            # 立刻再抛，故 shield 出去、不等结果（迟到/失败由 mark_stale 兜底）。
+            if owner_id is not None:
+                await self._mark_cancelled_best_effort(owner_id)
+            raise
+        finally:
+            # owner 语义：只在**我仍是该 key 的登记者**时删 `_dedup`，
+            # 免得把后来者的登记（同 key 的新 call）误删。上面各正常路径已各自
+            # 清理过，这里是**幂等兜底**——它才是取消路径的唯一保障。
+            if owner_id is not None:
+                self._pending.pop(owner_id, None)
+                if self._dedup.get(key) == owner_id:
+                    self._dedup.pop(key, None)
+
+    async def _mark_cancelled_best_effort(self, call_id: str) -> None:
+        """取消路径上尽力把 repo 标 `cancelled`——**不等结果**，失败静默。
+
+        取消上下文中 `await` 会立刻再抛 `CancelledError`，所以把标记用 `shield`
+        交出去；内层自吞异常，避免留下"无人接收的 task 异常"告警。标记失败（Mongo
+        离线等）不影响正确性：`_dedup`/`_pending` 已由 `finally` 释放，而 repo 里
+        那条 `pending` 由 `mark_stale_expired` 兜底清扫。
+        """
+
+        async def _mark() -> None:
             try:
-                if self._deliver is None:
-                    raise RuntimeError("deliver 回调未绑定")
-                await self._deliver(
-                    doc.get("target_connection"), self._build_request_frame(doc))
-            except Exception as e:  # noqa: BLE001 — 投递失败属预期路径，兜底清理
-                logger.warning("DesktopToolBridge 投递失败 (call=%s): %s", call_id, e)
-                self._pending.pop(call_id, None)
-                self._dedup.pop(key, None)
-                await self._repo.mark(
-                    call_id, status=STATUS_FAILED,
-                    error={"code": "DESKTOP_UNAVAILABLE", "message": "桌面工具请求投递失败"})
-                return ToolResult.fail(
-                    name=tool_name, error="桌面客户端不可用", error_type=ErrorType.UNAVAILABLE)
+                await self._repo.mark(call_id, status=STATUS_CANCELLED)
+            except Exception:  # noqa: BLE001 — 尽力而为
+                logger.debug("DesktopToolBridge 取消标记失败 (call=%s)", call_id, exc_info=True)
 
-        # ④ 锁外 await 结果（超时由 _await_with_timeout 返回 None 表达）
-        result = await self._await_with_timeout(future)
-        if result is None:
-            # ⑤ 超时：锁内 mark expired + 清理登记
-            async with lock:
-                self._pending.pop(call_id, None)
-                self._dedup.pop(key, None)
-                await self._repo.mark(call_id, status=STATUS_EXPIRED)
-            return self._timeout_result(tool_name)
-
-        # ⑥ 结果回传（handle_status/cancel_call 已 resolve future + 更新 repo）
-        self._pending.pop(call_id, None)
-        self._dedup.pop(key, None)
-        return result
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.shield(_mark())
 
     async def handle_status(self, status: dict, *,
                             sender_connection_id: str | None = None) -> bool:
