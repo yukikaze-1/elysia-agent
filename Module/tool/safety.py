@@ -221,6 +221,28 @@ def _validate_url(url: str, profile: SafetyProfile) -> str | None:
     return None
 
 
+def _expand_session_template(text: str, safe_sid: str) -> str:
+    """`{session_id}` 模板的**唯一**替换点（读写共用）。
+
+    S2-G4：读侧此前**不做替换**（只有写路径替换），于是配置里带模板的那一项
+    **永不匹配**，真正放行一切的是同一份配置里的**裸根**——写隔离、读不隔离，
+    多角色/多会话的文件层隔离被整体打穿。两份实现正是缺陷来源（RC-11：
+    同一语义不得有两个真相源），故收口到这一个函数。
+    """
+    return text.replace("{session_id}", safe_sid)
+
+
+def _read_dir_paths(profile: SafetyProfile, safe_sid: str) -> list[Path] | None:
+    """读白名单展开为路径；`None` = **未配置**读白名单（保持既有"不限制读"语义）。
+
+    返回的路径与模板一一对应，调用方若需要"哪一项是会话作用域的"可对照
+    `profile.read_dirs` 判断（见 `_resolve_sandbox_path` 的相对路径分支）。
+    """
+    if not profile.read_dirs:
+        return None
+    return [Path(_expand_session_template(d, safe_sid)) for d in profile.read_dirs]
+
+
 def _resolve_sandbox_path(
     path: str, profile: SafetyProfile, session_id: str, is_write: bool,
 ) -> tuple[Path, str | None]:
@@ -239,10 +261,18 @@ def _resolve_sandbox_path(
     safe_sid = sanitize_session_id(session_id)
     if not raw.is_absolute():
         if is_write:
-            write_dir = profile.write_dir.replace("{session_id}", safe_sid)
-            raw = Path(write_dir) / raw
-        elif profile.read_dirs:
-            raw = Path(profile.read_dirs[0].replace("{session_id}", safe_sid)) / raw
+            raw = Path(_expand_session_template(profile.write_dir, safe_sid)) / raw
+        else:
+            dirs = _read_dir_paths(profile, safe_sid)
+            if dirs:
+                # 相对路径落在**会话作用域**的那一项（S2-G4）：配置里若同时存在
+                # 公共根，取 `read_dirs[0]` 会把相对读引到公共根，等于没隔离。
+                scoped = next(
+                    (d for d, tpl in zip(dirs, profile.read_dirs or [], strict=True)
+                     if "{session_id}" in tpl),
+                    dirs[0],
+                )
+                raw = scoped / raw
     try:
         resolved = raw.expanduser().resolve()
     except (OSError, RuntimeError) as e:
@@ -250,7 +280,7 @@ def _resolve_sandbox_path(
 
     if is_write:
         write_dir = Path(
-            profile.write_dir.replace("{session_id}", safe_sid)
+            _expand_session_template(profile.write_dir, safe_sid)
         ).resolve()
         # D1/P1-14：containment 用 is_relative_to——字符串 startswith 会把
         # /sandbox 误判为 /sandbox_evil 的父级（sibling 逃逸）。
@@ -278,6 +308,7 @@ def _path_has_symlink(path: Path) -> bool:
 
 def _validate_path(
     resolved: Path, profile: SafetyProfile, raw: Path | None = None,
+    safe_sid: str = "default",
 ) -> str | None:
     """路径安全检查。
 
@@ -285,17 +316,23 @@ def _validate_path(
         resolved: 已解析的绝对路径。
         profile: 安全配置声明。
         raw: resolve 前的原始路径（symlink 判定用）；None 时跳过 symlink 检查。
+        safe_sid: **已 sanitize** 的会话 id——读白名单的 `{session_id}` 模板在此展开
+            （S2-G4）。调用方必须传当前调用的真实会话（`_check_safety` 已 sanitize）；
+            默认值仅服务于无需会话的直调场景。
 
     Returns:
         None 表示通过检查，否则返回错误描述字符串。
     """
     path_str = str(resolved)
 
-    if profile.read_dirs:
+    read_dirs = _read_dir_paths(profile, safe_sid)
+    if read_dirs is not None:
         # D1/P1-14：is_relative_to 替代 startswith（sibling 前缀不再误判）
+        # S2-G4：白名单**必须**先替换 `{session_id}` 再比对——否则带模板的那一项
+        # 永不匹配，跨会话读会被"配置里的裸根"放行（写隔离、读不隔离）。
         allowed = any(
-            resolved.is_relative_to(Path(d).resolve())
-            for d in profile.read_dirs
+            resolved.is_relative_to(d.resolve())
+            for d in read_dirs
         )
         if not allowed:
             return f"路径 '{path_str}' 不在允许的目录中"
@@ -694,7 +731,8 @@ class SafetyPipeline:
                     )
                     if err:
                         return err
-                    err = _validate_path(resolved, profile, raw=Path(value))
+                    err = _validate_path(
+                        resolved, profile, raw=Path(value), safe_sid=session_id)
                     if err:
                         return err
                     # 将验证后的安全路径注入 ctx

@@ -1,8 +1,12 @@
 # 文件系统沙箱配置
-# {session_id} 在运行时替换为当前会话 ID（sanitized）
+# {session_id} 在运行时替换为当前会话 ID（sanitized）。
+#
+# **读白名单必须带 `{session_id}` 模板**（S2-G4）：裸根（如
+# `/home/yomu/data/sandbox`）会让所有会话互相可读——写隔离、读不隔离。
+# 模板替换由 `Module/tool/safety.py::_expand_session_template` 单点负责，
+# 读写两侧共用；`Module/tool/tests/test_safety_read_isolation.py` 有守卫。
 read_dirs:
   - /home/yomu/data/sandbox/{session_id}
-  - /home/yomu/data/sandbox
 write_dir: /home/yomu/data/sandbox/{session_id}
 max_file_bytes: 10485760
 allow_symlinks: false
