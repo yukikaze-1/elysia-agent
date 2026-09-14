@@ -558,9 +558,68 @@ Worker 日志里都**没有** `check-timeouts` / `check-contract` 步骤（那�
 "守卫没有真的走到被测路径上"。所以收口方式不是把断言放宽（那只是让红灯消失），
 而是**让脚本在无法判定时拒绝给结论**，并把"能判定"的证据搬到一个与环境无关的合成仓库里。
 
+### §0.4.10 owner 决策记录 + 待办全景补全（2026-09-14）
+
+"待办全景"此前**三次被找出洞**（38 条正文项 / CI 假绿 / 本轮的【新增】项）。这次逐类补齐，
+并把 owner 对本报告尾部「仍需产品/运维确认的决策」表的裁定一并落档——**决策不落档等于没定**。
+
+#### (a) owner 决策（2026-09-14）
+
+| # | 问题 | owner 决定 | 去向 |
+|---|---|---|---|
+| 1 | permessage-deflate 是否影响浏览器 | —（**已过期**） | 随 S2-E2~E5（`d512d6d6`）落地 |
+| 2 | 生产库 `character_versions.session_id` 是 `chi_*` 还是 `conv_*` | —（**已过期**） | 随 S3-21 落地；`character_version_repo.py:185` 记明是 `conv_*`/`default` |
+| 3 | 是否严格单进程部署 | **按"两种部署都正确"实现（CAS）** | `desktop_call_repo.mark()` 守卫 + 单进程假设排查 |
+| 4 | `start.sh` 的 SIGTERM 是否透传 | —（**已过期**） | `start.sh` 已直接 `exec` 环境内 python（注明 CR-02），不经 `conda run` |
+| 5 | 多客户端并存是否受支持 | **暂缓**（owner 要求之后详细讨论） | 不改；记为待讨论 |
+| 6 | 后台任务终态是否要求跨重启不丢 | **要求不丢 → 给 `AgentInfra` 加持久化 repo** | 新工作项（§0.4.8 的 S2-A4 只保证进程内停机窗口可投递） |
+| 7 | 打断后不归档半截回复是否有意 | **落 `AssistantMessage` 并标 `incomplete`** | S2-H5（注：原表把本条挂在 `S3-16` 上，编号引用有误——`S3-16` 实为 `get_self_state`，已修） |
+| 8 | 哪些读路径允许静默返回空 | **一律 fail-closed（503）** | `CharacterVersionRepository` 三条读路径 → `READ_FAIL_CLOSED`（见 (b3)） |
+| 9 | `retryable=True` 的契约语义 | —（**已过期**） | 随 S2-C1（`bc88353e`）落地 |
+| 10 | 关机时最后 <6 轮不做长期记忆提取 | **落盘，待下次启动补提** | consolidator buffer 持久化 + 启动补提 |
+| — | `/restart` 的修法（原表未列，本轮问出） | **重建 Agent 实例，真正重载全部配置** | S2-A5 |
+| — | 真实 MongoDB 测试专层（S2-R6-1） | **补完整版（独立 marker + CI job）** | 新工作项 |
+| — | CR-12 彻底版 | **暂缓**（owner 要求之后详细讨论） | 记为待讨论 |
+| — | 此前排除的 `#41`/`#44`/`#45`/`#46` | **全部解禁** | 排入后续队列 |
+
+#### (b) 本轮补进来的三类待办
+
+**(b1) 路线图【新增】项 —— 既不在"已做 48 项"、也不在"38 条未排期"**
+
+| 项 | 内容 | 核对状态 |
+|---|---|---|
+| `#33b` | `SafetyPipeline` 不得把 `CancelledError` 归一为业务结果 | ✅ 已核实未做（`Module/tool/safety.py:521`） |
+| `#33c` | `DesktopToolBridge` 登记/清理改 `try/finally` + `_locks` 有界化 | ✅ 已核实未做（`core/desktop/bridge.py:254` 无 `finally`） |
+| `#20b` | `flush_after_response` 改用 `AsyncTaskScope.drain` | 抽查支持未做（`lifecycle.py:318` 仍是 `wait_for(..., 10.0)`） |
+| `#14c` | 角色三仓储补恢复路径（不在探针表、不在 `/ready`；`_require_connected` 无懒重连） | 抽查支持未做 |
+| `#21b` | 会话删除级联补全（`token_usage`/`generations`/`character_versions`） | 抽查支持未做 |
+| `#21c` | `_custom_profile_in_use` 读运行时后端模型 | 未核实 |
+| `#11b`/`#11c`/`#14b` | CR-05 LTM 恢复后重载 / CR-06 Mongo 恢复先 merge JSONL / `character_revision_repo.py:94` 的多 worker 条件 | 未核实 |
+
+**(b2) 门禁里"已登记"的缺口（登记 ≠ 处置）**
+
+`_RESERVED_ENUM_MEMBERS` **23** ／ `_PENDING_WRITERS` **6** ／ `_PENDING_DECISION` **8**（见 (b3)）／
+`_ASYMMETRIC_JUSTIFIED` **3** ／ `_TASK_SPAWN_ALLOWLIST` **20** ／ `check-architecture` R1 豁免 **3**。
+每一项都要么补上生产者/写入方，要么给出"为什么长期不产"的结论。
+
+**(b3) `_PENDING_DECISION` 的 8 条里，只有 3 条是产品决策，另 5 条是缺陷**
+
+owner 对 #8 的裁定（一律 fail-closed）覆盖那三条读路径；剩下 5 条**不需要决策**——
+它们是"同仓写路径一半 `raise`、一半静默返回"的不一致，按"与同仓同类写对齐"直接修：
+
+| 仓储·方法 | 现状 | 目标 |
+|---|---|---|
+| `MemoryRepository.insert` | 静默返回 `[]` | `raise`（同仓 `clear_all` 已 fail-closed） |
+| `MemoryRepository.delete` | 静默返回 `0` | `raise` |
+| `SessionRepository.rename` | 返回 `False` | `raise`（与 `save`/`create` 一致） |
+| `TokenRepository.flush` | 静默返回 `None` | `raise`（与 `record` 一致） |
+| `TokenRepository.clear_all` | 静默返回 `0` | `raise`（与 `delete_by_session` 一致） |
+
 ---
 
 **(2) 正文写了、但从未排进任何计划（38 条）**
+
+> 另有本轮补进来的三类（路线图【新增】项 / 门禁登记缺口 / 5 条写路径缺陷）见 §0.4.10(b)。
 
 | 组 | 条目 | 备注 |
 |---|---|---|
