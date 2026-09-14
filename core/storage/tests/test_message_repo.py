@@ -539,6 +539,7 @@ class TestQuerySearchLiteral:
 # S3-19：写路径 fail-closed + 畸形 ID 不得冒泡成 500
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 class TestWritePathsFailClosed:
     """`delete_one` / `update_text` 原先 `_db is None → return 0`（静默）——调用方
     无法区分"没删到"与"存储不可用"；而同类的 `delete_by_session` / `clear_all`

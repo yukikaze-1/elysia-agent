@@ -52,6 +52,7 @@ def _write(root: Path, rel: str, body: str) -> None:
 # 超时预算门禁
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.unit
 class TestConstantEvaluation:
     """预算解析：只有能静态算出来的才参与比较，算不出来的必须落到"未解析"。"""
 
@@ -94,6 +95,7 @@ class TestConstantEvaluation:
         assert total == 5.0, "内层函数体的预算不该算进外层的域"
 
 
+@pytest.mark.unit
 class TestTimeoutRules:
     """三条规则各自都要红得起来（合成 fixture 仓库）。"""
 
@@ -197,6 +199,7 @@ class TestTimeoutRules:
 # 契约可达性门禁
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.unit
 class TestMentionMatching:
     """匹配判据本身：前缀不得误命中（`.children` vs `.children_ids`）。"""
 
@@ -214,6 +217,7 @@ class TestMentionMatching:
         assert reads == 1 and writes == 2
 
 
+@pytest.mark.unit
 class TestContractRules:
     """E1（枚举可达性）与 F1（有读必须有写）各自要红得起来。"""
 

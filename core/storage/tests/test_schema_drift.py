@@ -250,6 +250,7 @@ class TestLogSchemaDriftReport:
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
+@pytest.mark.service
 class TestQueryFailureIsNotAbsence:
     """S2-B1：**"查不到" ≠ "不存在"**。
 
@@ -279,6 +280,7 @@ class TestQueryFailureIsNotAbsence:
         assert not report.missing and not report.orphans
 
 
+@pytest.mark.service
 class TestIndexOptionConflicts:
     """S2-B1：同名索引的**选项**也要比。
 
@@ -357,6 +359,7 @@ class TestIndexOptionConflicts:
 # S3-20：热路径查询必须有覆盖 filter + sort 的索引
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.unit
 class TestHotQueryIndexes:
     """`find_by_user_message` 是**幂等证据探测**的热路径（每次 stale CLAIMED 恢复都走
     一次），filter `user_message_id` + sort `created_at desc`——而两个字段原先都没有

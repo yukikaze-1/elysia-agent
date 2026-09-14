@@ -116,6 +116,7 @@ from core.storage.attachment_repo import AttachmentRepository
 from core.storage.idempotency_repo import IdempotencyRepository
 from core.storage.attachment_release import release_session_attachments
 from core.desktop.bridge import DesktopToolBridge
+from paths import ProjectPath
 
 logger = logging.getLogger(__name__)
 
@@ -466,11 +467,18 @@ class Agent(AgentLifecycle, AgentServer):
         self._session_manager.set_busy_check(lambda: not self.status.is_accepting_input)
 
         # Worker Pool — 执行 AI 规划的工具子任务 + 后台任务
+        #
+        # checkpoint 路径走 ProjectPath 而非字面量（2026-09-14 CI 并行专项）：
+        # 字面量 `"data/scheduler_checkpoint.json"` 是 CWD 相对路径，**忽略了
+        # paths.py 已有的 `ELYSIA_PATH_SCHEDULER_CHECKPOINT` 覆盖**——于是
+        # `pytest -n N` 的 N 个 worker 共享同一个文件与同一个 `<path>.tmp`
+        # （scheduler.py 用 `<path> + ".tmp"` 做原子写），互相覆盖/删除/串读
+        # 彼此 checkpoint。改走 ProjectPath 后根 conftest 的隔离 fixture 才生效。
         self._scheduler = ToolCallDispatcher(
             tool_executor=self._tool_adapter,
             tool_ctx=None,  # 在 start() 中通过 configure() 更新
             num_workers=5,
-            checkpoint_path="data/scheduler_checkpoint.json",
+            checkpoint_path=str(ProjectPath.SCHEDULER_CHECKPOINT.resolve()),
         )
 
         # #43：`_state` **不再是独立存储**——见下方 `_state` property。

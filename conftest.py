@@ -48,6 +48,85 @@ from core.tests._real_db_guard import (  # noqa: E402
 _REDIRECTED_TESTS: set[str] = set()
 """被防线导流过的测试 nodeid（供 session 结束汇总）。"""
 
+_FAST_LAYER = frozenset({"unit", "service"})
+"""快门禁层——`make test-quick` / PR 门禁的范围。"""
+
+_SLOW_LAYER = frozenset({"slow", "integration", "external"})
+"""慢/外部层——放宽到 `-m "not slow and not external"` 才进来。"""
+
+_LAYER_MARKERS = _FAST_LAYER | _SLOW_LAYER
+
+
+class TestMarkerDisciplineError(RuntimeError):
+    """标记纪律（docs/testing.md）被破坏。"""
+
+
+def pytest_collection_modifyitems(config, items):
+    """标记纪律守卫——`docs/testing.md`「标记纪律」的可执行化（2026-09-14）。
+
+    ## 为什么是 hook 而不是一个 test
+
+    hook 在**每个** pytest 进程里都跑（含 `pytest -n N` 的每个 xdist worker），
+    而 test 只会被派给**一个** worker。写成 test 的话，xdist 下它只看到自己那个
+    分片——`--dist loadfile` 时甚至只看到它自己——断言平凡成立，是**假绿**。
+
+    实测（pytest 9.1.1）：普通（非 `trylast`）的 `pytest_collection_modifyitems`
+    在 `-m` 过滤**之前**收到全部条目——`-m "unit"` 下本 hook 看到的条目数**恰好等于**
+    不带 `-m` 时的全量数（用临时探针打印 `len(items)` 验证过）。所以判据是全量拓扑，
+    不依赖 `--dist` 模式，也不依赖选中的 marker 子集（这里刻意不写死条目数——
+    那种数字必然漂移）。
+
+    ## 两条判据
+
+    ① **每个条目至少带一个分层 marker**。无 marker 的测试不在
+       `-m "unit or service"` 里 → 被 `make test-quick` / PR 门禁静默跳过。
+       实测漂移：71 条（9 个文件）已修复；docs 里那条自查命令此前只能靠人跑。
+    ② **不得同时带快门禁层与慢/外部层 marker**。这是
+       `Quick ∪ remainder == Normal` 成立的**充要前提**（推导见
+       `scripts/check_test_sets.py` 模块 docstring）：一条 `service and slow`
+       就会把真 I/O 用例塞进快门禁，而 pytest 的 marker 只增不减。
+
+    判据失败 → 收集阶段报错。**退出码不是契约**：串行下是 4（`pytest.UsageError`），
+    但 `pytest -n N` 下 xdist 会把它转成 `INTERNALERROR … assert not crashitem`、
+    退出码 3——所以失败原因**显式打 stderr**（见下面的 `print`），否则在 xdist 下
+    控制台只剩一个无辜测试的 nodeid。
+    **刻意让整仓 pytest 不可运行**：marker 是分层体系的唯一凭据，一个漏标就能让
+    门禁出现静默空洞，而修法是加一行装饰器。
+    """
+    unmarked: list[str] = []
+    mixed: list[tuple[str, list[str]]] = []
+    for item in items:
+        names = {m.name for m in item.iter_markers()} & _LAYER_MARKERS
+        if not names:
+            unmarked.append(item.nodeid)
+        elif names & _FAST_LAYER and names & _SLOW_LAYER:
+            mixed.append((item.nodeid, sorted(names)))
+
+    problems: list[str] = []
+    if unmarked:
+        problems.append(
+            f"标记纪律①：{len(unmarked)} 个测试没有任何分层 marker"
+            f"（unit/service/integration/slow/external 至少一个）——它们会被"
+            f"`make test-quick` 静默跳过、PR 门禁对它们不设防。"
+            f"前 10 个：{unmarked[:10]}")
+    if mixed:
+        problems.append(
+            f"标记纪律②：{len(mixed)} 个测试同时带快门禁层与慢/外部层 marker"
+            f"——会破坏 `Quick ∪ remainder == Normal` 的互斥性（真 I/O 用例"
+            f"混进快门禁）。前 10 个：{mixed[:10]}")
+    if problems:
+        message = (
+            " " + "\n ".join(problems)
+            + "\n（判据与推导见 scripts/check_test_sets.py；标记标准见 docs/testing.md）")
+        # **必须显式打 stderr**：`pytest -n N`（现在是 `make test-quick`/`make test-normal`
+        # 的默认路径）下，worker 收集期抛异常会被 xdist 转成
+        # `INTERNALERROR> … assert not crashitem` —— 退出码 3，而**异常消息整段丢失**，
+        # 报错里出现的是一个无辜测试的 nodeid。实测：不打印时 `grep 标记纪律` = 0 命中。
+        # 打印后 xdist 会把它转发到控制台（每个 worker 一份），退出码仍是 3（不是 4）——
+        # 串行下是 4。**退出码不是契约，可读的失败原因是。**
+        print(message, file=sys.stderr, flush=True)
+        raise pytest.UsageError(message)
+
 
 @pytest.fixture
 def fake_storage(monkeypatch):
@@ -116,6 +195,144 @@ def _isolate_session_pending_jsonl(tmp_path, monkeypatch):
         "ELYSIA_PATH_SESSION_PENDING",
         str(tmp_path / "session_{session_id}.json"),
     )
+
+
+@pytest.fixture
+def real_embedding():
+    """本测试**有意加载真实 HuggingFace 嵌入模型**，请全局替身让位。
+
+    仅用于确实需要真实 `bge-large-zh-v1.5` 的测试（当前仓内没有）。默认情况下
+    所有非 `external` 测试都用 `_no_real_embedding` 的确定性替身——见那里的理由
+    （真实冷加载会让 63 条用例各多花 ~3.8s）。
+    """
+
+
+@pytest.fixture(autouse=True)
+def _no_real_embedding(request, monkeypatch):
+    """全局不加载真实 HuggingFace 嵌入模型——本仓最大的一处单点耗时（2026-09-14）。
+
+    ## 实测（串行 `-m "unit or service"`，逐条累加 phase 时长）
+
+    | phase | 合计 | 占比 |
+    |-------|------|------|
+    | setup | 32.3s | 5.7% |
+    | call | 281.3s | 49.6% |
+    | **teardown** | **253.9s** | **44.7%** |
+
+    单条 setup 最大只有 36ms（没有"昂贵的 fixture"可优化）；teardown 里
+    **63 条各 ~3.8s**（3.5–4.5s 带状聚集）就占了 238.6s。
+
+    ## 根因（已确认，非推断）
+
+    `Agent.start()` 会起一个 embedding 预加载任务；`Agent.stop()` 用
+    **3.0s** 预算取消它（`core/agent/_lifecycle_tools.py` 的
+    `cancel_and_drain(timeout=3.0)`）。但真实 `bge-large-zh-v1.5` 冷加载远超 3s
+    ——预加载任务在预算内**没有落定**，加载于是溢进 pytest-asyncio 的事件循环
+    收尾，3.0s 预算 + ~0.7s settle 正是那 3.67–3.77s 的来源。
+    带 `log_cli` 的时间戳捕获在 teardown 窗口里看到
+    `Using local model … bge-large-zh-v1.5` → `Loading SentenceTransformer model`。
+
+    反证（逐条排除）：
+      - `-p no:timeout` 后同一条测试 27.18s vs 27.05s → **不是 pytest-timeout**；
+      - 只构造不 `start()` 的对照测试 0.05s、**完全没有 teardown 项**；
+      - `Agent.stop()` 本身在 `call` 相里只占 0.23s（4 次 stop）→ 不是 stop 本身慢；
+      - 打上本替身后 `core/input/tests/test_version.py` **26.0s → 13.7s，且
+        teardown 条目全部归零**（剩余是 4×2.04s 的 `ws.receive(timeout=2.0)`）。
+
+    ## 为什么现在才覆盖到
+
+    正确做法本就有现成 fixture（`core/tests/conftest.py` 与
+    `core/memory/tests/conftest.py` 的 `_no_network_embedding`），但 **conftest 是
+    目录作用域**——只覆盖 490/4985 条，恰好漏掉全部热点目录
+    （`core/agent/tests/`、`core/input/tests/`、`core/cognitive/tests/`）。
+    本 fixture 把它提到根 conftest，替换掉那两份目录级副本。
+
+    豁免：`external`（真实 LLM/DB E2E 本就需要真实依赖）与显式请求
+    `real_embedding` 的测试。
+
+    替身只换 `EmbeddingProvider._try_load_sync`（core 的嵌入提供者），**不动**
+    `Module/embedding` 那一层——`Module/embedding/tests/` 走 `EmbeddingFactory` /
+    `HuggingFaceEmbeddings`，由 `Module/conftest.py` 自己的 patch 覆盖。
+
+    ## 覆盖边界（务必知道）
+
+    **离线套件里没有任何测试验证真实模型的冷加载**——这一点在本 fixture 落地**之前**
+    就是这样：真实加载只作为副作用发生（`Agent.start()` 的预加载任务），没有任何断言
+    依赖它的输出。逐个查过断言嵌入事实的三处：`test_ready_embedding.py` 断言的是
+    `is_ready is False`（纯读，不触发加载）；`test_long_term.py` 断言的是
+    `expected_dimension` 这个**配置常量**（不是模型属性）；`Module/embedding/tests/`
+    属另一层。三者都不依赖真实权重。
+
+    所以本 fixture **没有掩盖任何既有集成覆盖**。要验证真实嵌入请走 `external`
+    （已豁免本 fixture）或手工 `scripts/stage4_smoke.py` / `make check-full`。
+
+    两条分支各有一条回归守卫：`core/tests/test_embedding_fake_guard.py`
+    （默认必须被替身覆盖 / `real_embedding` 必须恢复原方法）。反证过：把
+    `autouse=True` 摘掉，那条守卫立即转红并给出可执行的排查指引。
+    """
+    if "external" in {m.name for m in request.node.iter_markers()}:
+        return
+    if "real_embedding" in set(request.fixturenames):
+        return
+
+    from core.memory.embedding_provider import EmbeddingProvider
+
+    class _FakeEmbedding:
+        dimension = 1024
+
+        async def embed_query(self, text: str) -> list[float]:
+            return [0.1] * 1024
+
+        async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            return [[0.1] * 1024 for _ in texts]
+
+    monkeypatch.setattr(EmbeddingProvider, "_try_load_sync", lambda self: _FakeEmbedding())
+
+
+@pytest.fixture(autouse=True)
+def _isolate_shared_journals(tmp_path, monkeypatch):
+    """把"仓库根相对路径"的共享 journal 隔离到 tmp_path（2026-09-14 CI 并行专项）。
+
+    ## 为什么需要（`pytest -n N` 的硬阻塞项）
+
+    这些 journal 的路径**不含 worker 维度**，`pytest -n N` 时 N 个 worker 共享同一个
+    文件、甚至同一个临时文件名，于是互相覆盖/删除/串读：
+
+    - `data/scheduler_checkpoint.json`——`ToolCallDispatcher` 用
+      `<path> + ".tmp"` 做原子写（`core/tool_runtime/scheduler.py`）。同名 `.tmp`
+      在多个进程里并发生成 → 一个 worker 的 `os.replace` 让另一个的写变成
+      `FileNotFoundError`；更糟的是 worker B 的 `_restore_checkpoint()` 会把
+      **另一个测试 checkpoint 的任务**恢复进自己的队列（跨测试串扰，且写入失败
+      只 warn，问题不会自我暴露）。
+    - `data/memory_pending_deletes.json`——`LongTermMemory` 的删除 tombstone
+      journal。此前只有 `core/tests/conftest.py` 与 `core/memory/tests/conftest.py`
+      用 `_isolate_pending_syncs` 隔离了**兄弟**文件（syncs），deletes 没有对应
+      隔离，而 `core/storage`、`core/agent`、`core/input`、`Module/system_prompt`
+      的测试同样会构造 `LongTermMemory`。
+    - `data/memory_pending_syncs.json`——同一族的未同步条目 journal。原本只有
+      `core/tests` / `core/memory/tests` 两个目录 conftest 隔离，其余目录裸奔。
+    - `data/session_pending_cleanup.json`——会话删除清理重试 journal，
+      `SessionManager.__init__` 就会读它，此前**没有任何地方隔离**。
+
+    隔离手段是 `ProjectPath.resolve()` 自带的环境变量覆盖（`ELYSIA_PATH_<NAME>`），
+    对被测代码零侵入——与既有 `_isolate_session_pending_jsonl` 同模式。
+    注意 `ProjectPath.resolve()` 是**每次调用**读环境变量，所以 monkeypatch 生效；
+    反过来说，**在 import 期就把路径固化下来的写法不受本 fixture 影响**——
+    `TokenTracker._pending_file`（`core/monitoring/token_tracker.py`，类属性，
+    定义时求值）就是这种情况，它的测试用实例属性覆盖
+    （见 `core/monitoring/tests/test_token_tracker.py`）。这条是**已知缺口**：
+    目前没有测试从"未隔离目录"走到它，但同一类缺陷的下一个实例不会自己暴露。
+
+    **串行下同样需要**：它同时消除"测试写进真实 `data/` 目录"的残留（本仓 `data/`
+    是真实运行时目录，不是测试沙箱）。
+    """
+    for name in (
+        "SCHEDULER_CHECKPOINT",
+        "MEMORY_PENDING_DELETES",
+        "MEMORY_PENDING_SYNCS",
+        "SESSION_PENDING_CLEANUP",
+    ):
+        monkeypatch.setenv(f"ELYSIA_PATH_{name}", str(tmp_path / f"{name.lower()}.json"))
 
 
 @pytest.fixture(autouse=True)

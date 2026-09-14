@@ -2006,6 +2006,7 @@ class TestSearchDateFailFast:
 # 读出期语义区分（问题单 §5.2 ★★☆）：缺口告警，wire 不变
 # ---------------------------------------------------------------------------
 
+@pytest.mark.service
 class TestCharacterSnapshotCauseDiagnostics:
     """会话列表的角色快照取不到时，按成因分别处置——wire 不变，仅服务端可见性。
 
@@ -2081,6 +2082,7 @@ class TestCharacterSnapshotCauseDiagnostics:
 # S2-E5：历史接口的 fail-closed 语义必须与 /ready 一致
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 class TestHistoryReadIsFailClosed:
     """Mongo 离线时 `GET /api/sessions/{id}/messages` 原先返回
     `200 {"messages":[],"has_more":false,"total":0}`，而同一系统的 `/ready` 探针是
@@ -2145,6 +2147,7 @@ class TestHistoryReadIsFailClosed:
 # S2-F1：资源索引必须有扫描预算 + 批量校验 + 限流兜底
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 class TestResourceScanBudget:
     """`/api/sessions/{id}/resources` 原先"凑不满 limit 就按 200/批翻到会话末尾"，
     且**每个候选各发一次** `await repo.get()`——单请求可产生数百次串行 Mongo 往返，

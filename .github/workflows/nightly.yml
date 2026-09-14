@@ -1,25 +1,53 @@
-name: Full Suite (Manual)
+name: Manual Suite (full + external)
 
+# ── 受信手工套件（2026-09-14 重组）───────────────────────────────────────────
+#
+# 本 workflow 是**唯一**的手工触发入口，承载两个语义不同的套件：
+#
+#   full      `make test-full`     = `pytest -q`，全仓（含 slow）。
+#                                   `external` 用例在此**被 skip**：Module/conftest.py
+#                                   的 collection hook 要求 `RUN_EXTERNAL_TESTS=1`
+#                                   才会放行——所以它**不覆盖**外部 E2E。
+#   external  `make test-external` = `RUN_EXTERNAL_TESTS=1 pytest -m "external"`，
+#                                   真实 LLM/DB + 真实凭据。
+#
+# 两者语义不同，故用 `suite` 输入显式选择而不是"dispatch 就把两个都跑"——后者会让
+# 一次手工触发都产生真实 LLM 费用。默认 `full`（不产生外部调用）。
+#
+# 为什么 external 从 ci.yml 搬来这里：ci.yml 顶层 `on:` 只声明 push / pull_request，
+# 而它的 external job 守卫是 `if: github.event_name == 'workflow_dispatch'` ——
+# 该分支永不成立，是一条**死 job**（runner 侧 57 份 worker 日志里只有 Quick / Normal，
+# External E2E 从未执行过一次；ci.yml 头注释还声称它用 "workflow_dispatch +
+# environment"，而全仓没有任何 workflow 声明 `environment:`）。死配置已删，
+# 能力在这里以**可达**的形式保留。`scripts/check_ci_isolation.py` 现在有判据
+# 专门拦「if 守卫引用未在 on: 声明的事件」，这类缺陷不会再静默回归。
+#
+# 安全性：workflow_dispatch 触发的是仓库**受信 ref**（默认分支，非不受信 PR），
+# 因此本文件的 job 用 `runs-on: self-hosted` + 宿主 .env 是可接受的——与 push 到
+# main 的受信 job 同级信任边界（见 ci.yml 头注释 + scripts/check_ci_isolation.py）。
 on:
-  # 手工触发的全量套件——`make test-full` 是跑 slow 层的入口。
-  #   - 不设定时：slow 层（完整 Agent 启停 + 真实 API 调用）耗时长、且依赖
-  #     宿主 self-hosted runner 与真实凭据，按需手动跑即可（2026-09-10 决策）。
-  #   - 安全性：workflow_dispatch 触发的是仓库**受信 ref**（默认分支，非不受信
-  #     PR），因此本 job 用 `runs-on: self-hosted` + 宿主 .env 可接受——与 push
-  #     到 main 的受信 job 同级信任边界（见 ci.yml 头注释 +
-  #     scripts/check_ci_isolation.py）。
   workflow_dispatch:
+    inputs:
+      suite:
+        description: '要运行的手工套件（full=全仓离线；external=真实 LLM/DB E2E）'
+        type: choice
+        options:
+          - full
+          - external
+          - both
+        default: full
+        required: true
 
 jobs:
   full:
-    name: Full Suite
+    name: Full Suite (pytest -q, external skipped)
     # 只由受信触发（管理员 workflow_dispatch）运行——显式 guard 让
     # scripts/check_ci_isolation.py 能静态识别为「非 PR 可达」受信 job。
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'full' || inputs.suite == 'both')
     runs-on: self-hosted
     timeout-minutes: 40
     steps:
-      - name: Checkout (retry x4)
+      - name: Checkout (retry x4, hermetic clean)
         shell: bash
         env:
           REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
@@ -30,9 +58,15 @@ jobs:
           while :; do
             attempt=$((attempt + 1))
             echo "== checkout attempt ${attempt}/4 =="
-            rm -rf ./* ./.git 2>/dev/null || true
+            # 密闭清理（含 dotfile/dotdir）——理由见 ci.yml backend job 的详细注释
+            WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE 未设置——拒绝在未知目录下清理}"
+            if [ "$WS" = "/" ]; then
+              echo "FATAL: GITHUB_WORKSPACE 解析为 / ——拒绝清理"
+              exit 1
+            fi
+            find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
             if git init -q . &&
-               git remote add origin "$REPO_URL" &&
+               (git remote add origin "$REPO_URL" || git remote set-url origin "$REPO_URL") &&
                git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
                git checkout --quiet --force refs/remotes/origin/target; then
               echo "checkout succeeded on attempt ${attempt}"
@@ -46,17 +80,64 @@ jobs:
             sleep $((attempt * 10))
           done
       - name: Load .env
-        # 仅受信 ref（schedule/手工触发）——不受信 PR 永不进入本 job
+        # 仅受信 ref（手工触发）——不受信 PR 永不进入本 job
         run: cp /home/yomu/elysia-agent/.env .env
       - name: Setup conda env (Elysia)
         # self-hosted runner 默认 shell 无 conda——把 Elysia env 的 bin 加入 PATH，
         # 使 ruff/pytest/python 可解析（等价 conda activate Elysia）
-        run: echo "/home/yomu/miniconda3/envs/Elysia/bin" >> $GITHUB_PATH
+        run: echo "/home/yomu/data/anaconda3/envs/Elysia/bin" >> $GITHUB_PATH
       - name: Run full test suite
         run: |
           set -a
           source .env
           set +a
           make test-full
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+  external:
+    name: External E2E (real LLM/DB, opt-in)
+    # 语义与 full 不同：真实 LLM/DB + 真实凭据，必须 `RUN_EXTERNAL_TESTS=1`
+    # 才会真正执行（否则 external 用例整体 skip）。
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'external' || inputs.suite == 'both')
+    runs-on: self-hosted
+    timeout-minutes: 45
+    steps:
+      - name: Checkout (retry x4, hermetic clean)
+        shell: bash
+        env:
+          REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+        run: |
+          set -uo pipefail
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            echo "== checkout attempt ${attempt}/4 =="
+            WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE 未设置——拒绝在未知目录下清理}"
+            if [ "$WS" = "/" ]; then
+              echo "FATAL: GITHUB_WORKSPACE 解析为 / ——拒绝清理"
+              exit 1
+            fi
+            find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+            if git init -q . &&
+               (git remote add origin "$REPO_URL" || git remote set-url origin "$REPO_URL") &&
+               git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
+               git checkout --quiet --force refs/remotes/origin/target; then
+              echo "checkout succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            if [ "$attempt" -ge 4 ]; then exit 1; fi
+            sleep $((attempt * 10))
+          done
+      - name: Load .env (受信 workflow_dispatch ref)
+        run: cp /home/yomu/elysia-agent/.env .env
+      - name: Setup conda env (Elysia)
+        run: echo "/home/yomu/data/anaconda3/envs/Elysia/bin" >> $GITHUB_PATH
+      - name: Run external E2E (真实 LLM/DB)
+        run: |
+          set -a
+          source .env
+          set +a
+          make test-external
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

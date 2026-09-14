@@ -1,7 +1,16 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth check-timeouts check-contract check-secrets check-secrets-history
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-remainder test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth check-timeouts check-contract check-secrets check-secrets-history check-ci-isolation check-test-sets check check-full
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
+
+# pytest-xdist worker 数（2026-09-14 CI 性能专项）。CI 与本地同源，避免两套行为；
+# 取值是**实测 sweet spot**（档位表见 docs/testing.md「并行执行」）而非"越多越好"——
+# 每个 worker 都要独立 import torch/sentence-transformers（数百 MB），
+# 且 `-n 24`(≈auto) 并不比 `-n 12` 快，还曾在竞争下少报过一条用例（RC 复核未复现，
+# 见 docs/testing.md）。**CI 明确禁止 `-n auto`**：worker 数不应随 runner 核数漂移。
+# 覆盖：`make test-normal PYTEST_N=12`。
+PYTEST_N ?= 8
+PYTEST_XDIST = -n $(PYTEST_N) --dist loadfile
 
 test: test-module test-core test-tools
 
@@ -22,18 +31,31 @@ test-all:
 # 测试分层命令
 # F1：external marker 取代 --ignore——WorkflowEngine unit/service 入合并门禁，
 # 真实 LLM/DB 集成测试标 external、独立 opt-in（test-external）。
+#
+# 2026-09-14 CI 性能专项——**Quick 与 remainder 互斥**：
+#   Quick     = unit or service
+#   remainder = not slow and not external and not unit and not service
+# 两条恒等式（Quick ∪ remainder == Normal、Quick ∩ remainder == ∅）由
+# `make check-test-sets` 强制。此前 CI 的 Quick / Normal 两个 job 里 Quick ⊆ Normal，
+# 98.5% 的用例被同一台 runner 跑了两遍（runner 侧实测 5m34s + 5m05s 串行）。
 test-quick:
-	conda run -n Elysia python -m pytest -m "unit or service" -q -x --tb=short
+	$(PYTEST) -m "unit or service" -q -x --tb=short $(PYTEST_XDIST)
 
 test-normal:
-	conda run -n Elysia python -m pytest -m "not slow and not external" -q --tb=short
+	$(PYTEST) -m "not slow and not external" -q --tb=short $(PYTEST_XDIST)
+
+# Normal 中**不在** Quick 里的部分（互斥余集）。当前只有 3 条 integration——
+# 保留它是因为 Quick/remainder 的互斥性是 CI 分层的前提，而它是该前提的可运行定义。
+# 不并行：条数极少，起 worker 的固定成本（每个约 1-2s import）反而更大。
+test-remainder:
+	$(PYTEST) -m "not slow and not external and not unit and not service" -q --tb=short
 
 test-full:
-	conda run -n Elysia python -m pytest -q
+	$(PYTEST) -q
 
 # F1：外部 E2E 显式 opt-in（真实 LLM/DB，受保护凭据/受信 ref 才能跑）
 test-external:
-	conda run -n Elysia RUN_EXTERNAL_TESTS=1 python -m pytest -m "external" -q --tb=short
+	conda run -n $(CONDA_ENV) RUN_EXTERNAL_TESTS=1 python -m pytest -m "external" -q --tb=short
 
 # workflow_engine / workflow_contract 独立迭代门禁（不含 external——真实 LLM）
 test-workflow-engine:
@@ -121,6 +143,21 @@ check-secrets:
 # 脚本退出 2 拒答而不是报绿——"没扫到"与"干净"不是一回事。
 check-secrets-history:
 	python scripts/check_secrets.py --all-refs
+
+# 测试集合代数门禁（2026-09-14 CI 性能专项）：证明 Quick ∪ remainder == Normal
+# 且 Quick ∩ remainder == ∅——即"没有测试被漏掉、没有被跑两遍"。
+# 需要独立收集（3 次 `pytest --collect-only`，约 35s）才能验证**表达式**本身。
+# **必须走 conda run**：本目标内部会起 pytest，用裸 `python` 会落到 runner 的基础
+# 解释器（另一份 pytest 与插件集）——那就成了"用别的环境验证这个环境"（判据假绿③）。
+# marker 纪律（无 marker / 快慢层交叠）由根 `conftest.py::pytest_collection_modifyitems`
+# 在**每个** pytest 进程内零成本断言，见那里的 docstring。
+check-test-sets:
+	conda run -n $(CONDA_ENV) python scripts/check_test_sets.py
+
+# CI 信任边界门禁（P0-02）：PR 可达 job 禁 self-hosted / 禁宿主 .env 路径 /
+# 禁死 job（`if` 守卫引用未在 `on:` 声明的事件）。默认扫描全部 workflow 文件。
+check-ci-isolation:
+	python scripts/check_ci_isolation.py
 
 start:
 	bash scripts/start.sh

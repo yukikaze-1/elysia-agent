@@ -1556,6 +1556,8 @@ class TestEvidenceProbeIsNotFailOpen:
     idempotency 仓储的健康状态**互相独立**，所以二次 `store()` 的 claim 仍会成功。
     """
 
+    pytestmark = pytest.mark.service
+
     @pytest.mark.asyncio
     async def test_unavailable_evidence_rejects_retryable_without_takeover(
         self, fresh_store,
@@ -1634,6 +1636,8 @@ class TestRetryableRejectionIsNotTerminal:
     `_send_rejected`（落库 → 永久失败）下**语义相反**——这就是缺陷的形状。
     """
 
+    pytestmark = pytest.mark.service
+
     @pytest.mark.asyncio
     async def test_queue_full_rejection_stays_retryable(self, fresh_store):
         """QUEUE_FULL（retryable）→ 不落终态；同键重试必须能被**重新处理**。"""
@@ -1711,6 +1715,11 @@ class TestRetryableRejectionGuardIsStructural:
     语义"，运行时只能覆盖走到的那几条路径（附件路径的回归在反证时就漏了网）。
     逐调用点扫描能覆盖**全部现状 + 未来新增**的调用点。
     """
+
+    # 纯 `ast.parse` 源码扫描，无 I/O、无 Agent、无异步 → 按 pytest.ini 的
+    # 分层标准是 `unit`（2026-09-14 review 修正；同文件其余类走 fake ws/agent，
+    # 那些才是 `service`）。
+    pytestmark = pytest.mark.unit
 
     #: 可能返回 retryable=True 的负载构造器（名字即约定）。
     _RETRYABLE_HELPERS = ("_not_accepted_error", "_storage_unavailable_error",

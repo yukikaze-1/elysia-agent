@@ -8,28 +8,43 @@
 2. 任何 PR 可达 job 的步骤引用宿主绝对路径凭据（`/home/.../.env`），或
    `cp`/`source` 宿主 `.env` —— 直接把宿主密钥暴露给 PR 代码。
 
+第三条（2026-09-14 CI 性能专项补）：**死 job**。job 的 `if` 守卫引用的事件必须
+在 workflow 顶层 `on:` 里声明过，否则该守卫的分支永远不会成立。此前 ci.yml
+的 `external` job 就是这种形态：`if: github.event_name == 'workflow_dispatch'`，
+而 ci.yml 的 `on:` 只有 push / pull_request —— 45 分钟的真实 LLM/DB E2E 配置
+从未执行过一次（runner 侧 57 份 worker 日志里只有 Quick / Normal）。
+
+**为什么这条属于信任边界门禁**：`_is_push_only` 把「守卫里提到
+workflow_dispatch」的 job 直接当作受信 job 并**跳过全部检查**（第 79-83 行）。
+于是「写一个永不触发的守卫」成了绕过本门禁的静默通道——把受信判定反过来
+当作免检声明。加了第三条之后，这种守卫必须在 `on:` 里真实声明才成立。
+
 判定规则：
 - job 的 `if` 若显式限定 push-only（字符串含 `github.event_name == 'push'`
   且不含 `pull_request`），视为受信 push job，允许 self-hosted + 宿主 .env；
   否则视为 PR 可达，必须 GitHub-hosted、不得触碰宿主路径。
 - 步骤 `run`/`name` 中出现 `/home/<...>/.env`、或以 `/home/` 开头的绝对路径、
   `cp <宿主绝对路径> .env`、`source <宿主绝对路径>.env` 均视为访问宿主凭据。
+- job `if` 中出现的每个 `github.event_name == '<event>'` 事件名都必须出现在顶层
+  `on:` —— 否则记「不可达 job」违规。
 
 用法：
-    python scripts/check_ci_isolation.py [workflow.yml]   # 默认 .github/workflows/ci.yml
+    python scripts/check_ci_isolation.py            # 检查 .github/workflows/*.yml 全部
+    python scripts/check_ci_isolation.py <file...>  # 只检查指定文件
                                                           # 违规打印并退出码 1
     python -c "from scripts.check_ci_isolation import check_workflow_file; ..."
 """
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-_DEFAULT_WORKFLOW = ".github/workflows/ci.yml"
+_WORKFLOWS_DIR = ".github/workflows"
 
 # 宿主绝对路径凭据特征（仓库不应引用任何 /home/... 或宿主 .env）
 _HOST_PATH_MARKERS = (
@@ -41,6 +56,42 @@ _HOST_ENV_MARKERS = (
     ". /home/",
 )
 
+_EVENT_GUARD_RE = re.compile(r"github\.event_name\s*==\s*['\"]([a-z_]+)['\"]")
+
+_EVENT_INHERITING = frozenset({"workflow_call"})
+"""`on:` 里出现它时，`github.event_name` 取自调用方——死 job 判定对这类文件不适用。"""
+
+
+def _declared_events(data: dict[str, Any]) -> set[str]:
+    """workflow 顶层 `on:` 声明的事件名集合。
+
+    `on:` 可以是字符串（`on: push`）、列表（`on: [push, pull_request]`）或映射
+    （`on: {push: ..., workflow_dispatch: ...}`）——三种形态都要认。
+
+    另有一个 YAML 1.1 的坑必须处理：**裸 `on:` 会被解析成布尔 `True`**（PyYAML
+    按 YAML 1.1 把 `on`/`off`/`yes`/`no` 当布尔）。所以键要按 `"on"` 与 `True`
+    两种形态都找一遍，不能只 `data["on"]`。
+    """
+    raw: Any = None
+    for key in ("on", True):          # type: ignore[list-item]  # 见 docstring：两种键形态
+        if key in data:
+            raw = data[key]
+            break
+    if raw is None:
+        return set()
+    if isinstance(raw, str):
+        return {raw}
+    if isinstance(raw, list):
+        return {str(e) for e in raw}
+    if isinstance(raw, dict):
+        return {str(k) for k in raw}
+    return set()
+
+
+def _guarded_events(job: dict[str, Any]) -> set[str]:
+    """job `if` 里用 `github.event_name == '<event>'` 比较过的事件名集合。"""
+    return set(_EVENT_GUARD_RE.findall(str(job.get("if", ""))))
+
 
 def _is_push_only(job: dict[str, Any]) -> bool:
     """job 是否显式限定只跑受信触发（push / workflow_dispatch / schedule）。
@@ -48,8 +99,12 @@ def _is_push_only(job: dict[str, Any]) -> bool:
     非 PR 触发（push 到受信 ref、受信管理员手工 workflow_dispatch、定时 schedule）
     视为受信——不受信 pull_request 永不触发它们。if 表达式含任一受信 guard 且不含
     pull_request → 受信 job（允许 self-hosted + 宿主凭据，F1 external E2E 用）。
+
+    引号先归一：`== 'push'` 与 `== "push"` 语义完全相同（YAML 里两种都合法），
+    只认单引号会把一个**正确加了 guard** 的受信 job 误判成不受信（假红），
+    而那会逼人去删 guard——正好是反方向。
     """
-    cond = str(job.get("if", ""))
+    cond = str(job.get("if", "")).replace('"', "'")
     trusted_guard = any(g in cond for g in (
         "== 'push'", "== 'workflow_dispatch'", "== 'schedule'"))
     has_pr_ref = "pull_request" in cond
@@ -73,9 +128,24 @@ def check_workflow_file(path: str | Path) -> list[str]:
     violations: list[str] = []
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     jobs: dict[str, Any] = (data or {}).get("jobs", {}) or {}
+    declared = _declared_events(data or {})
+    # 可复用 workflow（`on: workflow_call`）里 `github.event_name` 取自**调用方**，
+    # 所以它的 job 用 `if: github.event_name == 'push'` 是正当写法、不是死守卫。
+    # 不豁免的话，本仓加第一个 reusable workflow 就会让 CI 假红。
+    # 注意这只关掉"死 job"判定：`_is_push_only` 仍照常分类（无 guard 的
+    # workflow_call job 依旧算 PR 可达，必须 GitHub-hosted）。
+    event_inherited = bool(declared & _EVENT_INHERITING)
     for name, job in jobs.items():
         runs_on = str(job.get("runs-on", ""))
         steps: list[dict[str, Any]] = job.get("steps", []) or []
+        # 死 job 判定（先于 `_is_push_only` 的免检 continue——否则「写一个永不触发的
+        # 守卫」即可绕过下面全部检查，2026-09-14）
+        unreachable = set() if event_inherited else _guarded_events(job) - declared
+        if unreachable:
+            violations.append(
+                f"job '{name}' 的 if 守卫引用了未在 on: 声明的事件 "
+                f"{sorted(unreachable)}（本 workflow 声明的是 {sorted(declared)}）"
+                "——该分支永不触发，是死 job；要么在 on: 声明该事件，要么删掉死配置")
         if _is_push_only(job):
             # 受信 push job：允许 self-hosted + 宿主 .env（受信 ref，仅维护者可触发）。
             # 这里不扫描宿主路径——push-only guard 本身即信任边界（门禁脚本负责
@@ -103,21 +173,34 @@ def main(argv: list[str] | None = None) -> int:
     """CLI 入口：检查 workflow 文件，违规退出码 1。
 
     Args:
-        argv: 命令行参数（可选 workflow 路径）。
+        argv: 命令行参数（可选 workflow 路径列表）。
 
     Returns:
-        0 表示通过，1 表示违规。
+        0 表示通过，1 表示违规，2 表示无法判定（拒答）。
     """
     argv = argv if argv is not None else sys.argv[1:]
-    path = argv[0] if argv else _DEFAULT_WORKFLOW
-    violations = check_workflow_file(path)
-    if violations:
-        print(f"CI 信任边界检查失败：{path}")
-        for v in violations:
-            print(f"  - {v}")
-        return 1
-    print(f"CI 信任边界检查通过：{path}（无 PR 可达 self-hosted job，无宿主凭据路径）")
-    return 0
+    if argv:
+        paths = [Path(p) for p in argv]
+    else:
+        # 默认**扫描全部** workflow 文件——此前调用方手写三个文件名，新增第四个
+        # workflow 不会被任何门禁看见（CLAUDE.md「守卫没装在改动上」）。
+        paths = sorted(Path(_WORKFLOWS_DIR).glob("*.yml"))
+    if not paths:
+        print(f"CI 信任边界检查无法判定：{_WORKFLOWS_DIR} 下没有任何 *.yml")
+        return 2
+
+    failed = False
+    for path in paths:
+        violations = check_workflow_file(path)
+        if violations:
+            failed = True
+            print(f"CI 信任边界检查失败：{path}")
+            for v in violations:
+                print(f"  - {v}")
+        else:
+            print(f"CI 信任边界检查通过：{path}"
+                  "（无 PR 可达 self-hosted job，无宿主凭据路径，无死 job）")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -268,6 +268,7 @@ async def test_reflector_accepts_scoped_view_and_none_session():
 # S3-14：逐组失败不得静默，且不得无条件复位计数器
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 class TestGroupFailureIsVisible:
     """每组失败原先只 `logger.debug` 且**无条件** `_reset_counters()` →
     **去重永久静默失效**：日志上看不出异常（"日志说成功但实际全失败"的典型），

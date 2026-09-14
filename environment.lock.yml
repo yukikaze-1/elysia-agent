@@ -24,7 +24,6 @@ dependencies:
   - readline=8.3=hc2a1206_0
   - sqlite=3.53.2=h795bf6d_0
   - tk=8.6.15=h54e0aa7_0
-  - tzdata=2026c=he532380_0
   - wheel=0.47.0=py312h06a4308_0
   - xorg-libx11=1.8.12=h9b100fa_1
   - xorg-libxau=1.0.12=h9b100fa_0
@@ -54,6 +53,7 @@ dependencies:
       - defusedxml==0.7.1
       - distro==1.9.0
       - dnspython==2.8.0
+      - execnet==2.1.2
       - filelock==3.32.2
       - filetype==1.2.0
       - frozenlist==1.8.0
@@ -126,6 +126,7 @@ dependencies:
       - pytest-aiohttp==1.1.1
       - pytest-asyncio==1.4.0
       - pytest-timeout==2.4.0
+      - pytest-xdist==3.8.0
       - python-dateutil==2.9.0.post0
       - python-dotenv==1.2.2
       - pyyaml==6.0.3
@@ -168,4 +169,4 @@ dependencies:
       - xxhash==3.8.1
       - yarl==1.24.5
       - zstandard==0.25.0
-prefix: /home/yomu/miniconda3/envs/Elysia
+prefix: /home/yomu/data/anaconda3/envs/Elysia

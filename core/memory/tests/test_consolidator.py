@@ -409,6 +409,7 @@ async def test_consolidator_accepts_scoped_view():
 # S3-12 / S3-13：比对失败的回退边界 + requeue 上界
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 class TestCompareFallbackBoundary:
     """`_compare_and_resolve` 原先把"LLM 比对"与"执行动作"放在**同一个 try** 里，
     于是"执行到第 2 条动作时失败"也会走 insert-all 回退：**已 insert 的重复插入、
@@ -487,6 +488,7 @@ class TestCompareFallbackBoundary:
             "insert-all 降级在默认日志级别不可见"
 
 
+@pytest.mark.service
 class TestRequeueIsBounded:
     """requeue 走 `batch + self._buffer` 前插且**无上界**：LLM 持续失败时缓冲无界
     增长，而提取 prompt 只取 `[-2000:]`——**最旧的轮次永远进不了 prompt**，

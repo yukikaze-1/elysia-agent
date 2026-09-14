@@ -10,26 +10,9 @@ LongTermMemory.__init__ 的 _load_pending_syncs() 会读真实 data/memory_pendi
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def _no_network_embedding(monkeypatch):
-    """测试统一用内存 fake embedding，不加载真实 HuggingFace 模型。
-
-    CI 干净检出环境无模型缓存且联网失败/挂起（BAAI/bge-large-zh-v1.5 需下载），
-    真实 embedding 会让依赖 insert 的测试失败（synced=0 / embedding 空）或挂起，
-    导致 CI quick job 超时。
-    """
-    from core.memory.embedding_provider import EmbeddingProvider
-
-    class _FakeEmbedding:
-        dimension = 1024
-
-        async def embed_query(self, text: str) -> list[float]:
-            return [0.1] * 1024
-
-        async def embed_documents(self, texts: list[str]) -> list[list[float]]:
-            return [[0.1] * 1024 for _ in texts]
-
-    monkeypatch.setattr(EmbeddingProvider, "_try_load_sync", lambda self: _FakeEmbedding())
+# `_no_network_embedding` 已上提到根 conftest 的 `_no_real_embedding`
+# （2026-09-14 CI 性能专项）：目录作用域只覆盖 490/4985 条，
+# 漏掉 core/agent、core/input、core/cognitive 等全部 teardown 热点。
 
 
 @pytest.fixture(autouse=True)

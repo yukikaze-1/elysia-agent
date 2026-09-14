@@ -43,7 +43,14 @@ setuptools<81
 # Python 3.12/3.13 无预编译 wheel，需要时手动安装）
 # openwakeword>=0.6
 
-# 测试超时（P2）：pytest.ini 的全局 `timeout` 依赖本插件；缺它时无界 `await`
-# 回归会永久挂死本地 `make test-full`，CI 也只能等 job 级 15–45 分钟超时。
-# 置此（而非 requirements-dev.txt）因 CI pr-gate 只安装 requirements.txt。
-pytest-timeout>=2.4,<3
+# ── 测试/门禁工具不在此文件 ────────────────────────────────────────────────
+# 本文件是 **runtime** 声明（见文件头：缺少则应用无法启动）。
+# 测试工具（pytest 及其插件 pytest-timeout / pytest-xdist、ruff、pyright、
+# pip-audit、bandit）一律在 `requirements-dev.txt`——`environment.yml` 同时装两者。
+#
+# 2026-09-14 RC 修正：pytest-timeout 与 pytest-xdist 此前被放在本文件，理由是
+# 「CI pr-gate 只安装 requirements.txt」。那个理由已不成立——pr-gate 现在装
+# `-r requirements.txt -r requirements-dev.txt`（见 .github/workflows/ci.yml），
+# 所以两个 pytest 插件回到了它们该在的位置。**不要因为"CI 少装一个文件"再把
+# 测试插件挪回来**：把 dev 依赖混进 runtime 声明会让部署环境多装 pytest 全家桶，
+# 而真正的修法是修 CI 的安装行。

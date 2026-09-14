@@ -648,6 +648,7 @@ def test_sync_reflector_to_runtime_state():
 # S3-18：self_perception_history 必须真的有写入者
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 class TestSelfPerceptionHistoryIsWritten:
     """该字段此前**全仓无写入者**（只有 `service.py` 的清空与三处读）：
 
@@ -713,6 +714,7 @@ class TestSelfPerceptionHistoryIsWritten:
         assert engine.state.self_perception_history == []
 
 
+@pytest.mark.unit
 class TestReflectorTimestampCoercion:
     """`_should_trigger` 直接 `time.time() - last_ts`；旧数据可能是 ISO 字符串 →
     `TypeError`。`_reflect` 内有兼容、`_should_trigger` 没有——**同一份数据两处解析

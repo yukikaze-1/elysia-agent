@@ -2,26 +2,133 @@
 
 ## 分层体系
 
-测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-10）全量收集 4258：
+测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-14）全量收集 5033：
 
 | 层 | marker | 标准 | 测试数 |
 |---|--------|------|--------|
-| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 2313 |
-| 服务 | `service` | 单模块 + mock/fake 替身，不连真实依赖 | 1915 |
+| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 2798 |
+| 服务 | `service` | 单模块 + mock/fake 替身，不连真实依赖 | 2211 |
 | 集成 | `integration` | 需真实数据库或外部 API | 10 |
 | 慢速 | `slow` | 起 Agent 且连真实依赖 / 端到端 / >1s | 39 |
 | 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 7 |
 
-> **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁；合并门禁 `-m "not external"` 收集 4251。2026-09-10 实测 `make test-quick`（`-m "unit or service"`）4210 passed / 2 skipped；`make test-normal`（`-m "not slow and not external"`）4213 passed / 2 skipped。各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
+> **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁。
+> 各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
+
+### 合并门禁的两个集合是**互斥**的（2026-09-14 CI 性能专项）
+
+```bash
+make test-quick       # pytest -m "unit or service"                    → 4991 收集（4989 passed + 2 skipped）
+make test-remainder   # pytest -m "not slow and not external and not unit and not service" → 3
+make test-normal      # pytest -m "not slow and not external"          → 4994 收集（4992 passed + 2 skipped）
+```
+
+`test-quick ∪ test-remainder == test-normal`，且两者交集为空。这两条恒等式由
+`make check-test-sets`（`scripts/check_test_sets.py`）机械验证。
+
+**为什么要有这条约束**：CI 的 push 流程此前是并列的 `Quick` + `Normal` 两个 job。
+它们看着能并行，实际不能——本仓库只注册了 **1 个** self-hosted runner，一个 runner
+同时只跑一个 job（runner 自己的诊断日志显示 Normal 恒在 Quick 结束后 4–13s 才启动）。
+而 `Quick ⊆ Normal`，于是 **4912/4986 = 98.5% 的用例被同一批机器跑了两遍**。
+现在两个集合仍有定义（本地迭代用 Quick，验证余集用 remainder），但 push CI 合并成
+**一个 job 跑一遍 `test-normal`**——见 `.github/workflows/ci.yml` 的 `backend` job。
+
+> **标记纪律（2026-09-14 起由代码强制）**：全仓**不得有无 marker 的测试**
+> （无 marker 会被 `make test-quick` 静默跳过，PR 门禁对它不设防），也**不得出现
+> `(slow|integration|external) and (unit|service)` 的叠加**（会把真 I/O 用例塞进快门禁，
+> 破坏上面那条互斥性）。两条不变量由根 `conftest.py` 的
+> `pytest_collection_modifyitems` 钩子在**收集阶段**强制：违规 → `pytest.UsageError`，
+> 失败原因显式打 stderr。**退出码不是契约**：串行下是 4，但 `pytest -n N` 下 xdist 会
+> 把它转成 `INTERNALERROR … assert not crashitem`（退出码 3）且**异常消息会丢**——
+> 所以原因由钩子自己 print 到 stderr。
 >
-> **标记纪律（2026-09-10 复审）**：全仓**不得有无 marker 的测试**——无 marker 会被 `make test-quick` 静默跳过，PR 门禁对它不设防（曾积累 188 条）。同时**不得出现 `(slow|integration|external) and (unit|service)`** 的叠加——pytest 的 marker 只增不减，模块级 `pytestmark` 会覆盖类级 `slow`，把真 I/O 用例塞进快门禁（曾 10 条）。两条不变量可自查：
+> **为什么是 hook 不是 test**：hook 在**每个**进程里都跑（含 `pytest -n N` 的每个
+> worker），而 test 只被派给一个 worker——写成 test 的话 xdist 下它只看得到自己那个
+> 分片，断言平凡成立 = 假绿。实测该 hook 在 `-m` 过滤**之前**收到全部条目。
+>
+> 历史漂移：此约定写在文档里但只能靠人跑自查命令，实测积到 **71 条**无 marker
+> 测试（9 个文件），2026-09-14 已修复。此前文档里那条自查命令：
 >
 > ```bash
 > pytest -q --collect-only -m "not (unit or service or integration or slow or external)" | grep -c "::"   # 期望 0
 > pytest -q --collect-only -m "(slow or integration or external) and (unit or service)" | grep -c "::"   # 期望 0
 > ```
 >
-> 另：`pytest.ini` 设 `timeout = 300`（`pytest-timeout`，`thread` 方式）——无界 `await` 回归成挂死时不再无限期挂住 CI。
+> 另：`pytest.ini` 设 `timeout = 300`（`pytest-timeout`，`thread` 方式）——无界 `await`
+> 回归成挂死时不再无限期挂住 CI。
+
+### 并行执行（pytest-xdist，2026-09-14 引入）
+
+`make test-quick` / `make test-normal` 默认带 `-n 8 --dist loadfile`
+（`PYTEST_N` 可覆盖：`make test-normal PYTEST_N=12`）。
+
+**实测档位曲线**（本机 24 核；`-m "not slow and not external"`，修复后列为 4992 passed / 2 skipped = 4994 收集）。
+两列是**同一天的两次扫描**——"修复前"是还没动 embedding 替身（见下节，它占了 teardown
+的 44.7%）时测的，"修复后"是打上替身之后：
+
+| workers | 修复前 pytest / wall | 修复后 pytest / wall | 串行加速比（后） |
+|---------|---------------------|---------------------|----------------|
+| 串行 | 544.1s / 551s | **313.7s / 320s** | 1.0× |
+| `-n 4` | 156.7s / 159s | 未重测 | — |
+| **`-n 8`（默认）** | 104.5s / 107s | **63.2s / 66s** | 5.0× |
+| `-n 12` | 84.6s / 87s（另 3 次 81.4–82.3s） | **53.3–54.1s / 56–57s** | 5.9× |
+| `-n 16` | 88.0s / 91s | 未重测 | — |
+| `-n 24`（≈`auto`） | 96.8s / 100s，**那一次少报 1 条**（见下） | 63.9s / 65s | 4.9× |
+
+**结论与取舍**：
+
+- **`-n auto` 不是答案**：24 worker 并不比 12 快（修复前 96.8s vs 84.6s，甚至更慢；
+  每个 worker 都要独立 import torch/sentence-transformers，数百 MB），而默认 8 与它的
+  差距只有 ~1s。**CI 明确禁止 `-n auto`**：worker 数不应随 runner 核数漂移。
+- 默认取 **8** 而不是更快的 12：修复 embedding 之后曲线已经变平（12 只比 8 快 9s，
+  约 7%），而 8 个 worker 在"这台机器同时跑 mongod / milvus / neo4j / 开发工具"
+  的前提下留更多余量。要更快就 `PYTEST_N=12`（实测 5 次全绿，81–84s → 53–54s）。
+
+#### `-n 24` 那次少报 1 条：结论是「一次性偶发，未复现」（2026-09-14 RC 复核）
+
+**现象**：修复 embedding 之前的 `-n 24` 那一次报告 `4985 passed, 2 skipped`（=4987），
+而当时选择集是 4988——**少 1 条，且输出里没有任何报错行**。
+
+**复核结果**：在最终工作树上重跑 `-n 24` **4 次**——前 2 次（守卫测试加入前）报
+`4990 passed, 2 skipped = 4992`，后 2 次（加入后）报 `4992 passed, 2 skipped = 4994`；
+**每次都恰好等于当时的收集数**。即该现象**未能复现**。
+
+**逐条排除**（都基于实测，不是推测）：
+
+| 假设 | 证据 | 结论 |
+|------|------|------|
+| collection mismatch | 最终树连续 4 次的报数都等于当时的收集数（4992 → 4994）；同一批次里紧邻的 `-n 16` 那次也报了完整数 | 排除 |
+| worker crash | 无 crash/失败行。对照组证明这条路径**会**报出来：`-o timeout=3 -n 2` 的挂死探针输出 `FAILED … worker 'gw0' crashed`、退出码 1 | 排除 |
+| pytest-timeout | 整个 run 只用了 96.8s，远低于每测 300s 预算 | 排除 |
+| 内存耗尽 / OOM | `/var/log/kern.log` 与 `/var/log/syslog`（都可读、覆盖该时段）**无 OOM 记录**；实测 `-n 24` 峰值占用 **≈12.7 GB / 31 GB** | 排除 |
+| 输出统计问题 | 4 次重跑计数精确，非系统性 | 未证实 |
+
+**唯一未排除的假设（标注为假设）**：当时机器上**同时有另外两个全量 pytest 在跑**
+（fixture 审计 subagent 的 durations 插件全量 + 一个 1Hz 的 `ps` 采样器）——那是整个
+档位系列里唯一一次这种条件。至于"竞争如何导致某条用例不上报"，**从产物里查不出来**
+（该次输出没有任何错误行）。
+
+**因此的处理**：默认 `PYTEST_N=8`；**CI 不使用 `-n auto`**；把上面这条残留不确定性
+写在这里。若将来在干净的 runner 上再次观察到"少报但全绿"，按 worker crash 路线排查
+（`-v` 看是否有用例从未开始，或加 `-p no:cacheprovider --max-worker-restart=0` 观察）。
+
+**已知边界**：
+
+- `--dist loadfile`（整文件进同一 worker）而非默认的测试级 `load`：本仓多处测试
+  共享按文件划分的假替身/模块状态，loadfile 用一点负载均衡换掉这类同文件内交互。
+- **`timeout_method = thread` 与 xdist 的交互**：`pytest-timeout` 的 thread 方式在超时
+  时 dump 全线程栈后 `os._exit(1)`——**整个 worker 进程退出**，该 worker 队列里剩余
+  用例一并丢失。300s 阈值下这只可能是真回归，但排查时要意识到"少跑了一些用例"
+  可能是这个原因（这条路径**会**打印 `worker 'gw0' crashed`，与上面那次不吻合）。
+- 需要跨 worker 隔离的资源在根 `conftest.py` 收口到各自测试的 `tmp_path`：
+  `ELYSIA_PATH_SESSION_PENDING`、`ELYSIA_PATH_SCHEDULER_CHECKPOINT`、
+  `ELYSIA_PATH_MEMORY_PENDING_DELETES`、`ELYSIA_PATH_MEMORY_PENDING_SYNCS`、
+  `ELYSIA_PATH_SESSION_PENDING_CLEANUP`（这些 journal 的原子写用 `<path>.tmp`，
+  同名文件在多进程下会互相覆盖/删除/串读）。
+  **已知缺口**：`TokenTracker._pending_file`（`data/token_usage_pending.jsonl`）
+  在 import 期就把路径固化进**类属性**，`ELYSIA_PATH_*` 覆盖对它无效
+  （它的测试用实例属性覆盖）。目前没有测试从"未隔离目录"走到它，属潜在项。
+
 
 ### 真实数据库防线（unit/service 不碰生产库）
 
@@ -100,22 +207,80 @@ make test-external
 ```bash
 conda activate Elysia
 
-# 日常开发（实测 ≈9min；日常迭代请按模块跑，见下）
+# 日常开发（unit + service；串行 ≈9min27s，xdist 默认 -n 8 后 ≈1min03s）
 make test-quick
-# 或: pytest -m "unit or service" -q -x --tb=short
+# 或: pytest -m "unit or service" -q -x --tb=short -n 8 --dist loadfile
 
-# 提交前 — 排除 slow（实测 ≈9min）
+# 提交前 — 排除 slow（全量离线；串行 ≈5min13s，-n 8 后 ≈1min03s）
 make test-normal
-# 或: pytest -m "not slow and not external" -q --tb=short
+# 或: pytest -m "not slow and not external" -q --tb=short -n 8 --dist loadfile
 
-# 全量 — 推之前（~20min）
+# Normal 中不在 Quick 里的余集（当前 3 条 integration）
+make test-remainder
+
+# 全量（含 slow；slow 无界，慢）
 make test-full
 # 或: pytest -q
 
 # 导入风格门禁（秒级——这一条确实快）
 make lint
 # 或: ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
+
+# 测试集合代数门禁（约 35s，3 次收集）：Quick ∪ remainder == Normal 且交集为空
+make check-test-sets
 ```
+
+> **时间数字的来源**：上表的串行值来自 2026-09-14 本机 `--durations` 基线；xdist 值来自
+> 同日的档位实测（表见上文「并行执行」）。CI 侧的耗时以 runner 自身日志为准，
+> 两者不要混用——本机 24 核，CI 的 GitHub-hosted runner 只有 4 核。
+
+## 已修复：teardown 占了 44.7%（2026-09-14）
+
+**逐条累加 phase 时长**（串行 `-m "unit or service"`，测量时收集 4985 条）后的真实分布：
+
+| phase | 合计 | 占比 | 单条最大 |
+|-------|------|------|---------|
+| setup | 32.3s | 5.7% | **0.036s** |
+| call | 281.3s | 49.6% | 34.5s |
+| **teardown** | **253.9s** | **44.7%** | 6.8s |
+
+**没有"昂贵的 fixture"可优化**——全仓最贵的 fixture 是 `agent`（真
+`Agent(config=AppConfig())`），均值 20.2ms。真正的成本是 **63 条各 ~3.8s 的
+teardown**（3.5–4.5s 带状聚集，合计 238.6s）。
+
+**根因**：`Agent.start()` 起一个 embedding 预加载任务，`Agent.stop()` 用 **3.0s**
+预算取消它（`core/agent/_lifecycle_tools.py`）；真实 `bge-large-zh-v1.5` 冷加载远超
+3s → 任务在预算内没落定 → 加载**溢进 pytest-asyncio 的事件循环收尾**。
+3.0s 预算 + ~0.7s settle 正是那 3.67–3.77s。
+
+**修复**：把已有的 `_no_network_embedding` 从**目录作用域**（只覆盖 490/4985 条，
+且恰好漏掉 core/agent、core/input、core/cognitive 全部热点）上提到根 conftest 的
+autouse `_no_real_embedding`。豁免 `external` 与显式请求 `real_embedding` 的测试。
+
+反证链（每条都实测过）：
+- `-p no:timeout` 后 27.18s vs 27.05s → **不是 pytest-timeout**；
+- 只构造不 `start()` 的对照 0.05s、**完全没有 teardown 项**；
+- `Agent.stop()` 在 `call` 相里 4 次共 0.23s → 不是 stop 本身慢；
+- 打替身后 `core/input/tests/test_version.py` **26.0s → 13.3s，teardown 条目归零**。
+
+## 其它已知慢点（2026-09-14 实测，未修）
+
+`--durations=50 --durations-min=0.1` 串行结果里最大的三条，各约 30s、合计 ~95s：
+
+| 测试 | 耗时 | 说明 |
+|------|------|------|
+| `scripts/tests/test_check_secrets.py::test_real_repo_full_history_verdict_is_faithful` | 34.5s | `git clone --depth 1`（`:208`） |
+| `core/tests/test_phase3.py::TestAudioBufferErrors::test_stt_timeout` | 30.1s | 桩 sleep 99s，测试等真实预算 `timeout=30.0`（`core/input/audio_buffer.py:356`） |
+| `Module/workflow_engine/tests/unit/test_workflow_engine.py::test_pause_sets_pause_requested` | 30.1s | **unit** 却烧掉 `pause()` 默认 `timeout=30.0`（`Module/workflow_engine/workflow_engine.py:494`），而该断言并不需要它 |
+
+其余量级：`core/cognitive/tests/test_v2_generation.py` ×4 各 7.1s、
+`core/input/tests/test_v2_ws.py::TestSetTtsVoice` ×3 各 5.0s。
+
+**sleep 基本是红鲱鱼**：全仓字面量求和 26704s，但其中 26677s 是 22 处
+`sleep(3600/999/99)` 这类"永久挂起"哨兵；真实会执行的 sleep 合计只有 **27.3s**。
+也没有 retry/backoff 循环。
+
+
 
 ## Import 门禁（ruff TID252）
 

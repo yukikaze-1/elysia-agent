@@ -4,19 +4,30 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - "**.md"
+      # 2026-09-14（CI 性能专项）：这里**只**保留证明确实不被任何测试/gate 读取的路径。
+      # 此前还忽略 `**.md` 与 `character/**`，但两者都会被测试读：
+      #   - `core/tests/test_doc_counts.py`（unit）断言 `CLAUDE.md` 与 `core/README.md`
+      #     的内容——只改 Markdown 的 push 会让 main 上的 CI 静默变红（改了文档
+      #     里那几个可数事实，却因为 paths-ignore 根本不触发任何 workflow）；
+      #   - `character/**/config.yaml` 被 `core/prompt/tests/conftest.py:76`、
+      #     `core/prompt/tests/test_system_prompt_snapshot.py:91`、
+      #     `Module/config/tests/test_preflight.py`、`core/tests/test_phase3.py` 读取。
+      # `docs/**` 保留：没有测试在运行期读 docs/（唯一例外是 golden frames
+      # `docs/archive/frontend-handoff-v2/traces/**`，由 contract-frames.yml 单独覆盖）。
       - "docs/**"
-      - "character/**"
   pull_request:
     branches: [main]
     paths-ignore:
-      - "**.md"
       - "docs/**"
-      - "character/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+# 最小权限：全仓只需读代码（自托管 checkout 用 github.token 拉取同样只需 contents:read）。
+# 此前无 permissions 块 → 继承仓库默认（可能是 read/write）。
+permissions:
+  contents: read
 
 # ---------------------------------------------------------------------------
 # 信任边界（P0-02，2026-08-10）：
@@ -25,8 +36,10 @@ concurrency:
 #     runner 上读取宿主 .env / API key / 执行任意代码。
 #   - push 到 main（受信 ref）才允许 self-hosted + 宿主 Elysia env + 真实 .env。
 #   - 策略由 scripts/check_ci_isolation.py 静态强制（PR 可达 job 禁止
-#     self-hosted、禁止 /home/.../.env 引用）；违规即 CI 红。
-#   - 真实凭据外部 E2E（workflow_dispatch + environment）由 F1/E4 拆分，仅受信 ref。
+#     self-hosted、禁止 /home/.../.env 引用、禁止 if 守卫引用未声明事件）；
+#     违规即 CI 红。
+#   - 真实凭据外部 E2E 已移出本 workflow（见下），只在 `.github/workflows/nightly.yml`
+#     的受信手动触发里跑。
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -45,6 +58,13 @@ jobs:
       - name: Install runtime + dev deps (clean-room, 无真实凭据)
         # CPU-only torch 快速安装（CUDA/GPU 只在受信 push job）；一次全新安装，结果确定
         #
+        # 2026-09-14 RC：dev/测试工具改为装 `requirements-dev.txt`，不再手写
+        # `pytest ruff pyright pip-audit bandit`——那是第二处真相：往 dev 文件里加
+        # 工具（如 pytest-xdist）而忘改这里，CI 就会以 "unrecognized arguments: -n" 失败。
+        # 生效集合 = 旧集合 + {pytest-timeout, pytest-xdist}（这两个此前由
+        # requirements.txt 顺带带进来，现已随插件一起移到 dev 文件）。逐项对比脚本见
+        # 提交说明；**没有任何包被少装**。
+        #
         # S2-9「CI 装锁」的结论：**CI 不直接消费 environment.lock.yml**。那份锁是
         # `conda env export`，含 linux-64 专用 conda 包（build string 形如 `=he532380_0`）
         # 与生成机 prefix，GitHub runner 上没有 conda、也重放不了这些条目。
@@ -58,7 +78,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-          python -m pip install -r requirements.txt pytest ruff pyright pip-audit bandit
+          python -m pip install -r requirements.txt -r requirements-dev.txt
       - name: Lint (import style gate)
         # F4：scripts/ 纳入 lint（此前遗漏 17 个 ANN）
         run: python -m ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
@@ -83,12 +103,9 @@ jobs:
         # `make check-secrets-history` 的判据、不是 PR 门禁（见 docs/credential-handling.md）。
         run: python scripts/check_secrets.py
       - name: CI trust boundary check
-        # 覆盖全部 workflow（此前只查 ci.yml——nightly/contract-frames 的
-        # PR 可达 job 若引 self-hosted 或宿主 .env 会漏检）
-        run: |
-          python scripts/check_ci_isolation.py
-          python scripts/check_ci_isolation.py .github/workflows/nightly.yml
-          python scripts/check_ci_isolation.py .github/workflows/contract-frames.yml
+        # 默认扫描 .github/workflows/*.yml **全部**（不再手写三个文件名——新增第四个
+        # workflow 此前不会被任何门禁看见）。含死 job 判定。
+        run: python scripts/check_ci_isolation.py
       - name: Architecture boundary check (ARCH-INC-P1-03)
         # 依赖方向（Module→core / 零依赖层 / 领域层→input）+ 跨包私有符号 + eager 环。
         # 纯 AST、无外部依赖；存量泄漏在脚本 allowlist 逐项登记理由，新增即红。
@@ -97,19 +114,34 @@ jobs:
         # /debug/api/* 只认 SERVER_AUTH_TOKEN；所有请求必须经 debugFetch 带
         # Authorization 头，EventSource 无法设头故禁用。纯静态扫描、无依赖。
         run: python scripts/check_debug_auth.py
+      - name: Test set algebra gate (Quick ∪ remainder == Normal)
+        # 证明 make test-quick 与 test-remainder 互斥且不遗漏（约 35s，3 次收集）。
+        run: python scripts/check_test_sets.py
       - name: Run quick tests (unit + service, 无外部 key; F1 含 WorkflowEngine unit/service)
         # F1：不再 --ignore workflow——external marker 排除真实 LLM/DB E2E，
         # WorkflowEngine 确定性 unit/service 入合并门禁（破坏 cancel/submit 的提交会阻止合并）
-        run: python -m pytest -m "unit or service" -q -x --tb=short
+        run: python -m pytest -m "unit or service" -q -x --tb=short -n 4 --dist loadfile
 
   # ---- push 到 main（受信 ref）：复用 self-hosted Elysia env，真实 .env ----
-  quick:
-    name: Quick (unit + service)
+  #
+  # 单一 backend job（2026-09-14 CI 性能专项）。此前是并列的 `Quick` + `Normal`
+  # 两个 job，看似可并行，实际不能：
+  #   ① 本仓库只注册了 **1 个** self-hosted runner（`elysia-server`，
+  #      `/home/yomu/actions-runner/.runner`；其余三个 runner 属于
+  #      `yukikaze-1/elysia-frontend`，不接本仓库的 job）。一个 runner 同时只跑一个
+  #      job —— runner 自己的诊断日志显示 Normal 恒在 Quick 结束后 4–13s 才启动
+  #      （2026-09-13 19:12:13→19:23:06 = 10m53s，两段严格串行）。
+  #   ② `Quick`(`-m "unit or service"`) ⊆ `Normal`(`-m "not slow and not external"`)，
+  #      4912/4986 = **98.5% 的 Normal 是 Quick 的逐字重复**——同一批用例被跑了两遍。
+  #      而 `Quick` 里唯一的"独有"内容是静态门禁（26s），与测试集合无关。
+  # 合并后：静态门禁只跑一次、离线用例只跑一遍、xdist 并行。
+  backend:
+    name: Backend (static gates + offline suite)
     if: github.event_name == 'push'
     runs-on: self-hosted
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Checkout (retry x4)
+      - name: Checkout (retry x4, hermetic clean)
         shell: bash
         env:
           REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
@@ -120,9 +152,23 @@ jobs:
           while :; do
             attempt=$((attempt + 1))
             echo "== checkout attempt ${attempt}/4 =="
-            rm -rf ./* ./.git 2>/dev/null || true
+            # **密闭清理**：删掉 $GITHUB_WORKSPACE 的每一个直接子项，含 dotfile/dotdir。
+            # 旧写法 `rm -rf ./* ./.git 2>/dev/null || true` 有两个缺陷（实测于
+            # /home/yomu/actions-runner/_work/elysia-agent/elysia-agent）：
+            #   ① shell glob `*` 不匹配前导点 → `.env` / `.pytest_cache` / `.ruff_cache`
+            #      / `__pycache__` / `.model_cache` 全部跨 job 残留（该工作区里
+            #      `.pytest_cache` 目录 mtime 还是 2026-08-02，而 lastfailed 是 09-14 写的）；
+            #   ② `|| true` 把真实失败也吞掉——若 `.git` 侥幸留下，`git remote add` 会以
+            #      "already exists" 失败，四次重试全部同样失败却把原因归给网络。
+            # find 形式对空目录、dotfile、非常规文件名都正确，且只作用于 workspace 自身。
+            WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE 未设置——拒绝在未知目录下清理}"
+            if [ "$WS" = "/" ]; then
+              echo "FATAL: GITHUB_WORKSPACE 解析为 / ——拒绝清理"
+              exit 1
+            fi
+            find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
             if git init -q . &&
-               git remote add origin "$REPO_URL" &&
+               (git remote add origin "$REPO_URL" || git remote set-url origin "$REPO_URL") &&
                git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
                git checkout --quiet --force refs/remotes/origin/target; then
               echo "checkout succeeded on attempt ${attempt}"
@@ -136,12 +182,14 @@ jobs:
             sleep $((attempt * 10))
           done
       - name: Load .env
-        # 仅受信 push ref——不受信 PR 永不进入本 job（if guard + 门禁脚本双保险）
+        # 仅受信 push ref——不受信 PR 永不进入本 job（if guard + 门禁脚本双保险）。
+        # 上一步已把 workspace 清空，所以这里的 .env 一定是本 job 从宿主重新取的，
+        # 不存在上一个 job 残留的 .env。
         run: cp /home/yomu/elysia-agent/.env .env
       - name: Setup conda env (Elysia)
         # self-hosted runner 默认 shell 无 conda——把 Elysia env 的 bin 加入 PATH，
         # 使 ruff/pytest/python 可解析（等价 conda activate Elysia）
-        run: echo "/home/yomu/miniconda3/envs/Elysia/bin" >> $GITHUB_PATH
+        run: echo "/home/yomu/data/anaconda3/envs/Elysia/bin" >> $GITHUB_PATH
       - name: Lint (import style gate)
         run: make lint
       - name: Pyright (type check gate, 全仓生产代码)
@@ -156,57 +204,19 @@ jobs:
         run: make check-contract
       - name: Debug frontend auth guard (S2-F3)
         run: make check-debug-auth
-      - name: Run quick tests
-        run: |
-          set -a
-          source .env
-          set +a
-          make test-quick
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-
-  normal:
-    name: Normal (not slow)
-    if: github.event_name == 'push'
-    runs-on: self-hosted
-    timeout-minutes: 30
-    steps:
-      - name: Checkout (retry x4)
-        shell: bash
-        env:
-          REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-        run: |
-          # self-hosted runner 到 github.com 网络抖动时重试；HTTP/1.1 由 runner 全局 git config 保证
-          set -uo pipefail
-          attempt=0
-          while :; do
-            attempt=$((attempt + 1))
-            echo "== checkout attempt ${attempt}/4 =="
-            rm -rf ./* ./.git 2>/dev/null || true
-            if git init -q . &&
-               git remote add origin "$REPO_URL" &&
-               git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
-               git checkout --quiet --force refs/remotes/origin/target; then
-              echo "checkout succeeded on attempt ${attempt}"
-              exit 0
-            fi
-            echo "checkout failed on attempt ${attempt}"
-            if [ "$attempt" -ge 4 ]; then
-              echo "FATAL: checkout failed after 4 attempts"
-              exit 1
-            fi
-            sleep $((attempt * 10))
-          done
-      - name: Load .env
-        # 仅受信 push ref——不受信 PR 永不进入本 job
-        run: cp /home/yomu/elysia-agent/.env .env
-      - name: Setup conda env (Elysia)
-        # self-hosted runner 默认 shell 无 conda——把 Elysia env 的 bin 加入 PATH，
-        # 使 ruff/pytest/python 可解析（等价 conda activate Elysia）
-        run: echo "/home/yomu/miniconda3/envs/Elysia/bin" >> $GITHUB_PATH
-      - name: Lint (import style gate)
-        run: make lint
-      - name: Run normal tests
+      - name: CI trust boundary check (P0-02)
+        # 此前只在 PR Gate 跑 → 直接 push 到 main 的提交从未被校验过信任边界。
+        # 纯静态解析、<1s。
+        run: make check-ci-isolation
+      - name: Secret scanning (CR-01)
+        # 同上：此前只在 PR Gate 跑 → 直接 push 到 main 的提交不会被扫凭据形态。
+        # 纯 stdlib、秒级。
+        run: make check-secrets
+      - name: Test set algebra gate (Quick ∪ remainder == Normal)
+        # 保证 make test-quick / test-remainder 仍然互斥且不遗漏；约 35s（3 次收集）。
+        run: make check-test-sets
+      - name: Run offline suite (not slow and not external, xdist)
+        # 完整离线集**只跑一遍**（此前 Quick + Normal 把 98.5% 的用例跑了两遍）。
         run: |
           set -a
           source .env
@@ -215,52 +225,11 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 
-  # ---- F1：外部 E2E 独立受保护 job（真实 LLM/DB）----
-  # 仅 workflow_dispatch 手工触发（受信仓库管理员）——不入 merge gate；
-  # self-hosted（宿主 Elysia env + 真实 .env），结果与合并门禁分开展示。
-  external:
-    name: External E2E (real LLM/DB, opt-in)
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: self-hosted
-    timeout-minutes: 45
-    steps:
-      - name: Checkout (retry x4)
-        shell: bash
-        env:
-          REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-        run: |
-          set -uo pipefail
-          attempt=0
-          while :; do
-            attempt=$((attempt + 1))
-            echo "== checkout attempt ${attempt}/4 =="
-            rm -rf ./* ./.git 2>/dev/null || true
-            if git init -q . &&
-               git remote add origin "$REPO_URL" &&
-               git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
-               git checkout --quiet --force refs/remotes/origin/target; then
-              echo "checkout succeeded on attempt ${attempt}"
-              exit 0
-            fi
-            if [ "$attempt" -ge 4 ]; then exit 1; fi
-            sleep $((attempt * 10))
-          done
-      - name: Load .env (受信 workflow_dispatch ref)
-        run: cp /home/yomu/elysia-agent/.env .env
-      - name: Setup conda env (Elysia)
-        run: echo "/home/yomu/miniconda3/envs/Elysia/bin" >> $GITHUB_PATH
-      - name: Run external E2E (真实 LLM/DB)
-        run: |
-          set -a
-          source .env
-          set +a
-          make test-external
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-
   frontend:
     name: Frontend (vue-tsc + build)
-    # 无需宿主 secret / self-hosted——GitHub-hosted 即可安全构建 v1 UI
+    # 无需宿主 secret / self-hosted——GitHub-hosted 即可安全构建 v1 UI。
+    # 刻意**不加** `if:`：本 job 是 PR 可达的，加了 push-only guard 反而会让
+    # scripts/check_ci_isolation.py 把它当作受信 job 跳过检查（信任边界不能靠"跳过"）。
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

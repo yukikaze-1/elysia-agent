@@ -1124,7 +1124,13 @@ core/utils/log_setup.py:
 
 ## 11. 测试架构
 
-3,804 个测试按 5 层 markers 组织（unit / service / integration / slow / external opt-in；全量收集，合并门禁 `-m "not external"` 3,768，2026-08-16 实测 `make test-quick` 3618 passed / `make test-normal` 3726 passed；具体数字以 `scripts/print_test_stats.py` 为准，不手写易漂移）。
+5 层 markers 组织（unit / service / integration / slow / external opt-in）的测试的**数量不在此手写**——
+以 `scripts/print_test_stats.py` 的输出为准（手写数字必然漂移，本节此前即因之全面过期）。
+
+2026-09-14 CI 性能专项后，两个合并门禁集合**互斥**：`make test-quick`（`-m "unit or service"`）
+与 `make test-remainder`（Normal − Quick），由 `make check-test-sets` 机械验证
+`Quick ∪ remainder == Normal` 且交集为空；`make test-quick` / `make test-normal` 默认带
+`pytest-xdist`（`-n 8 --dist loadfile`：`make test-normal` 串行 ≈5min13s → ≈1min03s，档位实测表见 testing.md）。
 
 完整分层体系、测试文件索引、按模块运行命令 → [docs/testing.md](testing.md)
 

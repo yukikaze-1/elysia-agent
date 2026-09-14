@@ -16,29 +16,37 @@ Plain Python（无 `pyproject.toml` 等构建系统）。前端 Vue 3 + Vite + T
 
 ### 分层运行
 
-    > **实测（2026-09-13，本机）**：三档耗时其实**很接近**——quick ≈9min、
-    > normal ≈9min、full ≈9m47s（4924 passed）。原因是绝大部分用例都是
-    > unit/service，三档都包含它们；`slow`/`integration` 只占几十条。
-    > 文档此前写的「秒级 / 5 分钟 / 22 分钟」三个都不准（那个 22 分钟是更早
-    > 时代的数字），照它做时间预算会差一个量级。日常迭代请**按模块**跑
-    > （见下），全量留给推之前。
+    > **实测（2026-09-14，本机 24 核）**：这里有两道坎，都跨过去了才有下面的数——
+    >  ① **重复**：Quick ⊆ Normal，98.5% 的用例被同一台 runner 跑了两遍（CI 的
+    >     Quick+Normal 是**串行**的：本仓只注册了 1 个 self-hosted runner）；
+    >  ② **teardown**：串行 `-m "unit or service"` 的 567s 里 253.9s（44.7%）是
+    >     teardown，根因是测试里**真加载** `bge-large-zh-v1.5`（详见 docs/testing.md）。
+    > 修完这两道坎，再加 `-n 8 --dist loadfile`：**quick ≈1min03s、normal ≈1min03s**
+    > （串行分别是 ≈9min27s / ≈5min13s；`-n 12` 再快 ~9s）。
+    > 档位实测表见 `docs/testing.md`「并行执行」。日常迭代仍建议**按模块**跑（见下）。
 
 ```bash
-# 日常开发（unit + service；本机实测 ≈9min，日常请按模块跑）
+# 日常开发（unit + service；本机串行 ≈9min，-n 8 后 ≈1min03s）
 make test-quick
-# 或: pytest -m "unit or service" -q -x --tb=short
+# 或: pytest -m "unit or service" -q -x --tb=short -n 8 --dist loadfile
 
-# 提交前 — 排除 slow（实测 ≈9min）
+# 提交前 — 排除 slow（全量离线；串行 ≈5min13s，-n 8 后 ≈1min03s）
 make test-normal
-# 或: pytest -m "not slow and not external" -q --tb=short
+# 或: pytest -m "not slow and not external" -q --tb=short -n 8 --dist loadfile
 
-# 全量 — 推之前（实测 ≈10min）
+# Normal 中不在 Quick 里的余集（当前 3 条 integration）——两者互斥，见 docs/testing.md
+make test-remainder
+
+# 全量（含 slow，无界，慢）
 make test-full
 # 或: pytest -q
 
+# 测试集合代数门禁（Quick ∪ remainder == Normal 且交集为空；约 35s）
+make check-test-sets
+
 # 导入风格门禁（禁相对导入，秒级）
 make lint
-# 或: ruff check core/ Module/ frontend_contract/ --exclude __pycache__
+# 或: ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
 
 # pyright 类型检查门禁（core + Module + frontend_contract 生产代码，basic + 排除测试；须 Elysia env——base env 无 aiohttp 会漏报 ~25 处）
 make pyright
@@ -47,6 +55,9 @@ make pyright
 # 架构边界门禁（ARCH-INC-P1-03/P2-03，纯 AST 无外部依赖，秒级）：依赖方向 + 跨包私有符号 + eager 环 + 裸后台任务登记
 make check-arch
 # 或: python scripts/check_architecture.py [--list]
+
+# CI 信任边界门禁（PR 可达 job 禁 self-hosted / 禁宿主 .env 路径 / 禁死 job；默认扫全部 workflow）
+make check-ci-isolation
 ```
 
 ### 按模块运行
@@ -94,10 +105,15 @@ python -m pytest frontend_contract/tests/ -v
 
 | marker | 标准 | 日常使用 |
 |--------|------|----------|
-| `unit` | 纯函数/类，无 I/O，无 Agent | `-m "unit or service"` |
-| `service` | 单模块 + mock，不启动 Agent | `-m "unit or service"` |
-| `integration` | 需真实 DB 或外部 API | `-m "not slow"` |
-| `slow` | 完整管线或 >1s | 全量时才跑 |
+| `unit` | 纯函数/类，无 I/O，无 Agent | `make test-quick`（`-m "unit or service"`） |
+| `service` | 单模块 + mock/fake，不连真实依赖 | `make test-quick` |
+| `integration` | 需真实 DB 或外部 API | `make test-remainder`（Normal−Quick 的余集） |
+| `slow` | 完整管线或 >1s | `make test-full` 才跑 |
+| `external` | 真实 LLM/DB 凭据（opt-in） | `make test-external`（须 `RUN_EXTERNAL_TESTS=1`） |
+
+marker 纪律由根 `conftest.py` 的收集钩子强制：**每个测试必须有分层 marker**，且
+**不得同时带 `(unit|service)` 与 `(slow|integration|external)`**（否则
+`Quick ∪ remainder == Normal` 的互斥性被破坏）。违规 → 收集阶段报错，失败原因显式打 stderr。**退出码不是契约**：串行下 4，`-n N` 下 xdist 会把它转成 `INTERNALERROR`（退出码 3）——所以原因必须自己打出来，否则控制台只剩一个无辜测试的 nodeid。
 
 ## Architecture
 

@@ -631,6 +631,7 @@ class TestMaxAgeDaysDeliberatelyInert:
 # S3-10：更新文本时旧向量删不掉 → 必须记 tombstone
 # ══════════════════════════════════════════════════════════════════
 
+@pytest.mark.service
 class TestUpdateTextTombstonesOldVector:
     """`update_text` 插入新向量后会删旧向量，但删除失败**只 `logger.debug`**——
     不记 tombstone、不落 journal。
