@@ -301,6 +301,18 @@ class DesktopToolBridge:
 
         async def _mark() -> None:
             try:
+                # **只终结"从未交付"的调用**（D-o 断连规则）：`accepted`/`running`/
+                # `offline` 的调用可能已在 Electron 侧产生副作用，必须留出
+                # "重连后重传 result → succeeded" 的闭环（BE-043）。把它们标成
+                # `cancelled` 会撞上终态守卫，让合法的晚到结果**永久**被拒
+                # ——`core/input/tests/test_desktop_roundtrip.py` 的
+                # accepted-断连-重连用例就是这么抓到本行第一版的。
+                doc = await self._repo.get(call_id)
+                if (doc or {}).get("status") != STATUS_PENDING:
+                    logger.debug(
+                        "DesktopToolBridge 取消时调用已非 pending（call=%s）——"
+                        "保留给晚到结果/过期清扫处理", call_id)
+                    return
                 await self._repo.mark(call_id, status=STATUS_CANCELLED)
             except Exception:  # noqa: BLE001 — 尽力而为
                 logger.debug("DesktopToolBridge 取消标记失败 (call=%s)", call_id, exc_info=True)

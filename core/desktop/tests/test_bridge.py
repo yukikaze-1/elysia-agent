@@ -715,6 +715,34 @@ class TestCancellationCleanup:
         await _until(lambda: repo.calls[call_id]["status"] == "cancelled")
 
     @pytest.mark.asyncio
+    async def test_cancel_does_not_terminalise_accepted_call(self):
+        """取消**已接手**的调用不得把它标成 `cancelled`（D-o / BE-043）。
+
+        已接手（accepted/running/offline）的调用可能已在 Electron 侧产生副作用，必须
+        留出"重连重传 result → offline → succeeded"的闭环。把它标 `cancelled` 会撞上
+        终态守卫，让合法的晚到结果**永久**被拒——`core/input/tests/
+        test_desktop_roundtrip.py::test_accepted_disconnect_reconnect_result_recovery`
+        就是这么抓到本机制第一版的（当时标记无条件执行）。
+        """
+        repo, bridge, frames = _make_bridge(timeout=120.0)
+        task = asyncio.create_task(bridge.request_and_wait(call=_call()))
+        await _until(lambda: len(frames) == 1)
+        call_id = frames[0]["callId"]
+        assert await bridge.handle_status(_status(call_id, "accepted")) is True
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0.05)          # 让 shield 出去的标记协程跑完
+        assert repo.calls[call_id]["status"] == "accepted", \
+            "已接手的调用不得被取消标记终结"
+
+        # 晚到结果仍须能闭环 offline/accepted → succeeded
+        await bridge.handle_status(
+            _status(call_id, "result", output="晚到结果", executionSummary="s"))
+        assert repo.calls[call_id]["status"] == "succeeded"
+
+    @pytest.mark.asyncio
     async def test_retry_after_cancel_redelivers(self):
         """核心后果：取消后同参重试必须**重新投递**，而不是复用陈旧 future。"""
         _repo, bridge, frames = _make_bridge(timeout=120.0)
