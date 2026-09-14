@@ -6310,6 +6310,7 @@
                   "items": {
                     "$ref": "#/$defs/AttachmentRef"
                   },
+                  "maxItems": 20,
                   "type": "array"
                 },
                 {
@@ -6317,7 +6318,7 @@
                 }
               ],
               "default": null,
-              "description": "附件引用列表（POST /api/uploads 上传结果），可缺省",
+              "description": "附件引用列表（POST /api/uploads 上传结果），可缺省；至多 20 条（S3-07）",
               "title": "Attachments"
             },
             "clientMessageId": {
@@ -24672,6 +24673,7 @@
               "items": {
                 "$ref": "#/$defs/AttachmentRef"
               },
+              "maxItems": 20,
               "type": "array"
             },
             {
@@ -24679,7 +24681,7 @@
             }
           ],
           "default": null,
-          "description": "附件引用列表（POST /api/uploads 上传结果），可缺省",
+          "description": "附件引用列表（POST /api/uploads 上传结果），可缺省；至多 20 条（S3-07）",
           "title": "Attachments"
         },
         "clientMessageId": {
@@ -25403,6 +25405,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "2c3345d55d76a53a",
+  "schemaHash": "1397295aa02775b6",
   "transportVersion": "2"
 }

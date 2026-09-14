@@ -189,6 +189,40 @@ def _record_calls(agent, calls: list[dict]) -> None:
 
 class TestAttachmentMessage:
     @pytest.mark.asyncio
+    async def test_repeated_attachment_refs_fetched_once(self, aiohttp_client):
+        """S3-07 顺带：同一条消息**重复引用**同一附件 → 只查一次 MongoDB。
+
+        修前逐条串行 `repo.get`，重复引用把消息循环的占用放大到引用条数倍。
+        契约上限（20 条）管"多少条"，本去重管"其中多少条是同一个"——两者互补。
+        """
+        agent, app = _make_agent_app()
+        _add_attachment(agent._attachment_repo, "att_dup")  # noqa: SLF001
+        repo = agent._attachment_repo                       # noqa: SLF001
+        fetches: list[str] = []
+        original_get = repo.get
+
+        async def _counting_get(attachment_id):
+            fetches.append(attachment_id)
+            return await original_get(attachment_id)
+
+        repo.get = _counting_get
+        client = await aiohttp_client(app)
+        await agent.start()
+        try:
+            _record_calls(agent, [])
+            ws = await _drain(client, {"X-Protocol-Version": "2"})
+            ref = {"attachmentId": "att_dup", "kind": "image", "mime": "image/png"}
+            await ws.send_json({
+                "type": "text", "content": "hi", "clientRequestId": "req_dup",
+                "attachments": [ref, ref, ref],
+            })
+            ack = await _read_ack(ws)
+            assert ack["status"] == "accepted", ack
+            assert fetches == ["att_dup"], f"重复引用应只取一次，实际 {fetches}"
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
     async def test_v2_text_with_attachments_processed(self, aiohttp_client):
         """v2 text 带 attachments → accepted + process_message 收到 dict 列表 + refs+1。"""
         agent, app = _make_agent_app()

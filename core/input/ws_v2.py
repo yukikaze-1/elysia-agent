@@ -391,6 +391,10 @@ async def _prepare_v2_text_context(
                                            "retryable": False},
                                     received_at=received_at)
                     return None, True
+                if aid in attachment_records:
+                    # S3-07 顺带：同一附件被**重复引用**时只查一次。此前逐条串行
+                    # Mongo 往返，重复引用会把消息循环的占用放大到引用条数倍。
+                    continue
                 doc = await agent.attachment_repo.get(AttachmentId(aid))
                 if doc is None or (doc.get("status") or "") != "active":
                     await _send_ack(ws, "", client_request_id, client_message_id,

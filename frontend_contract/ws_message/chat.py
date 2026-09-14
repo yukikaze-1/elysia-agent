@@ -168,6 +168,16 @@ class AudioCancelledMessage(ContractModel):
 
 
 
+MAX_ATTACHMENTS_PER_MESSAGE = 20
+"""单条消息可携带的附件引用上限（S3-07）。
+
+无上限时，一个 16MB 的 WS 帧可以塞进约十万条引用，服务端**逐条串行** `Mongo`
+往返取记录——整条消息循环被独占，其他连接的消息全部排队。
+20 是"人类真实用法（几张图/几个文件）"的宽裕上界；超限在**契约层**就被拒
+（`ValidationError` → 既有的 `CONTRACT_VALIDATION` 拒绝路径），不会走到取数循环。
+"""
+
+
 class V2TextMessage(ContractModel):
     """v2 客户端文本消息（type=text + 幂等/定位字段；不进 ServerMessage 联合）。
 
@@ -189,7 +199,9 @@ class V2TextMessage(ContractModel):
     clientMessageId: Optional[str] = Field(default=None, description="客户端本地消息 ID，可缺省")
     conversationId: Optional[str] = Field(default=None, description="会话 ID，批次 2 忽略/恒 null，可缺省")
     attachments: Optional[list[AttachmentRef]] = Field(
-        default=None, description="附件引用列表（POST /api/uploads 上传结果），可缺省")
+        default=None, max_length=MAX_ATTACHMENTS_PER_MESSAGE,
+        description="附件引用列表（POST /api/uploads 上传结果），可缺省；"
+                    f"至多 {MAX_ATTACHMENTS_PER_MESSAGE} 条（S3-07）")
     stickerId: Optional[str] = Field(
         default=None, description="内置表情 ID（st_ 前缀，非附件），可缺省")
 

@@ -42,6 +42,7 @@ from frontend_contract.ws_message._types import (
     ToolAttachment,
 )
 from frontend_contract.ws_message.chat import (
+    MAX_ATTACHMENTS_PER_MESSAGE,
     DeltaMessage,
     MessageMessage,
     TokenUsageMessage,
@@ -195,6 +196,7 @@ ServerMessage = Annotated[Union[
 ], Field(discriminator="type")]
 
 __all__ = [
+    "MAX_ATTACHMENTS_PER_MESSAGE",
     "AcceptedUserAckMessage",
     "AckError",
     "ActionMessage",

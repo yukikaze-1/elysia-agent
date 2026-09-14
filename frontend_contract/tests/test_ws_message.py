@@ -601,3 +601,26 @@ def test_audio_descriptor_wire_camel_keys():
     assert m.wire_dict()["audio"] == {
         "codec": "pcm_s16le", "sampleRate": 16000, "channels": 1}
     assert "audio" not in w.VoiceRecordStartMessage(recordingId="rec_1").wire_dict()
+
+
+# ── S3-07：附件引用条数的契约上限 ────────────────────────────────────────────
+
+@pytest.mark.unit
+def test_v2_text_attachments_capped_at_contract_level():
+    """超限必须在**契约层**被拒（否则会走到逐条 Mongo 取数循环）。"""
+    import pydantic
+
+    ref = {"attachmentId": "att_x", "kind": "image", "mime": "image/png"}
+    limit = w.MAX_ATTACHMENTS_PER_MESSAGE
+
+    ok = w.V2TextMessage(content="hi", clientRequestId="r", attachments=[ref] * limit)
+    assert len(ok.attachments or []) == limit
+
+    with pytest.raises(pydantic.ValidationError):
+        w.V2TextMessage(content="hi", clientRequestId="r", attachments=[ref] * (limit + 1))
+
+
+@pytest.mark.unit
+def test_attachment_limit_is_small_enough_to_bound_the_fetch_loop():
+    """上限本身也是判据：一个 16MB 帧能塞十万条引用，上限必须远小于那个量级。"""
+    assert 0 < w.MAX_ATTACHMENTS_PER_MESSAGE <= 100

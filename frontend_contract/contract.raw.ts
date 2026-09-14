@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: 2c3345d55d76a53a
+// schemaHash: 1397295aa02775b6
 
 /** 用户消息接受确认（v2）：accepted → 后续 generation.* 事件；无 error。
 
@@ -2460,7 +2460,7 @@ export interface V2TextMessage {
   clientMessageId?: string
   /** 会话 ID，批次 2 忽略/恒 null，可缺省 */
   conversationId?: string
-  /** 附件引用列表（POST /api/uploads 上传结果），可缺省 */
+  /** 附件引用列表（POST /api/uploads 上传结果），可缺省；至多 20 条（S3-07） */
   attachments?: AttachmentRef[]
   /** 内置表情 ID（st_ 前缀，非附件），可缺省 */
   stickerId?: string
