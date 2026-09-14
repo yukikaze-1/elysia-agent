@@ -170,3 +170,42 @@ class TestPartsFromDictsRejectsLocalSrc:
             {"type": "image", "src": "https://example.com/a.png"},
         ])
         assert len(parts) == 3
+
+# ── S2-H10：空 src（默认值绕过校验）不得产出坏 image 块 ──────────────────────
+
+@pytest.mark.unit
+def test_empty_src_does_not_touch_the_filesystem():
+    """`src=""`（默认值，pydantic 不校验默认值）必须原样返回、不碰文件系统。
+
+    报告记的 `IsADirectoryError` 来自已被删除的相对路径兜底分支（`Path("")` == `.`）
+    ——CR-09 移除了它，本用例把"不碰 fs、不抛异常"这个不变式钉住。
+    """
+    assert resolve_image_source("") == ""
+
+
+@pytest.mark.unit
+def test_empty_src_image_part_is_skipped_in_openai_conversion():
+    """空 src 的 ImagePart 必须**跳过**，否则产出 `{"url": ""}` → provider 判非法请求。
+
+    这是 S2-H10 的真实残留：legacy 会话里的坏 Part **每轮**重建进 prompt，
+    一个坏记录就能让该会话永久无法对话。
+    """
+    from core.schema.adapters.message_adapter import content_to_openai
+    from core.schema.part import ImagePart, TextPart
+
+    blocks = content_to_openai([ImagePart(), TextPart(content="hi")])
+    assert isinstance(blocks, list)
+    assert all(b.get("type") != "image_url" for b in blocks), blocks
+    assert any(b.get("type") == "text" and b["text"] == "hi" for b in blocks)
+
+
+@pytest.mark.unit
+def test_healthy_image_part_still_converted():
+    """对照：正常 src 仍必须产出 image 块（别把整个 image 路径一并关掉）。"""
+    from core.schema.adapters.message_adapter import content_to_openai
+    from core.schema.part import ImagePart, TextPart
+
+    blocks = content_to_openai([
+        ImagePart(src="https://example.com/a.png"), TextPart(content="hi")])
+    assert any(b.get("type") == "image_url"
+               and b["image_url"]["url"] == "https://example.com/a.png" for b in blocks), blocks

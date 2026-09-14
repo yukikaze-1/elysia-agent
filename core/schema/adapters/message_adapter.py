@@ -8,6 +8,7 @@
 用 parts_from_dicts() 在边界处转为 list[Part]，内部逻辑只处理 Part。
 """
 
+import logging
 import re as _re
 from typing import Annotated, Any, Union
 
@@ -17,6 +18,8 @@ from core.schema.adapters import attachment_resolver as _attachment_resolver
 from core.schema.part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart, ImageMime
 from core.schema.message import Message, AssistantMessage, ToolResultMessage, UserMessage
 from core.schema.utils import stable_tool_message_id
+
+logger = logging.getLogger(__name__)
 
 
 # ── dict → Part 边界转换 ──────────────────────────────
@@ -175,6 +178,18 @@ def content_to_openai(parts: list[Part]) -> str | list[dict]:
     for p in parts:
         if isinstance(p, ImagePart):
             source = resolve_image_source(p.src)
+            if not source:
+                # S2-H10 的真实残留：`src` 有默认值 `""`，而 pydantic **不校验默认值**
+                # （显式传空串会被 `_validate_src` 拦下，legacy 存量数据不会）。空 src
+                # 会产出 `{"url": ""}` —— provider 判为非法请求，而 legacy 会话里的坏
+                # Part **每一轮**都会重建进 prompt，于是一个坏记录就能让该会话永久
+                # 无法对话。**跳过**它（而不是把坏块发出去）。
+                # （报告记的 `IsADirectoryError` 已由 CR-09 移除：`Path("")` 走的是
+                # 相对路径兜底分支，那条分支 2026-09-12 已删，见 image_source.py。）
+                logger.warning(
+                    "跳过 src 为空的 ImagePart（legacy 数据？attachment_id=%r）",
+                    getattr(p, "attachment_id", None))
+                continue
             image_blocks.append({
                 "type": "image_url",
                 "image_url": {
