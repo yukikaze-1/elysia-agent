@@ -1443,7 +1443,7 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
 |---|---|---|
 | `S3-G4` ✅**已修** `ed66fcc3` | `Module/tool/safety.py:213-234` | `_validate_url` 只认字面量 IP：`localhost`/`2130706433`/`0177.0.0.1`/`metadata.google.internal` 全放行。`block_private_ips` 形同虚设；**正面对照仍成立**：唯一带 url 的 `web_fetch` 走 `ssrf.build_guarded_http_client` 逐跳校验。修法：复用 `ssrf.validate_endpoint` |
 | `S2-B7c` ✅**已修** `571b8f19` | `core/storage/message_repo.py:660-661`（+ 同型 `character_repo.py:170`） | debug 归档搜索的 `$regex` 未 `re.escape`、无长度上限；**同文件 `:126-130` 的 `query_search` 早已是 `re.escape` + ≤200 上限**，对照强烈 |
-| `S3-06` | `core/input/ws_handler.py:105-113` + `ws_handlers/voice.py:238` | 错误帧 `requestId` 取自 ContextVar 且**每帧不重置** → 指向已成功的旧请求；现用例把该来源钉成合法 |
+| `S3-06` ✅**已修** `17a50b93` | `core/input/ws_handler.py:105-113` + `ws_handlers/voice.py:238` | 错误帧 `requestId` 取自 ContextVar 且**每帧不重置** → 指向已成功的旧请求；现用例把该来源钉成合法 |
 | `S3-G5` ✅**已修** `02f93442` | `core/tools/vision/plugin.py:285-322` | 缓存写 `created_at` 但**无人读**，无上限/TTL/淘汰；`core/tools/tests/` **无 test_vision.py**（零覆盖） |
 | `S3-R6-1` ✅**已修** `1e83c6c4` | `core/tests/test_phase3.py:457-471` | `_process_lock` 的唯一并发用例是**空断言**（断言的是 `len(started)==2`，与锁无关）——删锁仍绿 |
 | `S2-G4` 残余 ✅**已修** `d841f88f` | `core/tools/filesystem/plugin.py:120,213` | 类默认仍是**裸根**；`config.yaml` 缺失时 `manager.py:165-186` 静默 return → 回退裸根 |
@@ -1454,7 +1454,7 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
 |---|---|
 | `S2-H3` | `extra_body={"thinking": …}` 硬编码在 **10 个调用点**（`streaming.py:136` 等），`providers.yaml` 无 `supports_thinking`。严格 OpenAI 兼容 provider 上 100% 回合失败，而日志只显示 `GENERATION_PROVIDER_UNAVAILABLE`——**误诊成本最高** |
 | `S2-H4` | 无端到端超时 × SDK 默认重试 2 次 × 适配器 3 次 → 最坏 ~12 分钟；`GENERATION_TIMEOUT` 是**死错误码**（`loop.py:620` 只消费不抛） |
-| `S2-H7` | 空 `base_url` 覆盖内置默认（**STT 已修 `36f11449`，LLM/TTS 未修**）→ `gpt_sovits.py:35` 的 `localhost:9880` 默认成死代码 |
+| `S2-H7` ✅**已修** `388ed7b7` | 空 `base_url` 覆盖内置默认（STT `36f11449` / LLM+TTS `388ed7b7`）|
 | `S2-H8` | sticker/file-only → `{"role":"user","content":[]}`（用户发的贴图模型**完全看不到**），v2 路径真实可达、无守卫 |
 | `S2-H9` | prompt 无总长/预算/截断（`system_prompt_manager.py:55` 仍是 `"\n\n".join`） |
 | `S2-H6` | `send_json` 吞异常 → 桌面工具白等满 120s（且在册通道"坏"时契约无法满足）；改动落在 `Module/output` 的**全 wire 公共路径**上，需先定语义 |
@@ -1828,6 +1828,46 @@ ollama / gpt-sovits 的本地 `base_url`），由 DNS 层与出站客户端逐�
   注入反证 5 条
 - 全量 5644 passed / 17 skipped / 1 xfailed / 0 failed；13 道门禁全绿
 - 档 3 剩余：`S3-06`；档 4（8 条，多数需 owner 决策）未动
+
+### §0.4.26 收尾三连：S3-06 关联 ID / S3-G3 热重载回写 / S2-H7 空 base_url（2026-09-16，3 个提交）
+
+三条都是"**看起来在生效、实际没生效**"：错 id 比省略更糟、热重载在重启后静默回退、
+空 base_url 把默认值顶掉后故障推迟到首次请求。
+
+#### (a) `S3-06`：关联 ID 按帧重置 → `17a50b93`
+
+`ErrorMessage.requestId` 取自任务级 ContextVar，写点只写不重置 ⇒ 上一条 `voice.commit`
+设的 id 会跟着后续**无关**错误帧发出去（客户端归因到一条**已成功**的旧请求）。
+修法：每帧入口 `set_request_id("-")`。**不动 wire 契约**——"-" 是既有默认值
+（此时字段本就缺省省略），故不需要与前端另定协议（审计另建议的"命令自带 requestId
+显式传参"更强但是契约变更，留作将来需要更强关联时再谈）。
+
+#### (b) `S3-G3`：热重载要回写类列表 → `9ae346d4`
+
+`reload` 只更新 manager 局部的 `_plugin_classes`；`core/tools/__init__.py` 的
+`ALL_PLUGINS` 是 import 期绑定的旧类列表、全仓无回写点，而同进程 `/restart` 会
+`load_all(ALL_PLUGINS)` ⇒ 重新实例化旧类（"修了但静默回退"，运维会以为已经好了）。
+修法：`load_all` 记住调用方列表的**身份**，热重载后按 **`is` 匹配**替换槽位。
+两个刻意选择：**不 import `core.tools`**（Module 不得反向依赖 core，R1）、
+**按身份而非名字**（同名插件会误伤）。守卫是端到端的：回写后再用同一张列表重新装配
+（= restart），行为必须是新版本。
+
+#### (c) `S2-H7`：空 `base_url` 不再顶掉内置默认 → `388ed7b7`
+
+三层成因（详见提交）：providers.yaml 全空 / `resolve_base_url` 对**空 env** 也照原样返回 /
+空串直交后端（实测 `AsyncOpenAI(base_url="")` 的 base_url 就是空串，SDK 只对 `None` 回退）。
+修法：填上仓库**已经声明过**的规范默认值 + 空 env 视为未设置 + LLM 侧"没有默认地址就
+**建连即报错**并指名环境变量"（对齐 MiniMax TTS 既有做法）。
+**刻意留空的例外写清理由并用例钉住**（gemini/custom/minimax/mimo）——不为了让测试变绿
+去编造厂商 URL。
+
+#### (d) 验收
+
+- 本轮 3 条提交、新增用例 12 条、注入反证 7 条
+- 全量 5653 passed / 17 skipped / 1 xfailed / 0 failed；13 道门禁全绿
+- **档 3 至此全部收口**；档 4 剩 7 条（其中 5 条需 owner 先定语义，见 §0.4.18(c)）
+- 另有一条**我做的无效注入**已修正：删"内置 provider 早报错"时误删了紧邻的 SSRF 守卫块，
+  红的是别人的用例——重做后只删目标块，恰好 1 failed
 
 ---
 
