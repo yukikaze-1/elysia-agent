@@ -662,7 +662,8 @@ test_desktop_roundtrip.py` 红了 → `git worktree` 在 A 之前的提交复跑
 | ~~`#7`~~ | 决策 #7 | ✅ **已完成**（`ff80204e`）：半截回复落 `AssistantMessage` + `metadata[incomplete]`，两条 except 路径（interrupted/error）都覆盖 | — |
 | `#10` | 决策 #10 | consolidator buffer **落盘 + 下次启动补提**（现为每 runtime 5s 超时即丢） | 0.5d |
 | 写路径 5 条 | 本表 (b3) | `MemoryRepository.insert/delete`、`SessionRepository.rename`、`TokenRepository.flush/clear_all` 的静默返回 | 0.5d |
-| owner 解禁项 | 决策表 | `#41` / `#45` / `#44` / `#46`（全部解禁）、`S2-R6-1` 完整版真实库专层 | 4–6d |
+| ~~`#45`~~ | 决策表 | ✅ **已完成**（`23819361`）：三个字段的声明改为与执行现实一致（`max_context_tokens` 预留/无执行点、`max_mutations` 软、`max_retries_per_node` 硬且有执行点），并纠正门禁登记表里两条不准确的理由 | — |
+| owner 解禁项（其余） | 决策表 | `#41`（CR-04 彻底版，**需先把不可逆删除路径读透**）、`#44`、`#46`、`S2-R6-1` 完整版 | 4–6d |
 
 那 5 条写路径需要**逐调用点定语义**（用户可见写入 → 上抛；后台 best-effort 清理 →
 记日志继续），而 `long_term.py` 有 6+ 处调用点、无统一收口，改错会把"静默丢写"变成
