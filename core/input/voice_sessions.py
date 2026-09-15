@@ -541,27 +541,33 @@ class VoiceSessionManager:
         emotion = ""
         events: list[str] = []
         try:
-            # 串行化「转写 + 情绪捕获」临界区（F3）：并发段转写共享 agent.stt_emotion_state，
-            # 不加锁时早段提交可能读到晚段 emotion。锁只串行 STT 本身，消息循环仍不阻塞。
-            async with self._stt_stt_lock:
-                text = await asyncio.wait_for(transcriber(wav), timeout=STT_TIMEOUT)
-                text = text.strip() if text else ""
-                es = getattr(self._agent, "stt_emotion_state", None) or {}
-                emotion = es.get("emotion", "") or ""
-                events = list(es.get("events", []) or [])
-        except asyncio.TimeoutError:
-            logger.warning("语音 STT 段转写超时（丢弃段 seq=%d）", seq)
-        except Exception:
-            logger.warning("语音 STT 段转写失败", exc_info=True)
+            try:
+                # 串行化「转写 + 情绪捕获」临界区（F3）：并发段转写共享 agent.stt_emotion_state，
+                # 不加锁时早段提交可能读到晚段 emotion。锁只串行 STT 本身，消息循环仍不阻塞。
+                async with self._stt_stt_lock:
+                    text = await asyncio.wait_for(transcriber(wav), timeout=STT_TIMEOUT)
+                    text = text.strip() if text else ""
+                    es = getattr(self._agent, "stt_emotion_state", None) or {}
+                    emotion = es.get("emotion", "") or ""
+                    events = list(es.get("events", []) or [])
+            except asyncio.TimeoutError:
+                logger.warning("语音 STT 段转写超时（丢弃段 seq=%d）", seq)
+            except Exception:
+                logger.warning("语音 STT 段转写失败", exc_info=True)
+            if epoch != self._stt_epoch or self._mode == VoiceMode.IDLE:
+                return                   # 跨会话/teardown 后迟到结果——丢弃（B1 防线）
+            self._stt_pending[seq] = (text, emotion, events)
+            try:
+                await self._commit_ready_stt()
+            except Exception:
+                logger.debug("语音 STT 段提交失败（连接可能已关）", exc_info=True)
         finally:
+            # S3-R2-2：摘除必须发生在**提交也做完之后**。原先它在转写一结束就执行，
+            # 于是 `_drain_dispatch_stt()`（只快照 `_stt_tasks`）看不见"已转写完、仍在提交"
+            # 的段：`stop_session` 会抢先 `_teardown_session()`（抬 epoch），该段随后被
+            # `_on_segment` 的 epoch 守卫丢掉——客户端收到 `ended{stopped}`，
+            # 却**既没有 turn 也没有回复**（DICTATION 侧同理会截断末尾文本）。
             self._stt_tasks.discard(asyncio.current_task())
-        if epoch != self._stt_epoch or self._mode == VoiceMode.IDLE:
-            return                   # 跨会话/teardown 后迟到结果——丢弃（B1 防线）
-        self._stt_pending[seq] = (text, emotion, events)
-        try:
-            await self._commit_ready_stt()
-        except Exception:
-            logger.debug("语音 STT 段提交失败（连接可能已关）", exc_info=True)
 
     async def _commit_ready_stt(self) -> None:
         """按派发序号顺序提交（提交锁串行化——防 partial/turn 帧交错）；防乱序破坏 turn_id。"""

@@ -1225,3 +1225,57 @@ class TestShutdownAdmissionGate:
         assert bus_posts == [], "停机窗口仍投了中断（会被同实例重启后的新循环消费）"
         ends = [e for e in emitted if e.get("type") == "voice_session.ended"]
         assert ends and ends[-1]["reason"] == "cancelled", "收尾帧不受影响"
+
+
+class _CommitBlockingWorkManager(_SessionWorkManager):
+    """把**提交阶段**卡在 `reserve_work` 上（S3-R2-2 用例用）。
+
+    注意 `start_realtime` 自己也会 reserve 一次（会话生命周期引用）——所以由用例在
+    start 之后显式打开 `block`，只拦"每个 turn 的提交引用"，不拦会话启动。
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.block = False          # 用例在 start_realtime 之后置 True
+
+    async def reserve_work(self, conversation_id, protocol_version):
+        if self.block:
+            await self.gate.wait()
+        return await super().reserve_work(conversation_id, protocol_version)
+
+
+@pytest.mark.asyncio
+async def test_stop_waits_for_segment_stuck_in_commit_phase():
+    """S3-R2-2：段**已转写完、仍在提交**时 stop —— 必须等它提交完。
+
+    原先 `_run_dispatch_stt` 在转写一结束就把自己从 `_stt_tasks` 摘掉，
+    `_drain_dispatch_stt()` 因此看不见它 → `stop_session` 抢先 teardown（抬 epoch）
+    → 该段被 epoch 守卫丢弃：客户端收到 `ended{stopped}`，**既无 turn 也无回复**。
+    """
+    agent = FakeAgent()
+    agent._last_text = "提交中的段"
+    agent.session_manager = _CommitBlockingWorkManager()
+    mgr, emitted, bus_posts = make_manager(agent=agent)
+
+    await mgr.start_realtime("rt_1", None)
+    agent.session_manager.block = True      # 只拦 turn 的提交引用（不拦会话启动）
+    for _ in range(30):
+        await mgr.feed_pcm(_loud(1600))
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.15)
+    await mgr.feed_pcm(_sil(1600))
+    await asyncio.sleep(0.1)          # 转写完成，卡在提交阶段的 reserve_work
+
+    stop_task = asyncio.create_task(mgr.stop_session("rt_1"))
+    await asyncio.sleep(0.05)
+    agent.session_manager.gate.set()  # 放行提交
+    await asyncio.wait_for(stop_task, timeout=2)
+
+    types = [s.get("type") for s in emitted]
+    assert "voice_session.turn" in types, (
+        f"stop 抢在提交前 teardown，该段被丢弃（无 turn）：{types}")
+    assert types.index("voice_session.ended") > types.index("voice_session.turn"), (
+        f"ended 早于 turn —— 顺序反了：{types}")
+    assert any(getattr(p, "event_type", "") == "user_input" for p in bus_posts), (
+        "段没进 bus —— 用户没收到任何回复")
