@@ -69,6 +69,20 @@ XML 标签内部的文本使用 Markdown 或纯文本，按内容需要选择：
 
 模板变量通过 section 类的 `render()` 方法传入。变量名使用 `snake_case`。透传数据直接使用原始变量名（如 `{{ text }}`、`{{ self_perception }}`），结构化数据使用上下文对象（如 `{{ sensory_ctx.current_time }}`、`{{ memory_ctx.micro }}`）。
 
+**转义（2026-09-15 起）**：`Jinja2Section._render_template()` 是**唯一渲染点**，它会
+**递归转义所有字符串叶子**（含 dict/list/tuple 内部）——system prompt 是单条 system 消息、
+各段用 XML 式标签表达层级，未转义的用户/LLM 文本能闭合外层标签并伪造区块（CR-12 /
+S2-H2；`displayName` 与 C6 说话风格两处曾实测可利用）。
+
+因此：
+
+- **section 的 `render()` 里不要再手工转义**（会二次转义成 `&amp;amp;`；有 AST 守卫
+  `test_no_call_site_escapes_manually_any_more` 盯着）；
+- 需要**原样保留标记**的受信文本，用 `Module.system_prompt.sections.authored.Trusted`
+  **显式**包一层——当前唯一使用点是内建角色（`source == "builtin"`、仓库内 config、
+  不可编辑）的 L1 正文与风格文本，它们的正文里含 `<voice>` 这类说明性标签引用；
+- 新增模板变量**默认就是安全的**：不需要作者记得包转义，这是收口的全部意义。
+
 ## 命名规则
 
 ### 文件名
