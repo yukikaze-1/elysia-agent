@@ -536,12 +536,16 @@ async def test_tool_gives_up_after_max_retries():
     fut = t.get_future()
     await sched.submit(t)
 
-    result = await asyncio.wait_for(fut, timeout=5.0)
-    assert isinstance(result, ToolResult)
-    assert not result.success
-    assert call_count == 2  # first attempt + 1 retry
-
-    await sched.stop()
+    # `stop()` 必须走 finally：这条用例正是"重试 gate 被削弱"的回归网（#46 缺口行 10
+    # 的三个注入都让它变红），断言失败就跳过 stop() 会把一个仍在运行的 dispatcher
+    # 留给事件循环 teardown。
+    try:
+        result = await asyncio.wait_for(fut, timeout=5.0)
+        assert isinstance(result, ToolResult)
+        assert not result.success
+        assert call_count == 2  # first attempt + 1 retry
+    finally:
+        await sched.stop()
 
 
 # ═══════════════════════════════════════════════════════════════════
