@@ -780,7 +780,18 @@ S2-A4 的结论是"停机窗口内的终态事件要投递"。实测：`stop()` 
    必须逐项一致），顺带暴露 `test_expected_table_is_non_trivial` 的硬编码计数
    需要同步（12→13 集合 / 26→28 索引）。
 
-#### (f) 三项之后仍剩的队列（未做，如实标注）
+#### (f) 本轮验收（2026-09-15，本机 24 核，xdist `-n 8 --dist loadfile`）
+
+- `pytest -q`（含 slow）→ **5166 passed / 9 skipped / 0 failed**（69.1s；本轮起点 5106）
+- 门禁全绿（12 + compose）：lint / pyright(0 error) / check-arch / check-types(含 17
+  golden frames + 54 错误码) / check-timeouts(叶子预算 7→8) / check-contract /
+  check-debug-auth / check-secrets / check-test-sets(Quick 5136 ∪ remainder == Normal)
+  / check-ci-isolation / check_error_codes / check_env_lock
+- 本批 **4 个提交**（#41 `2ea87b62` / #10 `19fc1a74` / #6 `b3abca8d` / 文档 1 个），
+  每项都带注入/回退反证；新增测试 48 条（#41 13 + 生命周期 4 + #10 15 + 启动步骤 2
+  + #6 10 + 仓储 10 − 重写）
+
+#### (g) 三项之后仍剩的队列（未做，如实标注）
 
 | 项 | 内容 | 量级 |
 |---|---|---|
