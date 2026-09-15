@@ -16,7 +16,14 @@ core/character/
 ├── revision.py           # CharacterRevision — 不可变角色设定快照（§5.3）
 ├── instance.py           # CharacterInstance — 演化体 + revision policy/pending revision（§5/§7.5）
 ├── draft.py              # CharacterDraft + ConversationExample — 用户提交草稿（双层校验，阶段 D）
-├── service.py            # CharacterService — CRUD + Revision/状态策略传播 + CAS（阶段 D/H）
+├── service/              # CharacterService 包 — CRUD + Revision/状态策略传播 + CAS（阶段 D/H；#44 按写入链拆分）
+│   ├── __init__.py       #   唯一装配点：三链混入 + 基类 → CharacterService，并逐名重导出（导入路径零变化）
+│   ├── errors.py         #   CharacterError 层级（路由按异常类型映射 wire 错误码）
+│   ├── helpers.py        #   模块级纯函数（游标/校验和/归一化/wire 构造）+ 三链共享常量
+│   ├── base.py           #   共享管道：__init__ / 连接 / 取定义 / 草稿两层校验 / 草稿→Revision
+│   ├── queries.py        #   读链：get / list / list_revisions / resolve_runtime_source / preview
+│   ├── definitions.py    #   定义写链：create / update / clone / archive / rollback
+│   └── instances.py      #   实例/状态写链：reset_evolution / reconcile / 传播 / pending / busy 判定
 ├── builtin_source.py     # BuiltinCharacterSource — 从 character/{name}/config.yaml 构建内置角色
 ├── catalog.py            # CharacterCatalog — 只读内置角色目录（无 Mongo 也能列/校验）+ get_revision
 ├── runtime.py            # CharacterRuntime — 单实例运行时容器（快照 + 懒 engine + memory_view/consolidator/reflector 持有 + lock/dirty）【阶段 E/F 激活】
@@ -49,7 +56,7 @@ core/character/
 ### CharacterDraft + CharacterService（阶段 D：Custom CRUD）
 
 - **CharacterDraft**（[draft.py](draft.py)）：用户提交的完整角色表单（custom 唯一入口）。双层校验：第一层 Pydantic 字段边界（displayName 1-64 等，§8.1）；第二层 `validate_semantic`（保留标签 `<conflict_rules>` 等 / Jinja 分隔符 / NUL → hard error；关键字启发式 → warning）。`examples` 用 `ConversationExample` 子对象（每组 user/assistant ≤1000 字符）。
-- **CharacterService**（[service.py](service.py)）：create/get/list/update/clone/archive/rollback/validate 业务编排。**Revision-first 写序**（先 `append_revision` 再 `cas_revision_pointer`，CAS 失败回滚已 append revision——`current_revision` 永远指向 durable revision，架构稿 §10.1）；`create`/`update`/`rollback` 均产生新 Revision（append-only，不删历史）；`list`/`get` 合并内置（catalog）与 custom（repo）。阶段 H 中，update/rollback 还会枚举相关 instance：`follow_latest` 原子推进到新 revision，`pinned` 保持原 revision；`preserve` 保留演化态，`reset_evolution` 通过 `stateVersion` CAS 重置并审计。中断的跨集合传播由 pending 字段与 runtime 懒加载对账收敛。
+- **CharacterService**（[service/__init__.py](service/__init__.py)，#44 起为**按写入链拆分的包**：读链 `queries.py` / 定义写链 `definitions.py` / 实例状态写链 `instances.py` + 共享 `base.py`，`__init__.py` 是唯一装配点）：create/get/list/update/clone/archive/rollback/validate 业务编排。**Revision-first 写序**（先 `append_revision` 再 `cas_revision_pointer`，CAS 失败回滚已 append revision——`current_revision` 永远指向 durable revision，架构稿 §10.1）；`create`/`update`/`rollback` 均产生新 Revision（append-only，不删历史）；`list`/`get` 合并内置（catalog）与 custom（repo）。阶段 H 中，update/rollback 还会枚举相关 instance：`follow_latest` 原子推进到新 revision，`pinned` 保持原 revision；`preserve` 保留演化态，`reset_evolution` 通过 `stateVersion` CAS 重置并审计。中断的跨集合传播由 pending 字段与 runtime 懒加载对账收敛。
   - **归档一致性（P1）**：`archive()` 先在有限 CAS 重试内把 `UserIdentity.defaultCharacterId` 改到可用回退角色、**再**归档——反序会在 profile 冲突/存储失败时留下「默认角色仍指向已归档角色」的悬空引用。profile 更新失败或重试耗尽 → 整体失败，角色保持 `active`（可恢复）；归档的不是默认角色时不触碰 profile。
   - **无状态 preview（BE-STAGEH-03）**：经 `CharacterPreviewPort` 组装一次性 Prompt（无会话/无记忆/无工具）+ 单次推理，零持久化副作用；权威身份不可用时 503（P0-3 fail-closed）。
 - **CharacterRepository / CharacterRevisionRepository**（[core/storage](../storage/README.md)）：`characters` + `character_revisions` 集合。snake_case 落库（`character_id`/`current_revision`），CAS 用 `modified_count>0` + `$set` 恒定含必变字段 `updated_at`（后端只暴露 `modified_count`，对齐 `idempotency_repo.py` 先例）。
