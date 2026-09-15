@@ -17,8 +17,10 @@
 环境能解析出真实值，文件层面也不允许 0.0.0.0 端口/默认密码/空 token。
 
 用法：
-    python scripts/check_compose_security.py [compose.yml]   # 默认 docker-compose.yml
-                                                            # 违规打印并退出码 1
+    python scripts/check_compose_security.py [compose.yml]   # 缺省：扫仓库根下全部
+                                                            # docker-compose*.yml；
+                                                            # 违规打印并退出码 1，
+                                                            # 扫不到任何文件退出码 2（拒答）
     python -c "from scripts.check_compose_security import check_compose_file; ..."
 """
 
@@ -31,7 +33,9 @@ from typing import Any
 
 import yaml
 
-_DEFAULT_COMPOSE = "docker-compose.yml"
+# 默认扫描**全部** `docker-compose*.yml`（S2-R6-1 起多了一份 docker-compose.test.yml：
+# 新增 compose 文件不能因为"没被点名"而漏检——那正是"守卫没装在改动上"）。
+_DEFAULT_COMPOSE_GLOB = "docker-compose*.yml"
 
 # 数据服务识别关键字（服务名包含任一关键字即视为数据服务）
 _DATA_SERVICE_KEYWORDS = ("mongo", "milvus", "minio", "etcd")
@@ -205,15 +209,28 @@ def main(argv: list[str] | None = None) -> int:
         0 表示通过，1 表示违规。
     """
     argv = argv if argv is not None else sys.argv[1:]
-    path = argv[0] if argv else _DEFAULT_COMPOSE
-    violations = check_compose_file(path)
-    if violations:
-        print(f"Compose 安全策略检查失败：{path}")
-        for v in violations:
-            print(f"  - {v}")
-        return 1
-    print(f"Compose 安全策略检查通过：{path}（数据服务仅 loopback 端口、无默认凭据、无空 token、生产不发布管理端口）")
-    return 0
+    if argv:
+        targets = [Path(argv[0])]
+    else:
+        root = Path(__file__).resolve().parent.parent
+        targets = sorted(root.glob(_DEFAULT_COMPOSE_GLOB))
+        if not targets:
+            # 拒答而非报绿：找不到任何 compose 文件时"通过"是无意义的
+            print(f"Compose 安全策略检查无法判定：仓库根下没有 {_DEFAULT_COMPOSE_GLOB}")
+            return 2
+
+    failed = False
+    for path in targets:
+        violations = check_compose_file(str(path))
+        if violations:
+            failed = True
+            print(f"Compose 安全策略检查失败：{path}")
+            for v in violations:
+                print(f"  - {v}")
+        else:
+            print(f"Compose 安全策略检查通过：{path}"
+                  "（数据服务仅 loopback 端口、无默认凭据、无空 token、生产不发布管理端口）")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

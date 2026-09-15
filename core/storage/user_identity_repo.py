@@ -62,8 +62,18 @@ class UserIdentityRepository(Repository):
     """user_identity_profiles 集合（唯一 user_id + revision CAS，fail-closed）。"""
 
     def __init__(self, db: DocumentDBBackend | None = None, *,
+                 database_name: str = "default",
                  base_url: str | None = None):
+        """初始化。
+
+        S2-R6-1（真实 MongoDB 测试层）：新增 `database_name`——本仓储此前把库名
+        **硬编码**成 `"mongodb/default"`，是同层唯一不接受库名的仓储（其余仓储都有
+        这个参数）。后果有二：① 真实库测试层无法把它指向测试库（`base_url` 的 path
+        **不是**库名——见 `tests/real_mongo/conftest.py` 记录的那次误写生产库事故）；
+        ② 部署侧也无法把身份档放到别的库。默认值保持 `"default"`，生产行为不变。
+        """
         self._db = db
+        self._database_name = database_name
         self._base_url = base_url
         self._injected_db = db is not None
 
@@ -71,7 +81,8 @@ class UserIdentityRepository(Repository):
         if self._db is not None:
             return True
         try:
-            self._db = DocumentDBFactory.create("mongodb/default", base_url=self._base_url)
+            self._db = DocumentDBFactory.create(
+                f"mongodb/{self._database_name}", base_url=self._base_url)
             await self._db.ensure_index(COLLECTION, [("user_id", 1)], unique=True)
             return True
         except Exception:

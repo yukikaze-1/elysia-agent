@@ -104,10 +104,20 @@ def documentdb_backend():
 
 def pytest_collection_modifyitems(config, items):
     """外部测试门禁：未显式 RUN_EXTERNAL_TESTS=1 → external 测试整体 skip。
-    用 item.add_marker(skipif)——裸 pytest.skip() 在 collection 阶段会中断收集。"""
-    if os.getenv("RUN_EXTERNAL_TESTS") == "1":
-        return
+    用 item.add_marker(skipif)——裸 pytest.skip() 在 collection 阶段会中断收集。
+
+    S2-R6-1 例外：`real_mongo` 层自己的开关是 `RUN_REAL_MONGO_TESTS`（真实 MongoDB
+    走容器，不需要任何**凭据**——把它挂到 `RUN_EXTERNAL_TESTS` 下会让"我要跑真库
+    测试"这句命令同时要求一个它与无关的开关，而漏设的表现是**整体 skip**：
+    看起来跑过了、其实一条没跑）。故带 `real_mongo` 的条目由该层自己的守卫把关
+    （连不上即 fail，见 `tests/real_mongo/conftest.py`）。"""
+    external_ok = os.getenv("RUN_EXTERNAL_TESTS") == "1"
+    real_mongo_ok = os.getenv("RUN_REAL_MONGO_TESTS") == "1"
     skip = pytest.mark.skipif(True, reason="需要 RUN_EXTERNAL_TESTS=1 显式 opt-in（真实 LLM/DB E2E）")
     for item in items:
-        if item.get_closest_marker("external") is not None:   # 精确判 marker（keyword 是超集，防误 skip）
+        if item.get_closest_marker("external") is None:   # 精确判 marker（keyword 是超集，防误 skip）
+            continue
+        if item.get_closest_marker("real_mongo") is not None and real_mongo_ok:
+            continue      # 本层自带 opt-in 与"连不上即 fail"的守卫
+        if not external_ok:
             item.add_marker(skip)

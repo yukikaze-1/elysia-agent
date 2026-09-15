@@ -197,6 +197,36 @@ make test-external
 # 或: conda run -n Elysia RUN_EXTERNAL_TESTS=1 python -m pytest -m "external" -q --tb=short
 ```
 
+### 真实 MongoDB 测试层（S2-R6-1，`RUN_REAL_MONGO_TESTS=1`）
+
+`tests/real_mongo/` 是**唯一**连真实 MongoDB 的测试层，专测"只有真驱动能回答"的
+问题：索引声明能否被 Mongo 8 接受、唯一索引真的拒重复键吗、`$setOnInsert` / 条件
+update 的语义是否如实现所假设、TTL 的 `expireAfterSeconds` 有没有被静默忽略、
+`schema_drift` 的自检与真库是否一致。此前全仓**零**真实 MongoDB 测试（报告 S2-R6-1）。
+
+```bash
+docker compose -f docker-compose.test.yml up -d      # 起测试库（127.0.0.1:27018）
+make test-real-mongo                                  # = 下面那条命令
+# ELYSIA_TEST_MONGODB_URI=mongodb://127.0.0.1:27018/elysia_test #   RUN_REAL_MONGO_TESTS=1 python -m pytest -m real_mongo -q
+docker compose -f docker-compose.test.yml down        # 用完即弃（无 volume）
+```
+
+四层门（任一层不满足都**不会静默通过**）：
+
+| 门 | 机制 | 不满足时 |
+|---|---|---|
+| 不进任何默认档位 | marker `real_mongo`（未登记进分层）+ tier `external` | `make test-quick` / `test-normal` / `test-full` 都不跑它 |
+| 显式 opt-in | `RUN_REAL_MONGO_TESTS=1`（`Module/conftest.py` 的 external 门禁对 `real_mongo` 放行，由本层自查） | 未设 → 整层 `skip`（带原因，不是"跑过了"） |
+| 目标必须是测试库 | `tests/real_mongo/conftest.py` 校验库名含 `test`，且**核验仓储真连到哪个库** | 不像测试库 → **fail**（本层会 `drop_database`） |
+| 环境必须真满足 | 显式要求时连不上 → `pytest.fail` | 容器没起来 → **fail** 而非 skip（假绿③） |
+
+> ⚠️ **实测踩到的坑，写在这里防复发**：`base_url` 只给连接串，**目标库由
+> `database_name` 决定**。第一次跑本层时用 `Repo(base_url="…/elysia_test")` 构造，
+> 库名却取默认 `"default"` → 索引与文档全写进了**生产库**。所以本层只允许经
+> `real_mongo_repo` 工厂构造仓储（强制显式 `database_name` + 落点核验）。
+> 同批发现 `UserIdentityRepository` 的库名被硬编码成 `mongodb/default`（同层唯一
+> 不接受 `database_name` 的仓储）——已补上参数，默认值不变。
+
 真实 LLM 测试必须同时标 `integration + external`。workflow 确定性测试基建在
 `Module/workflow_engine/tests/helpers/fake_llm.py`：`FakeLLM`（对齐 `chat.completions.create`
 的 `tool_calls`/`content`/`usage` 访问面 + `gate`/`calls`/`prompts`）、`with_deadline`（gated 测试

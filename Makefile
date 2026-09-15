@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-remainder test-full test-external test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth check-timeouts check-contract check-secrets check-secrets-history check-ci-isolation check-test-sets check check-full
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-remainder test-full test-external test-real-mongo test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth check-timeouts check-contract check-secrets check-secrets-history check-ci-isolation check-test-sets check check-full
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -56,6 +56,15 @@ test-full:
 # F1：外部 E2E 显式 opt-in（真实 LLM/DB，受保护凭据/受信 ref 才能跑）
 test-external:
 	conda run -n $(CONDA_ENV) RUN_EXTERNAL_TESTS=1 python -m pytest -m "external" -q --tb=short
+
+# S2-R6-1：真实 MongoDB 测试层（独立 marker，不进任何默认档位）。
+# RUN_REAL_MONGO_TESTS=1 让"连不上"变成 **fail** 而不是 skip（显式要求了就得做到）；
+# 库名必须含 test——本层会 drop 整个库，指错库即数据事故（守卫见 tests/real_mongo/conftest.py）。
+# 本地起库：docker compose -f docker-compose.test.yml up -d
+test-real-mongo:
+	conda run -n $(CONDA_ENV) RUN_REAL_MONGO_TESTS=1 \
+		ELYSIA_TEST_MONGODB_URI=$${ELYSIA_TEST_MONGODB_URI:-mongodb://127.0.0.1:27018/elysia_test} \
+		python -m pytest -m real_mongo -q --tb=short
 
 # workflow_engine / workflow_contract 独立迭代门禁（不含 external——真实 LLM）
 test-workflow-engine:

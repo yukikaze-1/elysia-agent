@@ -269,6 +269,45 @@ jobs:
   # 为什么 push 侧不用 `actions/checkout` + `actions/setup-node`：
   #   ① checkout 必须密闭（self-hosted workspace 跨 job 持久），复用 backend job
   #      同一套清理方案；② 宿主已用 nvm 预装 Node — 见下面 "Pin Node" 步骤。
+  real-mongo:
+    # S2-R6-1：真实 MongoDB 测试层。**PR 可达 job → 必须 GitHub-hosted**
+    # （信任边界见文件头与 `scripts/check_ci_isolation.py`）：不读宿主 .env、
+    # 不用 self-hosted runner，数据服务用 GitHub 自己的 service container。
+    # 为什么单独一个 job：这些用例默认在**任何**档位都不跑（marker `real_mongo`
+    # 且不在 Normal 里），只有这里显式 `-m real_mongo` + `RUN_REAL_MONGO_TESTS=1`；
+    # 而 `RUN_REAL_MONGO_TESTS=1` 的语义是"**连不上就 fail**"——服务容器没起来
+    # 不会退化成 skip（那正是"环境不满足"型假绿）。
+    name: Real MongoDB (storage layer)
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mongo:
+        image: mongo:8
+        ports:
+          - 27018:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ELYSIA_TEST_MONGODB_URI: mongodb://127.0.0.1:27018/elysia_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps (clean-room, 无真实凭据)
+        run: |
+          python -m pip install -U pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Run real MongoDB layer
+        run: make test-real-mongo
+
   frontend:
     name: Frontend (vue-tsc + build, self-hosted)
     if: github.event_name == 'push'

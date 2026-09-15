@@ -1,0 +1,26 @@
+# 测试专用 compose —— 真实 MongoDB 测试层（S2-R6-1）的本地数据服务。
+#
+# **为什么不放进 docker-compose.yml**：那份是 Milvus/etcd/MinIO 的生产数据面；
+# 测试用的 Mongo 是**一次性**的，混进去会让"生产 compose"多出一个没人看的服务，
+# 而且它的库会被 drop（`tests/real_mongo` 的 teardown）。
+#
+# 用法：
+#   docker compose -f docker-compose.test.yml up -d
+#   ELYSIA_TEST_MONGODB_URI=mongodb://127.0.0.1:27018/elysia_test \
+#       RUN_REAL_MONGO_TESTS=1 python -m pytest -m real_mongo -q
+#   （或直接 `make test-real-mongo`——它会带上这两个环境变量）
+#
+# 端口只绑 127.0.0.1（与生产 compose 同规矩：数据服务不暴露到所有接口）；
+# 无鉴权是**测试专用**的取舍：它只监听 loopback、库里只有测试数据、每次跑完 drop。
+services:
+  mongo-test:
+    image: mongo:8
+    container_name: elysia-mongo-test
+    ports:
+      - "127.0.0.1:27018:27017"
+    # 无 volume：容器即数据，`down` 之后一切归零（测试库不需要持久化）
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

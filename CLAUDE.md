@@ -44,6 +44,9 @@ make test-full
 # 测试集合代数门禁（Quick ∪ remainder == Normal 且交集为空；约 35s）
 make check-test-sets
 
+# 真实 MongoDB 测试层（S2-R6-1；先 `docker compose -f docker-compose.test.yml up -d`）
+make test-real-mongo
+
 # 导入风格门禁（禁相对导入，秒级）
 make lint
 # 或: ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
@@ -112,6 +115,7 @@ python -m pytest frontend_contract/tests/ -v
 | `integration` | 需真实 DB 或外部 API | `make test-remainder`（Normal−Quick 的余集） |
 | `slow` | 完整管线或 >1s | `make test-full` 才跑 |
 | `external` | 真实 LLM/DB 凭据（opt-in） | `make test-external`（须 `RUN_EXTERNAL_TESTS=1`） |
+| `real_mongo` | 真实 MongoDB 测试层（S2-R6-1，非凭据：走容器） | `make test-real-mongo`（须 `RUN_REAL_MONGO_TESTS=1` + `ELYSIA_TEST_MONGODB_URI`；`tests/real_mongo/`） |
 
 marker 纪律由根 `conftest.py` 的收集钩子强制：**每个测试必须有分层 marker**，且
 **不得同时带 `(unit|service)` 与 `(slow|integration|external)`**（否则
