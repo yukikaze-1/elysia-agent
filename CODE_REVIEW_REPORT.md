@@ -1430,11 +1430,11 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
 
 | 条目 | 位置 | 后果 | 成本 |
 |---|---|---|---|
-| `S2-R2-4` | `core/agent/lifecycle.py:86-112`（20 步**无任何 WS/语音步**）+ `voice_sessions.py:682` 直接 `bus.post` | 停机窗口内语音段仍可进"消费者已死"的 bus；**CR-08 的准入闸只装在 `process_message` 一个口**。跨 `/restart` 的污染**仅在 `rebuild_on_restart=False`（同实例重启）成立**——默认路径重建 Agent ⇒ 新 `EventBus`（`agent.py:246`），旧队列随对象丢弃 | 0.5 天 |
+| `S2-R2-4` ✅**已修**（准入面）`c029110e` | `core/agent/lifecycle.py:86-112`（20 步**无任何 WS/语音步**）+ `voice_sessions.py:682` 直接 `bus.post` | 停机窗口内语音段仍可进"消费者已死"的 bus；**CR-08 的准入闸只装在 `process_message` 一个口**。跨 `/restart` 的污染**仅在 `rebuild_on_restart=False`（同实例重启）成立**——默认路径重建 Agent ⇒ 新 `EventBus`（`agent.py:246`），旧队列随对象丢弃 | 0.5 天 |
 | `S2-G3` | `core/adapter/tts_adapter.py:161-164`（reset 仍 `clear()` 重建）、`:413` 裸下标、`:503-505` finally 写**新** dict、`:236-249` `wait_all` 无超时、**:374-390 两个早退 `return` 落在 try/finally 之外** | 门控丢失**不依赖**那个时序窗口；后果 `wait_all`/`finish_turn` 无界等待 → Agent 永久 SPEAKING。**无修复提交、全仓无守卫** | 0.5 天 |
 | `#20b` | `core/agent/lifecycle.py:326-333`（外层 `wait_for(...,10.0)`）+ `loop.py:1087-1107`（逐任务 5s + `clear()`） | 外层超时会取消 flush 本身，剩余 task 既不取消也不等待，随后 `_stop_persistence` 关库。**代码库自己的 `drain` docstring（`task_scope.py:214-222`）逐字点名本处未迁移** | 0.5–1 天 |
-| `S3-05` | `Module/workflow_engine/debug_api.py:86` `await q.put(_SENTINEL)` 无超时（队列 `maxsize=256`，广播用 `put_nowait`） | 半开 SSE 客户端 → 队列打满 → `stop()` 挂起。**减轻事实**：`core/agent/server.py:74-79` 的 `wait_for(...,3.0)` 只覆盖 agent 自身服务循环这一条路径 | 0.5 天 |
-| `S3-R2-2` | `core/input/voice_sessions.py:553-554`（`discard` 在**提交之前**）vs 提交在 `:557-561` | `stop_session` 漏掉"已摘除、仍在提交中"的段 → teardown 抬 epoch 后该段被丢 → 用户收到 `ended` 但**无回复**；DICTATION 末尾文本被截断。现有两条用例都只阻塞在 transcribe 阶段 | 0.5–1 天 |
+| `S3-05` ✅**已修** `10acc315` | `Module/workflow_engine/debug_api.py:86` `await q.put(_SENTINEL)` 无超时（队列 `maxsize=256`，广播用 `put_nowait`） | 半开 SSE 客户端 → 队列打满 → `stop()` 挂起。**减轻事实**：`core/agent/server.py:74-79` 的 `wait_for(...,3.0)` 只覆盖 agent 自身服务循环这一条路径 | 0.5 天 |
+| `S3-R2-2` ✅**已修** `8b0f6c9c` | `core/input/voice_sessions.py:553-554`（`discard` 在**提交之前**）vs 提交在 `:557-561` | `stop_session` 漏掉"已摘除、仍在提交中"的段 → teardown 抬 epoch 后该段被丢 → 用户收到 `ended` 但**无回复**；DICTATION 末尾文本被截断。现有两条用例都只阻塞在 transcribe 阶段 | 0.5–1 天 |
 | `S2-R2-3`（部分） | `core/memory/embedding_provider.py:110-113` 仍是 `wait_for(run_in_executor(...))` | 超时后线程仍跑且 `_failed_at` 已置 → 冷却 60s 后可**叠加第二个加载线程**；`shutdown_default_executor` 全仓 0 命中 | 2–3h |
 
 **档 3 · 安全纵深 / 资源增长**（当前不可直接利用，但值得补守卫）
@@ -1655,6 +1655,52 @@ Mongo 离线时 `_persist` 直接 `return`（**没有 dirty 跟踪、没有恢�
   voice_ws 1 收紧 / documentdb 2 处 + autouse / desktop 存量）
 - `core/input` 840 passed、`Module/database` + `Module/config` 208 passed、ruff / pyright 全绿
 - 全量复跑见提交内数字
+
+### §0.4.22 档 2 前三条收口：S3-05 / S2-R2-4 / S3-R2-2（2026-09-16，3 个提交）
+
+三条都在**关停/收尾窗口**上，共性同样是"失败方向"：前两条把"慢"变成"永久挂起"或
+"状态污染"，第三条把"慢一点"变成"这一段没了"。
+
+#### (a) `S3-05`：`stop()` 里无超时的 `await q.put` → 半开 SSE 客户端卡死关停 → `10acc315`
+
+队列 `maxsize=256`，广播路径早就把满队列当可丢弃（`put_nowait` + `QueueFull` 跳过），
+唯独停止路径用阻塞 `put`。修法：`_force_put()` —— 满了先腾空再放 sentinel
+（关停语义下排队事件已无意义，而 sentinel **必须**送达，否则 handler 不退出）。
+
+**反证的设计要点**：两条用例各钉一件事——"不阻塞"与"sentinel 必须送达"。
+注入"满时直接丢弃 sentinel"时**只有后一条红**，证明缺一不可、且两条不是同一件事。
+
+#### (b) `S2-R2-4`：CR-08 的准入闸只装在 `process_message` 一个口 → `c029110e`
+
+输入层还有三处直接 `bus.post`：REALTIME 语音提交（`UserInputData`，**最重**：停机窗口里
+仍进队列，同实例重启后被当**新输入**消费）、`cancel_session` 与 `do_interrupt`
+（`InterruptData`）。三处一律改用与 `process_message` **同源**的判据
+`status.is_service_running`（`core/status/protocol.py:95` 是唯一定义点）。
+测试替身的手写 `status` 同步镜像该属性——**不为了让替身好写而在生产代码里 getattr 兜底**。
+
+**residual（如实标注，不宣称全修）**：连接/语音会话**不会**被提前主动关闭——
+`stop_output` 刻意在第 20 步（输出要活到 flush 与 TTS 播完），WS 连接归 `core/input` 所有
+（Agent 不持有 aiohttp runner）。生产者已闸住 ⇒ 停机期间没有新事件进 bus，
+关停末尾的 `EventBus.drain()` 足够。
+
+#### (c) `S3-R2-2`：`stop` 抢在"已转写、仍在提交"的段之前 teardown → `8b0f6c9c`
+
+`_run_dispatch_stt` 的摘除原先挂在**转写**之后，而提交（pending → commit → `_on_segment`
+→ reserve/bus/emit）在其后 ⇒ `_drain_dispatch_stt` 只快照 `_stt_tasks`，**看不见**这段窗口
+⇒ `stop_session` 立即 teardown（抬 epoch）⇒ 该段被 epoch 守卫丢弃：
+客户端收到 `ended{stopped}`，**既无 turn 也无回复**；DICTATION 侧截断末尾文本。
+修法：摘除移到包住提交的外层 `finally`。
+
+**一个值得记的测试坑**（已写进注释）：`start_realtime` **自己也会** `reserve_work`
+一次（会话生命周期引用），所以"卡住提交"的替身不能无条件阻塞它——第一版用例正是
+因此死锁（会话都启动不了）。
+
+#### (d) 验收
+
+- 新增/收紧用例 9 条（debug SSE 2 / input 6 / voice_ws 收紧 1），每条都有注入反证
+  （S2-R2-4 与 S3-05 各含"修过头"的反向对照）
+- `core/input` 846 passed、`Module/workflow_engine` unit 376 passed；ruff / pyright 全绿
+- 档 2 剩余：`#20b`（`flush_after_response` → `drain`）、`S2-G3`、`S2-R2-3` 残余
 
 ---
 
