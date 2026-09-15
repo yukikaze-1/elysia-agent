@@ -188,10 +188,11 @@ _TASK_SPAWN_ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         (1, "_in_flight_stt 字段；_reset_recording / discard_recording / close cancel"),
     ("core/input/voice_sessions.py", "VoiceSessionManager._make_dispatch_stt._dispatch"):
         (1, "_stt_tasks 集合；teardown 批量 cancel + gather drain"),
-    ("core/cognitive/finalize.py", "CognitiveFinalize._archive_final_turn"):
-        (1, "_pending_after_response 注册表 + _observe_after_response 观察回调；shutdown 限时 drain"),
+    # #20b（2026-09-16）：`CognitiveFinalize._archive_final_turn` 的裸 create_task 已收口到
+    # `CognitiveLoop._after_response_scope`（`AsyncTaskScope.spawn`），故条目删除——
+    # 收口一项就删一条，否则 R6 会因条数漂移报"陈旧登记"。
     ("core/personality/engine.py", "CharacterEngine.buffer_message"):
-        (1, "返回给调用方（CognitiveLoop 登记入 tail registry）——刻意不在内部造不可见任务"),
+        (1, "返回给调用方（CognitiveLoop 经 `_after_response_scope.adopt` 纳入同一收尾域）"),
 }
 
 

@@ -324,11 +324,15 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
             logger.warning("回合任务未在 3s 内收尾（%d 个仍在运行）", leftover)
 
     async def _flush_after_response(self) -> None:
-        """等待 fire-and-forget after-response task 完成，防止记忆保存丢失。"""
+        """等待 fire-and-forget after-response task 完成，防止记忆保存丢失。
+
+        #20b：**不再在外层套 `wait_for`**——预算由 `AsyncTaskScope.drain` 以
+        **总预算**语义执行（N 个任务不会把关闭时间拖成 N × timeout）。此前是
+        "逐任务 5s + 外层 10s"两层各自计时：靠后的任务会被外层直接砍掉，连取消都
+        来不及。预算值单源在 `core/cognitive/loop.py::_AFTER_RESPONSE_DRAIN_TIMEOUT`。
+        """
         try:
-            await asyncio.wait_for(self._cognitive.flush_after_response(), timeout=10.0)
-        except asyncio.TimeoutError:
-            logger.warning("flush_after_response timed out during shutdown")
+            await self._cognitive.flush_after_response()
         except Exception:
             logger.warning("flush_after_response failed", exc_info=True)
 

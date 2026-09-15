@@ -364,33 +364,44 @@ class TestAgentTurnDrain:
 
 
 class TestAfterResponseObservation:
+    """#20b 之后：after-response 收尾任务由 `AsyncTaskScope` 拥有，
+    异常观察随之归作用域的 done 回调（`AsyncTaskScope._observe`，记 ERROR）。
+
+    原先这里钉的是 `finalize._observe_after_response`（一个专用回调）——迁移后那个
+    回调删掉了，但**它防的东西一个字都没变**：尾任务在正常运行时无人 await，
+    失败必须有日志，否则只剩 asyncio 的 "Task exception was never retrieved" 噪音。
+    故这两条守卫改写为对着**新所有者**断言，而不是删掉。
+    """
+
     @pytest.mark.asyncio
     async def test_failed_tail_is_logged(self, caplog):
-        from core.cognitive.finalize import _observe_after_response
+        from Module._common.task_scope import AsyncTaskScope
 
         async def _boom() -> None:
             raise ValueError("tail boom")
 
-        task = asyncio.create_task(_boom())
-        with caplog.at_level(logging.WARNING):
-            task.add_done_callback(_observe_after_response)
+        scope = AsyncTaskScope("test.after_response")
+        with caplog.at_level(logging.ERROR):
+            task = scope.spawn(_boom())
             await asyncio.gather(task, return_exceptions=True)
-        assert any("after-response 收尾任务异常" in r.getMessage() for r in caplog.records)
+        assert any("后台任务未处理异常" in r.getMessage() for r in caplog.records), (
+            "尾任务异常无人上报——这正是本用例存在的理由")
 
     @pytest.mark.asyncio
     async def test_cancelled_tail_is_not_an_error(self, caplog):
-        from core.cognitive.finalize import _observe_after_response
+        from Module._common.task_scope import AsyncTaskScope
 
         async def _hang() -> None:
             await asyncio.sleep(3600)
 
-        task = asyncio.create_task(_hang())
+        scope = AsyncTaskScope("test.after_response")
         with caplog.at_level(logging.WARNING):
-            task.add_done_callback(_observe_after_response)
+            task = scope.spawn(_hang())
             await asyncio.sleep(0)
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+            "主动取消是正常收尾路径，不该报异常")
 
 
 # ================================================================

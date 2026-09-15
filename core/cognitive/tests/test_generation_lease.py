@@ -153,7 +153,10 @@ class TestDedupRunsOutsideTailLease:
         loop._session.save = AsyncMock()     # noqa: SLF001
         loop._engine = None                  # noqa: SLF001
         loop._consolidator = None            # noqa: SLF001
-        loop._pending_after_response = []    # noqa: SLF001
+        # #20b：收尾域改由 AsyncTaskScope 持有（`_pending_after_response` 现在是只读视图，
+        # 写它是 AttributeError）。本用例走 `__new__` 跳过 __init__，故显式装配。
+        from Module._common.task_scope import AsyncTaskScope
+        loop._after_response_scope = AsyncTaskScope("test.after_response")  # noqa: SLF001
         loop._memory_reflector = None        # noqa: SLF001
 
         reflector = MagicMock()

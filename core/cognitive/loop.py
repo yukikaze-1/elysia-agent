@@ -43,7 +43,13 @@ from core.memory.session import SessionMemory
 from core.adapter.llm_adapter import LLMAdapter
 from core.memory.consolidator import MemoryConsolidator
 from core.profile.user_identity import LOCAL_DEFAULT_PRONOMS, LOCAL_DEFAULT_USER_ID, UserIdentity
+from Module._common.task_scope import AsyncTaskScope
 from Module.llm.registry import LLMFactory
+
+# #20b：after-response 收尾任务的 drain 总预算（秒）。与关停步骤
+# `lifecycle._flush_after_response` 传给 `flush_after_response` 的预算一致——
+# 但**只有这一份**：drain 是总预算语义，不再"逐任务 5s + 外层 10s"两层各自计时。
+_AFTER_RESPONSE_DRAIN_TIMEOUT = 10.0
 
 if TYPE_CHECKING:
     from core.status.fsm import FSMBackedPhaseController, FSMBackedStatus
@@ -225,7 +231,12 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # 注意：此前注释写「保留供 agent.py stop() 读取」，但全仓无任何读写点；
         # TTS 取消实际走 _tts_mgr.cancel_all()（见 agent/_lifecycle_tools.py）。
         self._tts_task: asyncio.Task | None = None
-        self._pending_after_response: list[asyncio.Task] = []  # shutdown 时等待
+        # #20b：after-response 收尾任务的**唯一所有权**（此前是一张 list +
+        # 两处 append + 一处 prune + 一处 clear，四处各自维护同一个集合）。
+        # 用 scope 而非 aclose：本 loop 是可重启 owner（同一 Agent 实例 stop→start），
+        # 封闭 scope 会让重启后一律 TaskScopeClosedError。
+        self._after_response_scope = AsyncTaskScope(
+            "cognitive.after_response", drain_timeout=_AFTER_RESPONSE_DRAIN_TIMEOUT)
         # Agent 可选注入：after_response 会异步保存目标 SessionMemory，必须独立持有
         # accepted-work 引用，不能随主 cognitive task 返回就允许删除。
         self._session_work_reserver: (
@@ -358,11 +369,14 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         修复前 stop() 后 `_shutting_down` 恒 True——再次 start 的 turn 收尾
         after_response 永久跳过（记忆沉淀/性格反思不再执行）。这里复位：
         - `_shutting_down` 恢复 False；
-        - 清空 after-response tail registry（stop 已 drain，此处兜底）；
+        - 取消仍未落定的 after-response 任务（stop 已按预算 drain，此处收掉残余——
+          只"清空引用"会留下仍在跑的任务，且它们此后无人观察）；
         - 断开 `_current_task` 引用（stop 已取消）。
         """
         self._shutting_down = False
-        self._pending_after_response = []
+        leftover = self._cancel_after_response()
+        if leftover:
+            logger.info("重启复位：取消 %d 个未落定的 after-response 任务", leftover)
         self._current_task = None
 
     def configure(self, **kwargs: Any) -> None:
@@ -1054,7 +1068,10 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                     user_message, assistant_response, reflector=target_reflector)
                 if task is not None:
                     reflect_task = task
-                    self._pending_after_response.append(task)
+                    # #20b：tail task 由性格反思引擎创建，但**收尾归本 loop 负责**
+                    # ——用 adopt 纳入同一个作用域，而不是另立一张列表
+                    # （那正是"同一个作用域两条收尾路径"的来源）。
+                    self._after_response_scope.adopt(task)
             except Exception:
                 logger.warning("性格反思缓冲失败", exc_info=True)
         # 更新 MemoryReflector 计数器（廉价、非阻塞——留在本处）
@@ -1084,27 +1101,41 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             logger.error("会话保存失败", exc_info=True)
         return reflect_task, dedup
 
-    async def flush_after_response(self, timeout: float = 5.0) -> None:
-        """等待所有 pending _after_response task 完成。
+    async def flush_after_response(self, timeout: float | None = None) -> None:
+        """等待所有 after-response 收尾任务落定（shutdown 时由 lifecycle 调用）。
 
-        shutdown 时由 lifecycle 调用，防止内存沉淀和 session 保存丢失。
+        #20b：改用 :meth:`AsyncTaskScope.drain` —— **总预算**语义：N 个任务不会把关闭
+        时间拖成 N × timeout，超时后取消余下任务并再给一小段时间让其落定，仍未落定的
+        记 error 并由返回值如实上报。此前是"逐任务 5s + 外层再套 10s 总超时"，
+        两层语义不一致：靠后的任务会被外层直接砍掉（连取消都来不及），而随后的
+        `_pending_after_response.clear()` 会让它们变成无人观察的孤儿。
+        `drain` 的 docstring 一直逐字点名本处未迁移。
 
         Args:
-            timeout: 每个 task 的最长等待时间（秒）。
+            timeout: 总预算（秒）；None 用作用域默认值。
         """
-        pending = [t for t in self._pending_after_response if not t.done()]
+        scope = self._after_response_scope
+        pending = scope.pending()        # 注意：这是方法不是 property
         if not pending:
             return
         logger.info("等待 %d 个 after-response task 完成...", len(pending))
-        for t in pending:
-            try:
-                await asyncio.wait_for(t, timeout=timeout)
-            except asyncio.TimeoutError:
-                logger.warning("after-response task 超时，取消")
-                t.cancel()
-            except Exception:
-                logger.warning("after-response task 异常", exc_info=True)
-        self._pending_after_response.clear()
+        leftover = await scope.drain(timeout=timeout)
+        if leftover:
+            logger.warning("%d 个 after-response task 未在预算内落定（已请求取消）", leftover)
+
+    @property
+    def _pending_after_response(self) -> list[asyncio.Task]:
+        """未落定的 after-response 任务（**只读视图**；所有权归 `_after_response_scope`）。
+
+        保留这个名字是为了既有的诊断/测试读取点（它们都按 `not t.done()` 过滤，
+        与该视图语义一致）。**写权已收口**：此前全仓有 append ×2 / prune ×1 / clear ×1
+        各自维护同一张列表，而 `flush` 只按它来等——多一条登记路径就多一个漏等点。
+        """
+        return list(self._after_response_scope.pending())
+
+    def _cancel_after_response(self) -> int:
+        """取消仍未落定的 after-response 任务（重启复位用）。返回取消条数。"""
+        return self._after_response_scope.cancel_all()
 
     @staticmethod
     def _build_wake_up_message(ctx: dict) -> str:

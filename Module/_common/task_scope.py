@@ -172,6 +172,34 @@ class AsyncTaskScope:
             self._observe if log_errors else self._forget)
         return task
 
+    def adopt(self, task: asyncio.Task[Any]) -> asyncio.Task[Any]:
+        """把**外部创建**的任务纳入本作用域的所有权（登记强引用 + done 回调）。
+
+        用于"创建点在别处、但收尾必须由本 owner 负责"的情形：例如性格反思引擎自己
+        ``spawn`` 的 tail task，而 Agent 关闭时必须等它落定。没有这个方法时，这类
+        任务只能另立一张列表登记——于是同一个作用域里出现**两条收尾路径**
+        （`drain` 只看得见其中一条），正是本仓反复出现的「两条路径不对称」。
+
+        **不接管取消权**：`cancel_all()` 会取消它（与 scope 内任务一致），但创建方
+        自己的收尾逻辑不受影响；`drain()` 等它落定。
+
+        Args:
+            task: 已创建的任务。已完成的也可以登记（会被立即移出集合）。
+
+        Returns:
+            原任务（便于链式使用）。
+
+        Raises:
+            TaskScopeClosedError: owner 已关闭（调用方据此决定是否回滚）。
+        """
+        if self._closed:
+            raise TaskScopeClosedError(
+                f"作用域已关闭（owner={self._owner}），拒绝接管任务"
+                f"（task={task.get_name()}）")
+        self._tasks.add(task)
+        task.add_done_callback(self._observe)
+        return task
+
     def try_spawn(
         self,
         coro: Coroutine[Any, Any, Any],
