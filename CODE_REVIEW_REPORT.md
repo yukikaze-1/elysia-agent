@@ -1421,8 +1421,8 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
 
 | 条目 | 位置 | 后果 | 成本 |
 |---|---|---|---|
-| `#14c` | `core/character/service/base.py:73-81`（粘性 `_connected` **无任何重置**）+ `_lifecycle_persistence.py:479-504` 探针表无 character 键 | **一次网络抖动 → 角色域 503 直到进程重启**，L2/C6/mood flush 停写；`/ready` 与 debug 面板都看不见；**零守卫**。`:605` 那句"其余 repo：health_check 内部已重连"对这三个 repo **不成立**（它们的 `health_check` 全仓零调用点） | 1–2 天 |
-| `S2-B7b` | `core/storage/secret_store.py:63-79`（损坏 → `return {}`）+ `set_secret` 整份覆盖 | 密钥文件损坏后**第一次写入即抹掉其余全部 provider 密钥**。更糟：`test_secret_store.py:90-94` 把破坏性行为**钉成预期** ——不先改这条用例，洞不会被任何回归网挡住 | 0.5–1 天 |
+| `#14c` ✅**已修** `d3f84342` | `core/character/service/base.py:73-81`（粘性 `_connected` **无任何重置**）+ `_lifecycle_persistence.py:479-504` 探针表无 character 键 | **一次网络抖动 → 角色域 503 直到进程重启**，L2/C6/mood flush 停写；`/ready` 与 debug 面板都看不见；**零守卫**。`:605` 那句"其余 repo：health_check 内部已重连"对这三个 repo **不成立**（它们的 `health_check` 全仓零调用点） | 1–2 天 |
+| `S2-B7b` ✅**已修** `5f2a86bc` | `core/storage/secret_store.py:63-79`（损坏 → `return {}`）+ `set_secret` 整份覆盖 | 密钥文件损坏后**第一次写入即抹掉其余全部 provider 密钥**。更糟：`test_secret_store.py:90-94` 把破坏性行为**钉成预期** ——不先改这条用例，洞不会被任何回归网挡住 | 0.5–1 天 |
 | `S3-08` | `core/input/ws_handlers/voice.py:81-151`（先发 `ended{stt_disabled}` 再进 try）+ `voice_sessions.py:729-743` + `_require_session:723-727` | 另一连接关 STT 后，本连接**任一** `voice_session.*` 返回**两帧且语义矛盾**（先 ended 再 NOT_FOUND）。现用例 `test_voice_ws.py:154-172` 恰好把这多出来的一帧放过 → 等于零防线 | ~1 天 |
 | `S3-R6-2` | `Module/conftest.py:91-98` | patch 目标写错（`motor.motor_asyncio.AsyncIOMotorClient`，而 `mongodb.py:8` 已按名绑进本模块命名空间）→ fixture **恒无效**、`return` 无 teardown；`test_documentdb.py` **25 个用例**各泄漏一个真 `AsyncIOMotorClient`。首次报告后**未修**（`git log -S` 0 命中） | 0.5 天 |
 
@@ -1554,6 +1554,56 @@ Mongo 离线时 `_persist` 直接 `return`（**没有 dirty 跟踪、没有恢�
 - 新增 6（probe/recovery）+ 3（reload 合并）= 9 条用例，全部带注入反证
 - `core/storage/tests` + `core/agent/tests` + `core/desktop/tests` → **887 passed**
 - `#46` 十四行表**至此全部收口**（行 1–14 各有结论，见 §0.4.14(c) 与本节）
+
+---
+
+### §0.4.20 档 1 前两条收口：#14c 角色域永久 503 / S2-B7b 密钥文件损坏抹密钥（2026-09-16，2 个提交）
+
+承 §0.4.18(c) 档 1（数据不可逆 / 用户可见 / 零守卫）。两条的共性：**失败方向选错了**
+——一个把"暂时不可用"变成"永久不可用"，一个把"读不出来"变成"写没了"。
+
+#### (a) `#14c`：粘性连接标志让"抖动一次"= 角色域 503 到重启 → `d3f84342`
+
+`_connected` / `_instances_connected` **置 True 后全仓无复位点**，而仓储在非业务异常后
+`_mark_unavailable()`（先 close 再 `_db = None`），此后 `_require_connected` 直接抛
+"未连接"。两者叠加 ⇒ 一次网络抖动就让角色域整体不可用，**而没有任何观测面看得见**：
+探针表无 character 键、`/ready` 的 mongo 判据只有 session/message/attachment；
+`:605` 那句"health_check 内部已重连"对这三个仓储不成立（它们的 `health_check`
+**全仓零生产调用点**）。
+
+修法：判据改成"标志为真 **且** 后端句柄仍在"（`_backend_gone`），**只重连失效的那一半**；
+与 `base._health_check()` 的重连语义对齐。实例仓储走同一条判据。
+
+**诚实边界**：消除的是"永久不可用"，**不**新增角色域的 readiness 信号——抖动期间
+第一个操作仍会失败一次（然后自愈）。是否把角色域纳入 `/ready` 属产品决定。
+
+**反证**：退回只看 `_connected` → 1 failed；实例仓储退回粘性 → 1 failed；
+"健康路径不重连"对照组两次都绿（证明没有退化成"每轮都连"）。
+
+#### (b) `S2-B7b`：密钥文件损坏 → 第一次写入抹掉其余全部密钥 → `5f2a86bc`
+
+`_load` 对损坏文件返回 `{}`（一行 warning），而 `set_secret` 是 load → 改 → **整份 save**
+⇒ 新文件只含本次写入的那一条，**其余 provider 的密钥全部消失**，且旧内容无任何副本。
+`test_corrupt_file_can_be_overwritten` 还把这个行为钉成了预期——**先改这条用例，
+否则洞不会被任何回归网挡住**。
+
+修法：读容错、**写 fail-closed**。`_load` 区分"不存在 / 正常 / 损坏"三态，损坏抛
+`SecretStoreCorruptError`（含路径，明说"文件保持原样"）；读路径经 `_load_or_empty`
+降级为"未配置"并打 **ERROR**（原 warning）；`set_secret` 让异常冒泡（保留现场）；
+`delete_secret` 不写文件故只记日志返回。
+
+**顺带修失败语义**：`providers_save_handler` 的兜底文案是"保存失败，请稍后重试"，
+对"文件损坏"这种**非暂时性**失败是误导（重试永远不会成功）——加专用分支给出可操作
+文案，信封形状仍是 `ApiFail`（不改契约）。
+
+**反证（三半各自独立）**：`_load` 退回"损坏即空" → 3 failed；读路径改成直接抛（过头）
+→ 1 failed；去掉处理器专用分支 → 1 failed。
+
+#### (c) 验收
+
+- 新增/改写用例：character 3 + secret_store 4（含 1 条改写）+ providers_api 1 = 8 条，
+  每条都有对应注入反证
+- `core/agent` + `core/character` + `core/storage` → 1001 passed；ruff / pyright 全绿
 
 ---
 
