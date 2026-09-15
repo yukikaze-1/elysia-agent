@@ -211,7 +211,8 @@ core/
 │   ├── attachment_release.py # AttachmentRelease: 会话/消息删除的附件引用释放共享 helper（提取自 debug_routes/archive.py；REST DELETE /api/sessions/{id} 删除前先 release_session_attachments，批次 8a D5）
 │   ├── attachment_gc.py    #   AttachmentGC: 启动兜底扫描四规则（软删超 24h 物理删 / active 文件缺失软删 / 未关联超 7 天软删 / 磁盘孤儿删文件，限四 kind 目录，BE-071）
 │   ├── pending_attachment_release.py # 提交后附件引用释放失败 journal（#41）：主操作已提交、refs 未释放 → 落盘，启动 + 恢复边界重试
-│   └── background_task_repo.py # BackgroundTaskResultRepository: 后台任务终态结果（#6，task_id unique + 7d TTL，fail-closed）——停机落库 + 启动补投
+│   ├── background_task_repo.py # BackgroundTaskResultRepository: 后台任务终态结果（#6，task_id unique + 7d TTL，fail-closed）——停机落库 + 启动补投
+│   └── task_result_wal.py  # TaskResultWAL: 终态结果本地 WAL（#6 硬杀窗口）——派发/终态产生那一刻同步 fsync，启动 replay 进仓储（库为权威）
 ├── config/                 # Config sub-package: character_config + app_config
 │   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
 │   ├── app_config.py          # AgentConfig: YAML-loaded app configuration
@@ -523,6 +524,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 | `attachments` | MongoDB `default.attachments` | 附件元数据（BE-070，fail-closed）：ref_count/refs/status（软删 deleted_at）；TTL 不设，生命周期由 GC 管（24h/7d 规则） |
 | `user_identity_profiles` | MongoDB `default.user_identity_profiles` | 用户最小身份（BE-STAGEH-02，Mongo 权威）：`user_id` 唯一索引 + revision CAS；Agent.start() 装载，重启不回到 bootstrap |
 | `background_task_results` | MongoDB `default.background_task_results` | 后台任务终态结果（#6/决策 #6）：`task_id` 唯一 + `ttl_expires_at` TTL 7d；`delivered=False` 的记录在下次启动补投进总线 |
+| `task_result_wal.jsonl` | 本地文件 `data/task_result_wal.jsonl` | 终态结果本地 WAL（#6 硬杀窗口）：派发/终态记录的**同步 fsync** 副本。落库点在 mailbox 轮询上（0.5s 周期），硬杀窗口内终态只存在于这里；启动 replay 进仓储，**库为权威**（库里已有的跳过） |
 
 **Schema 变更（ARCH-INC-P1-04）**：**不做迁移框架**——新增集合/索引/字段由 `ensure_index`
 （每次 `connect()` 幂等执行）自动覆盖，实测 4 个月 24 次索引变更中约 20 次属此类。

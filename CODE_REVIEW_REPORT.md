@@ -959,6 +959,170 @@ mailbox 里"的那一刻。
 
 ---
 
+### §0.4.14 #44 / #6 硬杀窗口 / #46 测试缺口（2026-09-15，8 个提交）
+
+队列里最后三项 owner 解禁项。三者的共同点是**缺陷都在"没有机制的地方"**：
+#44 是职责密度（写入链全挤在一个 1384 行文件里）、#6 是持久化点选在了消费侧而非产生侧、
+#46 则是"路径存在但从没有测试走过"——而补测的过程中**又挖出 7 处真实缺陷**（2 处已修）。
+
+| 项 | 提交 | 内容 |
+|---|---|---|
+| **#44** | `48e64266` | `core/character/service.py`（1384 行）按写入链拆成包（7 文件），`__init__.py` 单一装配点 |
+| **#6 硬杀窗口** | `c5e38aa4` | 终态结果本地 WAL（同步 fsync）+ 启动 replay；持久化点从"消费时刻"前移到"产生时刻" |
+| **#46 行 3/5/14** | `10b93544` | 关停逐步矩阵（63）、FSM 全矩阵（115）、logger 跨模块 hop（换掉一条假绿守卫） |
+| **#46 行 11/12** | `591eb23d` | **修**：CRLF 静默吞块 + emoji 序列漏判（两处都实测复现） |
+| **#46 行 8** | `bc063b8d` | 角色写链补偿矩阵（18）——并暴露 4 处真实缺陷（未修，见 (d)） |
+| **#46 行 10** | `625c03ce` | 工具重试幂等性（24）——把"插件自担重复副作用"这一真实契约钉死 |
+| 文档（本文件） | 见 git log | §0.4.14 + CLAUDE.md/README/存储文档同步 + `#6b`→`#6d` 编号笔误更正 |
+
+#### (a) #44：按**写入链**拆，不是按行数拆
+
+拆分的理由是报告 §Coupling 指出的：**S2-B2 / S2-B7 / S3-21 三项缺陷全在它的写入链上**，
+而 1384 行里读链、定义写链、实例/状态写链的边界只存在于作者脑子里。
+
+| 模块 | 行数 | 拥有 |
+|---|---|---|
+| `__init__.py` | 144 | 装配点：三链混入 + 基类 → `CharacterService`；逐名重导出 |
+| `errors.py` | 76 | `CharacterError` 层级（13 类） |
+| `helpers.py` | 229 | 模块级纯函数 + 三链共享常量（准入规则：纯函数） |
+| `base.py` | 232 | 共享管道：`__init__`/连接/取定义/`validate`/草稿→Revision |
+| `queries.py` | 303 | 读链：`get`/`list`/`list_revisions`/`resolve_runtime_source`/`preview` |
+| `definitions.py` | 290 | 定义写链：`create`/`update`/`clone`/`archive`/`rollback` |
+| `instances.py` | 417 | 实例/状态写链：`reset_evolution`/`reconcile`/传播/pending/busy |
+
+**"零行为变更"是机器验证的，不是声称的**（我复核过，不只信子代理的报告）：
+
+- **AST 逐块对比**：旧文件 55 个顶层定义块（含 32 个 `CharacterService.*` 方法）在新包中
+  全部存在且 `ast.dump` **逐字相同**——32 个"缺失名"全部对应到新的混入宿主
+  （`CharacterService.create` → `CharacterDefinitionWriteChain.create` 等），唯一的差异块是
+  `logger`（子模块刻意固定 `logging.getLogger("core.character.service")`，避免 `%(name)s`
+  把每行日志变成 `…service.instances`——**这是行为变更，但只影响日志的 name 字段**，
+  已如实登记）。
+- **导入面逐名对比**：`removed=[]`，新增 10 个名字全是结构性（6 个子模块属性 + 混入/基类名）。
+- **反证**：注入 A（子模块导入不存在的名字）→ `import` 直接 ImportError；注入 B（混入体内
+  引用未定义常量）→ import 仍成功、2 条 revision 传播用例红——证明断点在混入体内而非导入面。
+
+> **口径澄清**：报告写的是"1351 行"，实际拆分前是 1384 行（1351 是更早一次测量的快照）。
+
+#### (b) #6 硬杀窗口：把持久化点从"消费时刻"移到"产生时刻"
+
+决策 #6（`b3abca8d`）把落库点放在 Agent 的 **mailbox 轮询**上（周期 0.5s）——
+"终态已产生、还没被排空落库"之间存在窗口，**进程在该窗口内被硬杀（SIGKILL/掉电/OOM），
+终态随内存一起消失**。优雅停机的同步排空覆盖不到硬杀：硬杀不给任何代码执行机会。
+
+**做法**（选项 B，未改 `push_mailbox_event` 的同步签名）：
+
+1. `core/storage/task_result_wal.py`——追加式 JSONL，每条 `write+flush+fsync`。
+   两类记录：`dispatch`（登记后台任务时落，让"派了任务但进程死了"可判定，并留下终态记录
+   本身没有的 `original_intent`）与 `terminal`（推终态时落）。
+   **为什么必须同步**：落盘若是 `await`，返回前任意 await 点被取消/进程死亡都会让落盘不发生
+   ——丢的恰是此刻唯一需要记住的那件事。
+2. sink 挂在 **mailbox 对象**上（一个任务一个，随其生命周期结束），在 `submit()` 创建时就挂
+   （不是等 Agent 登记时再挂）→ 不存在"事件先到、sink 后挂"的竞态。契约层用
+   `getattr`+`callable` 鸭子类型，**不反向依赖 core**。
+3. **措辞存原始 data 而非措辞好的文本**：WAL 只记事实，`terminal_payload()` 是唯一措辞
+   实现点，被"正常排空"与"硬杀补投"两条路径共用——否则同一条结果会有两种文本，正是本项目
+   反复出现的「两条路径不对称」。
+4. 启动 replay 三类候选：有终态记录 → 按该终态补；只有派发记录 → 补 `interrupted`（附 intent）；
+   **库里已有 → 跳过**（Mongo 是权威）。仓储不可用 / 判重失败 / 落库失败 → **保留 WAL**
+   （它是唯一副本），下轮启动再试。
+
+**自测发现的实现缺陷（已修）**：最初 `read_raw` 以文本模式**整体**打开文件——硬杀把最后一行
+截断在多字节字符中间（中文意图/emoji）会让 `UnicodeDecodeError` 波及**整个文件**，前面所有
+完好记录一起丢。改为按字节读、逐行解码，损伤被限制在受损那一行。
+（`test_torn_multibyte_tail_does_not_lose_earlier_records` 钉住。）
+
+**反证 8 条**（注入 → 红 → 逐字节还原 → 绿）：
+
+| # | 注入 | 结果 |
+|---|---|---|
+| 1 | `push_mailbox_event` 不调 sink | 5 failed |
+| 2 | `submit()` 不挂 sink | 1 failed / 2 passed（挂载点单独设防） |
+| 3 | 登记时不落派发记录 | 1 failed |
+| 4 | 落库成功不清 WAL | 1 failed |
+| 5 | 移除启动补录步骤 | 1 failed |
+| 6 | replay 不判重 | 1 failed（重复告知） |
+| 7 | 查库失败也删 WAL | 1 failed（真丢） |
+| 8 | `read_raw` 退回整体文本解码 | 1 failed |
+
+`fail-closed` 约定门禁迫使新读路径表态：`BackgroundTaskResultRepository.get` 必须分类为
+`READ_FAIL_CLOSED`（把"查不到"当成"库里没有"会让已投递记录被重置回待投），并补
+`_ARG_FACTORIES["task_id"]` 才能被门禁探测——**门禁在这里干的就是它该干的事**。
+
+**已知边界**：① `record_terminal` 与 fsync 之间仍有一次本地 fsync 的微小窗口；
+② 极快任务可能在 Agent 登记前就终态——终态记录仍在（sink 已在 `submit()` 挂上），
+只是 replay 出的记录没有 intent。
+
+#### (c) #46：14 行表的最终状态
+
+| 行 | 缺口 | 结论 |
+|---|---|---|
+| 1 | 清理路径（`_close_ws_connection` 抛错） | ✅ 已覆盖（`test_ws_close_always_removes_channel.py` 5 例 + 预算 3 例，`9b41beb8`） |
+| 2 | `confirm` 写错的破坏性端点 | ✅ 已覆盖（断言 `release.call_count == 0`；`2ea87b62` 彻底版） |
+| 3 | `Agent.stop()` 全 20 步含每步抛错 | 🔧 **本次补**（63 条逐格矩阵） |
+| 4 | 单 token 配置的管理端点鉴权 | ✅ 已覆盖（`TestAdminAuthStrictSeparation` 8 例，三种配置对照） |
+| 5 | `AgentFSM` 完整迁移矩阵 | 🔧 **本次补**（36 格全矩阵 + 非法格不得改动 state/previous） |
+| 6 | 依赖恢复路径（down→up） | ✅ 已覆盖（idempotency 与 LTM 各有一条真 down→up）；**未逐一确证** `generation`/`desktop` 两条 probe 分支 |
+| 7 | `wire_dict()` 对非 JSON 原生值 | ✅ 已覆盖（正是该行要的 `datetime in metadata`）；边角（`Enum`/`Path`/任意对象）**未定契约** |
+| 8 | 跨集合写序列的中间失败 | 🔧 **本次补**（18 条）——并暴露 4 处真实缺陷 |
+| 9 | 幂等三态 | ✅ 已覆盖（可用/不可用/不存在三态齐备） |
+| 10 | 重试的幂等性（工具副作用） | 🔧 **本次补**（24 条）——此前**零覆盖且既有用例锁定相反不变量** |
+| 11 | `\r`（CRLF）文本管线 | 🔧 **本次补 + 修**（真实静默丢数据，见 (d)） |
+| 12 | 边界值（空/超长/代理对/ZWJ emoji） | 🔧 **本次补 + 修**（emoji 序列漏判） |
+| 13 | `list[str]`/`dict[str,int]` 的 env 覆盖 | ✅ 已覆盖（正是该行要的 env 覆盖）；边角（非法 JSON env）**未补** |
+| 14 | `get_caller_logger` 的 hop-count | 🔧 **本次补**——原守卫是**假绿**，见 (d) |
+
+**顺带更正一处编号笔误**：本报告 `#46` 条目原写"4 条 P0 级已上移至 P0 `#6b`"，
+承载这 4 条回归测试的 P0 项其实是 **`#6d`**（`#6b` 是 CR-10 embedding 持久化）。已改。
+
+#### (d) 补测过程挖出的 7 处真实缺陷（**这是 #46 最大的产出**）
+
+补测不是"把绿变多"——它把 7 条**此前没有任何测试走过的路径**走了一遍，其中 7 条都有问题：
+
+| # | 缺陷 | 现状 | 证据 |
+|---|---|---|---|
+| 1 | **CRLF 让代码块与其后全部文本静默消失**（无日志无异常） | ✅ **已修** `591eb23d` | 复现：LF → 2 句 + 1 块；CRLF → 0 句 0 块。裸 `\r` 反向失败（代码当可见文本播报）。根因 `_WS`/`_HARD_DELIMITERS` 只认 `\n`。修法：归一收口在 `StreamProcessor.feed()`（管道唯一摄入点），跨 chunk 安全 |
+| 2 | **`is_emoji_only` 漏判全部 emoji 序列**（ZWJ/VS16/keycap/国旗/tag） | ✅ **已修** `591eb23d` | `👨‍👩‍👧‍👦` → False。危害不止漏判：TTS 单码点剥离后只剩连接符 `"\u200d\u200d\u200d"` → 真的发一次无意义合成请求 |
+| 3 | **`get_caller_logger` 的守卫是假绿** | ✅ **已替换** `10b93544` | 旧用例的 `_inner`/`_outer` 同住测试模块 → 单跳与双跳解析出**同一个** `__name__`，双跳注入下旧用例仍 PASSED、新用例 7 FAILED |
+| 4 | `cas_revision_pointer` **抛异常**时无补偿 → **孤儿 revision**（未发布版本出现在 `list_revisions` 且可被 `resolve_runtime_source` 解析） | ⚠️ **未修**（已用"当前契约"用例钉死） | `definitions.py:146-151` 只补偿 `ok is False` 分支；可达路径 `character_repo.py:163` 未连接即抛 |
+| 5 | 409 里的 `currentRevision` 是**过期值** → 客户端按它重试会**永远冲突** | ⚠️ **未修** | CAS 落败时用内存里的旧值填 `details.currentRevision` 并标 `retryable=True`；实测真实指针 3、报 1 |
+| 6 | 补偿调用**无 try 保护**（补偿自身失败会顶替原始异常、成因丢失 + 孤儿保留） | ⚠️ **未修** | `create:109` / `update:150` |
+| 7 | **副作用会被重试重复，且无按 callId 的幂等** | ⚠️ **未修**（`xfail(strict=True)` 留痕） | `desktop.file.write`/filesystem 写/reminder 超时 → 合成 TIMEOUT（可重试）→ 同 callId 二次执行，而 Desktop 桥的 `_dedup` 此时已释放。与归档 spec"所有副作用工具都按 `callId` 幂等"冲突——因文档已归档、桥实现的是 pending 期 args-hash 去重，**只留痕不硬断言**（实现补齐会 XPASS→红，强制更新本报告） |
+
+另有 2 条**口径/卫生**问题，不算缺陷但已登记：
+- `registry_helpers` docstring 称 `core.memory.long_term` → milvus.log，实际 `log_setup.py:94`
+  先路由到 embedding.log（`propagate=False`）+ `:167` 追加 milvus.log —— 措辞不精确。
+- `test_tool_gives_up_after_max_retries` 的 `stop()` 未走 `try/finally`（断言失败即泄漏一个
+  仍在运行的 dispatcher）。**已修**（`625c03ce`）。**如实记录**：子代理报告"失败时会挂死整个
+  pytest 会话（exit 124）"，我在两种配置下（单用例 / 整文件 + 必然失败断言）**均未复现挂死**
+  ——只有泄漏是确定的。故按"清理失败路径"修改，不按"修挂死"宣称。
+
+#### (e) 本轮验收
+
+- `pytest -q -n 8 --dist loadfile`（含 slow）→ **5540 passed / 17 skipped / 1 xfailed /
+  0 failed（71.9s）**；起点 5172，本批 **+368 passed + 1 xfailed**
+- **一次间歇性 xdist worker 死亡已如实记录**：首次长跑（timeout 2400s）在 99% 处出现
+  `[gw4] node down: Not properly terminated` 并挂死至超时；随后的复跑
+  （`-q -n 8` 一次、`-v -n 8` 一次）**均 5540 passed 正常收尾**，单文件/子模块跑法也全绿。
+  即：**可复现性未建立**——不作"已修"宣称，留作已知风险（详见 (f)）
+- 门禁全绿（13 道，见 §0.4.13 列表）
+
+#### (f) 仍未做 / 已知风险（如实标注）
+
+1. **间歇性 xdist worker 死亡未定位**（上面 (e)）。一次观测、无复现。可疑方向：
+   泄漏的 dispatcher / 事件循环 teardown / 真加载模型的内存压力。**未定位就不宣称修好**。
+2. 行 6 的 `generation` / `desktop` 两条 probe 分支未逐一确证是否有 down→up 用例。
+3. 行 7 的 `Enum`/`Path`/任意对象在 `wire_dict()` 下的契约未定性（当前任意对象会抛
+   `PydanticSerializationError`）——是"有意契约"还是"待改行为"需设计意图。
+4. 行 13 的"集合字段非法 JSON env"边角未补。
+5. (d) 表中 4/5/6/7 四处缺陷**未修**：每处都需要独立的设计决定（如 #5 需要 CAS 落败后回读、
+   #7 需要先定 callId 幂等的活契约），不宜在"补测"批次里顺手改。
+6. `#46` 的 `#44` 拆分遗留：`docs/electron-backend-security.md` 已改指新模块，但
+   `docs/review/2026-09-09-*` 等历史评审文档仍引用 `core/character/service.py::<方法>`
+   ——按"历史文档不改写"处理。
+
+---
+
 # Executive Summary
 
 ## 总体判断
@@ -4293,7 +4457,7 @@ rg -n 'reload_from_milvus|health_check.*reload' core/memory/tests/  # 0 命中
 | 43 | **架构债：状态单一权威化**（`Agent._state` 与 FSM 合一 / `_tts_enabled` 四源合一）|
 | 44 | **`core/character/service.py` 按写入链拆分**（先补公开门面，再拆内部）|
 | 45 | **`ConstraintConfig` 的"硬约束"要么实现要么改文案** |
-| 46 | **测试缺口补齐（P1/P2 部分）**——14 行表中 **4 条 P0 级已上移至 P0 `#6b`**（初版整体排 P3，导致 P0 修补期无回归网，本次修订纠正）|
+| 46 | **测试缺口补齐（P1/P2 部分）**——14 行表中 **4 条 P0 级已上移至 P0 `#6d`**（初版整体排 P3，导致 P0 修补期无回归网，本次修订纠正；`#6d` 是承载这 4 条回归测试的 P0 项，`#6b` 是 CR-10 embedding——此处原写 `#6b` 属编号笔误，2026-09-15 更正）|
 | 47 | **静态检查新增两条**：① `wait_for` 预算逐层递减；② 契约枚举/字段可达性（有读必须有写）|
 | 48 | **文档漂移修正**（`CLAUDE.md` 的 property 数、full 套件耗时、信号处理登记）|
 

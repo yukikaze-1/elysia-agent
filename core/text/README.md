@@ -105,7 +105,33 @@ LLM delta → StreamProcessor.feed(delta)              (core/text/stream_process
 | `tokenizer.py` | `StreamTokenizer`：增量输入 → 只吐完整 token。标签起始前缀 / PAUSE 尾串 / STAGE_CN K-M 计数窗口（闭合时英文语气词 → STAGE_EN）/ ANGLE 尖括号候选（ANGLE_MAX 窗口）/ 行首反引号持有上界；行首双状态（`at_line_start` + 缩进计数）判定围栏 |
 | `splitter.py` | `SpeechSplitter`：消费 SPEECH/PAUSE/STAGE_CN/STAGE_EN token → SENTENCE + TEXT_DELTA。边界扫描只在 SPEECH 文本上进行，PAUSE/STAGE_CN/STAGE_EN 以零宽位置保护，内部标点不参与边界判定。`completed_count` 供 `after_sentence_idx` 块定位 |
 | `parts.py` | `build_parts(all_sentences, blocks)`：按 `after_sentence_idx` 交错出 `TextPart` + content_type（不再二次扫描 acc_text）。`rebuild_public_text()`：从 token 流重建去标记纯文本。仅服务 session 存储/归档，不参与显示推送 |
-| `stream_processor.py` | `StreamProcessor` 协调器：tokenizer + splitter + 事件发射 + `get_blocks()` + public_text 重建。吸收旧状态机 + 旧块过滤逻辑 + TTFT/emoji 逻辑。**META 路由查注册表 `emit` 字段 + `_EMIT_BY_NAME` 枚举自动派生映射，未知 emit 降级 `logger.warning` + 丢弃**。每轮对话创建新实例 |
+| `stream_processor.py` | `StreamProcessor` 协调器：tokenizer + splitter + 事件发射 + `get_blocks()` + public_text 重建。吸收旧状态机 + 旧块过滤逻辑 + TTFT/emoji 逻辑。**META 路由查注册表 `emit` 字段 + `_EMIT_BY_NAME` 枚举自动派生映射，未知 emit 降级 `logger.warning` + 丢弃**。每轮对话创建新实例。**换行归一在 `feed()`（管道唯一摄入点）**，见下 |
+
+### 换行归一（#46 缺口行 11，2026-09-15）
+
+**不变式：CRLF / 裸 CR 输入的产物与 LF 逐项相同**——句子列表、`get_blocks()`、
+`rebuild_public_text()` 三者全等，换行次数严格为 1。
+
+归一放在 `StreamProcessor.feed()`，**不往各处空白集合补 `\r`**：`\r` 会渗进 tokenizer 的行首
+判定、块内容、`public_text`、以及 tts_adapter/显示路径消费的事件文本——逐点补属于「两条路径
+不对称」缺陷族（补一处漏一处）。因此 `tokenizer.py::_WS` 与 `splitter.py::_HARD_DELIMITERS`
+**刻意只认 `\n`**；直接使用 `StreamTokenizer` 而不经 `StreamProcessor` 的调用方须自行归一。
+
+跨 chunk 安全：chunk 末尾的 `\r` **扣下**到下一 chunk 定论（`"...\r"` + `"\n..."` 是跨 chunk
+的 CRLF，朴素的每 chunk `replace("\r\n", "\n")` 会变成**两个**换行）；`flush()` 时仍扣着
+（流截断在半个 CRLF）按行终止符补发 `\n`；`reset()` 清持有态。
+
+修前实测：CRLF 让围栏收尾行永不闭合 → **代码块与其后全部文本静默消失**（无日志、无异常，
+`sentence` 与 `blocks` 双空）；裸 `\r` 则行首状态无法重建 → 代码被当可见文本播报。
+
+### emoji 判定按序列（#46 缺口行 12，2026-09-15）
+
+`is_emoji_only` 的判定单位是 **emoji 序列**而非单码点：基底 + 修饰符（VS15/VS16、tag 字符）
++ ZWJ 连接（`👨‍👩‍👧‍👦` / `🏳️‍🌈`）+ keycap（`1️⃣`）+ 区域指示符对（`🇨🇳`）。
+修前只认单码点区间 → 上述形态一律判 False。危害不止"少判一个 emoji"：tts_adapter 的闸门放行
+后，`Module/tts` 的单码点剥离会把基底剥掉、只剩连接符（`👨‍👩‍👧‍👦` → `"\u200d\u200d\u200d"`），
+非空 → 真的发一次无意义合成请求。代理对（surrogate pair）判定为**管道内不可达**（WS/JSON 解码
+产出已解码 str、UTF-8 编码禁止代理码点），写成文档化用例而非为它扭曲正则。
 
 ### 分句保护
 

@@ -25,6 +25,7 @@
 | `attachment_gc.py` | AttachmentGC — 附件 GC 兜底扫描（BE-071 四规则：软删超 24h 物理删 / active 缺文件软删 / 未关联超 7 天软删 / 磁盘孤儿删文件） |
 | `pending_attachment_release.py` | PendingAttachmentRelease — 提交后附件引用释放失败 journal（#41：主操作已提交但 refs 未释放 → 落盘，启动 + Mongo 恢复边界重试；原子写、空则删文件） |
 | `background_task_repo.py` | BackgroundTaskResultRepository — MongoDB background_task_results 集合（#6 决策 #6：`task_id` 唯一 + 7d TTL，fail-closed；停机落库 + 启动补投） |
+| `task_result_wal.py` | TaskResultWAL — 后台任务终态结果本地 WAL（#6 硬杀窗口：追加式 JSONL + 同步 fsync，派发/终态各一行；启动 replay 进仓储，库为权威。非 Repository 子类——无连接概念，写失败只降级不抛） |
 | `attachment_release.py` | 附件引用释放共享 helpers（会话/消息删除时释放附件 refs，批次 8a D5；release_message/messages/all/session_attachments） |
 
 ## 设计原则

@@ -18,6 +18,7 @@
 | `attachments` | MongoDB | 附件元数据（BE-070，fail-closed） | TTL 不设，生命周期由 GC 管（软删 24h / 未关联 7d） |
 | `desktop_calls` | MongoDB | 桌面工具调用状态（批次 4） | 30天 TTL（按真实 BSON Date `ttl_expires_at`） |
 | `background_task_results` | MongoDB | 后台任务终态结果（#6/决策 #6：跨重启不丢） | 7天 TTL；`task_id` 唯一索引；`delivered=false` 的记录在下次启动补投进事件总线 |
+| `data/task_result_wal.jsonl` | 本地文件（非 DB） | 后台任务终态本地 WAL（#6 硬杀窗口：落库点在 mailbox 轮询上，进程被 SIGKILL/掉电时终态只存在于这里） | 追加式 JSONL，每条 `write+flush+fsync`；启动 replay 进 `background_task_results`，**库为权威**（库里已有则跳过）；成功落库后清对应副本 |
 | `idempotency` | MongoDB | `clientRequestId` 幂等 claim（D6c，2026-08-11） | 1h 有效期（`expires_at` BSON Date + TTL 索引 `expireAfterSeconds=0`，按绝对时间到期）；`(conversation_id, client_request_id)` 唯一约束防并发双写 |
 
 ---
