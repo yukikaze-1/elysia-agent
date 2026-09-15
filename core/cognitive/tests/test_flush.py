@@ -144,3 +144,35 @@ async def test_adopted_external_task_is_drained():
     await loop.flush_after_response()
 
     assert external.done()
+
+
+@pytest.mark.asyncio
+async def test_task_registered_during_flush_is_not_dropped():
+    """S3-R2-1：flush **期间**新登记的任务不得被丢弃。
+
+    旧实现是"快照 → 逐个 wait → 无条件 `clear()`"：clear 会把 flush 期间（正 await 的
+    tail 内）新登记的任务一并摘除，此后无人 await、也无人观察。
+    `#20b` 把收尾域换成 `AsyncTaskScope` 后**没有 clear 这一步**——后来者仍被强引用、
+    仍被观察，且下一次 drain 会等它。本用例钉住这个语义（它正是 S3-R2-1 剩下的那一半）。
+    """
+    loop = _make_loop()
+    late: list[asyncio.Task] = []
+
+    async def _late_work():
+        await asyncio.sleep(0.05)
+
+    async def _first_work():
+        await asyncio.sleep(0.01)
+        late.append(_spawn(loop, _late_work()))   # flush 正在等第一个任务时登记第二个
+        await asyncio.sleep(0)
+
+    _spawn(loop, _first_work())
+    await loop.flush_after_response()             # 这一次只覆盖第一个任务（快照语义）
+    assert late, "前置条件：后来者已登记"
+
+    scope = loop._after_response_scope  # noqa: SLF001
+    assert late[0] in scope.pending() or late[0].done(), (
+        "flush 期间新登记的任务被丢弃了（旧实现的 clear() 行为）")
+
+    await loop.flush_after_response()             # 再 drain 一次必须覆盖它
+    assert late[0].done() and not late[0].cancelled(), "后来者没能正常落定"
