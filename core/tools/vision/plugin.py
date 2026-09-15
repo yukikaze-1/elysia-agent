@@ -282,22 +282,82 @@ def _cache_path(key: str) -> Path:
     return _CACHE_DIR / f"{key}.json"
 
 
+#: 缓存条目存活时长（秒）。写侧一直记着 `created_at`，但读侧从不看它
+#: （S3-G5：等于只增不减）。
+CACHE_TTL_SECONDS = 7 * 24 * 3600
+#: 缓存条目上限。超过后按 `created_at` 淘汰最旧的（TTL 之外的兜底：
+#: 一周内也可能攒下成千上万张图的描述）。
+CACHE_MAX_ENTRIES = 500
+
+
+def _entry_age_seconds(data: dict) -> float | None:
+    """缓存条目的年龄（秒）；时间戳缺失/不可解析 → None（按"未知"处理）。"""
+    import time
+    raw = data.get("created_at")
+    if not isinstance(raw, str):
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+        try:
+            return time.time() - time.mktime(time.strptime(raw, fmt))
+        except ValueError:
+            continue
+    return None
+
+
+def _evict_overflow() -> None:
+    """条目数超上限 → 删最旧的那些（按 created_at / mtime 兜底排序）。"""
+    try:
+        files = [p for p in _CACHE_DIR.glob("*.json") if p.is_file()]
+    except OSError:
+        return
+    if len(files) <= CACHE_MAX_ENTRIES:
+        return
+    def _stamp(p: "Path") -> float:
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            age = _entry_age_seconds(data) if isinstance(data, dict) else None
+            if age is not None:
+                return -age                      # 越旧越小 → 先删
+        except Exception:
+            pass
+        try:
+            return -p.stat().st_mtime
+        except OSError:
+            return 0.0
+    for p in sorted(files, key=_stamp)[: len(files) - CACHE_MAX_ENTRIES]:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
 def _load_cache(key: str) -> str | None:
-    """从缓存文件加载图片描述。
+    """从缓存文件加载图片描述（S3-G5：**过 TTL 即视为未命中并删除**）。
 
     Args:
         key: 缓存键（hash 字符串）。
 
     Returns:
-        缓存的描述字符串，未命中时返回 None。
+        缓存的描述字符串，未命中/已过期时返回 None。
     """
     p = _cache_path(key)
     if p.exists():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-            return data.get("description")
         except Exception:
-            pass
+            return None
+        if not isinstance(data, dict):
+            return None
+        age = _entry_age_seconds(data)
+        if age is not None and age > CACHE_TTL_SECONDS:
+            logger.debug("describe_image 缓存过期（%.1f 天），删除：%s",
+                         age / 86400, key[:12])
+            try:
+                p.unlink()
+            except OSError:
+                pass
+            return None
+        return data.get("description")
     return None
 
 
@@ -320,3 +380,6 @@ def _save_cache(key: str, description: str, model: str) -> None:
         }, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    # S3-G5：写**之后**才淘汰——写之前调用时，条数还等于上限，淘汰条件不成立，
+    # 结果就是"每次多出一条、永远超上限"（第一版就是这样，被用例当场抓到）。
+    _evict_overflow()
