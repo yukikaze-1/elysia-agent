@@ -92,6 +92,21 @@ class MemoryRepository(Repository):
         """
         return await self._health_check()
 
+    def _require_db(self) -> VectorDBBackend:
+        """fail-closed：未连接（离线）时 raise `StorageUnavailableError`。
+
+        与同仓 `clear_all` 同一约定（#31 写路径收口 4–5/5）：离线**不得**用 `[]` / `0`
+        冒充业务结果——调用方分不清「离线」与「没有条目」，这正是"静默丢写"的形状。
+        降级语义由调用方显式承载（`LongTermMemory` 的两个收口点转成 dirty + journal）。
+
+        Raises:
+            StorageUnavailableError: 向量库未连接。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                f"MemoryRepository({self.COLLECTION}) 未连接：拒绝用空结果冒充成功")
+        return self._db
+
     async def insert(self, vectors: list[list[float]],
                      metadata: list[dict]) -> list[int]:
         """插入向量 + 元数据。
@@ -101,11 +116,14 @@ class MemoryRepository(Repository):
             metadata: 元数据列表，与 vectors 一一对应。
 
         Returns:
-            插入成功的主键列表。若数据库不可用返回空列表。
+            插入成功的主键列表（**空列表 = 后端返回了空 PK**，不再表示"离线"）。
+
+        Raises:
+            StorageUnavailableError: 向量库未连接（离线）——调用方决定降级语义
+                （`LongTermMemory` 记 dirty + 落 journal 待补写，不是丢写）。
         """
-        if self._db is None:
-            return []
-        return await self._db.insert(self.COLLECTION, vectors, metadata)
+        db = self._require_db()
+        return await db.insert(self.COLLECTION, vectors, metadata)
 
     async def search(self, vector: list[float], *,
                      top_k: int = 10, filter_expr: str | None = None,
@@ -158,11 +176,14 @@ class MemoryRepository(Repository):
             ids: 要删除的主键列表。
 
         Returns:
-            实际删除的条数。若数据库不可用返回 0。
+            实际删除的条数（**0 = 后端没删到行**，不再表示"离线"）。
+
+        Raises:
+            StorageUnavailableError: 向量库未连接（离线）——调用方记 tombstone 待重连清理
+                （`LongTermMemory` 的四处删除调用点都据此防"旧行重启复活"）。
         """
-        if self._db is None:
-            return 0
-        result = await self._db.delete(self.COLLECTION, ids)
+        db = self._require_db()
+        result = await db.delete(self.COLLECTION, ids)
         logger.info("MemoryRepository delete: ids=%s, count=%d", ids[:5], result)
         return result
 
@@ -195,10 +216,7 @@ class MemoryRepository(Repository):
         require_confirm(
             target=self.CONFIRM_TOKEN, confirm=confirm, operation="清空长期记忆",
         )
-        if self._db is None:
-            raise StorageUnavailableError(
-                f"MemoryRepository.clear_all: {self.COLLECTION} 未连接，拒绝静默成功",
-            )
+        db = self._require_db()
         logger.warning("MemoryRepository clear_all: dropping + recreating collection %s", self.COLLECTION)
-        await self._db.drop_collection(self.COLLECTION)
-        await self._db.create_collection(self.COLLECTION, self.DIMENSION)
+        await db.drop_collection(self.COLLECTION)
+        await db.create_collection(self.COLLECTION, self.DIMENSION)

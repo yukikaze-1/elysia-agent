@@ -238,13 +238,13 @@ _ASYMMETRIC_JUSTIFIED: dict[str, str] = {
 
 # 约定尚未定 / 已知与同仓其余路径不对称的写路径——逐条列出，不让它藏在实现里。
 # 键为 (仓储名, 方法名)，值为说明。定案后从本表移除并改分类。
-_PENDING_DECISION: dict[tuple[str, str], str] = {
-    ("MemoryRepository", "insert"): (
-        "写路径静默返回 []（同仓 clear_all 已 fail-closed）——Milvus 离线时记忆写入"
-        "静默丢失，调用方无从知晓。与 append_version 的写路径约定不一致。"
-    ),
-    ("MemoryRepository", "delete"): "写路径静默返回 0（同仓 clear_all 已 fail-closed）",
-}
+#
+# **已定案（#31 写路径收口，2026-09-15）**：5 条写路径全部对齐同仓约定——
+# `MemoryRepository.insert/delete`（本表原两项，`MemoryRepository` 现在整仓写
+# fail-closed，降级语义收到 `LongTermMemory._repo_insert/_repo_delete` 两个收口点）、
+# `SessionRepository.rename`、`TokenRepository.flush`、`TokenRepository.clear_all`。
+# 本表保持空表也是**有意义的断言**：它证明"没有已知的未定案写路径"。
+_PENDING_DECISION: dict[tuple[str, str], str] = {}
 
 # 构造仓储时的 db 参数名（默认 "db"；DesktopCallRepository 用 mongodb=）
 _DB_KWARG: dict[str, str] = {"DesktopCallRepository": "mongodb"}
@@ -479,12 +479,11 @@ class TestRepositoryReadConsistency:
             assert reason.strip(), f"{repo} 的理由为空"
         assert not stale, f"这些仓储读路径已同向，_ASYMMETRIC_JUSTIFIED 条目应删除：{stale}"
 
-    def test_declared_pending_set_is_documented(self):
-        """待决集合非空时必须都带理由，且必须与报告决策项 #8 的框架一致。"""
-        assert _PENDING_DECISION, (
-            "待决集合为空说明约定已全部定案——若确实如此，请删除本用例并更新文档")
-        for key, reason in _PENDING_DECISION.items():
-            assert isinstance(key, tuple) and len(key) == 2
+    # 原 `test_declared_pending_set_is_documented` 已按它自己的指示删除：
+    # 2026-09-15 起 `_PENDING_DECISION` 为空（5 条写路径全部定案，见该表上方注释）。
+    # 表本身保留——它会在**下一条**"约定未定"的写路径出现时重新被使用，
+    # 与之配套的结构守卫 `test_pending_decision_entries_are_reachable_in_source`
+    # 也随之重新生效（空表下为空转）。
 
 
 @pytest.mark.service
@@ -559,6 +558,26 @@ class TestPendingDecisionIsNotStale:
             await repo.flush([_fake_usage()])
         assert ("TokenRepository", "flush") not in _PENDING_DECISION, \
             "已经 fail-closed 了却还登记在待决策表里（陈旧项）"
+
+    @pytest.mark.asyncio
+    async def test_memory_writes_fail_closed_and_unregistered(self):
+        """#31 写路径收口 4–5/5：`MemoryRepository.insert/delete` 离线 raise。
+
+        反证：把 repo 改回 `return []` / `return 0` → 本用例红（这正是 2026-09-14
+        登记它们为"待决策"时的样子）；改回 fail-closed 却忘了从 `_PENDING_DECISION`
+        移除 → 第二个断言红。
+        """
+        from core.storage.base import StorageUnavailableError
+        from core.storage.memory_repo import MemoryRepository
+
+        repo = MemoryRepository(db=None)
+        with pytest.raises(StorageUnavailableError):
+            await repo.insert(vectors=[[0.1] * 8], metadata=[{"text": "x"}])
+        with pytest.raises(StorageUnavailableError):
+            await repo.delete([1])
+        assert ("MemoryRepository", "insert") not in _PENDING_DECISION, \
+            "已经 fail-closed 了却还登记在待决策表里（陈旧项）"
+        assert ("MemoryRepository", "delete") not in _PENDING_DECISION
 
     @pytest.mark.asyncio
     async def test_token_clear_all_is_fail_closed_and_unregistered(self):

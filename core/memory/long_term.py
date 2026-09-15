@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from paths import ProjectPath
 
 from core.memory.embedding_provider import EmbeddingProvider
+from core.storage.base import StorageUnavailableError
 from core.memory.scope import MemoryScope
 from core.schema.memory import MemoryType
 from core.schema.types import MemoryId
@@ -217,6 +218,70 @@ class LongTermMemory:
         # 仅在进程内 _dirty_ids，进程退出即丢失；本 journal 重启/重连后恢复补写。
         self._pending_syncs_file_path = pending_syncs_file
         self._load_pending_syncs()
+        # #31 写路径收口 4–5/5：Milvus 写降级的可见性。`MemoryRepository.insert/delete`
+        # 现在对离线 fail-closed（raise），两个收口点把它翻译成 dirty/journal 语义；
+        # 每段降级窗口记一次 WARNING（`_milvus_degraded_ops` 是累计次数，恢复后清零），
+        # 之后的重复降级降为 DEBUG——既不刷屏，也不静默。
+        self._milvus_degraded_ops = 0
+        self._milvus_degraded_warned = False
+
+    # ---- Milvus 写路径统一收口点（#31 写路径 4–5/5）----
+    #
+    # 为什么收口到一个方法、而不是让 8 处调用点各自 `except`：本仓反复出现
+    # 「两条路径不对称」——逐个 try 必然漂移（某处忘了 catch → Milvus 抖一下就打断
+    # 整个回合；某处 catch 成了 pass → 真的丢写）。仓储层现在只说"离线"（raise），
+    # **降级语义只在这一处定义**。
+
+    async def _repo_insert(self, *, vectors: list[list[float]],
+                           metadata: list[dict]) -> list[int]:
+        """Milvus insert 收口点：离线 → 返回空 PK 列表（调用方据此记 dirty + journal）。
+
+        Returns:
+            主键列表；离线时为空列表（= "未持久化"，与 repo 本就会返回的空 PK 同形——
+            两处调用点都以 `pk_list` 空判走脏条目路径）。
+        """
+        if self._repo is None:
+            return []
+        try:
+            return await self._repo.insert(vectors=vectors, metadata=metadata)
+        except StorageUnavailableError as e:
+            self._note_milvus_degraded("insert", e)
+            return []
+
+    async def _repo_delete(self, ids: list[int]) -> int:
+        """Milvus delete 收口点：离线 → 返回 0（调用方据此记 tombstone）。
+
+        Returns:
+            实际删除条数；离线时为 0（四处调用点都以 `deleted < len(...)` 判 tombstone）。
+        """
+        if self._repo is None:
+            return 0
+        try:
+            return await self._repo.delete(ids)
+        except StorageUnavailableError as e:
+            self._note_milvus_degraded("delete", e)
+            return 0
+
+    def _note_milvus_degraded(self, op: str, err: Exception) -> None:
+        """记一次 Milvus 写降级（窗口内首条 WARNING，其余 DEBUG）。"""
+        self._milvus_degraded_ops += 1
+        if not self._milvus_degraded_warned:
+            self._milvus_degraded_warned = True
+            logger.warning(
+                "Milvus 离线：%s 降级为内存 + journal 待补写（%s）——"
+                "记忆不会丢，重连后由 sync_dirty_entries / pending-deletes 补做",
+                op, err)
+        else:
+            logger.debug("Milvus 仍离线：%s 降级（累计 %d 次）",
+                         op, self._milvus_degraded_ops)
+
+    def _note_milvus_recovered(self) -> None:
+        """Milvus 可用被观测到 → 重新武装降级告警（下一段故障仍会 WARNING 一次）。"""
+        if self._milvus_degraded_ops:
+            logger.info("Milvus 恢复：本次降级窗口内累计 %d 次写降级（已由 journal 补做）",
+                        self._milvus_degraded_ops)
+        self._milvus_degraded_ops = 0
+        self._milvus_degraded_warned = False
 
     @staticmethod
     def _in_scope(entry: "MemoryEntry", scope: MemoryScope) -> bool:
@@ -413,7 +478,7 @@ class LongTermMemory:
             return
         for eid, pk in list(self._pending_deletes.items()):
             try:
-                await self._repo.delete([pk])
+                await self._repo_delete([pk])
                 self._pending_deletes.pop(eid, None)
             except Exception:
                 logger.debug("pending delete 重试失败 entry=%s pk=%s", eid, pk, exc_info=True)
@@ -555,7 +620,7 @@ class LongTermMemory:
 
             if self._repo is not None and embedding:
                 try:
-                    pk_list = await self._repo.insert(
+                    pk_list = await self._repo_insert(
                         vectors=[embedding],
                         metadata=[{
                             "entry_id": entry.id,
@@ -612,7 +677,7 @@ class LongTermMemory:
         # 同步清理 Milvus
         if self._repo is not None and evicted_pks:
             try:
-                deleted = await self._repo.delete(evicted_pks)
+                deleted = await self._repo_delete(evicted_pks)
                 if deleted < len(evicted_pks):
                     # B5/P1-12：部分/全部未删（离线）→ 记 tombstone 待重连清理
                     for e in evicted:
@@ -671,7 +736,7 @@ class LongTermMemory:
                 return
             if entry._milvus_pk is not None and self._repo is not None:
                 try:
-                    deleted = await self._repo.delete([entry._milvus_pk])
+                    deleted = await self._repo_delete([entry._milvus_pk])
                     if deleted < 1:
                         self._pending_deletes[entry_id] = entry._milvus_pk
                         self._save_pending_deletes()
@@ -704,7 +769,7 @@ class LongTermMemory:
                 if entry is None or not entry.embedding or eid in self._absorbed_ids:
                     continue
                 try:
-                    pk_list = await self._repo.insert(
+                    pk_list = await self._repo_insert(
                         vectors=[entry.embedding],
                         metadata=[{
                             "entry_id": entry.id,
@@ -729,6 +794,8 @@ class LongTermMemory:
                 # review 复核 #6：同步成功的条目从 journal 移除（防重启重复补写）
                 self._save_pending_syncs()
                 logger.info("Synced %d dirty entries to Milvus", synced)
+                # #31：补写成功 = Milvus 确实可用 → 重新武装降级告警窗口
+                self._note_milvus_recovered()
             return synced
 
     # ---- Delete ----
@@ -771,7 +838,7 @@ class LongTermMemory:
                             self._dirty_ids.add(entry_id)
                         else:
                             try:
-                                pk_list = await self._repo.insert(
+                                pk_list = await self._repo_insert(
                                     vectors=[emb],
                                     metadata=[{
                                         "entry_id": e.id,
@@ -797,7 +864,7 @@ class LongTermMemory:
                                     # 而 `_load_from_milvus` 按"先到者胜"去重 → 重启后
                                     # **旧文本静默复活**（记忆回滚）。
                                     try:
-                                        deleted = await self._repo.delete([old_pk])
+                                        deleted = await self._repo_delete([old_pk])
                                         if deleted < 1:
                                             self._tombstone_old_pk(entry_id, old_pk)
                                     except Exception:
@@ -835,7 +902,7 @@ class LongTermMemory:
                     if self._repo is not None and e._milvus_pk is not None:
                         logger.info("LongTermMemory delete: entry_id=%s, milvus_pk=%s", entry_id, e._milvus_pk)
                         try:
-                            deleted = await self._repo.delete([e._milvus_pk])
+                            deleted = await self._repo_delete([e._milvus_pk])
                             if deleted < 1:
                                 # B5/P1-12：repo 离线/无行删除 → 记持久 tombstone 待重连清理
                                 self._pending_deletes[entry_id] = e._milvus_pk

@@ -356,22 +356,37 @@ class TestMemoryTypeNormalization:
 
 
 class FakeMemoryRepo:
-    """B5/P1-12 专用 fake：可配置 insert PK / delete 返回值。"""
+    """B5/P1-12 专用 fake：可配置 insert PK / delete 返回值 / **离线 raise**。
 
-    def __init__(self, insert_pks=None, delete_result=1):
+    `offline=True` 复刻 `MemoryRepository` 在 #31 写路径收口之后的真实行为：
+    离线时 **raise `StorageUnavailableError`**（而不是返回 `[]` / `0`）。两个收口点
+    （`LongTermMemory._repo_insert` / `_repo_delete`）必须把它翻译成 dirty / tombstone
+    语义——否则 Milvus 一抖就打断整个回合。
+    """
+
+    def __init__(self, insert_pks=None, delete_result=1, *, offline=False):
         self.insert_pks = list(insert_pks or [])
         self.delete_result = delete_result
+        self.offline = offline
         self.insert_calls = 0
+        self.delete_calls = 0
         self.deleted: list[list[int]] = []
         self.query_results: list[dict] = []
 
     async def insert(self, vectors, metadata):
         self.insert_calls += 1
+        if self.offline:
+            from core.storage.base import StorageUnavailableError
+            raise StorageUnavailableError("milvus offline")
         if not self.insert_pks:
             return []
         return [self.insert_pks.pop(0)]
 
     async def delete(self, ids):
+        self.delete_calls += 1
+        if self.offline:
+            from core.storage.base import StorageUnavailableError
+            raise StorageUnavailableError("milvus offline")
         self.deleted.append(list(ids))
         return self.delete_result
 
@@ -469,6 +484,88 @@ class TestMemoryOfflineConsistency:
         assert await ltm.delete(entry.id, scope=memory_scope) is True
         assert entry.id in ltm._pending_deletes  # noqa: SLF001 — tombstone
         assert ltm._pending_deletes[entry.id] == 7  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_offline_repo_raise_is_translated_to_dirty(self, memory_scope):
+        """#31：repo 离线 **raise**（不再返回空）→ 收口点翻译成 dirty + journal。
+
+        反证：去掉 `LongTermMemory._repo_insert` 的 `except StorageUnavailableError`
+        → 本用例红（异常冒泡进回合）。
+        """
+        from core.storage.base import StorageUnavailableError
+        repo = FakeMemoryRepo(offline=True)
+        ltm = await self._ltm_with_embedding(repo)
+
+        # 不抛：离线是**预期状态**，语义是"记 dirty 待补写"，不是"打断回合"
+        await ltm.insert("离线记忆", source="consolidation",
+                         user_id=memory_scope.user_id,
+                         character_instance_id=memory_scope.character_instance_id)
+
+        entry = ltm._entries[0]  # noqa: SLF001
+        assert entry._milvus_pk is None  # noqa: SLF001
+        assert entry.id in ltm._dirty_ids  # noqa: SLF001
+        assert repo.insert_calls == 1, "仍然要真的尝试过写"
+        assert ltm._milvus_degraded_ops == 1  # noqa: SLF001 — 降级可见（不是静默）
+        assert ltm._milvus_degraded_warned is True  # noqa: SLF001
+        with pytest.raises(StorageUnavailableError):
+            # 直接调仓储层仍然是 fail-closed（收口点在 LTM 一层，不是把 repo 改回静默）
+            await repo.insert(vectors=[], metadata=[])
+
+    @pytest.mark.asyncio
+    async def test_offline_repo_raise_on_delete_records_tombstone(self, memory_scope):
+        """删除收口点：repo 离线 raise → 记持久 tombstone（旧行不会重启复活）。"""
+        repo = FakeMemoryRepo(offline=True)
+        ltm = await self._ltm_with_embedding(repo)
+        await ltm.insert("x", source="consolidation",
+                         user_id=memory_scope.user_id,
+                         character_instance_id=memory_scope.character_instance_id)
+        entry = ltm._entries[0]  # noqa: SLF001
+        entry._milvus_pk = 7  # noqa: SLF001 — 假装已同步过
+        ltm._dirty_ids.discard(entry.id)  # noqa: SLF001
+
+        assert await ltm.delete(entry.id, scope=memory_scope) is True
+
+        assert entry.id in ltm._pending_deletes  # noqa: SLF001 — tombstone 已登记
+        assert repo.delete_calls == 1, "仍然要真的尝试过删"
+        # 2 次 = insert 1 次 + delete 1 次（都经收口点）；去掉 delete 收口点的翻译
+        # 就只剩 1 次（调用点的宽 except 会把 raise 吞掉且不给降级标记）→ 用例红
+        assert ltm._milvus_degraded_ops == 2  # noqa: SLF001 — 降级经收口点可见
+
+    @pytest.mark.asyncio
+    async def test_degraded_window_warns_once_then_debug(self, memory_scope, caplog):
+        """降级告警**窗口内只 WARNING 一次**（Milvus 长离线不刷屏），但绝不静默。"""
+        import logging
+        repo = FakeMemoryRepo(offline=True)
+        ltm = await self._ltm_with_embedding(repo)
+
+        with caplog.at_level(logging.DEBUG, logger="core.memory.long_term"):
+            for i in range(3):
+                await ltm.insert(f"m{i}", source="consolidation",
+                                 user_id=memory_scope.user_id,
+                                 character_instance_id=memory_scope.character_instance_id)
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, f"窗口内应只 WARNING 一次，实得 {len(warnings)}"
+        assert ltm._milvus_degraded_ops == 3  # noqa: SLF001 — 次数仍然可见
+
+    @pytest.mark.asyncio
+    async def test_recovery_rearms_the_warning(self, memory_scope, caplog):
+        """补写成功 = Milvus 恢复 → 重新武装：下一段故障仍会 WARNING 一次。"""
+        import logging
+        repo = FakeMemoryRepo(offline=True)
+        ltm = await self._ltm_with_embedding(repo)
+        await ltm.insert("x", source="consolidation",
+                         user_id=memory_scope.user_id,
+                         character_instance_id=memory_scope.character_instance_id)
+        assert ltm._milvus_degraded_warned is True  # noqa: SLF001
+
+        repo.offline = False
+        repo.insert_pks.append(99)
+        with caplog.at_level(logging.INFO, logger="core.memory.long_term"):
+            assert await ltm.sync_dirty_entries() == 1
+
+        assert ltm._milvus_degraded_warned is False  # noqa: SLF001 — 已重新武装
+        assert ltm._milvus_degraded_ops == 0  # noqa: SLF001
 
     @pytest.mark.asyncio
     async def test_reload_dedup_no_duplicates(self):
