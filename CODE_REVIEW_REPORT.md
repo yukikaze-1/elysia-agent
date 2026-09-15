@@ -1442,10 +1442,10 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
 | 条目 | 位置 | 说明 |
 |---|---|---|
 | `S3-G4` | `Module/tool/safety.py:213-234` | `_validate_url` 只认字面量 IP：`localhost`/`2130706433`/`0177.0.0.1`/`metadata.google.internal` 全放行。`block_private_ips` 形同虚设；**正面对照仍成立**：唯一带 url 的 `web_fetch` 走 `ssrf.build_guarded_http_client` 逐跳校验。修法：复用 `ssrf.validate_endpoint` |
-| `S2-B7c` | `core/storage/message_repo.py:660-661`（+ 同型 `character_repo.py:170`） | debug 归档搜索的 `$regex` 未 `re.escape`、无长度上限；**同文件 `:126-130` 的 `query_search` 早已是 `re.escape` + ≤200 上限**，对照强烈 |
+| `S2-B7c` ✅**已修** `571b8f19` | `core/storage/message_repo.py:660-661`（+ 同型 `character_repo.py:170`） | debug 归档搜索的 `$regex` 未 `re.escape`、无长度上限；**同文件 `:126-130` 的 `query_search` 早已是 `re.escape` + ≤200 上限**，对照强烈 |
 | `S3-06` | `core/input/ws_handler.py:105-113` + `ws_handlers/voice.py:238` | 错误帧 `requestId` 取自 ContextVar 且**每帧不重置** → 指向已成功的旧请求；现用例把该来源钉成合法 |
 | `S3-G5` | `core/tools/vision/plugin.py:285-322` | 缓存写 `created_at` 但**无人读**，无上限/TTL/淘汰；`core/tools/tests/` **无 test_vision.py**（零覆盖） |
-| `S3-R6-1` | `core/tests/test_phase3.py:457-471` | `_process_lock` 的唯一并发用例是**空断言**（断言的是 `len(started)==2`，与锁无关）——删锁仍绿 |
+| `S3-R6-1` ✅**已修** `1e83c6c4` | `core/tests/test_phase3.py:457-471` | `_process_lock` 的唯一并发用例是**空断言**（断言的是 `len(started)==2`，与锁无关）——删锁仍绿 |
 | `S2-G4` 残余 | `core/tools/filesystem/plugin.py:120,213` | 类默认仍是**裸根**；`config.yaml` 缺失时 `manager.py:165-186` 静默 return → 回退裸根 |
 
 **档 4 · 设计决策型**（不是"快修"，需要 owner 定）
@@ -1754,6 +1754,39 @@ Mongo 离线时 `_persist` 直接 `return`（**没有 dirty 跟踪、没有恢�
   `#20b` `b3e513df`、`S2-G3` `9f323f07`；档 2 仅剩 `S2-R2-3` 残余（线程不可回收那一半）
 - 本轮新增/改写用例 11 条，注入反证 6 条（含 1 条门禁级）
 - 全量 5618 passed / 17 skipped / 1 xfailed / 0 failed；13 道门禁全绿
+
+### §0.4.24 档 3 前两条：S2-B7c 搜索转义收口 / S3-R6-1 空断言守卫（2026-09-16，2 个提交）
+
+#### (a) `S2-B7c`：三处"用户输入进 `$regex`"只有一处转了义 → `571b8f19`
+
+debug 归档搜索（`query_offset`）与角色列表搜索（`list_definitions`）把用户输入直接当
+**正则**执行：元字符要么改变语义（`a.b` 匹配 `axb`），要么是 ReDoS 面；而同层的
+`query_search` 早已 `re.escape` + 200 上限。修法：收口成
+`core/storage/base.py::search_regex_filter()`（与 `bson_expires`/`is_duplicate_key` 同处），
+三处共用；超长一律**无匹配**（不忽略过滤——忽略会把整个归档/全部角色返回）。
+
+**本条我踩了两个坑，都留在提交信息里**：
+1. 收口时把 `$elemMatch` 的字段名弄丢了（`{"$elemMatch": clause}` 少了 `{"content": ...}`）
+   ⇒ 归档搜索恒空。**是我自己新加的用例抓到的**。
+2. 第一版"超长搜索"用例**证明不了上限存在**：搜一个 300 字符的串，有无上限都是空结果。
+   改成"种一条**真的含该长串**的文档再搜它"才可区分——注入"去掉上限"第一轮全绿就是这个原因。
+
+#### (b) `S3-R6-1`：`_process_lock` 的唯一并发守卫是**空断言** → `1e83c6c4`
+
+原用例断言 `len(started) == 2`，与锁无关：删锁、换 `Semaphore(2)` 都照样绿
+（"门禁的三种假绿"之**判据写错**）。新判据在**锁内**的 `_prepare_turn` 上挂重叠计数，
+并断言 `calls == 2`（**前置条件也要断言**，否则第二次被相位判定拒收时 `max_active == 1`
+又是假绿）。反证两条都打在断言行：删锁 / 换 `Semaphore(2)`。
+
+**判据设计细节**：第一版 `_tracked` 继续调用真实 `_prepare_turn`，并发跑真流水线会先撞上
+mock 未配置的 await（TypeError）——用例虽然也红，但**红的原因不是锁**。改为抛哨兵异常
+立刻退出 + `gather(return_exceptions=True)`，判据才与流水线解耦。
+
+#### (c) 验收
+
+- 档 3 剩余 4 条：`S3-06`（陈旧 `requestId`）、`S3-G5`（vision 缓存无上限/TTL，零覆盖）、
+  `S3-G4`（`_validate_url` 只认字面量 IP）、`S2-G4` 残余（插件类默认裸根）
+- 全量 5623 passed / 17 skipped / 1 xfailed / 0 failed
 
 ---
 
