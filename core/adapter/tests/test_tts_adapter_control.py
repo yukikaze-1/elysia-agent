@@ -43,6 +43,33 @@ class FakeOut:
         self.calls.append(("audio_cancelled", stream_id))
 
 
+def test_model_property_reflects_runtime_backend():
+    """#21c：运行期 TTS 模型必须可读（与 `LLMAdapter.model` / STT 后端 `model` 对称）。
+
+    判定"某个 custom provider 是否正在被使用"时必须能读到**真正在跑的后端**：
+    切会话只换活动指针、**有意不重放模型热切换**（S2-C3），所以只读会话档位会漏，
+    而漏的后果是删掉在用的 provider（连带删密钥）。
+    """
+    class _BackendWithModel(FakeTTS):
+        model = "gpt-sovits/elysia"
+
+    mgr = TTSStreamManager(tts=_BackendWithModel(), output=FakeOut(), character_name="elysia")
+    assert mgr.model == "gpt-sovits/elysia"
+    mgr.set_backend(None)
+    assert mgr.model == "", "后端拆掉后必须归零，不能留着上一个模型 id"
+
+
+def test_model_property_tolerates_backend_without_model():
+    """鸭子类型后端（未继承 ABC、没有 `model`）→ 空串，**不抛** AttributeError。
+
+    这条钉的是**兜底方向**：读不到就当空串（与其余候选一致），而不是让
+    `/api/providers` 的删除判定炸掉。代价是"不实现 `model` 的后端退回旧行为"——
+    写在这里，免得这个兜底被当成完备覆盖。
+    """
+    mgr = TTSStreamManager(tts=FakeTTS(), output=FakeOut(), character_name="elysia")
+    assert mgr.model == ""
+
+
 class FakeTTS:
     stream_format = "wav"
     def get_preprocess(self):

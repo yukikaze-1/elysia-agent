@@ -38,16 +38,32 @@ def _custom_profile_in_use(agent: "Agent", service: str, name: str) -> bool:
         bool: True = 正在使用。
     """
     prefix = f"custom/{name}"
+    # **运行期后端**（`agent.<svc>.model`）必须纳入判定，且三个服务对称。
+    # 只读"活动会话的 service_state"会漏：`switch_session` 只换活动指针，
+    # **有意不重放模型热切换**（见 `_apply_service_enabled` 的 S2-C3 取舍与
+    # `test_*_model_hot_switch_is_deliberately_not_replayed`）——于是切到一个
+    # `llm_model` 为空的会话后，service_state 说"没用"，而适配器仍在跑 `custom/x`，
+    # 删除它会连带删掉密钥，把正在使用的会话打断。故以运行期值为第一真相源。
+    runtime_model = getattr(getattr(agent, service, None), "model", "") or ""
     if service == "llm":
         candidates = (
+            runtime_model,
             agent.session.service_state.llm_model,
             agent.config.llm.model,
             agent.config.vision.model,
         )
     elif service == "stt":
-        candidates = (agent.session.service_state.stt_model, agent.config.stt.model)
+        candidates = (
+            runtime_model,
+            agent.session.service_state.stt_model,
+            agent.config.stt.model,
+        )
     else:  # tts
-        candidates = (agent.session.service_state.tts_model, agent.config.tts.model)
+        candidates = (
+            runtime_model,
+            agent.session.service_state.tts_model,
+            agent.config.tts.model,
+        )
     return any(c.startswith(prefix) for c in candidates if c)
 
 

@@ -313,6 +313,26 @@ class TTSStreamManager:
         return self._tts is not None
 
     @property
+    def model(self) -> str:
+        """当前 TTS 后端的完整模型 id（`provider/model`）；读不到时为空串。
+
+        与 `LLMAdapter.model` / STT 后端的 `model` 对齐，供"运行期真相源"读取。
+        **为什么需要它**：切会话只换活动指针、**有意不重放模型热切换**（`switch_session`
+        的 S2-C3 取舍），所以"活动会话的 `service_state`"与"真正在用的后端"可以分叉。
+        任何拿"是否在用"做破坏性判定的地方都必须能读到后者——否则切一次会话即可
+        把仍在使用的模型判成未使用（`core/input/provider_routes.py::_custom_profile_in_use`
+        的 409 保护就是靠它兜住的）。
+
+        `getattr` 兜底**只**为未继承 `TTSBackend` ABC 的鸭子类型实现（测试替身 /
+        第三方后端）——`model` 是 ABC 上的具体属性，正常子类必有。兜底方向是
+        "读不到就当作没有"，与其余候选（config / service_state）一致；
+        这也意味着**只用**这条路判定时，一个不实现 `model` 的后端退回旧行为。
+        """
+        if self._tts is None:
+            return ""
+        return getattr(self._tts, "model", "") or ""
+
+    @property
     def enabled(self) -> bool:
         """TTS 是否启用（由 set_enabled 控制，默认 True）。"""
         return self._enabled

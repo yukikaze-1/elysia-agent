@@ -3,7 +3,7 @@ import asyncio
 import json
 import os
 import socket
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import WSMsgType  # noqa: F401  (保持与 test_server 一致导入风格)
@@ -247,6 +247,42 @@ async def test_save_missing_base_url_backend_fail(aiohttp_client, tmp_path):
     assert resp.status == 400
     assert data["ok"] is False
     assert "error" in data
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_delete_provider_in_use_only_by_runtime_backend_conflict(aiohttp_client, tmp_path):
+    """#21c：**切会话**不得绕过 409——判定必须读运行期后端，不能只看活动会话的档位。
+
+    背景：`switch_session` 只换活动指针，**有意不重放模型热切换**（S2-C3 的取舍，
+    见 `_apply_service_enabled` 与 `test_*_model_hot_switch_is_deliberately_not_replayed`）。
+    于是切到一个 `llm_model` 为空的会话后：
+
+    - `agent.session.service_state.llm_model` == ""（只看它 ⇒ 判定"没在用"）
+    - `agent.llm.model` == "custom/live_prof"（真正在跑的后端）
+
+    只读前者 ⇒ 一次会话切换即可删掉仍在使用的 provider，**并连带删掉它的密钥**，
+    把正在进行的会话打断。故运行期值是第一真相源。
+    """
+    from core.input.server import create_app
+    from core.providers import custom_providers as cp
+    from core.storage import secret_store
+    from core.schema.service_state import ServiceState
+    from core.adapter.llm_adapter import LLMAdapter
+    yaml_path = tmp_path / "custom_providers.yaml"
+    agent = _make_app_agent()
+    agent.session.service_state = ServiceState()          # 活动会话"干净"（切会话后的形态）
+    agent._llm = LLMAdapter(                              # 但运行期后端仍指向它
+        model="custom/live_prof", _test_backend=MagicMock())
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    with patch.object(cp, "_DEFAULT_PATH", yaml_path), \
+         patch.object(secret_store, "_DEFAULT_DIR", tmp_path):
+        resp = await client.delete("/api/providers/llm/live_prof")
+        data = await resp.json()
+    assert resp.status == 409, "运行期后端正在用它，切会话不该让删除变成允许"
+    assert data["code"] == "PROFILE_IN_USE"
 
 
 @pytest.mark.service
