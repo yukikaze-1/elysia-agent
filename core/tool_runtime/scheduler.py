@@ -255,62 +255,90 @@ class ToolCallDispatcher:
                 for tc in calls
             ]
 
-        sub_tasks: list[QueuedToolCall] = []
-        for tc in calls:
+        # S3-G1：**一切按输入下标索引**（`sub_tasks_indexed` / `bad` / `futures`）——
+        # 坏调用没有子任务，若沿用列表 + `zip(calls, sub_tasks)`，跳过一项会让后续结果
+        # 整体前移（"A 的结果被当成 B 的"，比拒绝执行更危险）。第一版就是这么写的，
+        # 被"夹在中间的坏调用"用例当场抓到。
+        sub_tasks_indexed: dict[int, QueuedToolCall] = {}
+        bad: dict[int, ToolResult] = {}
+        for idx, tc in enumerate(calls):
+            # S3-G1：参数 JSON 坏了（截断/畸形/非对象）→ **拒绝执行**，不要拿默认参数
+            # 跑一遍。必填参数的工具会被 pydantic 挡住，但全默认参数的工具会**真的执行**
+            # 并把结果喂回 LLM（LLM 基于错误前提继续推理，全程无异常无日志）。
+            if tc.function.arguments_invalid:
+                logger.warning(
+                    "Scheduler: 工具 %s 的 arguments 不是合法 JSON 对象，拒绝执行：%r",
+                    tc.function.name, tc.function.arguments[:200],
+                )
+                bad[idx] = ToolResult.fail(
+                    name=tc.function.name,
+                    error="工具参数不是合法的 JSON 对象（可能被截断）——请重新构造调用",
+                    error_type=ErrorType.INVALID_ARGUMENT,
+                )
+                continue
             t = QueuedToolCall.new_tool_call(
                 request_id=request_id or None,
                 tool_name=tc.function.name,
                 arguments=tc.function.parsed,
                 call_id=tc.id,
             )
-            sub_tasks.append(t)
+            sub_tasks_indexed[idx] = t
 
-        if not sub_tasks:
-            return []
+        if not sub_tasks_indexed:
+            # 全都是坏调用：不排队，直接按原顺序返回它们的失败结果
+            return [(calls[i], bad[i]) for i in sorted(bad)]
 
         # 绑定 children
         if request_id:
             # 死代码：request_id 是 RequestId 查 TaskId 字典恒不命中，本批不改行为
             parent = self._tasks.get(request_id)  # type: ignore[arg-type]
             if parent is not None:
-                for st in sub_tasks:
+                for st in sub_tasks_indexed.values():
                     parent.add_child(st.id)
 
-        for st in sub_tasks:
+        for st in sub_tasks_indexed.values():
             self._tasks[st.id] = st
             self._seq += 1
             self._queue.put_nowait((st.priority, self._seq, st))
 
-        logger.info("Scheduler: dispatch %d 工具子任务 (request=%s)", len(sub_tasks), request_id or "-")
+        logger.info("Scheduler: dispatch %d 工具子任务 (request=%s)",
+                    len(sub_tasks_indexed), request_id or "-")
 
-        futures = [st.get_future() for st in sub_tasks]
+        # S3-G1：futures 也按**输入下标**索引——坏调用没有子任务，用列表会与 calls 错位
+        futures: dict[int, Any] = {
+            idx: st.get_future() for idx, st in sub_tasks_indexed.items()
+        }
         # 用 asyncio.wait 而非 wait_for(gather(...))：wait_for 超时会**级联取消**子
         # future，之后就再也无法把它们改写成明确的失败结果（只能得到空 message 的
         # CancelledError），LLM 侧看到的是"失败但不知为何"。
         try:
-            _, pending = await asyncio.wait(futures, timeout=_DISPATCH_TIMEOUT)
+            _, pending = await asyncio.wait(list(futures.values()),
+                                            timeout=_DISPATCH_TIMEOUT)
         except asyncio.CancelledError:
-            for st in sub_tasks:
+            for st in sub_tasks_indexed.values():
                 self.cancel(st.id)
             raise
 
         stuck: set[int] = set()
         if pending:
-            for idx, fut in enumerate(futures):
+            for idx, fut in futures.items():
                 if fut in pending:
                     stuck.add(idx)
             logger.error(
                 "Scheduler: dispatch 等待预算耗尽（%.0fs），%d/%d 个子任务未完成 —— "
                 "取消并逐项以超时收口: %s",
-                _DISPATCH_TIMEOUT, len(stuck), len(sub_tasks),
-                [sub_tasks[i].id for i in sorted(stuck)],
+                _DISPATCH_TIMEOUT, len(stuck), len(sub_tasks_indexed),
+                [sub_tasks_indexed[i].id for i in sorted(stuck)],
             )
             for idx in stuck:
-                self.cancel(sub_tasks[idx].id)
+                self.cancel(sub_tasks_indexed[idx].id)
 
         # 组装返回: [(tc, result), ...]
         out: list[tuple[ToolCall, ToolResult | BaseException]] = []
-        for idx, (tc, st) in enumerate(zip(calls, sub_tasks)):
+        for idx, tc in enumerate(calls):
+            if idx in bad:
+                out.append((tc, bad[idx]))          # S3-G1：拒绝执行（参数损坏）
+                continue
             if idx in stuck:
                 out.append((tc, ToolResult.fail(
                     name=tc.function.name,
@@ -322,7 +350,7 @@ class ToolCallDispatcher:
                     synthesised_timeout=True,
                 )))
                 continue
-            raw = self._outcome_of(futures[idx], st)
+            raw = self._outcome_of(futures[idx], sub_tasks_indexed[idx])
             out.append((tc, raw))
         return out
 

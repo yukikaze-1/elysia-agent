@@ -1306,3 +1306,76 @@ class TestPerCallTimeoutBudget:
         sched = ToolCallDispatcher(
             tool_executor=_DeclaredTimeoutExecutor(9999.0), num_workers=1)
         assert sched._timeout_for("greedy") == _scheduler_mod._MAX_TOOL_TIMEOUT  # noqa: SLF001
+
+
+# ═══════════════════════════════════════════════════════════════════
+# S3-G1：参数 JSON 损坏的调用必须被**拒绝执行**（且不影响同批正常调用）
+# ═══════════════════════════════════════════════════════════════════
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_malformed_arguments_are_rejected_not_executed_with_defaults():
+    """截断/畸形/非对象的 `arguments` → 拒绝执行，返回 INVALID_ARGUMENT。
+
+    修复前：`parsed` 对解析失败返回 `{}`，于是**全默认参数**的工具会以默认参数真的跑一遍
+    （`list_directory` 的 path="."、`get_time` 的时区…），LLM 再基于错误前提继续推理，
+    全程无异常、无日志。必填参数的工具只是**碰巧**被 pydantic 挡住。
+    """
+    from Module._common.error_type import ErrorType as _ET
+
+    tm = await _make_manager()
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=2, checkpoint_path=None)
+    await sched.start()
+    try:
+        for raw in ('{"msg": "a"', '[1,2]', 'not json at all'):
+            results = await sched.dispatch_tool_calls(
+                "parent-1", [_tc("c1", "echo", raw)])
+            assert len(results) == 1, results
+            _tc_out, result = results[0]
+            assert result.success is False, f"{raw!r} 竟然执行成功了：{result.content}"
+            assert result.error_type == _ET.INVALID_ARGUMENT
+            assert "JSON" in (result.error or "")
+    finally:
+        await sched.stop()
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_bad_arguments_do_not_misalign_the_rest_of_the_batch():
+    """**按位对齐**：坏调用夹在中间时，其余调用的结果不能错位到别人身上。
+
+    结果组装是 `zip(calls, sub_tasks)` 按位配对的——跳过一项就会让后续结果整体前移，
+    "A 的结果被当成 B 的"是比拒绝执行更危险的失败。
+    """
+    tm = await _make_manager()
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=3, checkpoint_path=None)
+    await sched.start()
+    try:
+        calls = [
+            _tc("c1", "echo", '{"msg":"first"}'),
+            _tc("c2", "echo", "{ broken"),
+            _tc("c3", "echo", '{"msg":"third"}'),
+        ]
+        results = await sched.dispatch_tool_calls("parent-1", calls)
+
+        assert len(results) == 3, results
+        assert [r[0].id for r in results] == ["c1", "c2", "c3"], "返回顺序与入参不一致"
+        assert results[0][1].success is True and "first" in results[0][1].content
+        assert results[1][1].success is False, "坏参数的那条没被拒绝"
+        assert results[2][1].success is True and "third" in results[2][1].content, (
+            "第三条的结果错位/被吞了")
+    finally:
+        await sched.stop()
+
+
+@pytest.mark.unit
+def test_empty_arguments_are_not_treated_as_corrupt():
+    """边界：空串是"没有参数"，不是"参数损坏"。
+
+    否则每个 `ToolCallFunction()` 的默认构造都会被判损坏，把"调用方没填"与
+    "模型传了坏 JSON"混成一类（后者才是要拦的）。
+    """
+    assert ToolCallFunction(name="echo").arguments_invalid is False
+    assert ToolCallFunction(name="echo", arguments="{}").arguments_invalid is False
+    assert ToolCallFunction(name="echo", arguments="").parsed == {}
+    assert ToolCallFunction(name="echo", arguments="{ broken").arguments_invalid is True
