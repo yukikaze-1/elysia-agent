@@ -1084,9 +1084,9 @@ mailbox 里"的那一刻。
 | 1 | **CRLF 让代码块与其后全部文本静默消失**（无日志无异常） | ✅ **已修** `591eb23d` | 复现：LF → 2 句 + 1 块；CRLF → 0 句 0 块。裸 `\r` 反向失败（代码当可见文本播报）。根因 `_WS`/`_HARD_DELIMITERS` 只认 `\n`。修法：归一收口在 `StreamProcessor.feed()`（管道唯一摄入点），跨 chunk 安全 |
 | 2 | **`is_emoji_only` 漏判全部 emoji 序列**（ZWJ/VS16/keycap/国旗/tag） | ✅ **已修** `591eb23d` | `👨‍👩‍👧‍👦` → False。危害不止漏判：TTS 单码点剥离后只剩连接符 `"\u200d\u200d\u200d"` → 真的发一次无意义合成请求 |
 | 3 | **`get_caller_logger` 的守卫是假绿** | ✅ **已替换** `10b93544` | 旧用例的 `_inner`/`_outer` 同住测试模块 → 单跳与双跳解析出**同一个** `__name__`，双跳注入下旧用例仍 PASSED、新用例 7 FAILED |
-| 4 | `cas_revision_pointer` **抛异常**时无补偿 → **孤儿 revision**（未发布版本出现在 `list_revisions` 且可被 `resolve_runtime_source` 解析） | ⚠️ **未修**（已用"当前契约"用例钉死） | `definitions.py:146-151` 只补偿 `ok is False` 分支；可达路径 `character_repo.py:163` 未连接即抛 |
-| 5 | 409 里的 `currentRevision` 是**过期值** → 客户端按它重试会**永远冲突** | ⚠️ **未修** | CAS 落败时用内存里的旧值填 `details.currentRevision` 并标 `retryable=True`；实测真实指针 3、报 1 |
-| 6 | 补偿调用**无 try 保护**（补偿自身失败会顶替原始异常、成因丢失 + 孤儿保留） | ⚠️ **未修** | `create:109` / `update:150` |
+| 4 | `cas_revision_pointer` **抛异常**时无补偿 → **孤儿 revision**（未发布版本出现在 `list_revisions` 且可被 `resolve_runtime_source` 解析） | ✅ **已修** `83ef9ad0`（见 §0.4.15） | `definitions.py:146-151` 只补偿 `ok is False` 分支；可达路径 `character_repo.py:163` 未连接即抛 |
+| 5 | 409 里的 `currentRevision` 是**过期值** → 客户端按它重试会**永远冲突** | ✅ **已修** `83ef9ad0`（见 §0.4.15） | CAS 落败时用内存里的旧值填 `details.currentRevision` 并标 `retryable=True`；实测真实指针 3、报 1 |
+| 6 | 补偿调用**无 try 保护**（补偿自身失败会顶替原始异常、成因丢失 + 孤儿保留） | ✅ **已修** `83ef9ad0`（见 §0.4.15） | `create:109` / `update:150` |
 | 7 | **副作用会被重试重复，且无按 callId 的幂等** | ⚠️ **未修**（`xfail(strict=True)` 留痕） | `desktop.file.write`/filesystem 写/reminder 超时 → 合成 TIMEOUT（可重试）→ 同 callId 二次执行，而 Desktop 桥的 `_dedup` 此时已释放。与归档 spec"所有副作用工具都按 `callId` 幂等"冲突——因文档已归档、桥实现的是 pending 期 args-hash 去重，**只留痕不硬断言**（实现补齐会 XPASS→红，强制更新本报告） |
 
 另有 2 条**口径/卫生**问题，不算缺陷但已登记：
@@ -1115,11 +1115,87 @@ mailbox 里"的那一刻。
 3. 行 7 的 `Enum`/`Path`/任意对象在 `wire_dict()` 下的契约未定性（当前任意对象会抛
    `PydanticSerializationError`）——是"有意契约"还是"待改行为"需设计意图。
 4. 行 13 的"集合字段非法 JSON env"边角未补。
-5. (d) 表中 4/5/6/7 四处缺陷**未修**：每处都需要独立的设计决定（如 #5 需要 CAS 落败后回读、
-   #7 需要先定 callId 幂等的活契约），不宜在"补测"批次里顺手改。
+5. (d) 表中 4/5/6 三处**已于 `83ef9ad0` 修复**（见 §0.4.15）；**7 号仍未修**——它需要先定
+   "callId 幂等"是不是活契约（原 spec 已归档，Desktop 桥实现的是 pending 期 args-hash
+   去重，前端也可能自行去重），不宜由实现方单方面决定。
 6. `#46` 的 `#44` 拆分遗留：`docs/electron-backend-security.md` 已改指新模块，但
    `docs/review/2026-09-09-*` 等历史评审文档仍引用 `core/character/service.py::<方法>`
    ——按"历史文档不改写"处理。
+
+---
+
+### §0.4.15 角色写链 CAS 失败语义收口（2026-09-15，1 个提交）
+
+§0.4.14(d) 表里 4/5/6 三号缺陷的修复。三处都在 `update`/`rollback` 的
+「append revision → CAS 指针」这条写链上，**共同根因是判据用错了**：旧代码问的是
+"有没有抛异常"，该问的是"**指针到哪了**"。这是本项目「守卫没装在改动上」缺陷族的
+又一实例——补偿装在了一个分支上，另一个同样能到达该状态的路径漏了。
+
+| # | 缺陷 | 修法 |
+|---|---|---|
+| 6 | 补偿调用**无保护**，自身失败顶替原始异常 | 抽 `_compensate_delete_revision()`：失败降级为带 traceback 的 warning，**病因照常上抛** |
+| 4 | CAS **抛异常**时无补偿 → 孤儿 revision | 先**回读**再决定（下表） |
+| 5 | 409 的 `currentRevision` 是**过期值** → 客户端活锁 | **绕过缓存**回读真值；读不到报 `None`（未知），不回退到过期值 |
+
+#### (a) 4 号的关键取舍：**不能**"抛异常就补删"
+
+最直白的修法是"catch 住异常 → 删掉 revision → 重抛"。**那是把泄漏换成数据丢失**：
+驱动超时完全可能发生在**服务端已提交之后**，此时删掉的是一条**已发布的** revision
+（指针指向不存在的版本 / 历史出现空洞 / 回滚目标消失）。
+
+所以判据是回读结果，而不是"有没有异常"：
+
+| CAS 结果 | 回读指针 | 处置 | 理由 |
+|---|---|---|---|
+| 返回 False | （不需回读）| 补偿删除 → 抛 409 | filter 未命中 = 指针确定没到 `new_revision`；且 `(character_id, revision)` 唯一索引让并发写者拿到的是冲突而不是同一个号，故刚 append 的那条**确定是孤儿** |
+| 抛异常 | `== new_revision` | **按成功处理**（记 warning） | 写已落库、只是响应丢了。若当失败，调用方重试时 CAS 必然因 expected 过期而失败 |
+| 抛异常 | `== expected_revision` | 补偿删除 → 抛原始异常 | 指针确定没动 = 确定没发布 |
+| 抛异常 | 第三种值 / 回读失败 | **一个字节都不删** + error 日志 | 无法证明"没发布"——第三种值可能意味着指针曾到过 `new_revision` 又被别人推走（删了就是历史空洞） |
+
+最后一行与 #41 同一条纪律：**宁可泄漏不可误删**——孤儿是可见、可对账的
+（`list_revisions` 里能看见），数据丢失不会自己暴露。
+
+#### (b) 5 号：为什么必须**绕过缓存**
+
+`CharacterRepository.get_definition` 是 read-through 缓存，且只在**本地写成功**时
+`_cache_invalidate`。CAS 落败恰恰意味着写是**别的进程**做的——本进程的缓存不会被通知，
+仍是旧值；更糟的是 `insert_definition` 把**调用方的对象本身**放进缓存，所以"内存里那份"
+和"缓存里那份"是同一个对象，直接读只会拿回过期值。
+
+新增 `get_definition(character_id, *, fresh=False)`：绕缓存直读，并把真值写回缓存
+（顺带修正陈旧条目，否则回读只帮到本次的错误消息）。读不到时报 `None` —— 路由层对
+`current_revision is None` 的处理是**省略** `details.currentRevision`
+（`core/input/character_routes.py`），即"我不知道当前版本"；这比给一个错的版本号诚实。
+
+#### (c) 一个被反证抓出来的**测试自身缺陷**（值得记下来）
+
+6 号注入（把 `fresh` 判断去掉，让回读也走缓存）**第一次没有变红**——用例照常通过。
+原因：那条用例的"并发对手"跑在**同一个 repo 实例**里，它的 CAS 成功会顺手
+`_cache_invalidate`，于是回读即使命中缓存也已经是新值。**它测的是"回读"，不是"绕过缓存"**
+——正是本项目点名的「测试没走到被测路径」。
+
+补 `test_update_cas_loss_reports_true_revision_despite_stale_cache`：直接把库里指针改掉
+（不经本 repo 的写路径 = "别的进程写的"语义），并**先断言前提**"缓存里确实还是旧的"，
+再触发 CAS 落败。重跑同一注入 → 1 failed。
+
+#### (d) 反证与验收
+
+6+1 条注入全部注入即红、逐字节还原后绿（详见 `83ef9ad0` 的提交信息）。
+
+- `core/character` 142 → **145 passed**（写链补偿文件 18 → 22 条：5 条「当前契约」用例
+  改写为断言修好的行为 + 判定分支补测）
+- core/character + core/storage + 角色路由 + 两道私有穿透守卫合跑 **659 passed**
+- `ruff` 全绿 / `pyright` 0 error / `check-arch` 通过 / fail-closed 约定门禁 28 passed
+
+#### (e) 仍未修（如实标注）
+
+1. **7 号：副作用重试无 callId 幂等** —— 需要 owner 先定"callId 幂等"是不是活契约
+   （原 spec 已归档，Desktop 桥实现的是 pending 期 args-hash 去重，前端也可能自行去重）。
+   现以 `xfail(strict=True)` 留痕（`core/tool_runtime/tests/test_tool_retry_idempotency.py`）。
+2. **archive 的半程写入**（profile 已改指、归档失败）：方向安全（角色仍 active、无悬空引用），
+   补偿需要"把默认角色改回去"的第二次 CAS——那本身也会失败，属独立设计决定。
+3. **实例传播的非白名单异常在提交后冒泡**：调用方看到失败但 revision + 指针已发布。
+   要改就得先定义"提交后还能报哪些错"的语义，同属设计决定。
 
 ---
 
