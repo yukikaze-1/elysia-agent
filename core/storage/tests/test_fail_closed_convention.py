@@ -110,9 +110,11 @@ _CONVENTION: dict[str, dict[str, str]] = {
     # 与"存储离线"在 UI 上都表现为空）——**待决策 #8**，见 _PENDING_DECISION。
     "CharacterVersionRepository": {
         "append_version": WRITE,
-        "list_versions": READ_EMPTY_OK,
-        "get_version": READ_EMPTY_OK,
-        "count_versions": READ_EMPTY_OK,
+        # 决策 #8（2026-09-14 owner）：**一律 fail-closed**——读不到版本历史时宁可
+        # 503，也不要让"库离线"看起来像"没有历史"（后者会被误读为历史被清空）。
+        "list_versions": READ_FAIL_CLOSED,
+        "get_version": READ_FAIL_CLOSED,
+        "count_versions": READ_FAIL_CLOSED,
     },
     # **刻意**让读走进程内缓存：docstring 明确"缓存为唯一读权威"，Mongo 离线时
     # get/query_pending 仍可从 cache 回答（幂等去重/状态查询不失效）。这不是遗漏，
@@ -226,9 +228,6 @@ _ASYMMETRIC_JUSTIFIED: dict[str, str] = {
 # 约定尚未定 / 已知与同仓其余路径不对称的写路径——逐条列出，不让它藏在实现里。
 # 键为 (仓储名, 方法名)，值为说明。定案后从本表移除并改分类。
 _PENDING_DECISION: dict[tuple[str, str], str] = {
-    ("CharacterVersionRepository", "list_versions"): "决策 #8：版本历史读空 vs 503",
-    ("CharacterVersionRepository", "get_version"): "决策 #8：回滚目标读不到时 404 还是 503",
-    ("CharacterVersionRepository", "count_versions"): "决策 #8：debug 计数读空 vs 503",
     ("MemoryRepository", "insert"): (
         "写路径静默返回 []（同仓 clear_all 已 fail-closed）——Milvus 离线时记忆写入"
         "静默丢失，调用方无从知晓。与 append_version 的写路径约定不一致。"

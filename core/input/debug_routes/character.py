@@ -16,6 +16,7 @@ from core.input.debug_routes._shared import _protocol_error_response
 from core.schema.utils import now_iso
 from core.schema.compression import CompressionTrigger
 from frontend_contract import debug as contract
+from core.storage.base import StorageUnavailableError
 
 if TYPE_CHECKING:
     from core.agent import Agent
@@ -55,11 +56,16 @@ async def _list_character_versions(agent: "Agent", content_type: str,
     if not engine or not engine.version_repo:
         return None, "版本历史不可用", "STORAGE_UNAVAILABLE", 503
     sid = engine.version_key
-    versions = await engine.version_repo.list_versions(
-        sid, limit=limit, before_version=before_version,
-        content_type=content_type,
-    )
-    total = await engine.version_repo.count_versions(sid, content_type=content_type)
+    try:
+        versions = await engine.version_repo.list_versions(
+            sid, limit=limit, before_version=before_version,
+            content_type=content_type,
+        )
+        total = await engine.version_repo.count_versions(sid, content_type=content_type)
+    except StorageUnavailableError:
+        # 决策 #8（owner 2026-09-14）：**一律 fail-closed** —— 读不到版本历史时给 503，
+        # 而不是让"库离线"看起来像"没有历史"（后者会被误读为历史被清空）。
+        return None, "版本历史不可用（存储离线）", "STORAGE_UNAVAILABLE", 503
     result = contract.CharacterVersionListResponse(
         versions=versions,
         total=total,
@@ -83,8 +89,11 @@ async def _character_rollback(agent: "Agent", content_type: str, target_version:
     if not engine or not engine.version_repo:
         return None, "版本历史不可用", "STORAGE_UNAVAILABLE", 503
     sid = engine.version_key          # S3-21：与写侧同源
-    entry = await engine.version_repo.get_version(sid, target_version,
-                                                    content_type=content_type)
+    try:
+        entry = await engine.version_repo.get_version(sid, target_version,
+                                                      content_type=content_type)
+    except StorageUnavailableError:
+        return None, "版本历史不可用（存储离线）", "STORAGE_UNAVAILABLE", 503
     if entry is None:
         return None, f"版本 {target_version} 不存在", "RESOURCE_NOT_FOUND", 404
 

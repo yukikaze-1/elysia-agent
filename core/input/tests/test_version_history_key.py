@@ -104,3 +104,39 @@ async def test_overview_counts_use_engine_key():
         used = str(call.args[0])
         assert used == _INSTANCE_KEY, (
             f"Overview 计数用了 {used!r}（应为 {_INSTANCE_KEY!r}）——计数会恒 0")
+
+
+# ── 决策 #8（owner 2026-09-14）：读路径一律 fail-closed → 503 ────────────────
+
+@pytest.mark.asyncio
+async def test_version_history_read_failure_maps_to_503():
+    """库离线时版本历史读必须给 **503**，而不是"空历史"（会被误读为历史被清空）。"""
+    from core.input.debug_routes.character import _list_character_versions
+    from core.storage.base import StorageUnavailableError
+
+    agent, _engine, repo = _agent_with_split_keys()
+    repo.list_versions = AsyncMock(side_effect=StorageUnavailableError("MongoDB 离线"))
+
+    result, err, code, status = await _list_character_versions(
+        agent, content_type="l2", limit=20, before_version=None)
+
+    assert result is None
+    assert status == 503, f"必须 503（fail-closed），实际 {status}"
+    assert code == "STORAGE_UNAVAILABLE"
+    assert err and "离线" in err
+
+
+@pytest.mark.asyncio
+async def test_rollback_read_failure_maps_to_503():
+    """回滚的单条读同口径：库离线 → 503（不是 404'版本不存在'）。"""
+    from core.input.debug_routes.character import _character_rollback
+    from core.storage.base import StorageUnavailableError
+
+    agent, _engine, repo = _agent_with_split_keys()
+    repo.get_version = AsyncMock(side_effect=StorageUnavailableError("MongoDB 离线"))
+
+    result, err, code, status = await _character_rollback(agent, "l2", 3)
+
+    assert result is None
+    assert status == 503, f"必须 503，实际 {status}"
+    assert code == "STORAGE_UNAVAILABLE"

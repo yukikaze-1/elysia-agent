@@ -305,8 +305,7 @@ class CharacterVersionRepository(Repository):
         Returns:
             版本条目列表，按版本号降序排列。若数据库不可用返回空列表。
         """
-        if self._db is None:
-            return []
+        db = self._require_connected("list_versions")  # 决策 #8：读也 fail-closed（503）
         # 兼容旧文档（无 content_type 字段）— 当作 l2
         type_filter: dict = (
             {"content_type": content_type}
@@ -316,7 +315,7 @@ class CharacterVersionRepository(Repository):
         filter_expr: dict = {"session_id": session_id, **type_filter}
         if before_version is not None:
             filter_expr["version"] = {"$lt": before_version}
-        docs = await self._db.find(
+        docs = await db.find(
             COLLECTION, filter_expr,
             sort=[("version", -1)], limit=limit,
         )
@@ -347,14 +346,13 @@ class CharacterVersionRepository(Repository):
         Returns:
             版本条目，若不存在或数据库不可用返回 None。
         """
-        if self._db is None:
-            return None
+        db = self._require_connected("get_version")    # 决策 #8：读也 fail-closed（503）
         type_filter: dict = (
             {"content_type": content_type}
             if content_type != "l2"
             else {"$or": [{"content_type": "l2"}, {"content_type": {"$exists": False}}]}
         )
-        docs = await self._db.find(
+        docs = await db.find(
             COLLECTION,
             {"session_id": session_id, "version": version, **type_filter},
             limit=1,
@@ -385,14 +383,13 @@ class CharacterVersionRepository(Repository):
         Returns:
             版本总数。若数据库不可用返回 0。
         """
-        if self._db is None:
-            return 0
+        db = self._require_connected("count_versions")  # 决策 #8：读也 fail-closed（503）
         type_filter: dict = (
             {"content_type": content_type}
             if content_type != "l2"
             else {"$or": [{"content_type": "l2"}, {"content_type": {"$exists": False}}]}
         )
-        return await self._db.count(
+        return await db.count(
             COLLECTION,
             {"session_id": session_id, **type_filter},
         )
