@@ -1,7 +1,5 @@
 """C9: 自我感知。"""
 from Module.system_prompt.protocol import Jinja2Section
-from Module.system_prompt.sections.authored import escape_authored_prompt
-
 
 class SelfPerceptionSection(Jinja2Section):
     name = "SelfPerception"
@@ -30,6 +28,6 @@ class SelfPerceptionSection(Jinja2Section):
     async def render(self) -> str:
         if not self._awareness_text:
             return ""
-        # S2-H2 同根：觉察文本由 LLM 依据会话状态生成，属不可信输入
-        return self._render_template(
-            awareness_text=escape_authored_prompt(self._awareness_text))
+        # S2-H2 同根：觉察文本由 LLM 依据会话状态生成，属不可信输入——
+        # 转义收口在 `_render_template`。
+        return self._render_template(awareness_text=self._awareness_text)

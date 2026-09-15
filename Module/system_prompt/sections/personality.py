@@ -1,8 +1,7 @@
 """C1: 人格。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
-from Module.system_prompt.sections.authored import escape_authored_prompt
-
+from Module.system_prompt.sections.authored import Trusted
 
 class PersonalitySection(Jinja2Section):
     name = "Personality"
@@ -46,24 +45,27 @@ class PersonalitySection(Jinja2Section):
         self._user_pronoun = kwargs.get("user_pronoun", "她")
 
     async def render(self) -> str:
-        core = (
-            escape_authored_prompt(self._core)
-            if self._authored else self._core
-        )
-        examples = [
-            {
-                "user": escape_authored_prompt(user),
-                "assistant": escape_authored_prompt(assistant),
-            }
-            for user, assistant in self._examples
-        ]
+        # 转义已收口到 `Jinja2Section._render_template`（含 name / examples 的字符串
+        # 叶子）——此处**不再**手工转义，否则会二次转义成 `&amp;amp;`。
+        #
+        # `core_personality` 的唯一例外：内建角色（`_authored=False` ⇔
+        # `definition.source == "builtin"`）的 L1 来自仓库内 `character/<role>/`，
+        # **不是**用户输入且不可编辑（`update()` 对 builtin 抛 CharacterImmutableError）。
+        # 它的正文里本就含 `<voice>`/`<message>`/`<facts>` 这类**说明性**标签引用——
+        # 一律转义会把 prompt 正文写成 `&lt;voice&gt;`（system prompt 快照测试当场抓到）。
+        # 故此处用 `Trusted` **显式**声明"这段是受信的、原样保留"：豁免可见、可 grep，
+        # 而"忘记转义"不再是默认结果。
         return self._render_template(
             name=self._name,
-            core_personality=core,
+            core_personality=(
+                self._core if self._authored else Trusted(self._core)
+            ),
             # L2「自我」由 CharacterReflector 的 LLM 反思产物演化而来——不可信文本
-            self_personality=(escape_authored_prompt(self._self)
-                              if isinstance(self._self, str) else self._self),
-            examples=examples,
+            self_personality=self._self,
+            examples=[
+                {"user": user, "assistant": assistant}
+                for user, assistant in self._examples
+            ],
         )
 
     def set_authored_profile(

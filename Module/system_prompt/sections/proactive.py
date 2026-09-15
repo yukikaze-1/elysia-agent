@@ -1,8 +1,6 @@
 """C7: 主动性。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
-from Module.system_prompt.sections.authored import escape_authored_prompt
-
 
 class ProactiveSection(Jinja2Section):
     name = "Proactive"
@@ -26,11 +24,9 @@ class ProactiveSection(Jinja2Section):
 
     async def render(self) -> str:
         return self._render_template(
-            user_name=escape_authored_prompt(self._user_name),
-            user_pronoun=escape_authored_prompt(self._user_pronoun),
-            conversation_initiative=escape_authored_prompt(
-                self._conversation_initiative
-            ),
+            user_name=self._user_name,
+            user_pronoun=self._user_pronoun,
+            conversation_initiative=self._conversation_initiative,
         )
 
     def set_character_profile(self, conversation_initiative: str) -> None:

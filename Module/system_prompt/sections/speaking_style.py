@@ -1,8 +1,7 @@
 """C6: 说话方式。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
-from Module.system_prompt.sections.authored import escape_authored_prompt
-
+from Module.system_prompt.sections.authored import Trusted
 # L1 默认说话风格（改造时把当前 C6 else 分支正文固化，模板删 else 后仍存在）
 # 注：必须是硬编码常量，不能运行时从模板 else 提取（模板改造后无 else 分支）
 C6_L1_DEFAULT = """每次回复前，先在心里想一下（这是你自己的事），再决定说出来什么。
@@ -122,9 +121,12 @@ class SpeakingStyleSection(Jinja2Section):
         return self._render_template(
             user_name=self._user_name,
             speaking_style_c6=self._speaking_style_c6,
+            # 转义收口在 `_render_template`（含 speaking_style_c6——它是 C6 刷新的
+            # LLM 输出，此前完全没被转义）。L1 `speaking_style` 与 C1 同理：内建角色
+            # 的文本来自仓库 config，显式 `Trusted`。
             speaking_style=(
-                escape_authored_prompt(self._speaking_style)
-                if self._authored else self._speaking_style
+                self._speaking_style if self._authored
+                else Trusted(self._speaking_style)
             ),
         )
 

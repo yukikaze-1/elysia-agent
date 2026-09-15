@@ -10,6 +10,8 @@ from typing import Any
 
 from jinja2 import Environment, TemplateSyntaxError
 
+from Module.system_prompt.sections.authored import escape_template_vars
+
 logger = logging.getLogger(__name__)
 
 
@@ -135,10 +137,16 @@ class Jinja2Section(PromptSection):
         return Path(self._template_path).read_text("utf-8")
 
     def _render_template(self, **vars: Any) -> str:
-        """用给定变量渲染模板。
+        """用给定变量渲染模板（**所有字符串叶子在此统一转义**）。
+
+        这是 system prompt 各段注入变量的**唯一收口点**：CR-12/S2-H2 的逐点转义
+        实测漏了三处（其中 `displayName` 与 `speaking_style_c6` 是活的注入通道），
+        故改在此处递归转义。需要原文的位置用 `Trusted` 显式豁免——豁免是显式且
+        可 grep 的，而遗漏不再是默认结果。详见
+        `Module/system_prompt/sections/authored.py`。
 
         Args:
-            **vars: 传递给 Jinja2 模板的变量。
+            **vars: 传递给 Jinja2 模板的变量（字符串叶子会被转义）。
 
         Returns:
             渲染后的 prompt 文本。
@@ -146,7 +154,8 @@ class Jinja2Section(PromptSection):
         if self._cached_template is None:
             self._cached_template = self._load_template()
         tmpl = self._env.from_string(self._cached_template)
-        return tmpl.render(**vars).strip()
+        safe = {key: escape_template_vars(value) for key, value in vars.items()}
+        return tmpl.render(**safe).strip()
 
     def render_sync(self) -> str:
         """同步版 render，测试用。子类覆盖 render() 即可。

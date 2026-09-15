@@ -3,8 +3,6 @@ import logging
 import time
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
-from Module.system_prompt.sections.authored import escape_authored_prompt
-
 logger = logging.getLogger(__name__)
 
 
@@ -44,8 +42,8 @@ class MemorySection(Jinja2Section):
         for entry in results:
             micro.append({
                 # S2-H2（与 CR-12 同根）：记忆文本源自用户对话经 LLM 提取，属不可信
-                # 输入——不转义即可闭合 `<memory>` 伪造 system prompt 区块。
-                "content": escape_authored_prompt(entry.text),
+                # 输入。转义收口在 `_render_template`（递归进 dict/list 叶子）。
+                "content": entry.text,
                 "type": entry.memory_type,
                 "timestamp": entry.timestamp if entry.timestamp else now,
                 "poignancy": entry.poignancy,

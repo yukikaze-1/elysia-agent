@@ -1,8 +1,6 @@
 """C2: 关系。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
-from Module.system_prompt.sections.authored import escape_authored_prompt
-
 
 class RelationshipSection(Jinja2Section):
     name = "Relationship"
@@ -30,10 +28,10 @@ class RelationshipSection(Jinja2Section):
         return self._render_template(
             name=self._character_name,
             # CR-12：user_name 由用户经 `PUT /api/me` 设置并落 Mongo（持久化、每回合
-            # 生效）。不转义即可闭合 `<relationship>` 并伪造区块，注入点在 F1 之后。
-            user_name=escape_authored_prompt(self._user_name),
-            user_pronoun=escape_authored_prompt(self._user_pronoun),
-            relationship_style=escape_authored_prompt(self._relationship_style),
+            # 生效）——转义已收口在 `_render_template`。
+            user_name=self._user_name,
+            user_pronoun=self._user_pronoun,
+            relationship_style=self._relationship_style,
         )
 
     def set_character_profile(self, *, name: str, relationship_style: str) -> None:

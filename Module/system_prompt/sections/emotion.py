@@ -1,8 +1,6 @@
 """C3: 情感。"""
 from typing import Any
 from Module.system_prompt.protocol import Jinja2Section
-from Module.system_prompt.sections.authored import escape_authored_prompt
-
 
 class EmotionSection(Jinja2Section):
     name = "Emotion"
@@ -35,10 +33,10 @@ class EmotionSection(Jinja2Section):
         return self._render_template(
             # mood 是 LLM 生成的自由文本（<mood> 标签），user_name 是用户可控文本
             # ——两者都是不可信输入（CR-12 / S2-H2 同根）。
-            mood=escape_authored_prompt(self._mood),
-            user_name=escape_authored_prompt(self._user_name),
-            user_pronoun=escape_authored_prompt(self._user_pronoun),
-            emotion_style=escape_authored_prompt(self._emotion_style),
+            mood=self._mood,
+            user_name=self._user_name,
+            user_pronoun=self._user_pronoun,
+            emotion_style=self._emotion_style,
         )
 
     def set_character_profile(self, emotion_style: str) -> None:
