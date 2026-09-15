@@ -225,13 +225,14 @@ def _validate_url(url: str, profile: SafetyProfile) -> str | None:
     if parsed.scheme not in ("http", "https"):
         return f"不支持的 URL scheme: {parsed.scheme}"
     if profile.block_private_ips and parsed.hostname:
-        import ipaddress
-        try:
-            ip = ipaddress.ip_address(parsed.hostname)
-            if ip.is_private or ip.is_loopback or ip.is_link_local:
-                return f"禁止访问内网地址: {parsed.hostname}"
-        except ValueError:
-            pass
+        # S3-G4：改用出站守卫共用的**非 DNS** 判定。原先只试 `ipaddress.ip_address`，
+        # 于是 `http://2130706433/`（十进制）、`http://0177.0.0.1/`（八进制）、
+        # `http://metadata.google.internal/` 全部放行——`block_private_ips` 形同虚设。
+        # 主机名形态（如 `localhost`）仍需 DNS 才能判定，由 `ssrf.validate_endpoint`
+        # 与出站客户端逐跳校验兜住（见该函数的边界说明）。
+        from Module._common.ssrf import literal_host_is_blocked
+        if literal_host_is_blocked(parsed.hostname):
+            return f"禁止访问内网地址: {parsed.hostname}"
     return None
 
 

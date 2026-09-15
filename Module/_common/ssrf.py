@@ -55,6 +55,43 @@ class SSRFError(ValueError):
         super().__init__(message)
 
 
+def literal_host_is_blocked(host: str) -> bool:
+    """**非 DNS** 的 host 判定：命中即应拒绝（同步、廉价，可在事件循环里直接调）。
+
+    与 :func:`validate_endpoint` 的分工：那个是"保存 provider 时"的完整门禁（**含 DNS
+    解析**，会阻塞），本函数是"出站前的预筛"，供同步上下文（如工具安全校验）使用。
+    覆盖三类：
+
+    1. 字面量黑名单（云元数据主机名，含结尾点归一）；
+    2. :mod:`ipaddress` 认得的 IP 形态（含 IPv4-mapped IPv6 → IPv4 归一）；
+    3. **系统解析器接受、但 `ipaddress` 不认的 IP 写法**：`2130706433`（十进制）、
+       `0177.0.0.1`（八进制）、`0x7f.0.0.1`（十六进制）。这些形态 socket 会解析成
+       127.0.0.1，只用 `ipaddress` 判类会**全部漏过**——`block_private_ips` 就成了装饰。
+
+    **边界（有意，勿"补齐"）**：`localhost` 这类**普通主机名**不在覆盖范围内——它需要
+    DNS 才能判定，而把 `localhost` 一律拉黑会连带打死"本地模型服务"这类正当用法
+    （`ollama` / `gpt-sovits` 的 `base_url` 就是 `http://localhost:9880`）。主机名形态
+    由 DNS 层（`validate_endpoint`）与出站客户端逐跳校验兜住。
+    """
+    if not host:
+        return False
+    host = host.strip().rstrip(".").lower()
+    if host in _BLOCKED_HOSTS:
+        return True
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return _is_blocked_ip(host)
+    # ipaddress 不认、但 socket 认得的 IPv4 写法（十进制/八进制/十六进制/短式）
+    try:
+        packed = socket.inet_aton(host)
+    except OSError:
+        return False
+    return _is_blocked_ip(socket.inet_ntoa(packed))
+
+
 def _is_blocked_ip(ip: str) -> bool:
     """判断 IP 是否命中 SSRF 拦截规则（ipaddress 全地址族 + CGNAT 显式判类）。
 

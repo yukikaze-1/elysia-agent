@@ -336,6 +336,38 @@ class TestURLValidation:
         )
         assert err is None
 
+    @pytest.mark.parametrize("url", [
+        "http://127.0.0.1/admin",
+        "http://2130706433/admin",          # 十进制 127.0.0.1（socket 认、ipaddress 不认）
+        "http://0177.0.0.1/admin",          # 八进制
+        "http://0x7f.0.0.1/admin",          # 十六进制
+        "http://[::1]/admin",               # IPv6 回环
+        "http://169.254.169.254/latest",    # 云元数据 IP
+        "http://metadata.google.internal/", # 云元数据主机名（字面量黑名单）
+        "http://metadata.google.internal./",  # 结尾点归一
+        "http://10.0.0.1/admin",            # 私网
+        "http://192.168.1.1/admin",
+        "http://100.64.0.1/admin",          # CGNAT
+    ])
+    def test_internal_forms_are_blocked(self, url):
+        """S3-G4：这些形态此前**全部放行**（只试 `ipaddress.ip_address`）。
+
+        十进制/八进制/十六进制写法会被系统解析器解析成 127.0.0.1，而 `ipaddress` 不认
+        ——不拦掉的话 `block_private_ips` 就是个装饰。
+        """
+        err = _validate_url(url, SafetyProfile())
+        assert err and "内网地址" in err, f"{url} 未被拦截（err={err!r}）"
+
+    def test_public_ip_and_hostname_still_allowed(self):
+        """回归网：公网 IP 与普通主机名照常放行（别把预筛做成"一律拒绝"）。"""
+        assert _validate_url("https://8.8.8.8/x", SafetyProfile()) is None
+        assert _validate_url("https://example.com", SafetyProfile()) is None
+        # 普通主机名（含 localhost）需要 DNS 才能判定，**不在本层覆盖范围**——
+        # 这是有意的边界：一律拉黑 localhost 会打死 ollama/gpt-sovits 这类本地服务。
+        assert _validate_url("http://localhost:9880/", SafetyProfile()) is None
+        # 但真正需要凭据的云元数据主机名是字面量黑名单，照样拦
+        assert _validate_url("http://metadata/x", SafetyProfile()) is not None
+
 
 # ============================================================================
 # SafetyPipeline（安全管线）
