@@ -761,3 +761,46 @@ class TestCancellationCleanup:
         retry.cancel()
         with pytest.raises(asyncio.CancelledError):
             await retry
+
+
+# ============================================================================
+# #33c 另一半：`_locks` 有界化（条纹锁）
+# ============================================================================
+
+class TestStripedLocks:
+    """`_locks` 此前按 key 无界增长（只在 `setdefault` 处增加、从不清理）。
+
+    条纹化后：同 key 恒同锁（互斥语义不变）、空间 O(桶数)。
+    """
+
+    @pytest.mark.asyncio
+    async def test_same_key_always_maps_to_the_same_lock(self):
+        """互斥语义的前提：同一个 key 必须恒定拿到同一把锁。"""
+        _repo, bridge, _frames = _make_bridge()
+        a = bridge._lock_for(("desktop.file.read", "sha256-abc"))  # noqa: SLF001
+        b = bridge._lock_for(("desktop.file.read", "sha256-abc"))  # noqa: SLF001
+        assert a is b
+
+    @pytest.mark.asyncio
+    async def test_lock_space_is_bounded(self):
+        """核心：大量不同 key 不得让锁表增长（修前是随 key 无界增长的 dict）。"""
+        from core.desktop.bridge import _LOCKS_STRIPES
+        _repo, bridge, _frames = _make_bridge()
+        for i in range(_LOCKS_STRIPES * 20):
+            bridge._lock_for(("tool", f"hash-{i}"))          # noqa: SLF001
+        created = [lock for lock in bridge._locks if lock is not None]  # noqa: SLF001
+        assert len(created) <= _LOCKS_STRIPES, \
+            f"锁表必须 ≤ {_LOCKS_STRIPES} 把，实际 {len(created)}"
+
+    @pytest.mark.asyncio
+    async def test_dedup_mutual_exclusion_still_holds(self):
+        """行为级对照：条纹化后同参并发仍只投递一次（既有语义的回归网）。"""
+        repo, bridge, frames = _make_bridge(timeout=120.0)
+        t1 = asyncio.create_task(bridge.request_and_wait(call=_call()))
+        t2 = asyncio.create_task(bridge.request_and_wait(call=_call()))
+        await _until(lambda: len(frames) == 1)
+        await asyncio.sleep(0.05)
+        assert len(frames) == 1, "同参并发仍必须只投递一次"
+        for t in (t1, t2):
+            t.cancel()
+        await asyncio.gather(t1, t2, return_exceptions=True)

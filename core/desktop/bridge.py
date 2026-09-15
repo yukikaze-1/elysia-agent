@@ -5,7 +5,7 @@
 wire 帧经契约层 `ToolRequestMessage`/`ToolStatusMessage`（frontend_contract，Task 1）。
 
 职责（spec §4.2/§4.3）：
-- **幂等去重（锁内完成）**：`_locks.setdefault((tool_name, arguments_hash), Lock())`
+- **幂等去重（锁内完成）**：`_lock_for((tool_name, arguments_hash))`（**固定条纹锁**，见下）
   串行化同参并发——锁内查 `_dedup` 索引（`dict[tuple[str,str], call_id]`），pending 命中
   复用 callId + await 原 future，不二次投递（防重复弹窗，BE-043）。offline/expired
   不参与去重（断连后原弹窗不可恢复，重试即新调用）。
@@ -63,6 +63,11 @@ logger = logging.getLogger(__name__)
 _TAMPER_CODE = "CALL_IDEMPOTENCY_CONFLICT"
 
 
+_LOCKS_STRIPES = 64
+"""条纹锁桶数（#33c）。取 64 是"远大于并发桌面调用数、又不浪费"的折中：
+同 key 恒同桶 → 互斥不变；空间有界（原来是随 key 无界增长的 dict）。"""
+
+
 class DesktopToolBridge:
     """Desktop 工具桥 — 幂等去重 + future 终态唯一 + 状态机 + 断连规则。
 
@@ -77,7 +82,11 @@ class DesktopToolBridge:
         # 进程内 await 等待：call_id → future（request_and_wait 的唤醒源）
         self._pending: dict[str, asyncio.Future] = {}
         # 锁：tuple（幂等去重 per (tool, hash)）+ str（按 call_id 状态闩）两种键共存
-        self._locks: dict[Any, asyncio.Lock] = {}
+        # #33c：**固定条纹锁**——原先按 key 无界增长（只在 setdefault 处增加、
+        # 从不清理），长期运行是无界内存增长。条纹化后同一 key 恒映射到同一把锁
+        # （互斥语义与逐 key 锁等价），不同 key 可能共用（多一点串行，不损失正确性），
+        # 空间 O(_LOCKS_STRIPES)。懒建：不在构造期绑定事件循环。
+        self._locks: list[asyncio.Lock | None] = [None] * _LOCKS_STRIPES
         # 幂等去重索引：(tool_name, arguments_hash) → call_id
         self._dedup: dict[tuple[str, str], str] = {}
         self._connected: bool = False
@@ -191,7 +200,7 @@ class DesktopToolBridge:
         tool_name = call.get("tool_name") or ""
         arguments_hash = call.get("arguments_hash") or ""
         key = self._dedup_key(tool_name, arguments_hash)
-        lock = self._locks.setdefault(key, asyncio.Lock())
+        lock = self._lock_for(key)
         # #33c / S2-R2-2：本次调用在 `_dedup`/`_pending` 里登记的 callId
         # （复用分支登记的是**已有** callId；新建分支登记新 callId）。
         # 退出时按 owner 语义释放——**取消路径也必须释放**：调度器外层超时会 cancel
@@ -289,6 +298,23 @@ class DesktopToolBridge:
                 self._pending.pop(owner_id, None)
                 if self._dedup.get(key) == owner_id:
                     self._dedup.pop(key, None)
+
+    def _lock_for(self, key: Any) -> asyncio.Lock:
+        """取 `key` 对应的**条纹锁**（#33c）。
+
+        同一 key 恒映射到同一把锁 → 与"每 key 一把锁"的互斥语义等价；不同 key 可能
+        共用（代价只是偶尔多串行一次）。空间 O(`_LOCKS_STRIPES`)，不再随调用次数增长。
+
+        注意：本类的 key 空间**有两种**（`request_and_wait` 用
+        `(tool_name, arguments_hash)`，`cancel_call`/`_reject_tampering` 用 `call_id`），
+        它们本就不同源 —— 条纹化不改变这一点（该不一致是既有设计，见模块 docstring）。
+        """
+        idx = hash(key) % _LOCKS_STRIPES
+        lock = self._locks[idx]
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[idx] = lock
+        return lock
 
     async def _mark_cancelled_best_effort(self, call_id: str) -> None:
         """取消路径上尽力把 repo 标 `cancelled`——**不等结果**，失败静默。
@@ -388,7 +414,7 @@ class DesktopToolBridge:
 
     async def cancel_call(self, call_id: str) -> None:
         """interrupt/回合取消：锁内 mark cancelled + future resolve(CANCELLED)。"""
-        lock = self._locks.setdefault(call_id, asyncio.Lock())
+        lock = self._lock_for(call_id)
         async with lock:
             doc = await self._repo.get(call_id)
             await self._repo.mark(call_id, status=STATUS_CANCELLED)
@@ -493,7 +519,7 @@ class DesktopToolBridge:
         立即 resolve 而非挂超时——Electron 副作用已发生但结果被拒，Agent 及时收到拒绝。
         """
         tool_name = doc.get("tool_name") or ""
-        lock = self._locks.setdefault(call_id, asyncio.Lock())
+        lock = self._lock_for(call_id)
         async with lock:
             await self._repo.mark(
                 call_id, status=STATUS_FAILED,
