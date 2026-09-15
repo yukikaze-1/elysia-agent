@@ -795,13 +795,93 @@ S2-A4 的结论是"停机窗口内的终态事件要投递"。实测：`stop()` 
 
 | 项 | 内容 | 量级 |
 |---|---|---|
-| `MemoryRepository.insert/delete` | 写路径 5 条的**最后 2 条**（需先在 `long_term.py` 定统一收口点，6+ 调用点） | 0.25d |
+| ~~`MemoryRepository.insert/delete`~~ | ✅ **已完成**（`a32ff90e`），见 §0.4.13 | — |
+| ~~`S2-R6-1`~~ | ✅ **已完成**（`ae867831`），见 §0.4.13 | — |
 | `#44` | `core/character/service.py`（1351 行）按写入链拆分 | 1–2d |
 | `#46` | 测试缺口补齐（14 行表的 P1/P2 部分） | 2–3d |
-| `S2-R6-1` | 真实 MongoDB 测试专层（docker + marker + CI job） | 1d |
 | `#6` 的硬崩溃面 | 落库点前移到 `push_mailbox_event`（需把 infra 线进 mailbox） | 0.5d |
 | owner 待讨论 | `#5` 多客户端语义、CR-12 彻底版 | — |
 | owner-only | CR-01 步骤 1–2（轮换 key + Milvus 口令，再清历史） | — |
+
+---
+
+### §0.4.13 写路径 5/5 + 真实 MongoDB 测试层（2026-09-15，2 个提交）
+
+| 项 | 提交 | 内容 | 反证（注入即红） |
+|---|---|---|---|
+| **写路径 5/5** | `a32ff90e` | `MemoryRepository.insert/delete` 离线改 fail-closed + `LongTermMemory` 两个统一收口点（8 处调用点全走它） | repo 退回静默 `[]`/`0` → 3 条红；去掉 insert 收口点的翻译 → 3 条红；只去掉 delete 的 → 1 条红（`_milvus_degraded_ops` 停在 1 而非 2） |
+| **S2-R6-1** | `ae867831` | 真实 MongoDB 测试层（`tests/real_mongo/`，8 条）+ 四层门 + docker-compose.test.yml + `make test-real-mongo` + CI job | 三条路各自实测（见下） |
+
+#### (a) 写路径：`[]` / `0` 是合法业务结果，不能兼职表示"离线"
+
+`_PENDING_DECISION` 的最后两项。原状是 `insert` 离线返回 `[]`、`delete` 离线返回 `0`，
+而同仓 `clear_all` 早已 fail-closed——**同一个仓储里两种约定**。危险不在当下（现有调用点
+碰巧都按"空 = 没写成"处理），而在**下一个调用点**：它无法区分"后端返回空 PK"与"连不上"。
+
+修法分两层，缺一不可：
+
+1. **仓储层只说事实**：`_require_db()`（`clear_all` 也改用它——同一判据只有一处），
+   离线即 `raise StorageUnavailableError`。
+2. **降级语义收口一处**：`LongTermMemory._repo_insert` / `_repo_delete` 把"离线"翻译成
+   调用方需要的形状（空 PK / 0），8 处调用点全部改走它们。**为什么不逐个 try**：本仓
+   反复出现「两条路径不对称」，逐个 try 必然漂移（忘了 catch → Milvus 抖一下打断回合；
+   catch 成 pass → 真的丢写）。
+
+顺带补上**降级可见性**：此前完全静默（`insert` 返回空、`delete` 返回 0，一句日志都没有）。
+现在每段降级窗口记一次 WARNING（含累计次数）、之后降为 DEBUG、补写成功即重新武装——
+既不刷屏，也不静默。
+
+`_PENDING_DECISION` 至此为空。按该表**自带的指示**删掉了
+`test_declared_pending_set_is_documented`（"待决集合为空说明约定已全部定案——若确实如此，
+请删除本用例"），并把"已定案"记进表上方注释：表保留，下一条未定案的写路径出现时它会
+重新被使用，配套的结构守卫也随之重新生效。
+
+#### (b) S2-R6-1：新测试层在**建设过程中**就抓到了两件事
+
+第一版跑起来就红了 5 条，两条根因都不是"测试写错"，而是**真实存在的坑**：
+
+1. **`base_url` 只给连接串，目标库由 `database_name` 决定。** 我用
+   `Repo(base_url="mongodb://…/elysia_real_mongo_test")` 构造仓储，以为 URI 的 path 就是
+   库名——实际 `database_name` 取默认 `"default"`，**索引与文档全写进了生产库**
+   （`default.attachments` 一条测试文档、`default.background_task_results` 整个集合）。
+   已清理（删文档 + drop 本次新建的集合），并复核 `user_identity_profiles` 未被改动
+   （`$setOnInsert` 面对已存在文档确实不写——这条顺带被真库证实）。
+   → 修法：本层只允许经 `real_mongo_repo` 工厂构造仓储（强制显式 `database_name` +
+   **核验仓储真连到哪个库**，读不到库名就 fail——"查不了"不能当"通过"）。
+2. **`UserIdentityRepository` 的库名被硬编码**成 `"mongodb/default"`——它是同层**唯一**
+   不接受 `database_name` 的仓储。后果：真实库测试层无法把它指向测试库，部署侧也无法把
+   身份档放到别的库。已补参数（默认值不变，生产行为不变）。
+
+四层门（任一层不满足都**不会静默通过**）：
+
+| 门 | 机制 | 不满足时 |
+|---|---|---|
+| 不进任何默认档位 | marker `real_mongo`（非分层）+ tier `external` | quick / normal / full 都不跑它 |
+| 显式 opt-in | `RUN_REAL_MONGO_TESTS=1` | 未设 → 整层 skip（带原因） |
+| 目标必须是测试库 | 库名含 `test` + 落点核验 | 不像测试库 → **fail**（本层会 drop 库） |
+| 环境必须真满足 | 显式要求时连不上 | **fail** 而非 skip（假绿③） |
+
+覆盖的 8 条只挑"只有真驱动能回答"的：唯一索引真拒重复键、TTL 秒数与声明逐字一致
+（`schema_drift` 只比"有没有 TTL"，秒数只有读回真库才看得见）、`check_schema_drift`
+对真库端到端无漂移、`remove_ref` 条件 update 幂等（#41 依赖的前提）、`insert_one` 不污染
+调用方 dict、`$setOnInsert` 不覆盖既有身份、close 后 ping 必须说不可用（P1-05 的判据）。
+
+两条**门禁侧**的配套（都是"守卫必须装在改动上"）：
+
+- `Module/conftest.py` 的 external 门禁对 `real_mongo` 放行——真实 MongoDB 走容器、
+  不需要任何**凭据**，把它挂在 `RUN_EXTERNAL_TESTS` 下会让"我要跑真库测试"这句命令
+  同时要求一个无关开关，而漏设的表现是**整体 skip**（看起来跑过了、其实一条没跑）。
+- `check_compose_security.py` 默认改扫**全部** `docker-compose*.yml`：新增的
+  `docker-compose.test.yml` 不能因为"没被点名"而漏检。扫不到任何文件时退出码 2（拒答）。
+
+#### (c) 本轮验收（2026-09-15，本机 24 核，xdist `-n 8 --dist loadfile`）
+
+- `pytest -q`（含 slow）→ **5172 passed / 17 skipped / 0 failed**（69.9s；跳过含
+  8 条 `real_mongo`——它们默认 skip，只有显式 opt-in 才跑）
+- `tests/real_mongo` 三条路各自实测：真实库 → **8 passed**；无 env → 8 skipped（带原因）；
+  `ELYSIA_TEST_MONGODB_URI=…/default` → **8 errors 拒答**且生产库未被触碰（复核确认）
+- 门禁全绿（13）：上述 12 道 + `check-compose`（现覆盖两个 compose 文件）
+- 本批 **2 个提交**，各自带注入/回退反证
 
 **(2) 正文写了、但从未排进任何计划（38 条）**
 
