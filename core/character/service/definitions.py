@@ -125,6 +125,42 @@ class CharacterDefinitionWriteChain(CharacterQueryChain, CharacterInstanceStateW
             return None
         return None if fresh is None else fresh.currentRevision
 
+    async def _compensate_orphan_revision(self, character_id: str, new_revision: int) -> None:
+        """删掉未发布的孤儿 revision——**仅当它仍是最高版本**。
+
+        为什么需要这个前提（2026-09-15 只读分析实测）：`max_revision()` 读的是 revisions
+        集合，而 CAS 比对的是 Definition 的 `currentRevision`——两者可以不同步。并发写者
+        完全可能读到**我们已落库但尚未发布**的 revision N，于是它 append N+1 并 CAS
+        `expected → N+1`（它的 expected 是它更早读到的旧指针）。此时我们的 CAS 落败，
+        若照旧删掉 N，历史就变成 `{…, N-1, N+1}`——**中间缺一格**。
+
+        缺格的后果不是"少一个版本"：`reconcile_instance_revision` 从实例当前版本走到目标
+        版本时要逐格取 revision，缺一格拉 `CharacterStorageUnavailableError("角色 revision
+        缺失")`——**每次都会再拉**（永久），而且 load 路径（`runtime_loader.py`）没有兜底，
+        该实例从此**再也加载不出来**（会话创建/切换 503）。留一条孤儿只是泄漏
+        （`list_revisions` 里看得见、可对账），挖洞是不可恢复的——与 #41 同一条纪律：
+        选可恢复的那一侧。
+
+        Args:
+            character_id: 角色 ID。
+            new_revision: 本次调用 append 的版本号。
+        """
+        try:
+            highest = await self.rev_repo.max_revision(character_id)
+        except Exception:
+            logger.warning(
+                "补偿前查最高版本失败——不删（宁可留孤儿，不可挖洞）"
+                "character_id=%s revision=%d", character_id, new_revision, exc_info=True,
+            )
+            return
+        if highest != new_revision:
+            logger.warning(
+                "保留孤儿 revision（库中已有更高版本 %s，删 %d 会在历史里挖洞、让实例"
+                "永久无法对账）character_id=%s", highest, new_revision, character_id,
+            )
+            return
+        await _compensate_delete_revision(self.rev_repo, character_id, new_revision)
+
     async def _commit_revision_pointer(
         self, character_id: str, *, expected_revision: int, new_revision: int,
     ) -> str:
@@ -178,7 +214,7 @@ class CharacterDefinitionWriteChain(CharacterQueryChain, CharacterInstanceStateW
                 )
                 return updated_at
             if current == expected_revision:
-                await _compensate_delete_revision(self.rev_repo, character_id, new_revision)
+                await self._compensate_orphan_revision(character_id, new_revision)
             else:
                 logger.error(
                     "角色指针 CAS 抛异常且指针位置无法判定（回读=%s）——保留孤儿 revision "
@@ -187,7 +223,8 @@ class CharacterDefinitionWriteChain(CharacterQueryChain, CharacterInstanceStateW
                 )
             raise
         if not ok:
-            await _compensate_delete_revision(self.rev_repo, character_id, new_revision)
+            # 仅在"没有更高版本"时才删——否则会挖出 reconcile 永久修不好的洞。
+            await self._compensate_orphan_revision(character_id, new_revision)
             raise RevisionConflictError(
                 character_id, await self._fresh_current_revision(character_id)
             )

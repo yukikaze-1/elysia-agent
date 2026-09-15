@@ -157,6 +157,27 @@ async def _install_cas_loser(svc: CharacterService, monkeypatch, *, append_impl=
     monkeypatch.setattr(svc.repo, "cas_revision_pointer", _rival)
 
 
+async def _install_rival_rollback(svc: CharacterService, monkeypatch) -> None:
+    """让"下一次 CAS"落败，但**没有**任何更高版本出现——并发写者把指针回滚了。
+
+    与 `_install_cas_loser` 的区别：那个模拟"对手 append 更高版本并抢先发布"（于是本次
+    append 的 revision 不是最高版本，补偿必须让位给"不许挖洞"）；这个模拟"对手把指针退回
+    旧版本"（revisions 集合没有新增），此时本次 append 的 revision 仍是最高版本，补偿
+    **应当**照旧删除。两条路都要有用例，否则"加了前提"很容易变成"把补偿关掉了"。
+
+    必须在 CAS **内部**移动指针：`update()` 开头的 `currentRevision != expected_revision`
+    预检会先拦下"指针已经不对"的普通情形，测试就测不到 CAS 这一段。
+    """
+    original_cas = svc.repo.cas_revision_pointer
+
+    async def _rival(character_id, expected_revision, new_revision, updated_at):
+        await original_cas(character_id, expected_revision, 1, updated_at=now_iso())
+        return await original_cas(
+            character_id, expected_revision, new_revision, updated_at=updated_at)
+
+    monkeypatch.setattr(svc.repo, "cas_revision_pointer", _rival)
+
+
 # --------------------------------------------------------------------------- create
 
 
@@ -268,10 +289,17 @@ async def test_create_append_failure_writes_nothing_and_never_compensates(monkey
 
 
 @pytest.mark.asyncio
-async def test_update_cas_loss_compensates_appended_revision(monkeypatch):
-    """append 成功、CAS 落败（并发写者先提交）→ **有补偿**：删掉本次 append 的 revision。
+async def test_update_cas_loss_keeps_revision_when_higher_version_exists(monkeypatch):
+    """CAS 落败且库中已有**更高版本** → **不删**（删了会在历史里挖洞）。
 
-    幸存状态必须一致：并发写者的 revision 3 生效可读，我们未发布的 revision 2 被清掉。
+    2026-09-15 只读分析实测：`max_revision()` 读 revisions 集合、CAS 比对 Definition 的
+    `currentRevision`，两者可以不同步——并发写者能读到我们**已落库但未发布**的 revision 2，
+    于是 append 3 并把指针 CAS 到 3。此时若删掉 2，历史变成 `{1,3}`：中间缺一格，
+    `reconcile_instance_revision` 逐格取 revision 时**永久**拉「角色 revision 缺失」，
+    而 load 路径（`runtime_loader`）没有兜底 → 该实例再也加载不出来（会话创建/切换 503）。
+
+    所以补偿加了前提：**仅当自己仍是最高版本时才删**。留孤儿只是泄漏（`list_revisions`
+    里可见、可对账），挖洞不可恢复——与 #41 同一条纪律：选可恢复的那一侧。
     """
     svc = _service()
     character_id = await _create(svc)
@@ -283,14 +311,42 @@ async def test_update_cas_loss_compensates_appended_revision(monkeypatch):
     with pytest.raises(RevisionConflictError):
         await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
 
-    assert log.names == [APPEND, DELETE]
-    assert log.args_for(DELETE) == [(character_id, 2)]
-    assert await svc.rev_repo.get_revision(character_id, 2) is None
-    assert await svc.rev_repo.get_revision(character_id, 3) is not None
+    assert log.names == [APPEND], "库中已有更高版本 → 不得补偿删除"
+    assert log.args_for(DELETE) == []
+    assert await svc.rev_repo.get_revision(character_id, 2) is not None   # 孤儿保留
+    assert await svc.rev_repo.get_revision(character_id, 3) is not None   # 并发写者的版本
     definition = await svc.repo.get_definition(character_id)
     assert definition is not None and definition.currentRevision == 3
     got = await svc.get(character_id)
     assert got is not None and got.summary.displayName == "并发对手"
+    # 关键不变式：历史**连续**（缺格会让 reconcile 永久失败）
+    revisions = await svc.list_revisions(character_id)
+    assert sorted(item.revision for item in revisions.items) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_update_cas_loss_still_compensates_when_still_highest(monkeypatch):
+    """CAS 落败但自己仍是最高版本 → **照旧补偿删除**（前提没把这条路径关掉）。
+
+    现实形态：另一个客户端**回滚**了指针（指针退回旧版本，而 revisions 集合里没有新增
+    更高版本）。此时删掉本次 append 的孤儿不会挖洞——补偿的原始意图仍要成立。
+    """
+    svc = _service()
+    character_id = await _create(svc)
+    await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
+    log = _WriteLog()
+    log.spy(monkeypatch, svc.rev_repo, "append_revision", APPEND)
+    log.spy(monkeypatch, svc.rev_repo, "delete_revision", DELETE)
+    await _install_rival_rollback(svc, monkeypatch)
+
+    with pytest.raises(RevisionConflictError):
+        await svc.update(character_id, _draft(displayName="v3"), expected_revision=2)
+
+    assert log.names == [APPEND, DELETE], "自己仍是最高版本 → 应当补偿删除"
+    assert log.args_for(DELETE) == [(character_id, 3)]
+    assert await svc.rev_repo.get_revision(character_id, 3) is None
+    revisions = await svc.list_revisions(character_id)
+    assert sorted(item.revision for item in revisions.items) == [1, 2]
 
 
 @pytest.mark.asyncio
@@ -491,19 +547,20 @@ async def test_update_compensation_failure_keeps_conflict_error(monkeypatch, cap
 
     svc = _service()
     character_id = await _create(svc)
+    await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
     log = _WriteLog()
-    append_original = log.spy(monkeypatch, svc.rev_repo, "append_revision", APPEND)
+    log.spy(monkeypatch, svc.rev_repo, "append_revision", APPEND)
     compensation_error = StorageUnavailableError("注入：补偿删除失败")
     log.spy(monkeypatch, svc.rev_repo, "delete_revision", DELETE, raises=compensation_error)
-    await _install_cas_loser(svc, monkeypatch, append_impl=append_original)
+    await _install_rival_rollback(svc, monkeypatch)
 
     with caplog.at_level(logging.WARNING):
         with pytest.raises(RevisionConflictError) as excinfo:
-            await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
+            await svc.update(character_id, _draft(displayName="v3"), expected_revision=2)
 
-    assert excinfo.value.current_revision == 3, "冲突语义不被善后失败顶替"
-    assert log.args_for(DELETE) == [(character_id, 2)]
-    assert await svc.rev_repo.get_revision(character_id, 2) is not None   # 孤儿（补偿未生效）
+    assert excinfo.value.current_revision == 1, "409 报真值，且不被善后失败顶替"
+    assert log.args_for(DELETE) == [(character_id, 3)]
+    assert await svc.rev_repo.get_revision(character_id, 3) is not None   # 孤儿（补偿未生效）
     assert any("补偿失败" in r.getMessage() for r in caplog.records)
 
 
@@ -531,8 +588,8 @@ async def test_update_success_orders_revision_before_pointer_and_never_compensat
 
 
 @pytest.mark.asyncio
-async def test_rollback_cas_loss_compensates_appended_revision(monkeypatch):
-    """rollback 的 CAS 落败 → **有补偿**：删掉本次 append 的 revision 3，409 冒泡。"""
+async def test_rollback_cas_loss_keeps_revision_when_higher_version_exists(monkeypatch):
+    """rollback 同 update：库中已有更高版本 → **不删**，历史保持连续。"""
     svc = _service()
     character_id = await _create(svc)
     await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
@@ -544,10 +601,13 @@ async def test_rollback_cas_loss_compensates_appended_revision(monkeypatch):
     with pytest.raises(RevisionConflictError):
         await svc.rollback(character_id, target_revision=1, expected_revision=2)
 
-    assert log.names == [APPEND, DELETE]
-    assert log.args_for(DELETE) == [(character_id, 3)]
-    assert await svc.rev_repo.get_revision(character_id, 3) is None
-    assert await svc.rev_repo.get_revision(character_id, 4) is not None
+    assert log.names == [APPEND], "库中已有更高版本 → 不得补偿删除"
+    assert log.args_for(DELETE) == []
+    assert await svc.rev_repo.get_revision(character_id, 3) is not None   # 孤儿保留
+    assert await svc.rev_repo.get_revision(character_id, 4) is not None   # 并发写者的版本
+    revisions = await svc.list_revisions(character_id)
+    assert sorted(item.revision for item in revisions.items) == [1, 2, 3, 4], \
+        "历史必须连续——缺格会让 reconcile 永久失败"
     definition = await svc.repo.get_definition(character_id)
     assert definition is not None and definition.currentRevision == 4
     assert definition.currentRevision != 2            # 指针没有被回滚重写的旧值覆盖
