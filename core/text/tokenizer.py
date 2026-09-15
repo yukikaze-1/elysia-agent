@@ -24,6 +24,11 @@
 - **行首双状态**：布尔 `at_line_start` + 缩进计数；围栏判定只看 `at_line_start`。
 - **SPEECH 确定性边界落盘**：待判定文本在标签事件 / 换行 / 空格 / flush
   边界输出，保证跨 chunk 不变式（单一 SPEECH 粒度由边界位置唯一决定）。
+- **行结束符契约**：本类只认 `\n` 为换行（`_WS` 刻意不含 `\r`）。归一（`\r\n` /
+  裸 `\r` → `\n`）由管道唯一摄入点 `core.text.stream_processor.StreamProcessor.feed`
+  完成——不要在此处补 `\r`：那只会修好 tokenizer 一条路径，而块内容、
+  `public_text`、tts_adapter/显示路径消费的事件文本仍带着 `\r`（"两条路径不对称"
+  缺陷家族）。直接使用本类（不经 StreamProcessor）的调用方须自行归一。
 
 未闭合处理（flush）：半截 PAUSE 剥离、未闭合 mood 丢弃（不发事件）、
 未闭合 inner_voice 产出残留 META token（由协调器广播）、未闭合

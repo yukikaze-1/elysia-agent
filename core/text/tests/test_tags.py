@@ -4,6 +4,9 @@
 行为对照表。每个用例钉死一项标签定义。
 """
 
+import json
+import re
+
 import pytest
 
 from core.text.tags import (
@@ -49,6 +52,169 @@ class TestIsEmojiOnly:
     def test_plain_text_false(self):
         """纯文字 → False。"""
         assert is_emoji_only("你好世界") is False
+
+
+# ---- Emoji 序列边界（CODE_REVIEW_REPORT #46 缺口行 #12）----------------------
+#
+# 修复前 `_EMOJI_RE` 只是若干**单码点**区间，序列成分（ZWJ U+200D、变体选择符
+# U+FE0F、keycap 组合符 U+20E3、区域指示符、tag 字符）全在区间外 →
+# `👨‍👩‍👧‍👦` / `❤️` / `1️⃣` / `🇨🇳` / `🏳️‍🌈` 一律 False。
+# 危害不是"少判一个 emoji"：`tts_adapter.stream_sentence` 的 is_emoji_only 闸门
+# 放行后，Module/tts 的 `_EMOJI_RE`（同样只认单码点）会把基底码点剥掉、
+# **只剩 ZWJ 串**（`👨‍👩‍👧‍👦` → `"\u200d\u200d\u200d"`），非空 → 真的发一次
+# 合成请求 → 正是缺口表点名的 "TTS 400 / 分句错位" 风险。
+
+# 正例：整句 = 一个或多个 emoji 序列（含修饰符 / 连接符 / 区域指示符 / tag 序列）
+_EMOJI_ONLY_TRUE = [
+    pytest.param("\U0001F600", id="single-u1f600"),
+    pytest.param("\U0001F44D\U0001F3FD", id="skin-tone-modifier"),
+    pytest.param(
+        "\U0001F468\u200D\U0001F469\u200D\U0001F467\u200D\U0001F466",
+        id="zwj-family",
+    ),
+    pytest.param("\u2764\uFE0F", id="heart-vs16"),
+    pytest.param("\u2764", id="heart-bare-u2764"),
+    pytest.param("1\uFE0F\u20E3", id="keycap-1"),
+    pytest.param("#\uFE0F\u20E3", id="keycap-hash"),
+    pytest.param("\U0001F1E8\U0001F1F3", id="regional-indicator-cn"),
+    pytest.param("\U0001F3F3\uFE0F\u200D\U0001F308", id="rainbow-flag"),
+    pytest.param(
+        "\U0001F3F4\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F",
+        id="tag-sequence-scotland",
+    ),
+    pytest.param("\U0001FAE0", id="extended-a-u1fae0"),
+    pytest.param("\U0001F44D\U0001F44D\U0001F44D", id="repeat-same"),
+    pytest.param("\U0001F44D \U0001F389", id="two-emoji-space-between"),
+    pytest.param("\U0001F3FD", id="lone-skin-tone-modifier"),
+    pytest.param("\u266A\u266A", id="musical-notes-existing"),
+    pytest.param("", id="empty"),
+    pytest.param("   ", id="whitespace-spaces"),
+    pytest.param("\t\n ", id="whitespace-mixed"),
+]
+
+# 反例 A：含真实文本字符 → False（"闸门不得放宽成含 emoji 即跳过"）
+_NON_EMOJI_TEXT_FALSE = [
+    pytest.param("\U0001F44D \u597D", id="emoji-space-cjk"),
+    pytest.param("hello", id="ascii-word"),
+    pytest.param("\u3002", id="ideographic-full-stop"),
+    pytest.param("\U0001F44Da", id="emoji-ascii-letter"),
+    pytest.param("<#0.5#>", id="pause-tag"),
+    pytest.param("\U0001F44D\uFF01", id="emoji-cjk-punct"),
+    pytest.param("1", id="bare-digit"),
+    pytest.param("#", id="bare-hash"),
+    pytest.param("(\u7728\u773C)", id="stage-cn-paren"),
+]
+
+# 反例 B：只有序列修饰符、没有基底码点 —— 修饰符不构成 emoji 序列（见类文档）
+_LONE_MODIFIER_FALSE = [
+    pytest.param("\u200D", id="lone-zwj"),
+    pytest.param("\uFE0F", id="lone-vs16"),
+    pytest.param("\u20E3", id="lone-keycap-combining"),
+]
+
+# 反例 C：代理码点（不可达，仅记录边界 —— 见 TestSurrogateBoundary）
+_SURROGATE_FALSE = [
+    pytest.param("\ud83d\ude00", id="literal-surrogate-pair"),
+    pytest.param("\ud83d", id="literal-lone-surrogate"),
+]
+
+_EMOJI_ONLY_FALSE = _NON_EMOJI_TEXT_FALSE + _LONE_MODIFIER_FALSE + _SURROGATE_FALSE
+
+# 独立判据：非 emoji、非空白、非序列修饰符的"真文本"字符类（与生产正则**分写**，
+# 只用于表自检——避免"用被测函数验证被测表"的循环论证）。
+_TEXT_RESIDUE_RE = (
+    r"[^"
+    "\U0001F300-\U0001F9FF"
+    "\U00002600-\U000027BF"
+    "\U00002300-\U000023FF"
+    "\U0001F1E6-\U0001F1FF"
+    "\U0001FA70-\U0001FAFF"
+    "\uFE0F\u200D\u20E3"
+    "\U000E0020-\U000E007F"
+    "\U0001F3FB-\U0001F3FF"
+    r"\s"
+    "]"
+)
+
+
+class TestIsEmojiOnlySequences:
+    @pytest.mark.parametrize("text", _EMOJI_ONLY_TRUE)
+    def test_sequences_true(self, text):
+        """emoji 序列（ZWJ / 变体选择符 / 肤色 / keycap / 区域指示符 / tag）→ True。"""
+        assert is_emoji_only(text) is True
+
+    @pytest.mark.parametrize("text", _EMOJI_ONLY_FALSE)
+    def test_non_emoji_content_false(self, text):
+        """含非 emoji、非空白字符 → False（闸门不得被放宽成"含 emoji 即跳过"）。"""
+        assert is_emoji_only(text) is False
+
+    def test_table_not_vacuous(self):
+        """参数表自检：正反例非空、互不相交，且反例 A 确实含"真文本"残留。
+
+        "反例真的含非 emoji 字符"用**独立**字符类（``_TEXT_RESIDUE_RE``）现算，
+        不复用 ``is_emoji_only``——否则自检与被测函数同源，等于没检。
+        """
+        positives = [p.values[0] for p in _EMOJI_ONLY_TRUE]
+        negatives = [p.values[0] for p in _EMOJI_ONLY_FALSE]
+        assert positives and negatives
+        assert len(set(positives)) == len(positives)
+        assert len(set(negatives)) == len(negatives)
+        assert set(positives) & set(negatives) == set()
+        for param in _NON_EMOJI_TEXT_FALSE:
+            text = param.values[0]
+            assert re.search(_TEXT_RESIDUE_RE, text), f"{text!r} 缺真文本残留"
+        # 修饰符反例必须**只有**修饰符，否则它测不到"修饰符无基底"这条边界
+        for param in _LONE_MODIFIER_FALSE:
+            text = param.values[0]
+            assert not re.search(_TEXT_RESIDUE_RE, text), f"{text!r} 并非纯修饰符"
+            assert all(
+                ch in "\u200D\uFE0F\u20E3" for ch in text
+            ), f"{text!r} 含非修饰符字符"
+        for param in _SURROGATE_FALSE:
+            for ch in param.values[0]:
+                assert 0xD800 <= ord(ch) <= 0xDFFF, "代理反例必须是代理码点"
+
+    def test_long_input_terminates(self):
+        """10 万字符纯 emoji 序列：终止、不爆栈、判定仍为 True。"""
+        assert is_emoji_only("\U0001F600" * 25_000) is True
+        assert is_emoji_only(
+            "\U0001F468\u200D\U0001F469\u200D\U0001F467" * 10_000
+        ) is True
+        # 末尾掺一个汉字 → 必须 False（长输入不得退化成"总是 True"）
+        assert is_emoji_only("\U0001F600" * 25_000 + "\u597D") is False
+
+
+class TestSurrogateBoundary:
+    """代理对（surrogate pair）边界 —— 记录不可达，不为它扭曲正则。
+
+    结论：**成对代理在管道里不可达**（证据见本类的三个用例与
+    ``core/text/README.md``「换行与 emoji 边界」）。
+
+    1. WS 入口 ``core/input/ws_handler.py::_run_ws_message_loop`` 用
+       ``json.loads(msg.data)``，而 ``msg.data`` 是 aiohttp 已按 UTF-8 解码的 str；
+       UTF-8 编码**禁止**代理码点（``"\\ud83d".encode("utf-8")`` → UnicodeEncodeError）。
+    2. ``json.loads('"\\ud83d\\ude00"')`` 会把转义对**合并**成单个 U+1F600，
+       线上实际到达 ``is_emoji_only`` 的是真字符而非两个代理码点。
+    3. LLM SDK 的增量内容同样是已解码 str（不产生代理码点）。
+
+    只有**畸形** JSON（单独 ``"\\ud83d"`` 转义）能构造出裸代理；它不是 emoji、
+    也不是合法文本，故保持 False —— 放行一次无意义合成请求无害，把乱码当 emoji
+    静默吞掉反而会掩盖上游解码问题。
+    """
+
+    def test_paired_surrogates_are_not_emoji(self):
+        """字面代理对 → False（不可达；记录边界，避免正则被代理区间污染）。"""
+        assert is_emoji_only("\ud83d\ude00") is False
+
+    def test_lone_surrogate_is_not_emoji(self):
+        """裸代理 → False（同上：乱码不是 emoji）。"""
+        assert is_emoji_only("\ud83d") is False
+
+    def test_real_char_after_json_decode_is_emoji(self):
+        """JSON 解码后的真字符（U+1F600）→ True —— 这才是线上实际形态。"""
+        decoded = json.loads('"\\ud83d\\ude00"')
+        assert decoded == "\U0001F600"
+        assert is_emoji_only(decoded) is True
 
 
 # ============================================================================

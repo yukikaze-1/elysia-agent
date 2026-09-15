@@ -26,6 +26,8 @@ from collections.abc import Iterable
 from core.text.tokenizer import Token, TokenKind
 
 
+# 句边界字符集。刻意不含 `\r`：换行归一在 `StreamProcessor.feed`（管道唯一摄入点）
+# 收口，到这里只可能是 `\n`——在此补 `\r` 只会掩盖上游未归一的输入。
 _HARD_DELIMITERS = frozenset("。！？!?\n♪♡")
 _DEFAULT_DELIMITERS = _HARD_DELIMITERS | {"."}
 

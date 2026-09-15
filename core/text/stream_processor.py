@@ -24,6 +24,10 @@ MOOD / INNER_VOICE / SENTENCE / TEXT_DELTA / TTFT（无新增事件类型）。
 - 块闭合时记录 `after_sentence_idx = splitter.completed_count()`（含 min_chunk 暂留
   与 max_buffer 强制切分的句子，spec v3.6.3），get_blocks()/rebuild_public_text()
   复用 core.text.parts（BlockRef + rebuild_public_text）。
+- **换行归一**：`feed()` 是管道唯一摄入点，`\\r\\n` / 裸 `\\r` 在此归一为 `\\n`
+  （跨 chunk 安全，chunk 末尾的 `\\r` 扣到下一 chunk / flush 定论）——见
+  `_normalize_newlines`。修前 CRLF 会让围栏收尾行永不闭合（块 + 块后文本静默消失），
+  裸 `\\r` 会让行首状态无法重建（围栏被当可见文本播报）。
 """
 
 from __future__ import annotations
@@ -83,11 +87,21 @@ class StreamProcessor:
         self._blocks: list[BlockRef] = []
         self._all_tokens: list[Token] = []
         self._ttft_sent = False
+        self._cr_pending = False
 
     # ---- 公共接口 ----------------------------------------------------------
 
     def feed(self, delta: str) -> list[StreamEvent]:
-        """输入增量文本，返回零到多个事件。"""
+        """输入增量文本，返回零到多个事件。
+
+        换行归一（``\\r\\n`` / 裸 ``\\r`` → ``\\n``）在本方法完成 —— 这里是
+        **管道唯一摄入点**（LLM 增量只经此进入 tokenizer/splitter/块/public_text，
+        下游 tts_adapter 与显示路径都消费本方法的产物）。不变式见
+        ``_normalize_newlines``。
+        """
+        if not delta:
+            return []
+        delta = self._normalize_newlines(delta)
         if not delta:
             return []
         events: list[StreamEvent] = []
@@ -103,6 +117,14 @@ class StreamProcessor:
             残留的 StreamEvent 列表。flush() 后 get_blocks() 返回本轮全部块。
         """
         events: list[StreamEvent] = []
+        # 跨 chunk 扣下的 \r：流已结束 → 定论为行终止符 \n（等价于 LF 输入），
+        # 否则一个"末尾恰好是 \r"的流会把这一行粘进上一行（且 tokenizer 永远
+        # 收不到换行，行首状态无法重建）。
+        tail = self._take_pending_cr()
+        if tail:
+            for token in self._tokenizer.feed(tail):
+                self._all_tokens.append(token)
+                self._route(token, events)
         # tokenizer 残留（未闭合 inner_voice 产出 META → 广播；收尾围栏 EOF 确认
         # 闭合产出 CODE → 记块；半截标签/prefix 回落 SPEECH）
         for token in self._tokenizer.flush():
@@ -118,6 +140,7 @@ class StreamProcessor:
         self._blocks = []
         self._all_tokens = []
         self._ttft_sent = False
+        self._cr_pending = False
 
     def get_blocks(self) -> list[BlockRef]:
         """返回本轮全部代码块：(kind, content, lang, after_sentence_idx)。"""
@@ -126,6 +149,47 @@ class StreamProcessor:
     def rebuild_public_text(self) -> str:
         """按 token 流重建 public_text（去 META，保留 PAUSE/STAGE_CN/块内容）。"""
         return rebuild_public_text(self._all_tokens)
+
+    # ---- 换行归一（管道唯一摄入点）-------------------------------------------
+
+    def _normalize_newlines(self, delta: str) -> str:
+        """换行归一：``\\r\\n`` / 裸 ``\\r`` → ``\\n``（跨 chunk 安全）。
+
+        为什么在摄入点而不是各处空白集合：``\\r`` 会渗进 tokenizer 的
+        ``_WS``/行首判定、splitter 的 ``_HARD_DELIMITERS``、块内容、``public_text``、
+        以及 tts_adapter/显示路径消费的事件文本 —— 逐点补 ``\\r`` 属于
+        "两条路径不对称"缺陷家族（补了一处漏另一处），且块内容里的 ``\\r`` 无论如何
+        都该归一。归一一次 = 下游所有消费者自动一致。
+
+        不变式（CRLF 输入的产物与 LF **逐项相同**）：
+
+        - 归一后管道内部不再出现 ``\\r``；
+        - chunk 末尾的 ``\\r`` **扣下**到下一个 chunk 再定论，因为 ``"...\\r"`` +
+          ``"\\n..."`` 是跨 chunk 的 CRLF：下一个 chunk 以 ``\\n`` 开头则吞掉该
+          ``\\n`` 并补一个 ``\\n``（净效果恰好一个换行）；否则直接补 ``\\n``
+          （裸 CR = 行终止符）。朴素的每 chunk ``replace("\\r\\n", "\\n")``
+          会把这对跨 chunk 的 CRLF 变成**两个**换行。
+        - ``flush()`` 时仍扣着（流截断在半个 CRLF）→ 按行终止符补发 ``\\n``；
+        - ``reset()`` 清空持有态，不把上一轮的 ``\\r`` 带进下一轮；
+        - 空 chunk（``feed("")``）不是"新数据"——``feed`` 在调用本函数前就返回，
+          持有态保持不变。
+        """
+        if self._cr_pending:
+            self._cr_pending = False
+            if delta.startswith("\n"):
+                delta = delta[1:]
+            delta = "\n" + delta
+        if delta.endswith("\r"):
+            self._cr_pending = True
+            delta = delta[:-1]
+        return delta.replace("\r\n", "\n").replace("\r", "\n")
+
+    def _take_pending_cr(self) -> str:
+        """取走跨 chunk 持有态：流已结束，``\\r`` 定论为行终止符，返回 ``"\\n"``。"""
+        if not self._cr_pending:
+            return ""
+        self._cr_pending = False
+        return "\n"
 
     # ---- 路由 --------------------------------------------------------------
 
