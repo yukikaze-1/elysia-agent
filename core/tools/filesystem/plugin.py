@@ -117,7 +117,9 @@ class ReadFilePlugin(ToolPlugin):
     risk_level = "safe"  # 沙盒只读（§3.3）
     safety = SafetyProfile(
         filesystem_allowed=True,
-        read_dirs=["/home/yomu/data/sandbox"],
+        # S2-G4 残余：默认值也必须是**模板**形态——config.yaml 缺失/加载失败时
+        # 类默认值是唯一防线，裸根会让"读"跨会话（写路径一直是模板）。
+        read_dirs=["/home/yomu/data/sandbox/{session_id}"],
         max_file_bytes=10 * 1024 * 1024,
         allow_symlinks=False,
         idempotent=True,  # 只读：超时重试安全（2026-09-16 幂等声明）
@@ -210,7 +212,9 @@ class ListDirPlugin(ToolPlugin):
     risk_level = "safe"  # 沙盒只读（§3.3）
     safety = SafetyProfile(
         filesystem_allowed=True,
-        read_dirs=["/home/yomu/data/sandbox"],
+        # S2-G4 残余：默认值也必须是**模板**形态——config.yaml 缺失/加载失败时
+        # 类默认值是唯一防线，裸根会让"读"跨会话（写路径一直是模板）。
+        read_dirs=["/home/yomu/data/sandbox/{session_id}"],
         max_dir_depth=3,
         allow_symlinks=False,
         idempotent=True,  # 只读：超时重试安全（2026-09-16 幂等声明）

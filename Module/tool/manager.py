@@ -173,6 +173,11 @@ class ToolManager:
         plugin_dir = Path(module_file).parent
         config_file = plugin_dir / "config.yaml"
         if not config_file.is_file():
+            # S2-G4 残余：静默 return 会让"配置没生效"这件事完全不可见，而此刻生效的是
+            # **类默认值**——读白名单的类默认值必须是会话模板（见 plugin.py），否则跨会话可读。
+            logger.warning(
+                "工具 '%s' 缺 config.yaml，使用类默认 SafetyProfile（读白名单应为会话模板）",
+                cls.__name__)
             return
         try:
             raw = yaml.safe_load(config_file.read_text("utf-8"))

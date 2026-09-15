@@ -138,3 +138,27 @@ class TestCheckSafetyWiring:
         err = await SafetyPipeline()._check_safety(  # noqa: SLF001
             _ReadPlugin(), _Ctx("my-session"), {"path": f"{_BASE}/my-session/a.txt"})
         assert err is None
+
+
+class TestPluginClassDefaultsAreSessionScoped:
+    """S2-G4 残余：**类默认值**也必须是会话模板。
+
+    `manager._load_safety_config` 在 `config.yaml` 缺失时**静默 return**（现在会 warning），
+    此刻生效的是插件类的 `SafetyProfile` 默认值。默认值若是裸根，读路径就跨会话——
+    写路径（`write_dir`）一直是模板，这是同一份隔离里的两套默认。
+    """
+
+    def test_read_plugins_default_to_session_template(self):
+        from core.tools.filesystem.plugin import ListDirPlugin, ReadFilePlugin
+
+        for cls in (ReadFilePlugin, ListDirPlugin):
+            dirs = cls.safety.read_dirs or []
+            assert dirs, f"{cls.__name__} 的 read_dirs 类默认为空——读路径会全挂"
+            assert all("{session_id}" in d for d in dirs), (
+                f"{cls.__name__} 的 read_dirs 类默认不是会话模板（裸根=跨会话可读）：{dirs}")
+
+    def test_write_dir_default_is_session_template(self):
+        """同一份隔离里两个默认值必须同口径（写一直是模板）。"""
+        from Module.tool.safety import SafetyProfile
+
+        assert "{session_id}" in SafetyProfile().write_dir
