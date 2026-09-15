@@ -125,24 +125,35 @@ class ConstraintConfig(BaseModel):
     WorkflowEngine 内所有执行路径强制遵守。这些是"天花板"——
     通过 WorkflowConstraints.resolve(global) 合并，任务级 None → 全局值，超限 → clamp。
 
-    字段：
+    字段（**标注的是"实际是否被执行"，不是设计意图**——RC-9 的教训：
+    `DAGNode.max_duration_s` 与 6 个 `WorkflowErrorCode` 就因为"声明了当已生效"
+    长期无人发现）：
+
         max_total_tokens:     整个任务 LLM 调用总 token 上限（硬）
-        max_context_tokens:   单次 prompt 最大 token 数（硬）
+        max_context_tokens:   单次 prompt 最大 token 数（**预留：当前无执行点**）。
+                              唯一引用是 `core/evaluator.py` 的 TODO 注释；实现前
+                              **不得**当作已生效（`make check-contract` 把它登记在
+                              `_PENDING_WRITERS`）。
         max_failure_count:    连续失败 N 次后熔断（硬）。
                               当前 v1 中 replan 只能由 failure 触发，故此值
                               同时充当 max_replans。若以后引入非失败驱动的 replan
                               （如"换个更优方案"），需拆为独立字段。
         max_dag_nodes:        DAG 节点数上限（硬）
-        max_retries_per_node: 单节点最大重试次数（硬）
-        max_mutations:        敏感操作次数上限（硬）
+        max_retries_per_node: 单节点最大重试次数（硬；执行点在
+                              `workflow_engine/core/execution.py`，节点级 None 时回退到它）
+        max_mutations:        敏感操作次数上限（**软：只作为 Planner/Delegation 的
+                              prompt 提示**，执行期不强制）。要变硬约束需在
+                              `PlanValidator` 里加校验点——在那之前它拦不住任何东西。
         max_task_duration_s:  整个任务最大执行时间（秒）（硬）
         max_tool_error_chars: 工具错误消息截断长度（软）
     """
     max_total_tokens: int       = Field(default=100_000,  ge=1)   # 至少 1 token，否则无法执行
-    max_context_tokens: int     = Field(default=32_000,   ge=1)   # 至少 1 token，否则无法投 prompt
+    # 预留：无执行点（见类 docstring）。保留字段是为了不破坏既有配置文件的解析。
+    max_context_tokens: int     = Field(default=32_000,   ge=1)
     max_failure_count: int      = Field(default=5,         ge=1)
     max_dag_nodes: int          = Field(default=20,        ge=1)
     max_retries_per_node: int   = Field(default=3,         ge=0)
+    # 软约束：只进 prompt（planner/delegation），执行期不强制（见类 docstring）。
     max_mutations: int          = Field(default=10,        ge=0)
     max_task_duration_s: float  = Field(default=600.0,     ge=0)  # 10 分钟
     max_tool_error_chars: int   = Field(default=2000,      ge=0)

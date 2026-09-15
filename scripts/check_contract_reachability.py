@@ -96,8 +96,12 @@ _RESERVED_ENUM_MEMBERS: dict[str, str] = {
 
 # ── F1：有读无写的字段（登记 = 已知缺口，写清"该谁补"或"为什么允许"）─────────
 _PENDING_WRITERS: dict[str, str] = {
-    "ConstraintConfig.max_context_tokens": "约束未实现（#45：实现硬约束或修文档承诺）",
-    "ConstraintConfig.max_retries_per_node": "约束未实现（#45 同族）",
+    "ConstraintConfig.max_context_tokens": (
+        "#45 已落地为**改文案**：声明改为'预留：当前无执行点'，字段保留只为兼容既有"
+        "配置文件。仍是'有读无写'（全局默认值字段，任务级不覆盖）——故保留登记"),
+    "ConstraintConfig.max_retries_per_node": (
+        "**全局默认值字段**：只被读、值由构造期默认注入，任务级 `None` 即回退——"
+        "这是设计，不是缺失的生产者。执行点在 workflow_engine/core/execution.py"),
     "HITLData.rbac_level": "RBAC 分级尚未落地：字段在契约里，生产者不填",
     "WorkflowState.token_entries": "token 分项账本尚无写入点（与 TokenComponentType 预留同源）",
     "DAGNode.max_duration_s": "节点级超时未接线：字段被 execution.py 读取做 wait_for，但规划器不填",
