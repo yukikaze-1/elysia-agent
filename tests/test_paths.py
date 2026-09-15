@@ -116,11 +116,13 @@ class TestEnumMetadata:
             "DATA_SANDBOX", "DATA_CACHE_VISION", "DATA_REF", "DATA_SECRETS",
             "LOG", "STATIC", "LIVE2D_ASSETS", "PROMPTS", "SYSTEM_PROMPT_TEMPLATES",
             "CHARACTERS", "MODEL_CACHE",
-            # 文件（11）
+            # 文件（13）
             "CONFIG_YAML", "DOTENV", "CUSTOM_PROVIDERS_YAML", "STT_SAMPLE_WAV",
             "TOKEN_PENDING", "SESSION_PENDING", "SESSION_PENDING_CHECK",
             "SCHEDULER_CHECKPOINT", "MEMORY_PENDING_DELETES",
             "MEMORY_PENDING_SYNCS", "SESSION_PENDING_CLEANUP",
+            # #41 / #10：提交后清理 journal 与未整合缓冲 journal
+            "PENDING_ATTACHMENT_RELEASE", "CONSOLIDATOR_PENDING",
         }
         assert {m.name for m in ProjectPath} == expected
 

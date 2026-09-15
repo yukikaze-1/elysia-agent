@@ -685,6 +685,113 @@ test_desktop_roundtrip.py` 红了 → `git worktree` 在 A 之前的提交复跑
 记日志继续），而 `long_term.py` 有 6+ 处调用点、无统一收口，改错会把"静默丢写"变成
 "打断回合"，故留作独立一项。
 
+---
+
+### §0.4.12 #41 / #10 / #6 完成（2026-09-15，3 个独立提交）
+
+owner 指定做队列里量级最大的三项（`#41` 0.5d、`#10` 0.5d、`#6` 0.5–1d）。三项都
+是"**失败/停机路径上的数据去向**"这一类——正是报告说的"门禁结构上看不见"的缺口。
+
+| 项 | 提交 | 修的是什么 | 反证（注入即红） |
+|---|---|---|---|
+| **#41** | `2ea87b62` | CR-04 彻底版：四条 debug 删除路径改「**快照 → 提交 → 释放**」，把"提交失败 ⇒ 无副作用"变成不变量 | 把 release 挪回提交之前 → `['release','commit']`；提交失败时实得 `['release']`（旧顺序下附件已被软删） |
+| **#10** | `19fc1a74` | 未整合对话缓冲**落盘 + 下次启动补提**（决策 #10） | 去掉 `_requeue` 落盘 → 5 条红；构造时不读回 journal → 3 条红 |
+| **#6** | `b3abca8d` | 后台任务终态**跨重启不丢**（决策 #6）：先落库再投递 + 启动补投 + stranded 落 `interrupted` | 去掉投递前落库 → 3 条红（含顺序 trace 实得 `['post','mark']`）；关停也标 `delivered=True` → 2 条红 |
+
+#### (a) #41：为什么"先提交后释放"才是安全的那个方向
+
+报告 CR-04 建议 #3 写的是"把 release 移到 clear_all 提交之后"，一句话；做起来要先
+把不可逆删除路径读透，因为**它换的是失败方向，不是消除失败**：
+
+| 顺序 | 提交失败时 | 释放失败时 | 崩溃在两步之间 |
+|---|---|---|---|
+| 旧（release → commit） | 附件已软删、消息还在 → **24h 后 GC 物理删文件**，而消息仍引用它 | 503"未删除"（此时是真的没删） | 同左：不可逆损失 |
+| 新（commit → release） | 什么都没发生 | 200 + `cleanup_pending` + journal 重试 | 消息已删、refs 待释放 → **只延迟清理** |
+
+关键前提：`remove_ref` 是条件 update（`refs` 含该 message_id 才 pull+dec），
+所以 journal 重试天然幂等；而反方向（消息还在、附件记录已软删）**没有**任何自动
+恢复机制——GC 规则 1 只会按时删。**所以两个方向不是对称的，必须选泄漏而不是丢失。**
+
+配套（都是"否则就不是彻底版"的部分）：
+
+- 快照必须**在提交前读**（`collect_all_attachment_refs`）——提交后消息不存在了，
+  反查不到它们引用了哪些附件，refs 会永久残留（`ref_count > 0` 让 GC 规则 3 永不命中）；
+- 新增 `pending_attachment_release` journal（`data/pending_attachment_release.json`），
+  **启动步骤** `pending_cleanups` + Mongo 恢复边界两处重试；
+- 契约 `DebugResult.cleanup_pending`（Optional，成功路径不发射 → wire 不变）；
+- 提交**前**读快照失败仍是 503 + 什么都不删（S2-F2 的"未删除语义"保留）。
+
+#### (b) 顺带修掉的一个既有空洞（两条 journal 共用）
+
+`SESSION_PENDING_CLEANUP`（review 复核 #5 D2 引入）只挂在 `_recover_dependency("session")`
+的 **False→True 边界**上，而**干净重启根本没有这个边界**：首轮 `prev={}` 既产生不了
+边界、`_dependency_needs_recovery("session")` 也恒 False。于是上一进程留下的 journal
+会一直躺到 Mongo 某次抖动才被读到（实测确认）。#41 新增的 journal 一并放到启动步骤里，
+并把旧的也补上——**"下次启动补做"才名副其实**。
+
+#### (c) #10：为什么落盘点不在"关机"这一处
+
+第一版把 `save_pending()` 放进 `_flush_consolidator` 的 `finally`，注入删除后
+**测试仍全绿**——说明它是冗余路径（真正的落盘在 `_requeue`），已删除（不留无法证伪的
+守卫）。最终三个落盘点各自可证伪：
+
+| 落盘点 | 覆盖的场景 | 反证 |
+|---|---|---|
+| `consolidate()` 未达阈值分支 | 每轮即落盘 → **SIGKILL（无关机钩子）也不丢** | 去掉 → 相关用例红 |
+| `_requeue()` | 达到阈值后 batch 已 detach，**这是失败路径的唯一落盘点** | 去掉 → 5 条红 |
+| `_do_consolidate()` 成功末尾 | 本批已消化 → journal 清空（否则下次重复提取） | 去掉 → 成功清空用例红 |
+
+补提触发有两条路径（覆盖全部 runtime）：启动步骤 `consolidator_catchup` 覆盖"启动时
+已注册"的 runtime；`_pending_restored` 标志覆盖懒加载的自定义实例（它的下一次对话
+立刻补提，**不看阈值**——否则要等用户再聊够 6 轮，而他可能再也不聊）。
+
+#### (d) #6：S2-A4 其实只修了一半（本轮实测确认）
+
+S2-A4 的结论是"停机窗口内的终态事件要投递"。实测：`stop()` **第一行**就置
+`_state = STOPPED`，`_stop_event_task` 又是 `_SHUTDOWN_STEPS` 的**第一步**，而
+`_stop_mailbox` 在第 11 步——那次 `bus.post` 投进的是**已经没人读的优先队列**。
+即 S2-A4 修好了"注册表留到排空之后"（让事件读得到），但事件本身仍然送不出去。
+#6 补的就是这一半：投递**先落库**，`_state == RUNNING`（消费者活着）才标
+`delivered=True`，关停路径留 False → 启动步骤 `task_result_redelivery` 重新投进
+**活着的**总线。判据用 `_state` 而不是"是否在关停中"，因为 `_state` 编码的正是
+"总线那头有没有人"。
+
+两个设计取舍（都写进了 docstring）：
+
+1. **落库失败不阻断投递**——Mongo 离线时"当下告诉用户"优先于"跨重启保障"，
+   只记 warning（不是静默）；
+2. 单次读写加 2s 预算（`_TASK_RESULT_STORE_TIMEOUT`，登记为超时门禁的**叶子预算**）
+   —— 驱动默认 `serverSelectionTimeoutMS` 是 30s，"Mongo 网络黑洞"下一条落库能把
+   停机拖住 30s（用户视角是"关不掉"）。
+
+**已知边界（如实标注）**：本项覆盖"正常关停 / 重启"。**硬崩溃（SIGKILL）**下 mailbox
+与内存一起消失、终态事件从未产生，本仓储也无从落库——要覆盖它必须把落库点前移到
+引擎产出终态的那一刻（`push_mailbox_event` 是同步自由函数，需把 infra 线进 mailbox）。
+
+#### (e) 本轮三次"被守卫抓住"的记录（都是既有测试/门禁的价值证明）
+
+1. **`#41` 释放键写错**（用 URL 上的 `_mongo_id` 而非 `message.message_id`）→ 被既有的
+   `test_attachment_message.py::test_delete_message_releases_attachment_refs` 抓住
+   （`ref_count` 停在 2，条件 update 一行都不命中）。**这是"改一处必须跑受影响邻居"的又一次实证。**
+2. **新仓储没有 fail-closed 分类** → 被 `test_fail_closed_convention.py` 抓住，
+   逼着显式表态（读路径 `READ_FAIL_CLOSED`：静默返回空会让"Mongo 离线"伪装成
+   "没有待补投的任务"，那正是"终态不丢"被悄悄取消的样子）。
+3. **新集合索引未登记** → 被 `test_schema_drift.py` 的 AST 反向校验抓住（表与代码
+   必须逐项一致），顺带暴露 `test_expected_table_is_non_trivial` 的硬编码计数
+   需要同步（12→13 集合 / 26→28 索引）。
+
+#### (f) 三项之后仍剩的队列（未做，如实标注）
+
+| 项 | 内容 | 量级 |
+|---|---|---|
+| `MemoryRepository.insert/delete` | 写路径 5 条的**最后 2 条**（需先在 `long_term.py` 定统一收口点，6+ 调用点） | 0.25d |
+| `#44` | `core/character/service.py`（1351 行）按写入链拆分 | 1–2d |
+| `#46` | 测试缺口补齐（14 行表的 P1/P2 部分） | 2–3d |
+| `S2-R6-1` | 真实 MongoDB 测试专层（docker + marker + CI job） | 1d |
+| `#6` 的硬崩溃面 | 落库点前移到 `push_mailbox_event`（需把 infra 线进 mailbox） | 0.5d |
+| owner 待讨论 | `#5` 多客户端语义、CR-12 彻底版 | — |
+| owner-only | CR-01 步骤 1–2（轮换 key + Milvus 口令，再清历史） | — |
+
 **(2) 正文写了、但从未排进任何计划（38 条）**
 
 > 另有本轮补进来的三类（路线图【新增】项 / 门禁登记缺口 / 5 条写路径缺陷）见 §0.4.10(b)。

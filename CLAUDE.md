@@ -136,7 +136,7 @@ Module/<service>/
 ```
 core/
 ├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types + AgentStatus + FSM + 4 lifecycle mixins
-│   ├── agent.py           #   Agent.__init__ + event handling + process_message + 45 公开 @property + background tasks
+│   ├── agent.py           #   Agent.__init__ + event handling + process_message + 46 公开 @property + background tasks
 │   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + _STARTUP_STEPS + _SHUTDOWN_STEPS + 3 flush
 │   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
 │   ├── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
@@ -194,7 +194,8 @@ core/
 │   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; count-based _evict_overflow; async mark_absorbed with Milvus cleanup。MemoryEntry.memory_type 用 MemoryType StrEnum，构造/update/search 边界经 try_coerce/coerce 归一（未知→Note，过滤大小写不敏感）
 │   ├── embedding_provider.py # EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback
 │   ├── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
-│   └── consolidator.py     # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
+│   ├── consolidator.py     # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
+│   └── consolidator_pending.py # 未整合对话缓冲 journal（#10/决策 #10）：关机 flush 超时即丢 → 每轮/失败/成功三处落盘，构造时读回 + 下次启动补提
 ├── storage/                # Storage layer: MongoDB/Milvus repositories
 │   ├── session_repo.py     #   SessionRepository: session CRUD（sessions 集合无 Mongo TTL）
 │   ├── message_repo.py     #   MessageRepository: message archive append-only log
@@ -204,7 +205,9 @@ core/
 │   ├── character_version_repo.py # CharacterVersionRepository: L2/C6 version history
 │   ├── attachment_repo.py  #   AttachmentRepository: attachments 集合（fail-closed，BE-070——Mongo 离线 raise StorageUnavailableError → 503；refs/ref_count + 软删 status/deleted_at）
 │   ├── attachment_release.py # AttachmentRelease: 会话/消息删除的附件引用释放共享 helper（提取自 debug_routes/archive.py；REST DELETE /api/sessions/{id} 删除前先 release_session_attachments，批次 8a D5）
-│   └── attachment_gc.py    #   AttachmentGC: 启动兜底扫描四规则（软删超 24h 物理删 / active 文件缺失软删 / 未关联超 7 天软删 / 磁盘孤儿删文件，限四 kind 目录，BE-071）
+│   ├── attachment_gc.py    #   AttachmentGC: 启动兜底扫描四规则（软删超 24h 物理删 / active 文件缺失软删 / 未关联超 7 天软删 / 磁盘孤儿删文件，限四 kind 目录，BE-071）
+│   ├── pending_attachment_release.py # 提交后附件引用释放失败 journal（#41）：主操作已提交、refs 未释放 → 落盘，启动 + 恢复边界重试
+│   └── background_task_repo.py # BackgroundTaskResultRepository: 后台任务终态结果（#6，task_id unique + 7d TTL，fail-closed）——停机落库 + 启动补投
 ├── config/                 # Config sub-package: character_config + app_config
 │   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
 │   ├── app_config.py          # AgentConfig: YAML-loaded app configuration
@@ -334,7 +337,7 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **inner_voice protocol**: Every reply has one `<inner_voice>` block (1-2 sentences: current feeling + response intent, no reasoning chains).
 - **Project paths**: `from paths import ProjectPath, get_project_root` — 所有项目文件系统路径的唯一定义点。`ProjectPath.X.resolve()` 返回基于 `ELYSIA_ROOT` 环境变量（fallback 为项目根目录）的绝对 `Path`。
 - **AgentStatus**: `agent.status`（`AgentStatus`）提供语义状态查询（`is_accepting_input` / `is_speaking` / `should_suppress_vad_interrupt` 等）；`agent.phases`（`CognitivePhaseController`）驱动阶段转换。底层 `AgentFSM` 不对外暴露。设计文档：[spec](docs/superpowers/specs/archive/2026-07/2026-07-30-agent-status-interface-design.md)。
-- **Agent 公开接口**: `Agent` 作为组合根，通过 **45 个同名 `@property`** 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
+- **Agent 公开接口**: `Agent` 作为组合根，通过 **46 个同名 `@property`** 公开子系统访问路径（`agent.session` / `agent.long_term` / `agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.stt` / `agent.tts` / `agent.config` / `agent.bus` 等，可写性由子系统 API 自管）。状态写方法：`agent.request_shutdown()` / `agent.request_restart()`（设 `_state` 信号引导主循环退出，不做清理）；`agent.set_service(service, enabled)`（STT/TTS 后端模式开关）；`agent.purge_message_from_session(msg_id)`。跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省用 `# noqa: SLF001` 显式豁免。设计文档：[spec](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
 - **私有穿透的两种形态（R3 都看不见）**: ① 字符串形式 `getattr(obj, "_priv")`；② 点式深读 `obj.sub._priv`。`make check-arch` 的 R3 只管**跨包导入私有符号**，这两种都躲得过。规则是「每处私有穿透**要么改走公开 API，要么同行标注 `# noqa: SLF001` + 理由**」，由两道可执行守卫兜底：
   - `core/tests/test_cross_package_privacy.py` —— **全仓跨包守卫**。按「属性名归属包」近似判定跨包（同包内部私有访问是正常封装，不判违规）。**已知局限**：同名属性会漏报，故是回归网而非完备审计工具。
   - `core/input/tests/test_layer_discipline.py` —— 输入层守卫，比全仓规则更严（该层任何未标注穿透即红）。
@@ -515,6 +518,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 | `long_term_memory` | Milvus `long_term_memory` | ExtractedMemory (Pydantic) → CompareAction (insert/update/merge/skip) → vector with reranking |
 | `attachments` | MongoDB `default.attachments` | 附件元数据（BE-070，fail-closed）：ref_count/refs/status（软删 deleted_at）；TTL 不设，生命周期由 GC 管（24h/7d 规则） |
 | `user_identity_profiles` | MongoDB `default.user_identity_profiles` | 用户最小身份（BE-STAGEH-02，Mongo 权威）：`user_id` 唯一索引 + revision CAS；Agent.start() 装载，重启不回到 bootstrap |
+| `background_task_results` | MongoDB `default.background_task_results` | 后台任务终态结果（#6/决策 #6）：`task_id` 唯一 + `ttl_expires_at` TTL 7d；`delivered=False` 的记录在下次启动补投进总线 |
 
 **Schema 变更（ARCH-INC-P1-04）**：**不做迁移框架**——新增集合/索引/字段由 `ensure_index`
 （每次 `connect()` 幂等执行）自动覆盖，实测 4 个月 24 次索引变更中约 20 次属此类。
