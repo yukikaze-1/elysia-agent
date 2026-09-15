@@ -76,6 +76,16 @@ STATUS_EXPIRED = "expired"
 STATUS_OFFLINE = "offline"
 
 # 终态集合：不可再迁移（晚到 status 仅记录 result/error，见 mark()）
+_MARK_RETRY_LIMIT = 3
+"""`mark()` 的 CAS 重试上限（决策 #3）。
+
+守卫**不能只依赖进程内 `_cache`**：多 worker 部署下每个进程各有一份 cache，A 标
+`cancelled`、B 标 `succeeded` 会各自看到 `pending` 并都写成功（**最后写入者胜**），
+终态被覆盖。故写 Mongo 时带**状态 CAS**（filter 里带上校验时看到的 status）；不匹配
+即说明有并发写入 → 重读、重校验、有界重试。
+"""
+
+
 _TERMINAL = frozenset({
     STATUS_SUCCEEDED, STATUS_FAILED, STATUS_REJECTED, STATUS_CANCELLED, STATUS_EXPIRED,
 })
@@ -286,28 +296,43 @@ class DesktopCallRepository(Repository):
         Returns:
             True 表示更新已落地；False 表示状态迁移被拒绝或调用不存在。
         """
-        cached = self._cache.get(call_id)
-        if cached is None:
-            return False
-        current = cached.get("status", "")
-        new_status = fields.get("status")
-        update: dict = dict(fields)
-        if "status" in update and update["status"] is None:
-            update.pop("status")
-        if new_status is not None and new_status != current:
-            allowed = _ALLOWED_TRANSITIONS.get(current, frozenset())
-            if new_status not in allowed:
-                if current in _TERMINAL:
-                    # 终态晚到 status：不覆盖枚举，仅记录 result/error（真实结果）。
-                    late = {k: v for k, v in update.items() if k in ("result", "error")}
-                    if not late:
-                        return False
-                    await self._apply_update(call_id, late)
-                    return False
-                # 非法迁移：不写，返回 False。
+        # 决策 #3：校验 → 写库之间**必须**是原子的（CAS），否则多 worker 下退化为
+        # "最后写入者胜"，终态枚举会被并发覆盖。冲突（None）时重读该条并重校验。
+        for _attempt in range(_MARK_RETRY_LIMIT):
+            cached = self._cache.get(call_id)
+            if cached is None:
                 return False
-        await self._apply_update(call_id, update)
-        return True
+            current = cached.get("status", "")
+            new_status = fields.get("status")
+            update: dict = dict(fields)
+            if "status" in update and update["status"] is None:
+                update.pop("status")
+            decision: bool = True
+            if new_status is not None and new_status != current:
+                allowed = _ALLOWED_TRANSITIONS.get(current, frozenset())
+                if new_status not in allowed:
+                    if current in _TERMINAL:
+                        # 终态晚到 status：不覆盖枚举，仅记录 result/error（真实结果）。
+                        late = {k: v for k, v in update.items() if k in ("result", "error")}
+                        if not late:
+                            return False
+                        update = late
+                        decision = False        # 字段已写，但"枚举迁移"被拒绝
+                    else:
+                        # 非法迁移：不写，返回 False。
+                        return False
+            outcome = await self._apply_update_cas(call_id, update, expect_status=current)
+            if outcome is not None:
+                return outcome and decision
+            # CAS 冲突：说明别的进程改了同一条 → 重读后按**新的** status 重新校验
+            logger.warning(
+                "DesktopCallRepository.mark(%s) 状态 CAS 冲突（第 %d 次）——重读后重校验",
+                call_id, _attempt + 1)
+            await self._refresh_one(call_id)
+        logger.error(
+            "DesktopCallRepository.mark(%s) 连续 %d 次 CAS 冲突，放弃（返回 False）",
+            call_id, _MARK_RETRY_LIMIT)
+        return False
 
     async def mark_offline_by_connection(self, connection_id: str) -> int:
         """把目标连接的 pending/accepted/running 调用批量标为 offline（断连）。
@@ -403,6 +428,66 @@ class DesktopCallRepository(Repository):
         update.setdefault("updated_at", now_iso())
         cached.update(update)
         await self._persist(call_id, cached)
+
+    async def _apply_update_cas(
+        self, call_id: str, update: dict, *, expect_status: str,
+    ) -> bool | None:
+        """带**状态 CAS** 的字段更新：True=已写 / False=无此文档 / None=并发冲突。
+
+        `DocumentDBBackend.update_one` 返回的是 `modified_count`，`0` 有两种含义
+        （filter 未命中，或值本来就相同），故未命中时**读回一次**判定：
+        目标状态已达成 → 视为成功（幂等）；确为他人改了 status → 返回 None 交给
+        `mark()` 重读重校验。
+
+        `_db is None`（未接 Mongo）时退化为"进程内 cache 即权威"——与单进程部署下
+        的既有语义一致（owner 决策 #3：两种部署都正确）。
+        """
+        update = dict(update)
+        update.setdefault("updated_at", now_iso())
+        if self._db is None:
+            cached = self._cache.get(call_id)
+            if cached is None:
+                return False
+            cached.update(update)
+            return True
+        try:
+            modified = await self._db.update_one(
+                COLLECTION, {"call_id": call_id, "status": expect_status},
+                {"$set": update})
+        except Exception as e:
+            # Mongo 抖动：保留"仅进程内缓存"的既有降级语义（不因为守卫把功能打挂）
+            logger.warning(
+                "DesktopCallRepository: CAS 写入失败，仅保留进程内缓存 (%s)", e)
+            cached = self._cache.get(call_id)
+            if cached is None:
+                return False
+            cached.update(update)
+            return True
+        if modified:
+            cached = self._cache.get(call_id)
+            if cached is not None:
+                cached.update(update)
+            return True
+        docs = await self._db.find(COLLECTION, {"call_id": call_id}, limit=1)
+        if not docs:
+            self._cache.pop(call_id, None)
+            return False
+        fresh = dict(docs[0])
+        self._cache[call_id] = fresh
+        if fresh.get("status", "") == expect_status:
+            # 状态没变（说明只是"值相同"导致 modified==0）→ 视为成功
+            return True
+        return None
+
+    async def _refresh_one(self, call_id: str) -> None:
+        """从 Mongo 重读单条并刷新 cache（CAS 冲突后的重校验基础）。"""
+        if self._db is None:
+            return
+        docs = await self._db.find(COLLECTION, {"call_id": call_id}, limit=1)
+        if docs:
+            self._cache[call_id] = dict(docs[0])
+        else:
+            self._cache.pop(call_id, None)
 
     async def _persist(self, call_id: str, doc: dict) -> None:
         """异步写 Mongo（dict() 拷贝防 motor 变异，update_one upsert 语义）。"""

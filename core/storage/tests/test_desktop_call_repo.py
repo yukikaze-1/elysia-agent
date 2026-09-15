@@ -335,3 +335,78 @@ class TestTtlExpiry:
 
         docs = asyncio.run(repo._db.find(COLLECTION, {"call_id": "c_old"}))  # noqa: SLF001
         assert isinstance(docs[0].get("ttl_expires_at"), datetime)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 决策 #3：状态迁移守卫的 CAS（多 worker 下不退化为"最后写入者胜"）
+# ═══════════════════════════════════════════════════════════════════
+
+class _ConcurrentWriterDB(FakeDocumentDBBackend):
+    """在**我的条件写入落地之前**插入一次外部写入（模拟另一个 worker）。
+
+    这样能确定性地复现"我读到 pending → 校验合法 → 但库已被别人改成终态"的窗口，
+    不依赖时序/睡眠（对齐本文件既有的"断言原子条件 update 形态"的做法）。
+    """
+
+    def __init__(self, *, hijack_status: str) -> None:
+        super().__init__()
+        self._hijack = hijack_status
+        self.filters: list[dict] = []
+
+    async def update_one(self, collection: str, filter_expr: dict,
+                         update: dict, upsert: bool = False) -> int:
+        if "status" in filter_expr:
+            self.filters.append(dict(filter_expr))
+            if self._hijack is not None:
+                for d in self.collections.setdefault(collection, []):
+                    if d.get("call_id") == filter_expr["call_id"]:
+                        d["status"] = self._hijack
+                        break
+                self._hijack = None
+        return await super().update_one(collection, filter_expr, update, upsert=upsert)
+
+
+class TestMarkCas:
+    @pytest.mark.asyncio
+    async def test_mark_uses_conditional_update_on_status(self):
+        """守卫必须是**原子条件更新**：filter 里带 status，而不是只按 call_id 覆盖。"""
+        db = FakeDocumentDBBackend()
+        repo = DesktopCallRepository(mongodb=db)
+        await repo.upsert(_call(call_id="call_1"))
+
+        assert await repo.mark("call_1", status="accepted") is True
+
+        docs = await db.find(COLLECTION, {"call_id": "call_1"})
+        assert docs[0]["status"] == "accepted"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_terminal_write_is_not_overwritten(self):
+        """核心：另一个 worker 已把该调用标成终态 → 我的迁移必须被**拒**。
+
+        修前：`update_one` 只按 `call_id` 过滤 → 直接覆盖 `succeeded`（最后写入者胜），
+        终态枚举被违反、"重连重传结果"闭环被破坏。
+        """
+        db = _ConcurrentWriterDB(hijack_status="succeeded")
+        repo = DesktopCallRepository(mongodb=db)
+        await repo.upsert(_call(call_id="call_1"))
+
+        ok = await repo.mark("call_1", status="cancelled")
+
+        assert ok is False, "重读到终态后，pending→cancelled 已不再合法，必须拒绝"
+        docs = await db.find(COLLECTION, {"call_id": "call_1"})
+        assert docs[0]["status"] == "succeeded", "终态不得被并发写入覆盖"
+        assert any(f.get("status") == "pending" for f in db.filters), \
+            f"条件写入必须带上校验时的 status，实际 filter：{db.filters}"
+
+    @pytest.mark.asyncio
+    async def test_idempotent_rewrite_still_reports_success(self):
+        """`modified_count==0` 的歧义分支：状态没变（值相同）仍是成功，不是冲突。"""
+        db = FakeDocumentDBBackend()
+        repo = DesktopCallRepository(mongodb=db)
+        await repo.upsert(_call(call_id="call_1"))
+
+        assert await repo.mark("call_1", status="accepted") is True
+        # 同状态重标（幂等）——filter 命中、$set 无变化 → modified_count == 0
+        assert await repo.mark("call_1", status="accepted") is True
+        docs = await db.find(COLLECTION, {"call_id": "call_1"})
+        assert docs[0]["status"] == "accepted"
