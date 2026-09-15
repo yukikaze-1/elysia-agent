@@ -659,7 +659,7 @@ test_desktop_roundtrip.py` 红了 → `git worktree` 在 A 之前的提交复跑
 |---|---|---|---|
 | ~~`#3`~~ | 决策 #3 | ✅ **已完成**（`7cbff545`）：`desktop_call_repo.mark()` 改**状态 CAS** + 读回判定 + 有界重试 | — |
 | `#6` | 决策 #6 | 后台任务终态**跨重启不丢** → 给 `AgentInfra` 加持久化 repo（停机落库 + 启动补投） | 0.5–1d |
-| `#7` | 决策 #7 | 打断/流中途失败时把半截回复**落 `AssistantMessage` 并标 `incomplete`**（= S2-H5） | 2–4h |
+| ~~`#7`~~ | 决策 #7 | ✅ **已完成**（`ff80204e`）：半截回复落 `AssistantMessage` + `metadata[incomplete]`，两条 except 路径（interrupted/error）都覆盖 | — |
 | `#10` | 决策 #10 | consolidator buffer **落盘 + 下次启动补提**（现为每 runtime 5s 超时即丢） | 0.5d |
 | 写路径 5 条 | 本表 (b3) | `MemoryRepository.insert/delete`、`SessionRepository.rename`、`TokenRepository.flush/clear_all` 的静默返回 | 0.5d |
 | owner 解禁项 | 决策表 | `#41` / `#45` / `#44` / `#46`（全部解禁）、`S2-R6-1` 完整版真实库专层 | 4–6d |
