@@ -144,6 +144,9 @@ class TTSStreamManager:
         self._turn_bytes: int = 0   # 本轮累计音频字节数
         self._pending_emojis: dict[int, list[str]] = {}
         self._release_events: dict[int, asyncio.Event] = {}  # seq → event 门控
+        # S2-G3：轮次代号——`reset_for_turn` 抬一，残留任务据此识别"我已属于上一轮"
+        # 并放弃转发（否则它们要么永久挂起，要么把新一轮的句子提前放行）。
+        self._turn_epoch: int = 0
 
     # ---- 公开 API ----
 
@@ -158,10 +161,33 @@ class TTSStreamManager:
         self._turn_chars = 0
         self._turn_bytes = 0
         self._pending_emojis.clear()
+        # S2-G3：先**放行**本轮已存在的门控，再清空并抬 epoch。
+        # 直接 `clear()` 会让正卡在 `await event.wait()` 的旧任务抱着一个再也不会被
+        # set 的对象**永久挂起**（那时任务已持有旧对象，重建 dict 无从唤醒它）；
+        # 而 `wait_all()` 没有超时 ⇒ 整轮卡在 SPEAKING。
+        # 放行后它们会立刻看到 epoch 变化并主动放弃转发（见 `_download_and_forward`）。
+        for event in self._release_events.values():
+            event.set()
+        self._turn_epoch += 1
         self._release_events.clear()
         # 第一个句子无需等待
         self._release_events[1] = asyncio.Event()
         self._release_events[1].set()
+
+    def _release_gate(self, seq: int) -> None:
+        """放行第 `seq` 句的门控（不存在则先建）。
+
+        句 N 结束时必须放行句 N+1；若 N+1 的 `stream_sentence()` 还没被调用（event
+        尚未创建），这里先建再 set——否则它创建后永远等不到 set（原注释保留的理由）。
+
+        **只在同一轮次内调用**：调用方负责判断 epoch（见 `_download_and_forward` 的
+        finally）——否则旧轮次的残留任务会提前放行**新一轮**的句子，破坏播放顺序。
+        """
+        event = self._release_events.get(seq)
+        if event is None:
+            event = asyncio.Event()
+            self._release_events[seq] = event
+        event.set()
 
     def stream_sentence(self, sentence: str, *, ctx: object | None = None) -> None:
         """启动一句的 TTS 后台任务。
@@ -391,6 +417,8 @@ class TTSStreamManager:
             display_text: enqueue 时算好的显示文本（任务局部自持，不共享注册表）。
             action_text: 句首中文舞台指示（单独一行显示）。
         """
+        # S2-G3：捕获本轮代号——下方每个 return / await 之后都要据此判断自己是否已过期。
+        epoch = self._turn_epoch
         if not self._enabled:
             # 禁用后尚未开始的任务：flush_on_cancel 置位时自刷排队未播文本。
             # 此分支在首个 await 前同步 return，进不到下方 try 的 CancelledError
@@ -405,8 +433,14 @@ class TTSStreamManager:
                     await self._output.send("")
                 except Exception:
                     pass
+            # S2-G3：早退**也必须放行后继门控**——本分支在 try 之外，不兜底的话
+            # 句 N+1 会在 `await event.wait()` 上永久等待（wait_all 无超时 ⇒ 整轮卡死）。
+            if epoch == self._turn_epoch:
+                self._release_gate(seq + 1)
             return
         if not self._tts:
+            if epoch == self._turn_epoch:
+                self._release_gate(seq + 1)
             return
 
         # TTS 文本：保留停顿标签（MiniMax 原生支持 <#x#> 产生语音停顿），
@@ -430,7 +464,17 @@ class TTSStreamManager:
             )
 
             # Phase 2: 按序转发（串行，门控保证播放顺序）
-            await self._release_events[seq].wait()
+            # S2-G3：**不用裸下标**——`reset_for_turn` 已经清过 dict 时它会 KeyError；
+            # 而拿到一个"已作废但永不 set"的对象则更糟（永久挂起）。这里显式区分：
+            # 门控不在（本轮已重置）或 epoch 变了 → 本任务属于上一轮，放弃转发。
+            gate = self._release_events.get(seq)
+            if gate is None or epoch != self._turn_epoch:
+                logger.debug("TTS 句 %d：本轮已重置，放弃转发（旧轮次残留任务）", seq)
+                return
+            await gate.wait()
+            if epoch != self._turn_epoch:
+                logger.debug("TTS 句 %d：等待期间本轮被重置，放弃转发", seq)
+                return
             self._turn_chars += len(sentence)
             self._turn_bytes += len(audio)
             logger.debug(
@@ -516,13 +560,12 @@ class TTSStreamManager:
             except Exception:
                 pass
         finally:
-            # 无论成功/失败/取消，都释放下一句的门控（避免后续句子永久卡住）
-            # 若下一句尚未创建 event，则先创建再 set，防止死锁：
-            #   句 N 完成时句 N+1 的 stream_sentence() 尚未被调用 → event 未创建 → set 跳过
-            #   → 之后句 N+1 创建 event 永远等不到 set
-            if seq + 1 not in self._release_events:
-                self._release_events[seq + 1] = asyncio.Event()
-            self._release_events[seq + 1].set()
+            # 无论成功/失败/取消，都释放下一句的门控（避免后续句子永久卡住）；
+            # 若下一句尚未创建 event，则先创建再 set（见 `_release_gate` 的说明）。
+            # S2-G3：**仅当仍在同一轮次时**——旧轮次的残留任务若在此放行，会提前
+            # 放开新一轮的句子，播放顺序被破坏。
+            if epoch == self._turn_epoch:
+                self._release_gate(seq + 1)
 
     async def synthesize_legacy(self, sentence: str) -> None:
         """Legacy 非流式 TTS — 保留向后兼容（供测试用）。
