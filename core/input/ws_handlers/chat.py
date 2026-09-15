@@ -137,5 +137,12 @@ async def do_interrupt(agent: "Agent", skip_vad: bool = False) -> None:
     """
     if skip_vad and agent.status.should_suppress_vad_interrupt:
         return
+    if not agent.status.is_service_running:
+        # S2-R2-4：停机窗口内**输入层不再向 bus 投任何事件**——事件消费者已在关停
+        # 第 1 步退出，残留的中断会在同实例重启（rebuild_on_restart=False）后被当成本轮
+        # 的中断消费；没有在途轮次时它虽是 no-op，但"残留事件跨运行被消费"本身
+        # 就是缺陷族（判据与 CR-08 / process_message 同源：status.is_service_running）。
+        logger.debug("interrupt 被拒：服务未在运行（停机窗口）")
+        return
     from core.monitoring.event_bus import EventPriority
     agent.bus.post(InterruptData(source="websocket"), priority=EventPriority.INTERRUPT)

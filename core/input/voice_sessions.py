@@ -420,8 +420,11 @@ class VoiceSessionManager:
 
     async def cancel_session(self, session_id: str) -> None:
         self._require_session(session_id)
-        # 取消在途轮次生成（spec §5.2）：generation 未完结才发中断
-        if not getattr(self._agent.status, "is_completely_idle", True):
+        # 取消在途轮次生成（spec §5.2）：generation 未完结才发中断。
+        # S2-R2-4：停机窗口内不投——消费者已退出，残留中断会被同实例重启后的新循环
+        # 消费（"残留事件跨运行被消费"与 CR-08 同源，判据统一 `status.is_service_running`）。
+        if (not getattr(self._agent.status, "is_completely_idle", True)
+                and self._agent.status.is_service_running):
             from core.monitoring.event_bus import EventPriority
             from core.schema.event import InterruptData
             self._agent.bus.post(InterruptData(source="voice_cancel"),
@@ -666,6 +669,17 @@ class VoiceSessionManager:
             else:
                 es = {"emotion": emotion, "events": events or []}
             message_id = new_message_id()
+            # CR-08 / S2-R2-4：**准入判定必须覆盖语音路径**。REALTIME 提交是直接
+            # `bus.post(UserInputData)`，不经过 `process_message`——于是停机窗口
+            # （`stop()` 首行即置 STOPPED、事件消费者已在第 1 步退出）里语音段仍能进
+            # bus 队列；同实例重启（`rebuild_on_restart=False`）会把它当**新输入**消费。
+            # 判据与 `process_message` 同源（`status.is_service_running`，生命周期轴），
+            # 不另设 flag——否则又是"N 处都要记得"。
+            # 这里**拒收而不排队**：与 `process_message` 一致，停机窗口没有"稍后再处理"。
+            if not self._agent.status.is_service_running:
+                logger.warning(
+                    "语音段提交被拒：服务未在运行（停机窗口）——该段丢弃，会话随连接关闭")
+                return
             # 每个 turn 独立预占 accepted work；REALTIME 生命周期引用只保证会话在
             # 录音期间存在，stop 后 EventBus/生成中的 turn 仍需自己的引用。
             try:

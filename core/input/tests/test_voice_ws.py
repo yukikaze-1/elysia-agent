@@ -61,6 +61,8 @@ class FakeAgent:
         self.bus_posts = []
         self.status = type("Status", (), {
             "is_speaking": False, "is_completely_idle": True,
+            # S2-R2-4：语音提交现在也走准入判定（与 process_message 同源），替身须镜像
+            "is_service_running": True,
             "should_suppress_vad_interrupt": False})()
         self.stt = object()
         self.stt_enabled = True

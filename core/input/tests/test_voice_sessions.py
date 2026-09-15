@@ -75,6 +75,8 @@ class FakeAgent:
         self.user_name = "用户"
         self.status = type("Status", (), {
             "is_speaking": False, "is_completely_idle": True,
+            # S2-R2-4：语音提交现在也走准入判定（与 process_message 同源），替身须镜像
+            "is_service_running": True,
             "should_suppress_vad_interrupt": False})()
         self._rid = 0
         self._last_text = ""
@@ -1173,3 +1175,53 @@ async def test_discard_dictation_isolated():
     assert ei.value.code == "VOICE_SESSION_CONFLICT"
     assert mgr._mode == VoiceMode.DICTATION
     await mgr.stop_dictation("req_d1")
+
+
+class TestShutdownAdmissionGate:
+    """S2-R2-4 / CR-08：停机窗口里**语音路径也必须被准入判定拦住**。
+
+    REALTIME 提交是直接 `bus.post(UserInputData)`，不经过 `process_message`——于是
+    CR-08 的闸只装了 `process_message` 一个口：`stop()` 首行置 STOPPED、事件消费者
+    已在第 1 步退出之后，语音段仍能进 bus 队列；同实例重启
+    （`rebuild_on_restart=False`）会把它当**新输入**消费。
+    """
+
+    @pytest.mark.asyncio
+    async def test_segment_is_refused_when_service_not_running(self):
+        mgr, emitted, bus_posts = make_manager()
+        await mgr.start_realtime("vs_1", None)
+        mgr._agent.status.is_service_running = False   # 停机窗口
+        mgr._agent._last_text = "停机中的语音段"
+        await _drive_segment(mgr)
+        await asyncio.sleep(0.05)
+
+        assert bus_posts == [], (
+            "语音段在停机窗口仍被投进 bus —— 同实例重启会把它当新输入消费（CR-08 的洞）")
+        assert not [e for e in emitted if e.get("type") == "voice_session.turn"], (
+            "被拒的段不得再发 turn 帧")
+        await mgr.close()
+
+    @pytest.mark.asyncio
+    async def test_segment_still_submits_while_running(self):
+        """反向对照：服务在运行时该段照常提交（别把闸装成"永远拒收"）。"""
+        mgr, emitted, bus_posts = make_manager()
+        await mgr.start_realtime("vs_1", None)
+        mgr._agent._last_text = "正常轮次"
+        await _drive_segment(mgr)
+        await asyncio.sleep(0.05)
+
+        assert any(getattr(p, "event_type", "") == "user_input" for p in bus_posts)
+        await mgr.close()
+
+    @pytest.mark.asyncio
+    async def test_cancel_session_does_not_post_interrupt_when_stopping(self):
+        """S2-R2-4：停机窗口里 `cancel_session` 仍要收尾（发 ended），但**不投中断**。"""
+        mgr, emitted, bus_posts = make_manager()
+        await mgr.start_realtime("vs_1", None)
+        mgr._agent.status.is_completely_idle = False   # 有在途轮次
+        mgr._agent.status.is_service_running = False   # 但服务正在停
+        await mgr.cancel_session("vs_1")
+
+        assert bus_posts == [], "停机窗口仍投了中断（会被同实例重启后的新循环消费）"
+        ends = [e for e in emitted if e.get("type") == "voice_session.ended"]
+        assert ends and ends[-1]["reason"] == "cancelled", "收尾帧不受影响"

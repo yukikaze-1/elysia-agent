@@ -1583,3 +1583,37 @@ class TestServeChat:
         client = await aiohttp_client(app)
         assert (await client.get("/")).status == 404
         assert (await client.get("/debug")).status == 404
+
+
+@pytest.mark.unit
+class TestInterruptRefusedWhileStopping:
+    """S2-R2-4：停机窗口内输入层不再向 bus 投事件（与 CR-08 同一判据）。"""
+
+    @pytest.mark.asyncio
+    async def test_interrupt_is_refused_when_service_not_running(self):
+        from core.input.ws_handler import do_interrupt as _do_interrupt
+
+        agent = MagicMock()
+        agent.status = MagicMock()
+        agent.status.should_suppress_vad_interrupt = False
+        agent.status.is_service_running = False     # 停机窗口
+        agent.bus.post = MagicMock()
+
+        await _do_interrupt(agent)                  # 显式按钮（skip_vad=False）
+
+        agent.bus.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_interrupt_still_fires_while_running(self):
+        """反向对照：服务在运行时按钮打断照常生效。"""
+        from core.input.ws_handler import do_interrupt as _do_interrupt
+
+        agent = MagicMock()
+        agent.status = MagicMock()
+        agent.status.should_suppress_vad_interrupt = False
+        agent.status.is_service_running = True
+        agent.bus.post = MagicMock()
+
+        await _do_interrupt(agent)
+
+        agent.bus.post.assert_called_once()
