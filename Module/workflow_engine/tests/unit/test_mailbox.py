@@ -205,3 +205,76 @@ class TestMailboxTerminalGuard:
         push_mailbox_event(mb, WorkflowEventType.COMPLETED, {})
         push_mailbox_event(mb, WorkflowEventType.CANCELLED, {})
         assert mb.count() == 1          # 第二个终态被守卫丢弃
+
+
+# ── 终态同步落盘 sink（#6 硬杀窗口）─────────────────────────────────────────
+
+
+class TestTerminalSink:
+    """`push_mailbox_event` 的终态落盘回调语义。
+
+    sink 由 core 经 `AgentInfra.terminal_result_sink` 提供、engine 在 `submit()` 时
+    挂到 mailbox 上（挂载点在 `test_workflow_engine.py::TestTerminalSinkAttachment`）。
+    这里只管"什么事件调它、什么事件不调它、它抛了会怎样"。
+    """
+
+    def test_terminal_events_call_sink_with_raw_data(self):
+        calls: list[tuple] = []
+        mb = WorkflowMailbox(WorkflowId("t1"))
+        mb.terminal_sink = lambda tid, event, data: calls.append((tid, event, data))
+
+        push_mailbox_event(mb, WorkflowEventType.FAILED, {"error": "崩了"})
+
+        assert calls == [("t1", "failed", {"error": "崩了"})], \
+            "传原始 data（措辞是 core 的事——两条投递路径必须给出同一文本）"
+
+    def test_non_terminal_events_do_not_call_sink(self):
+        calls: list[tuple] = []
+        mb = WorkflowMailbox(WorkflowId("t1"))
+        mb.terminal_sink = lambda tid, event, data: calls.append((tid, event, data))
+
+        push_mailbox_event(mb, WorkflowEventType.QUEUED, {"task_id": "t1"})
+        push_mailbox_event(mb, WorkflowEventType.PROGRESS, {"step": "1/3"})
+        push_mailbox_event(mb, WorkflowEventType.PAUSED, {})
+
+        assert calls == [], "非终态落盘等于每条 progress 一次 fsync"
+
+    def test_duplicate_terminal_does_not_reach_sink(self):
+        calls: list[tuple] = []
+        mb = WorkflowMailbox(WorkflowId("t1"))
+        mb.terminal_sink = lambda tid, event, data: calls.append((tid, event, data))
+
+        push_mailbox_event(mb, WorkflowEventType.COMPLETED, {"result": "先到"})
+        push_mailbox_event(mb, WorkflowEventType.FAILED, {"error": "重复终态"})
+
+        assert [c[1] for c in calls] == ["completed"], \
+            "被终态唯一性守卫丢弃的重复终态不该进 WAL（否则启动补投会给出两个结果）"
+
+    def test_unwired_mailbox_is_noop(self):
+        mb = WorkflowMailbox(WorkflowId("t1"))
+        assert mb.terminal_sink is None, "默认不落盘（单测/未接线）"
+        push_mailbox_event(mb, WorkflowEventType.COMPLETED, {"result": "x"})
+        assert mb.count() == 1, "未接线不影响事件入队"
+
+    def test_sink_raising_does_not_break_push(self):
+        def _boom(tid, event, data):  # noqa: ANN001, ANN202
+            raise RuntimeError("磁盘满了")
+
+        mb = WorkflowMailbox(WorkflowId("t1"))
+        mb.terminal_sink = _boom
+
+        push_mailbox_event(mb, WorkflowEventType.COMPLETED, {"result": "x"})
+
+        assert mb.count() == 1, "落盘失败绝不能把任务终态推送弄挂"
+
+    def test_each_mailbox_holds_its_own_sink(self):
+        """sink 随 mailbox 生命周期——一个任务一个，不会跨任务串（task_id 由 mailbox 提供）。"""
+        seen: list[str] = []
+        sinks = []
+        for i in range(2):
+            mb = WorkflowMailbox(WorkflowId(f"t{i}"))
+            mb.terminal_sink = (lambda tid, event, data: seen.append(tid))
+            sinks.append(mb)
+        for mb in sinks:
+            push_mailbox_event(mb, WorkflowEventType.COMPLETED, {})
+        assert seen == ["t0", "t1"]

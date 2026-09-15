@@ -109,6 +109,7 @@ from Module.embedding import EmbeddingFactory
 from core.tool_runtime import ToolCallDispatcher
 from core.storage.session_repo import SessionRepository
 from core.storage.background_task_repo import BackgroundTaskResultRepository
+from core.storage.task_result_wal import TaskResultWAL
 from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository
 from core.storage.memory_repo_v2 import MemoryRepositoryV2
@@ -185,6 +186,9 @@ class Agent(AgentLifecycle, AgentServer):
             database_name=db_cfg.db_name,
             base_url=db_cfg.mongodb_uri,
         )
+        # #6 硬杀窗口：终态结果的本地 WAL（同步 fsync；补的是"终态已产生、仓储还没
+        # 落库"的那 ≤1 个轮询周期被硬杀的部分）。无连接概念，构造即可用。
+        self._task_result_wal = TaskResultWAL()
         self._memory_repo = MemoryRepositoryV2(
             base_url=db_cfg.milvus_uri,
             token=db_cfg.milvus_token or None,
@@ -681,6 +685,11 @@ class Agent(AgentLifecycle, AgentServer):
     def _register_background_task(self, task_id: WorkflowId, mailbox: WorkflowMailbox, intent: str, dispatched_at: IsoTimestamp) -> None:
         """CognitiveLoop 提交后台任务后调用——注册到轮询列表。
 
+        #6 硬杀窗口：**同步**落一条 WAL 派发记录。它有两个作用——① 让"派了任务但
+        进程死了"在磁盘上可判定（启动时补一条 interrupted，而不是让用户永远等）；
+        ② 终态记录本身不含 `original_intent`，只有这里能留下它（硬杀补投要靠它告诉
+        用户"这是你当时让我做的哪件事"）。
+
         Args:
             task_id: 后台任务的唯一标识符。
             mailbox: asyncio.Queue，用于接收任务完成/失败事件。
@@ -692,6 +701,7 @@ class Agent(AgentLifecycle, AgentServer):
             dispatched_at=dispatched_at,
             mailbox=mailbox,
         )
+        self._task_result_wal.record_dispatch(str(task_id), intent, str(dispatched_at))
 
     def purge_message_from_session(self, msg_id: str) -> int:
         """从当前 session 中移除匹配 message_id 的消息。

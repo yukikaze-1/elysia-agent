@@ -185,6 +185,20 @@ class BackgroundTaskResultRepository(Repository):
             {"$set": {"delivered": True, "delivered_at": now_iso()}},
         )
 
+    async def get(self, task_id: TaskId) -> dict | None:
+        """按 task_id 取一条记录（无则 None）。
+
+        用途（#6 硬杀窗口）：启动 replay WAL 时判"库里有记录没有"——**库是权威**，
+        库里已有的任务一律跳过 WAL 候选。没有这条判据，WAL 里"落库成功但还没来得及
+        清理"的残留记录会把 `delivered` 重置回 False，让用户被重复告知同一个结果。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接。
+        """
+        db = self._require_db()
+        docs = await db.find(COLLECTION, {"task_id": task_id}, limit=1)
+        return docs[0] if docs else None
+
     async def list_pending(self, *, limit: int = 100) -> list[dict]:
         """未投递的终态结果（按建档时间升序 = 派发顺序）。
 

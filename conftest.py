@@ -335,6 +335,8 @@ def _isolate_shared_journals(tmp_path, monkeypatch):
         "PENDING_ATTACHMENT_RELEASE",
         # #10：未整合对话缓冲 journal（consolidator 构造时就读、每轮/失败/关机时写）。
         "CONSOLIDATOR_PENDING",
+        # #6 硬杀窗口：后台任务终态本地 WAL（Agent 构造即用、每次派发/终态同步追加）。
+        "TASK_RESULT_WAL",
     ):
         monkeypatch.setenv(f"ELYSIA_PATH_{name}", str(tmp_path / f"{name.lower()}.json"))
 

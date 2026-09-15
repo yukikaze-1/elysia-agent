@@ -88,6 +88,10 @@ _CONVENTION: dict[str, dict[str, str]] = {
         "mark_delivered": WRITE,
         "list_pending": READ_FAIL_CLOSED,
         "count_pending": READ_FAIL_CLOSED,
+        # #6 硬杀窗口：启动 replay WAL 时按 task_id 判重，**库是权威**。这里必须
+        # fail-closed——把"查不到（库离线）"当成"库里没有"会让 WAL 候选把一条
+        # 已经投递过（delivered=True）的结果重置回待投，用户被重复告知同一个结果。
+        "get": READ_FAIL_CLOSED,
     },
     # 角色运行时实例：整仓 fail-closed（角色状态不可臆造）
     "CharacterInstanceRepository": {
@@ -287,6 +291,8 @@ _ARG_FACTORIES: dict[str, Any] = {
     "expires_at": lambda: "2026-01-01T00:00:00Z",
     "payload": lambda: {},
     "error": lambda: {},
+    # #6：后台任务终态结果按 task_id 检索（jarvis 的 WorkflowId，探测用裸 str）
+    "task_id": lambda: "probe",
 }
 
 # `Repository` 基类声明的生命周期方法——对所有仓储同义，不在表里逐仓重复。

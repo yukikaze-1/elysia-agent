@@ -76,6 +76,11 @@ class ProjectPath(str, Enum):
     # 一次记忆提取要调 LLM → 超时即丢最后 <6 轮；落盘后下次启动补提。
     # 单文件多 key（instance_id 作 key，不拼进文件名——避免路径穿越与降级串档）。
     CONSOLIDATOR_PENDING = "data/consolidator_pending.json"
+    # 后台任务终态结果本地 WAL（#6 硬杀窗口）：`background_task_results` 仓储的
+    # 落库点在 mailbox 轮询上（周期 0.5s），进程在该窗口内被硬杀则终态随内存消失。
+    # 改为"派发时 + 终态产生时"各同步追加一行（fsync），启动时 replay 进仓储。
+    # 追加写 JSONL（非原子整体写）——半行是预期的，读取侧跳过损坏行。
+    TASK_RESULT_WAL = "data/task_result_wal.jsonl"
 
     def resolve(self, **kwargs: Any) -> Path:
         """返回绝对路径。

@@ -50,13 +50,18 @@ class _StubRepo:
     """终态结果仓储替身——记录调用顺序与写入内容，可注入失败。"""
 
     def __init__(self, *, trace: list[str] | None = None, fail_upsert: bool = False,
-                 fail_list: bool = False, pending: list[dict] | None = None) -> None:
+                 fail_list: bool = False, pending: list[dict] | None = None,
+                 existing: list[dict] | None = None, fail_get: bool = False) -> None:
         self.written: list[dict] = []
         self.delivered: list[str] = []
         self.trace = trace
         self.fail_upsert = fail_upsert
         self.fail_list = fail_list
+        self.fail_get = fail_get
         self._pending = pending or []
+        #: 库里"已有"的记录（#6 硬杀补录的判重依据：**库是权威**）
+        self._existing = {str(d["task_id"]): d for d in (existing or [])}
+        self.get_calls: list[str] = []
 
     async def upsert_pending(self, **kwargs) -> None:  # noqa: ANN003
         if self.trace is not None:
@@ -64,6 +69,7 @@ class _StubRepo:
         if self.fail_upsert:
             raise RuntimeError("mongo offline")
         self.written.append(kwargs)
+        self._existing[str(kwargs["task_id"])] = dict(kwargs)
 
     async def mark_delivered(self, task_id) -> None:  # noqa: ANN001
         if self.trace is not None:
@@ -75,8 +81,15 @@ class _StubRepo:
             raise RuntimeError("mongo offline")
         return list(self._pending)
 
+    async def get(self, task_id) -> dict | None:  # noqa: ANN001
+        self.get_calls.append(str(task_id))
+        if self.fail_get:
+            raise RuntimeError("mongo offline")
+        return self._existing.get(str(task_id))
 
-def _stub_agent(mailbox: WorkflowMailbox, *, repo=None, trace=None, intent="写季度报告"):
+
+def _stub_agent(mailbox: WorkflowMailbox, *, repo=None, trace=None, intent="写季度报告",
+                wal=None):
     """最小 Agent 替身：真实 `_stop_mailbox` / `_poll_mailboxes`，其余关停步骤 no-op。"""
     from core.agent.agent import Agent
 
@@ -95,6 +108,7 @@ def _stub_agent(mailbox: WorkflowMailbox, *, repo=None, trace=None, intent="写�
     agent._lifecycle_tasks = MagicMock()
     agent._session_manager = MagicMock()
     agent._background_task_result_repo = repo     # 未接线的替身场景显式置 None
+    agent._task_result_wal = wal                  # 未接线（None）→ WAL 全程 no-op
     return agent
 
 
@@ -274,3 +288,298 @@ class TestStartupRedelivery:
 
         assert not agent._bus.posted
         assert repo.delivered == []
+
+
+# ══════════════════════════════════════════════════════════════════
+# 4. 硬杀窗口（#6 残余）：本地 WAL 同步落盘 + 启动补录
+# ══════════════════════════════════════════════════════════════════
+
+class TestHardKillWal:
+    """SIGKILL/掉电窗口：终态已产生、还没被 mailbox 轮询落库时进程消失。
+
+    这一类的**唯一**副本只可能是"终态产生那一刻已 fsync 到盘"的本地 WAL——
+    优雅停机的同步排空跑不到（硬杀不给任何代码机会），仓储落库也来不及。
+    """
+
+    def test_added_startup_step_runs_before_redelivery(self):
+        order = [name for name, _ in AgentLifecycle._STARTUP_STEPS]
+        assert "task_result_wal_replay" in order
+        assert order.index("task_result_wal_replay") < order.index(
+            "task_result_redelivery"), \
+            "WAL 补录必须先于补投——反了这批终态要等下一轮启动才送达"
+
+    @pytest.mark.asyncio
+    async def test_terminal_wal_record_is_upserted_as_undelivered(self, tmp_path):
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        wal.record_dispatch("wf-9", "整理会议纪要", "2026-09-15T01:00:00Z")
+        wal.record_terminal("wf-9", "completed", {"result": "纪要已生成"})
+        repo = _StubRepo()
+        agent = _stub_agent(WorkflowMailbox("wf-x"), repo=repo, wal=wal)  # type: ignore[arg-type]
+
+        await Agent._replay_task_result_wal(agent)
+
+        assert len(repo.written) == 1
+        row = repo.written[0]
+        assert row["status"] == "completed"
+        assert row["result"] == "纪要已生成"
+        assert row["original_intent"] == "整理会议纪要", \
+            "终态记录本身不含 intent——只有派发记录能留下它（硬杀后用户才知道是哪件事）"
+        assert row["dispatched_at"] == "2026-09-15T01:00:00Z"
+        assert row["delivered"] is False, "补录的记录必须待补投"
+        assert wal.read_raw() == [], "补录成功即清理 WAL 副本"
+
+    @pytest.mark.asyncio
+    async def test_wording_matches_normal_drain_path(self, tmp_path):
+        """硬杀补录与正常排空必须给出**同一条**文本（两条路径对称）。"""
+        from core.agent._lifecycle_task_system import terminal_payload
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        for event, data in (
+            ("failed", {"error": "工具崩了"}),
+            ("cancelled", {"reason": "用户取消"}),
+        ):
+            wal = TaskResultWAL(str(tmp_path / f"{event}.jsonl"))
+            wal.record_terminal("wf-9", event, data)
+            repo = _StubRepo()
+            agent = _stub_agent(WorkflowMailbox("wf-x"), repo=repo, wal=wal)  # type: ignore[arg-type]
+
+            await Agent._replay_task_result_wal(agent)
+
+            expected_text, expected_error = terminal_payload(event, data)
+            assert repo.written[0]["result"] == expected_text
+            assert repo.written[0]["is_error"] is expected_error is True
+            assert repo.written[0]["status"] == event
+
+    @pytest.mark.asyncio
+    async def test_half_written_line_from_kill_is_skipped(self, tmp_path):
+        """硬杀可能把最后一行写了一半——半行必须跳过，前面完整的记录照常补录。"""
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        path = tmp_path / "wal.jsonl"
+        wal = TaskResultWAL(str(path))
+        wal.record_terminal("wf-ok", "completed", {"result": "完整的一条"})
+        with open(path, "a", encoding="utf-8") as f:
+            f.write('{"kind": "terminal", "task_id": "wf-cut", "eve')  # 半行
+
+        repo = _StubRepo()
+        agent = _stub_agent(WorkflowMailbox("wf-x"), repo=repo, wal=wal)  # type: ignore[arg-type]
+        await Agent._replay_task_result_wal(agent)
+
+        assert [w["task_id"] for w in repo.written] == ["wf-ok"]
+        assert repo.written[0]["result"] == "完整的一条"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_only_means_interrupted_with_intent(self, tmp_path):
+        from core.agent._lifecycle_task_system import INTERRUPTED_BY_HARD_KILL_TEXT
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        wal.record_dispatch("wf-9", "跑一次全库扫描", "2026-09-15T02:00:00Z")
+        repo = _StubRepo()
+        agent = _stub_agent(WorkflowMailbox("wf-x"), repo=repo, wal=wal)  # type: ignore[arg-type]
+
+        await Agent._replay_task_result_wal(agent)
+
+        row = repo.written[0]
+        assert row["status"] == "interrupted"
+        assert row["result"] == INTERRUPTED_BY_HARD_KILL_TEXT
+        assert row["is_error"] is True
+        assert row["original_intent"] == "跑一次全库扫描"
+        assert row["delivered"] is False
+
+    @pytest.mark.asyncio
+    async def test_row_already_in_repo_is_not_resurrected(self, tmp_path):
+        """库是权威：库里已有（可能已 delivered=True）的记录，WAL 不得把它重置回待投。"""
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        wal.record_terminal("wf-9", "completed", {"result": "新文本（不该覆盖库）"})
+        repo = _StubRepo(existing=[{
+            "task_id": "wf-9", "result": "库里的旧文本", "delivered": True,
+        }])
+        agent = _stub_agent(WorkflowMailbox("wf-x"), repo=repo, wal=wal)  # type: ignore[arg-type]
+
+        await Agent._replay_task_result_wal(agent)
+
+        assert repo.written == [], "库里已有 → 不得再写（否则 delivered 被重置成 False）"
+        assert repo.get_calls == ["wf-9"]
+        assert wal.read_raw() == [], "副本冗余，清理掉"
+
+    @pytest.mark.asyncio
+    async def test_storage_offline_keeps_wal_for_next_start(self, tmp_path):
+        """仓储不可用 → 一条都不补、WAL 原样保留（它是唯一副本，不能删）。"""
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        wal.record_terminal("wf-9", "completed", {"result": "结果"})
+        repo = _StubRepo(fail_get=True)
+        agent = _stub_agent(WorkflowMailbox("wf-x"), repo=repo, wal=wal)  # type: ignore[arg-type]
+
+        await Agent._replay_task_result_wal(agent)
+
+        assert repo.written == []
+        assert [r["task_id"] for r in wal.read_raw()] == ["wf-9"], \
+            "查库失败必须保留 WAL——删了就真丢了"
+
+    @pytest.mark.asyncio
+    async def test_upsert_failure_keeps_wal(self, tmp_path):
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        wal.record_terminal("wf-9", "completed", {"result": "结果"})
+        repo = _StubRepo(fail_upsert=True)
+        agent = _stub_agent(WorkflowMailbox("wf-x"), repo=repo, wal=wal)  # type: ignore[arg-type]
+
+        await Agent._replay_task_result_wal(agent)
+
+        assert [r["task_id"] for r in wal.read_raw()] == ["wf-9"]
+
+    @pytest.mark.asyncio
+    async def test_no_repo_keeps_wal(self, tmp_path):
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        wal.record_terminal("wf-9", "completed", {"result": "结果"})
+        agent = _stub_agent(WorkflowMailbox("wf-x"), repo=None, wal=wal)  # type: ignore[arg-type]
+
+        await Agent._replay_task_result_wal(agent)
+
+        assert [r["task_id"] for r in wal.read_raw()] == ["wf-9"]
+
+    @pytest.mark.asyncio
+    async def test_no_wal_wired_is_noop(self):
+        from core.agent.agent import Agent
+
+        repo = _StubRepo()
+        agent = _stub_agent(WorkflowMailbox("wf-x"), repo=repo, wal=None)  # type: ignore[arg-type]
+
+        await Agent._replay_task_result_wal(agent)
+
+        assert repo.written == [] and repo.get_calls == []
+
+
+class TestTerminalWalWiring:
+    """sink 的接线：终态产生 → 同步进 WAL；落库成功 → 清 WAL 副本。"""
+
+    @pytest.mark.asyncio
+    async def test_registration_writes_dispatch_record(self, tmp_path):
+        """登记后台任务时同步落派发记录——终态记录不含 intent，只有这里能留下它。"""
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        mailbox = WorkflowMailbox("wf-1")  # type: ignore[arg-type]
+        agent = _stub_agent(mailbox, wal=wal)
+        agent._background_tasks = {}
+
+        Agent._register_background_task(
+            agent, "wf-7", mailbox, "整理本周会议纪要", "2026-09-15T03:00:00Z")
+
+        raw = wal.read_raw()
+        assert len(raw) == 1 and raw[0]["kind"] == "dispatch"
+        assert raw[0]["task_id"] == "wf-7"
+        assert raw[0]["intent"] == "整理本周会议纪要"
+        assert raw[0]["dispatched_at"] == "2026-09-15T03:00:00Z"
+        assert "wf-7" in agent._background_tasks
+
+    @pytest.mark.asyncio
+    async def test_terminal_push_writes_wal_synchronously(self, tmp_path):
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        mailbox = WorkflowMailbox("wf-1")  # type: ignore[arg-type]
+        agent = _stub_agent(mailbox, wal=wal)
+
+        # engine 的挂载动作：sink 是 Agent 的 bound method（同步）
+        mailbox.terminal_sink = agent._record_terminal_wal
+        push_mailbox_event(mailbox, WorkflowEventType.FAILED, {"error": "工具崩了"})
+
+        raw = wal.read_raw()
+        assert len(raw) == 1 and raw[0]["kind"] == "terminal"
+        assert raw[0]["task_id"] == "wf-1"
+        assert raw[0]["event"] == "failed"
+        assert raw[0]["data"] == {"error": "工具崩了"}
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_push_leaves_wal_untouched(self, tmp_path):
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        mailbox = WorkflowMailbox("wf-1")  # type: ignore[arg-type]
+        agent = _stub_agent(mailbox, wal=wal)
+        mailbox.terminal_sink = agent._record_terminal_wal
+
+        push_mailbox_event(mailbox, WorkflowEventType.QUEUED, {"task_id": "wf-1"})
+        push_mailbox_event(mailbox, WorkflowEventType.PROGRESS, {"step": "1/3"})
+
+        assert wal.read_raw() == [], "非终态不落 WAL（不然每条 progress 一次 fsync）"
+
+    @pytest.mark.asyncio
+    async def test_duplicate_terminal_not_written_twice(self, tmp_path):
+        from core.agent.agent import Agent
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        mailbox = WorkflowMailbox("wf-1")  # type: ignore[arg-type]
+        agent = _stub_agent(mailbox, wal=wal)
+        mailbox.terminal_sink = agent._record_terminal_wal
+
+        push_mailbox_event(mailbox, WorkflowEventType.COMPLETED, {"result": "先到"})
+        push_mailbox_event(mailbox, WorkflowEventType.FAILED, {"error": "后到的重复终态"})
+
+        assert [r["event"] for r in wal.read_raw()] == ["completed"], \
+            "被终态唯一性守卫丢弃的重复终态不该进 WAL"
+
+    @pytest.mark.asyncio
+    async def test_persist_success_clears_wal_copy(self, tmp_path):
+        from core.agent.agent import Agent
+        from core.schema.event import TaskResultData
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        wal.record_dispatch("wf-1", "写报告", "2026-09-15T00:00:00Z")
+        wal.record_terminal("wf-1", "completed", {"result": "结果"})
+        repo = _StubRepo()
+        agent = _stub_agent(WorkflowMailbox("wf-1"), repo=repo, wal=wal)  # type: ignore[arg-type]
+
+        ok = await Agent._persist_task_result(
+            agent,
+            TaskResultData(task_id="wf-1", result="结果", original_intent="写报告",
+                           dispatched_at="2026-09-15T00:00:00Z"),
+            status="completed", delivered=True)
+
+        assert ok is True
+        assert wal.read_raw() == [], "落库成功 → WAL 副本冗余，必须清掉"
+
+    @pytest.mark.asyncio
+    async def test_persist_failure_keeps_wal_copy(self, tmp_path):
+        from core.agent.agent import Agent
+        from core.schema.event import TaskResultData
+        from core.storage.task_result_wal import TaskResultWAL
+
+        wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
+        wal.record_terminal("wf-1", "completed", {"result": "结果"})
+        repo = _StubRepo(fail_upsert=True)
+        agent = _stub_agent(WorkflowMailbox("wf-1"), repo=repo, wal=wal)  # type: ignore[arg-type]
+
+        ok = await Agent._persist_task_result(
+            agent,
+            TaskResultData(task_id="wf-1", result="结果", original_intent="写报告",
+                           dispatched_at="2026-09-15T00:00:00Z"),
+            status="completed", delivered=False)
+
+        assert ok is False
+        assert [r["task_id"] for r in wal.read_raw()] == ["wf-1"], \
+            "落库失败 → WAL 是这条终态的唯一副本，绝不能清"

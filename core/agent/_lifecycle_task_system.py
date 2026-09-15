@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from Module._common.task_scope import AsyncTaskScope, cancel_and_drain
+from Module.workflow_contract.schema import WorkflowId
 from core.agent._types import RunState
 from core.schema.event import TaskResultData
 
@@ -18,9 +19,41 @@ if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
     from core.agent._types import _BackgroundTaskEntry
-    from Module.workflow_contract.schema import WorkflowId
 
 logger = logging.getLogger(__name__)
+
+#: 终态事件类型（与 `Module/workflow_engine/mailbox.py::_TERMINAL_EVENTS` 同一集合的
+#: 字符串形态）。终态事件 → 呈现文本的唯一实现点是 `terminal_payload()`——轮询排空、
+#: WAL 硬杀补投两条路径共用它，避免同一条结果出现两种措辞。
+TERMINAL_KINDS = frozenset({"completed", "failed", "cancelled"})
+
+#: 硬杀（SIGKILL / 掉电 / OOM）后 WAL 里"只有派发记录、没有终态记录"的任务措辞。
+#: 与优雅停机的"任务因服务重启被中断，未产生结果"（见 `_stop_mailbox`）区分：
+#: 那条能确定是正常退出/`/restart`，这条只说明进程是异常终止的。
+INTERRUPTED_BY_HARD_KILL_TEXT = "任务因服务进程异常终止被中断，未产生结果"
+
+
+def terminal_payload(kind: str, data: dict) -> tuple[str, bool]:
+    """终态事件 → (呈现给用户的文本, is_error)。
+
+    **唯一的措辞实现点**：`drain_mailboxes_once`（正常/停机排空）与
+    `_replay_task_result_wal`（硬杀补投）都调它。两处各写一份必然漂移——本项目反复
+    出现的「两条路径不对称」缺陷族。
+
+    Args:
+        kind: 终态事件类型值（completed / failed / cancelled）。
+        data: 终态事件的原始 data。
+
+    Returns:
+        (文本, is_error)；未知 kind → ("", False)。
+    """
+    if kind == "completed":
+        return str(data.get("result", "")), False
+    if kind == "failed":
+        return f"任务执行失败: {data.get('error', '未知错误')}", True
+    if kind == "cancelled":
+        return f"任务已取消: {data.get('reason', '用户取消')}", True
+    return "", False
 
 
 class _LifecycleTaskSystem:
@@ -40,6 +73,7 @@ class _LifecycleTaskSystem:
         _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
         _background_tasks: dict[WorkflowId, _BackgroundTaskEntry]
         _background_task_result_repo: Any
+        _task_result_wal: Any
         _state: "RunState"
 
     #: 任务终态结果的一次 Mongo 读写预算（#6）。目标 = Mongo 驱动（外部 I/O，仓库内
@@ -57,6 +91,26 @@ class _LifecycleTaskSystem:
         属性：关停路径上绝不能触发懒构造（那会在停机中途新开一条 Mongo 连接）。
         """
         return getattr(self, "_background_task_result_repo", None)
+
+    def _wal(self) -> Any:
+        """本地终态 WAL（#6 硬杀窗口）；未接线（单测替身）→ None。
+
+        与 `_bg_result_repo` 同样只读单一字段：`terminal_sink` 要**同步**调用，
+        不能在里面做懒构造（惰性 import/建对象会把一次落盘变成不可预期的耗时）。
+        """
+        return getattr(self, "_task_result_wal", None)
+
+    def _record_terminal_wal(self, task_id: str, event: str, data: dict) -> None:
+        """`push_mailbox_event` 的同步 sink（#6 硬杀窗口）。
+
+        **必须是同步的普通方法**（不是 coroutine）：engine 在推终态事件的那一行直接
+        调用它，靠"调用返回时记录已 fsync 到盘"来消掉硬杀窗口。写失败由 WAL 自己
+        吞掉并计数（见 `TaskResultWAL.failure_count`），不影响任务终态推送。
+        """
+        wal = self._wal()
+        if wal is None:
+            return
+        wal.record_terminal(task_id, event, data)
 
     async def _persist_task_result(
         self, data: TaskResultData, *, status: str, delivered: bool,
@@ -90,6 +144,13 @@ class _LifecycleTaskSystem:
                     delivered=delivered,
                 ),
                 timeout=self._TASK_RESULT_STORE_TIMEOUT)
+            # #6 硬杀窗口：库里已有这条 = WAL 里的副本冗余，清掉。
+            # 放在 upsert 成功之后（同步，中间没有 await）——反过来的话，"清了 WAL
+            # 但落库失败"就会两头都没有。真出现"落库成功、清理前崩溃"也无害：启动
+            # replay 会因"库里有记录"跳过它（见 `_replay_task_result_wal`）。
+            wal = self._wal()
+            if wal is not None:
+                wal.forget([str(data.task_id)])
             return True
         except Exception:
             logger.warning(
@@ -126,6 +187,8 @@ class _LifecycleTaskSystem:
             constraints=ConstraintConfig(),
             # #6：终态结果持久化面（engine 侧可读、Agent 侧读写；停机落库 + 启动补投）
             background_task_results=self._bg_result_repo(),
+            # #6 硬杀窗口：终态**同步**落盘 sink（engine 挂在每个 mailbox 上）
+            terminal_result_sink=self._record_terminal_wal,
         )
 
         from core.hitl import EventBusHITLNotifier
@@ -196,23 +259,19 @@ class _LifecycleTaskSystem:
                         break
                     data = event.data or {}
                     kind = event.type.value
-                    if kind == "completed":
-                        payload = TaskResultData(
-                            task_id=task_id,
-                            result=data.get("result", ""),
-                            original_intent=info.intent,
-                            dispatched_at=info.dispatched_at,
-                        )
-                        status = "completed"
-                    elif kind == "failed":
-                        payload = TaskResultData(
-                            task_id=task_id,
-                            result=f"任务执行失败: {data.get('error', '未知错误')}",
-                            original_intent=info.intent,
-                            dispatched_at=info.dispatched_at,
-                            is_error=True,
-                        )
-                        status = "failed"
+                    if kind not in TERMINAL_KINDS:
+                        continue  # progress / approval_needed 等非终态：不投递、不 pop
+                    # 措辞走唯一实现点（与硬杀补投共用）——两处各写一份必然漂移。
+                    text, is_error = terminal_payload(kind, data)
+                    payload = TaskResultData(
+                        task_id=task_id,
+                        result=text,
+                        original_intent=info.intent,
+                        dispatched_at=info.dispatched_at,
+                        is_error=is_error,
+                    )
+                    status = kind
+                    if kind == "failed":
                         logger.warning(
                             "后台任务失败: %s — %s",
                             info.intent, data.get('error', '未知错误'),
@@ -220,20 +279,10 @@ class _LifecycleTaskSystem:
                     elif kind == "cancelled":
                         # E3：取消事件改推 CANCELLED——消费侧须 pop 条目 + 呈现结果，
                         # 否则 _background_tasks 条目永久驻留（直到下次 start 清理）。
-                        payload = TaskResultData(
-                            task_id=task_id,
-                            result=f"任务已取消: {data.get('reason', '用户取消')}",
-                            original_intent=info.intent,
-                            dispatched_at=info.dispatched_at,
-                            is_error=True,
-                        )
-                        status = "cancelled"
                         logger.info(
                             "后台任务已取消: %s — %s",
                             info.intent, data.get('reason', '用户取消'),
                         )
-                    else:
-                        continue  # progress / approval_needed 等非终态：不投递、不 pop
                     # #6：先落库（delivered 反映"总线那头有没有人"），再投递。
                     await self._persist_task_result(
                         payload, status=status, delivered=consumer_alive)
@@ -331,6 +380,78 @@ class _LifecycleTaskSystem:
             # 标记在补投之后：投递本身是同步入队，入队即由活跃事件循环取走。
             await self._mark_task_result_delivered(payload.task_id)
         logger.info("启动补投 %d 条后台任务终态（上次进程未送达）", len(pending))
+
+    async def _replay_task_result_wal(self) -> None:
+        """把本地 WAL 里的候选终态补进仓储（#6 硬杀窗口），必须在补投之前。
+
+        **它补的是哪一段**：`background_task_results` 的落库点在 mailbox 轮询上
+        （0.5s 周期）。进程在"终态已产生、还没被排空落库"这一窗口内被硬杀（SIGKILL /
+        掉电 / OOM），优雅停机一行代码都跑不到，那条终态就只能靠本地 WAL 找回来。
+        WAL 在**终态产生的那一刻**同步 fsync（见 `Module/workflow_engine/mailbox.py`
+        的 `_wal_terminal`），所以窗口被压到"任务终态与 fsync 之间"。
+
+        三类候选：
+        - 有终态记录 → 按该终态补（措辞走 `terminal_payload`，与正常排空同一实现点）；
+        - 只有派发记录 → 进程死在任务中途，补 `interrupted`（措辞见常量）；
+        - **库里已有记录 → 跳过**（Mongo 是权威；这条判据同时消掉"落库成功但 WAL
+          还没清理"残留导致的重复告知）。
+
+        失败语义：仓储不可用（Mongo 离线）/ 单条判重失败 → 记 warning 后**保留 WAL
+        并停止**（下轮启动再试）。绝不"假装补过了"——那才会真的丢。
+        """
+        wal = self._wal()
+        if wal is None:
+            return
+        candidates = wal.replay()
+        if not candidates:
+            return
+        repo = self._bg_result_repo()
+        if repo is None:
+            # 没有仓储可补 → 保留 WAL。进程若一直不接存储，WAL 会一直留着（它是
+            # 唯一副本，不能删）。
+            return
+        done: list[str] = []
+        already: int = 0
+        for cand in candidates:
+            task_id = str(cand["task_id"])
+            try:
+                existing = await asyncio.wait_for(
+                    repo.get(task_id), timeout=self._TASK_RESULT_STORE_TIMEOUT)
+            except Exception:
+                logger.warning(
+                    "启动 WAL 补录：查库失败，保留 WAL 待下次启动（task_id=%s）",
+                    task_id, exc_info=True)
+                break
+            if existing is not None:
+                done.append(task_id)  # 库是权威：库里已有 = WAL 副本冗余
+                already += 1
+                continue
+            event = cand.get("event")
+            if isinstance(event, str) and event in TERMINAL_KINDS:
+                text, is_error = terminal_payload(event, cand.get("data") or {})
+                status = event
+            else:
+                text, is_error = INTERRUPTED_BY_HARD_KILL_TEXT, True
+                status = "interrupted"
+            payload = TaskResultData(
+                # WAL 里是裸 str（磁盘上的 JSON），core 边界按 NewType 收口
+                # （`docs/code-style-guide.md`：ID 在边界处包一层）。
+                task_id=WorkflowId(task_id),
+                result=text,
+                original_intent=str(cand.get("original_intent") or ""),
+                dispatched_at=str(cand.get("dispatched_at") or ""),
+                is_error=is_error,
+            )
+            if await self._persist_task_result(payload, status=status, delivered=False):
+                done.append(task_id)
+            else:
+                break  # 落库失败 → 保留这条（及后续）待下次启动
+        if done:
+            wal.forget(done)
+            logger.info(
+                "启动 WAL 补录 %d 条后台任务终态（进程上次非正常终止）"
+                "——其中 %d 条库中已有，仅清理 WAL 副本；%d 条为本轮补录",
+                len(done), already, len(done) - already)
 
     # 外层预算必须 ≥ `WorkflowEngine.stop()` 的**整条最坏路径**，不是它的单个
     # `timeout` 参数。S2-A3 的缺陷正是外层 5.0s < 内层 10.0s：只要有任意任务仍在

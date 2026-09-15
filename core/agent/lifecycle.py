@@ -122,6 +122,9 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("tts",              "_start_tts"),
         ("task_system",      "_start_task_system"),
         ("mailbox_polling",  "_start_mailbox_polling"),
+        # #6 硬杀窗口：先把本地 WAL 里的候选终态补进仓储（进程上次若被硬杀，那批
+        # 终态只存在于 WAL），**再**补投——顺序反了这批就要等下一轮启动才送达。
+        ("task_result_wal_replay", "_replay_task_result_wal"),
         # #6：启动补投上次进程未送达的后台任务终态（消费者此时已就绪——
         # `idle_and_events` 在前，投进去的事件真的会被人读）
         ("task_result_redelivery", "_redeliver_pending_task_results"),

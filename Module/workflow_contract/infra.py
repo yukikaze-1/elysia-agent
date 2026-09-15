@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import httpx
 from openai import AsyncOpenAI
@@ -64,4 +64,18 @@ class AgentInfra:
     （`delivered=False`），活跃事件循环消费后置 True，启动时补投未投递的记录。
     类型为 `object`：契约层不依赖 core.storage（与 `tool_registry` 同一处理），
     消费方按鸭子类型调用。
+    """
+
+    terminal_result_sink: Callable[[str, str, dict], None] | None = None
+    """终态事件**同步**落盘回调（core 侧 `TaskResultWAL` 的 bound method）。
+
+    #6 硬杀窗口：`background_task_results` 的落库点在 Agent 的 mailbox 轮询上
+    （周期 0.5s），进程在该窗口内被硬杀则终态随内存消失。engine 在 `submit()` 时
+    把它挂到 `WorkflowMailbox.terminal_sink`，`push_mailbox_event()` 推终态事件时
+    调用——于是"终态产生"与"记录落盘"是同一个同步动作。
+
+    **必须同步**（返回 None，不是协程）：若落盘要 await，任意 await 点被取消或
+    进程死亡都会让落盘不发生，恰好丢掉的正是此刻唯一需要记住的那件事。
+    签名 `(task_id, event, data)`——data 是终态事件的原始 dict；措辞是 core 的事，
+    契约层只传事实（详见 `core/storage/task_result_wal.py`）。
     """

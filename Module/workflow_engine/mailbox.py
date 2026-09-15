@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
+from typing import Callable
 
 from Module.workflow_contract import (
     WorkflowEvent,
@@ -68,6 +69,10 @@ class WorkflowMailbox:
         # E3 §3.5 终态唯一性守卫——记录首个终态事件，后续终态静默丢弃。
         self._terminal_pushed: bool = False
         self._terminal_status: WorkflowStatus | None = None
+        # #6 硬杀窗口：终态落盘回调（core 经 AgentInfra → submit() 注入）。
+        # None = 不落盘（单测 / 未接线）。签名 (task_id, event, data) → None，
+        # **必须同步**——它的全部价值就在于"push_mailbox_event 返回时记录已在盘上"。
+        self.terminal_sink: Callable[[str, str, dict], None] | None = None
 
     # ── 消费者 API ─────────────────────────────────────────────────────────
 
@@ -182,6 +187,10 @@ def push_mailbox_event(
 
     生产者（单协程，无竞态）。消费者是 CognitiveLoop 的 Agent。
 
+    #6：**终态事件**额外经 `mailbox.terminal_sink` 同步落盘（core 注入，未接线则
+    不落盘）——把"持久化点"从 Agent 的 mailbox 轮询（0.5s 周期）前移到终态产生的
+    这一刻，消掉"轮询前被硬杀即永久丢失"的窗口。详见 `core/storage/task_result_wal.py`。
+
     Args:
         mailbox: 目标任务的邮箱。
         event_type: 事件类型。
@@ -206,6 +215,11 @@ def push_mailbox_event(
             return
         mailbox._terminal_pushed = True
         mailbox._terminal_status = _TERMINAL_STATUS_MAP[event_type]
+        # #6 硬杀窗口：终态产生的**这一刻**同步落盘（core 注入的 sink）。
+        # 位置在唯一性守卫之后——被守卫丢弃的重复终态不该进 WAL。
+        # 位置在 `_push` 之前：`_push` 若抛（理论上 queue 操作不会，但轮询/消费是
+        # 另一条路径），事件永远不会被消费，而 WAL 里已有记录，启动 replay 仍能补投。
+        _wal_terminal(mailbox, event_type, data)
 
     event = WorkflowEvent(type=event_type, data=data)
     mailbox._push(event)
@@ -215,3 +229,32 @@ def push_mailbox_event(
         event_type.value,
         list(data.keys()),
     )
+
+
+def _wal_terminal(
+    mailbox: WorkflowMailbox,
+    event_type: WorkflowEventType,
+    data: dict,
+) -> None:
+    """把终态事件同步写进 core 注入的 WAL sink（未接线 → no-op）。
+
+    `getattr` 兜底是**契约层不依赖 core** 的代价：本函数在 `Module/` 里，不能 import
+    core 的 WAL。sink 由 core 在 `AgentInfra.terminal_result_sink` 提供，engine 在
+    `submit()` 时挂到 mailbox 上（一个任务一个，随 mailbox 生命周期结束）。
+
+    `callable()` 只挡"未接线（None）/ 接了非可调用物"两种情况。**MagicMock mailbox
+    挡不住**——它的属性本身就是可调用的 mock，于是 mock sink 被调用一次（无副作用，
+    只多一条调用记录）。这里不做 `is True` 式的身份判断，因为真实 sink 是 bound
+    method，身份判断会把真接线也挡掉。sink 自己吞写失败（一条磁盘问题不能把任务终态
+    推送弄挂），这里再包一层是防"接线方违约抛出"——契约层不假设消费方一定守约。
+    """
+    sink = getattr(mailbox, "terminal_sink", None)
+    if not callable(sink):
+        return
+    try:
+        sink(str(mailbox.task_id), event_type.value, dict(data))
+    except Exception:
+        logger.warning(
+            "终态 WAL sink 抛出（跨硬杀保障降级，任务终态不受影响）task_id=%s",
+            mailbox.task_id, exc_info=True,
+        )

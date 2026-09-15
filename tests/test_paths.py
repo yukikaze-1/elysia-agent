@@ -123,6 +123,8 @@ class TestEnumMetadata:
             "MEMORY_PENDING_SYNCS", "SESSION_PENDING_CLEANUP",
             # #41 / #10：提交后清理 journal 与未整合缓冲 journal
             "PENDING_ATTACHMENT_RELEASE", "CONSOLIDATOR_PENDING",
+            # #6 硬杀窗口：后台任务终态本地 WAL（同步追加的 JSONL）
+            "TASK_RESULT_WAL",
         }
         assert {m.name for m in ProjectPath} == expected
 

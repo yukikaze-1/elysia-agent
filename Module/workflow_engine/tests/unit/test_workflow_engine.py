@@ -44,7 +44,7 @@ from Module.workflow_engine.schema import (
     TokenUsage,
     now_iso,
 )
-from Module.workflow_engine.mailbox import WorkflowMailbox
+from Module.workflow_engine.mailbox import WorkflowMailbox, push_mailbox_event
 from Module.workflow_engine.workflow_engine import QueuedItem, QueuedItemKind, WorkflowEngine
 
 pytestmark = pytest.mark.unit
@@ -1543,3 +1543,92 @@ async def test_submit_never_blocks_turn_when_slot_busy():
     assert isinstance(result, WorkflowMailbox)
     assert time.monotonic() - started < 1.0
     await engine.stop()
+
+
+# ── 终态落盘 sink 的挂载点（#6 硬杀窗口）────────────────────────────────────
+
+
+class TestTerminalSinkAttachment:
+    """`submit()` 必须把 `AgentInfra.terminal_result_sink` 挂到新 mailbox 上。
+
+    **为什么这条接线要单独测**：`push_mailbox_event` 那侧只认
+    `mailbox.terminal_sink`（契约层的鸭子类型），"engine 到底挂没挂"是另一件事。
+    不测它的话，sink 写得再对、core 注入得再对，链路中间断一节也全绿——这正是
+    「守卫没装在改动上」那一类假绿。
+    """
+
+    @pytest.mark.asyncio
+    async def test_submit_attaches_sink_from_infra(self):
+        from Module.workflow_contract import AgentInfra
+        from Module.workflow_engine.workflow_engine import WorkflowEngine
+
+        calls: list[tuple] = []
+        sink = lambda tid, event, data: calls.append((tid, event, data))  # noqa: E731
+        mock_llm = MagicMock()
+        mock_llm.chat = MagicMock()
+        mock_llm.chat.completions = MagicMock()
+        mock_llm.chat.completions.create = AsyncMock()
+        infra = AgentInfra(
+            llm=mock_llm, milvus=None, http=None,
+            tool_registry=MagicMock(), constraints=ConstraintConfig(),
+            terminal_result_sink=sink,
+        )
+        with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}):
+            engine = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=1)
+            await engine.start()
+        try:
+            ctx = DelegationContext(intent="测试落盘接线", session_id=SessionId("s1"))
+            mailbox = await engine.submit(ctx)
+            assert not isinstance(mailbox, SubmitError), mailbox
+            assert mailbox.terminal_sink is sink, \
+                "submit() 未把 infra 的 sink 挂到 mailbox——硬杀窗口的整条链在此断开"
+
+            # 端到端：引擎推终态 → sink 收到原始 data
+            push_mailbox_event(mailbox, WorkflowEventType.FAILED, {"error": "崩了"})
+            assert calls and calls[0][0] == str(mailbox.task_id)
+            assert calls[0][1] == "failed" and calls[0][2] == {"error": "崩了"}
+        finally:
+            await engine.stop()
+
+    @pytest.mark.asyncio
+    async def test_submit_without_sink_leaves_it_none(self):
+        """未接线（单测 / 替身 infra）→ None，不是"随便挂个能调用的东西"。"""
+        from Module.workflow_contract import AgentInfra
+        from Module.workflow_engine.workflow_engine import WorkflowEngine
+
+        mock_llm = MagicMock()
+        mock_llm.chat = MagicMock()
+        mock_llm.chat.completions = MagicMock()
+        mock_llm.chat.completions.create = AsyncMock()
+        infra = AgentInfra(
+            llm=mock_llm, milvus=None, http=None,
+            tool_registry=MagicMock(), constraints=ConstraintConfig(),
+        )
+        with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}):
+            engine = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=1)
+            await engine.start()
+        try:
+            ctx = DelegationContext(intent="未接线", session_id=SessionId("s1"))
+            mailbox = await engine.submit(ctx)
+            assert not isinstance(mailbox, SubmitError), mailbox
+            assert mailbox.terminal_sink is None
+        finally:
+            await engine.stop()
+
+    @pytest.mark.asyncio
+    async def test_infra_without_attribute_is_tolerated(self):
+        """替身 infra 缺该字段（老测试的 MagicMock/鸭子类型）→ 不抛，只是不落盘。"""
+        from Module.workflow_engine.workflow_engine import WorkflowEngine
+
+        infra = MagicMock()
+        del infra.terminal_result_sink          # 老替身没有这个字段
+        with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-test"}):
+            engine = WorkflowEngine(infra=infra, hitl_notifier=MagicMock(), max_sub_agents=1)
+            await engine.start()
+        try:
+            ctx = DelegationContext(intent="缺字段", session_id=SessionId("s1"))
+            mailbox = await engine.submit(ctx)
+            assert not isinstance(mailbox, SubmitError), mailbox
+            assert mailbox.terminal_sink is None
+        finally:
+            await engine.stop()

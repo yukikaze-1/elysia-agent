@@ -362,6 +362,10 @@ class WorkflowEngine:
 
         # ── 创建 Mailbox（先于 SubAgent——保证返回时已有队列可用）──
         mailbox: WorkflowMailbox = WorkflowMailbox(task_id)
+        # #6 硬杀窗口：终态落盘 sink 在**创建时**就挂上（而不是等 Agent 登记后台
+        # 任务时再挂）——这样从第一个事件起就不存在"事件先到、sink 后挂"的竞态。
+        # 未接线（单测 / 无 infra 字段的替身）→ None，`push_mailbox_event` 直接跳过。
+        mailbox.terminal_sink = getattr(self._infra, "terminal_result_sink", None)
 
         # ── 构造 SubAgent + 预创建 QUEUED 状态（不等待槽位）──
         sub_agent = SubAgent(
