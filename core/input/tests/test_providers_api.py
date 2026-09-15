@@ -635,3 +635,40 @@ async def test_test_endpoint_body_base_url_override_passes_through(aiohttp_clien
     mock_create.assert_called_once_with(
         "sensevoice/sense-voice", base_url="http://1.2.3.4:20042", http_client_factory=ANY)
 
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_save_provider_with_corrupt_secret_file_reports_actionable_error(
+        aiohttp_client, tmp_path):
+    """S2-B7b：本地密钥文件损坏是**非暂时性**失败——不得报"请稍后重试"。
+
+    写路径此时 fail-closed（`set_secret` 拒绝覆盖，保护既有密钥）；但若处理器沿用
+    兜底的通用文案，用户会以为"过会儿再试就行"，而重试**永远不会成功**。
+    信封形状保持 ApiFail（不改契约），只把失败语义说准。
+    """
+    from core.input.server import create_app
+    from core.providers import custom_providers as cp
+    from core.storage import secret_store
+    yaml_path = tmp_path / "custom_providers.yaml"
+    (tmp_path / secret_store._DEFAULT_FILE).write_text("{ broken json", encoding="utf-8")
+    agent = _make_app_agent()
+    app = create_app(agent, serve_static=False)
+    client = await aiohttp_client(app)
+
+    with patch.object(cp, "_DEFAULT_PATH", yaml_path), \
+         patch.object(secret_store, "_DEFAULT_DIR", tmp_path), \
+         patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo()):
+        resp = await client.post("/api/providers", json={
+            "service": "llm",
+            "entry": {"name": "myllm", "base_url": "https://example.com",
+                      "api_key": "sk-secret"},
+        })
+        data = await resp.json()
+
+    assert resp.status == 500
+    assert "稍后重试" not in data["error"], "非暂时性失败被报成了「过会儿再试」"
+    assert "损坏" in data["error"]
+    assert "sk-secret" not in json.dumps(data, ensure_ascii=False), "响应不得回显密钥"
+    # 现场必须原样保留（它是既有密钥的唯一副本）
+    assert (tmp_path / secret_store._DEFAULT_FILE).read_text(encoding="utf-8") == "{ broken json"

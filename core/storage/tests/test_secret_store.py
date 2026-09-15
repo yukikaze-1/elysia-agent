@@ -81,22 +81,54 @@ class TestSecretStorePermissions:
 @pytest.mark.unit
 class TestSecretStoreCorruption:
     def test_corrupt_file_returns_empty_without_raising(self, tmp_path):
-        """预写非法 JSON → 返回空 dict（不抛）+ logger.warning。"""
+        """预写非法 JSON → 读路径按"未配置"处理（不抛），但**打 ERROR**（S2-B7b）。
+
+        原实现打的是 warning 且要求"必须被调用一次"；改成 ERROR 是因为它意味着
+        **用户已配置的密钥读不出来了**，不是"顺手提示一下"。
+        """
         _resolved(tmp_path).write_text("{ not valid json", encoding="utf-8")
         with mock.patch.object(secret_store, "logger") as mock_logger:
             assert get_secret(SERVICE, NAME, path=tmp_path) is None
-            mock_logger.warning.assert_called_once()
+            mock_logger.error.assert_called_once()
+        assert all_configured(SERVICE, path=tmp_path) == set()
+        assert has_secret(SERVICE, NAME, path=tmp_path) is False
 
-    def test_corrupt_file_can_be_overwritten(self, tmp_path):
-        """损坏文件可被 set 覆盖恢复。"""
-        _resolved(tmp_path).write_text("{ not valid json", encoding="utf-8")
-        set_secret(SERVICE, NAME, VALUE, path=tmp_path)
-        assert get_secret(SERVICE, NAME, path=tmp_path) == VALUE
+    def test_corrupt_file_is_not_silently_overwritten(self, tmp_path):
+        """**写路径 fail-closed**：损坏时拒绝写入，且文件内容逐字节不变。
+
+        这是本条的核心：`set_secret` 是 load→改→整份 save，把损坏当空就会写出
+        "只含本次一条"的新文件，**其余 provider 的密钥全部消失且没有任何副本**。
+        原用例 `test_corrupt_file_can_be_overwritten` 恰好把这个不可逆行为钉成了预期。
+        """
+        target = _resolved(tmp_path)
+        # 半截 JSON：原文件里其实有 llm/tts 两条密钥，但已经解析不出来
+        broken = '{"llm": {"custom/keepme": "sk-keep"}, "tts": {"custom/x"'
+        target.write_text(broken, encoding="utf-8")
+
+        with pytest.raises(secret_store.SecretStoreCorruptError) as exc_info:
+            set_secret(SERVICE, NAME, VALUE, path=tmp_path)
+
+        assert str(target) in str(exc_info.value), "异常必须指出是哪个文件"
+        assert target.read_text(encoding="utf-8") == broken, (
+            "拒绝写入时文件必须原样保留——它是唯一副本")
+        assert list(tmp_path.glob("*.tmp")) == [], "不该留下临时文件"
+
+    def test_corrupt_file_does_not_block_delete(self, tmp_path):
+        """删除**不写文件**，故损坏时静默返回（只打 ERROR），不抛。"""
+        target = _resolved(tmp_path)
+        target.write_text("{ broken", encoding="utf-8")
+        with mock.patch.object(secret_store, "logger") as mock_logger:
+            delete_secret(SERVICE, NAME, path=tmp_path)
+            mock_logger.error.assert_called_once()
+        assert target.read_text(encoding="utf-8") == "{ broken"
 
     def test_missing_file_returns_empty(self, tmp_path):
-        """文件不存在 → 空 dict。"""
+        """文件不存在 → 空 dict（与"损坏"是两种状态：前者正常，后者要人处理）。"""
         assert get_secret(SERVICE, NAME, path=tmp_path) is None
         assert all_configured(SERVICE, path=tmp_path) == set()
+        # 不存在时写入必须正常（回归网：别把"不存在"也当成损坏拒绝掉）
+        set_secret(SERVICE, NAME, VALUE, path=tmp_path)
+        assert get_secret(SERVICE, NAME, path=tmp_path) == VALUE
 
 
 @pytest.mark.unit

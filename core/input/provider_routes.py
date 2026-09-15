@@ -14,6 +14,7 @@ from core.input._common import _tool_error
 from core.providers.custom_providers import add_provider, load as load_custom
 from core.input.errors import _json_object, _protocol_error_response
 from core.providers.provider_registry import build_providers_response
+from core.storage.secret_store import SecretStoreCorruptError
 from frontend_contract import rest as rest_contract
 
 if TYPE_CHECKING:
@@ -187,6 +188,14 @@ async def providers_save_handler(request: web.Request) -> web.Response:
         return _tool_error("PROFILE_INVALID_RUNTIME", "非 backend runtime 不接受 api_key", 400)
     try:
         data = add_provider(service, entry)
+    except SecretStoreCorruptError:
+        # S2-B7b：本地密钥文件损坏是**非暂时性**失败——报"请稍后重试"会误导用户
+        # （重试永远不会成功，必须先处理那个文件）。信封形状不变（仍是 ApiFail），
+        # 文案不泄漏路径（沿用下面同一条纪律），但要说清"已拒绝覆盖"这个事实。
+        logger.error("保存 provider 失败：本地密钥文件损坏，已拒绝写入以保护既有密钥")
+        return web.json_response(rest_contract.ApiFail(
+            error="本地密钥文件损坏，已拒绝覆盖以保护既有密钥；"
+                  "请修复或移走该文件后重试").wire_dict(), status=500)
     except Exception as e:
         # Task 9（批次 8a）：信封只给通用文案，str(e) 只进日志——防绝对路径/内部细节泄漏
         logger.warning("保存 provider 失败: %s", e)
