@@ -115,7 +115,7 @@ python -m pytest frontend_contract/tests/ -v
 | `integration` | 需真实 DB 或外部 API | `make test-remainder`（Normal−Quick 的余集） |
 | `slow` | 完整管线或 >1s | `make test-full` 才跑 |
 | `external` | 真实 LLM/DB 凭据（opt-in） | `make test-external`（须 `RUN_EXTERNAL_TESTS=1`） |
-| `real_mongo` | 真实 MongoDB 测试层（S2-R6-1，非凭据：走容器） | `make test-real-mongo`（须 `RUN_REAL_MONGO_TESTS=1` + `ELYSIA_TEST_MONGODB_URI`；`tests/real_mongo/`） |
+| `real_mongo` | 真实 MongoDB 测试层（S2-R6-1，非凭据：走容器） | `make test-real-mongo`（须 `RUN_REAL_MONGO_TESTS=1` + `ELYSIA_TEST_MONGODB_URI`；`tests/real_mongo/`）。**CI 为 push-only + self-hosted**（job 内自起 `docker-compose.test.yml`，不用按分钟计费的 GitHub-hosted `services:`）；PR 侧不跑 |
 
 marker 纪律由根 `conftest.py` 的收集钩子强制：**每个测试必须有分层 marker**，且
 **不得同时带 `(unit|service)` 与 `(slow|integration|external)`**（否则

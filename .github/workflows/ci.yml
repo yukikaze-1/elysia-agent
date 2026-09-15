@@ -269,44 +269,119 @@ jobs:
   # 为什么 push 侧不用 `actions/checkout` + `actions/setup-node`：
   #   ① checkout 必须密闭（self-hosted workspace 跨 job 持久），复用 backend job
   #      同一套清理方案；② 宿主已用 nvm 预装 Node — 见下面 "Pin Node" 步骤。
+  # ---- Real MongoDB：push-only + self-hosted（2026-09-16 从 GitHub-hosted 迁入）----
+  #
+  # 为什么迁：`ubuntu-latest` 按分钟计费，而账户额度一旦见底，**job 根本不会启动**
+  # （实测 annotation 原文："The job was not started because recent account payments
+  # have failed or your spending limit needs to be increased"）。那比没有这个 job 更糟
+  # ——它给每个 push/PR 挂一个**与代码无关的红叉**，训练人忽略红色。与 frontend job
+  # 同一处置（见上面那段注释：push → self-hosted「摆脱账单导致的 job 无法启动」）。
+  #
+  # 为什么是 **push-only**：本层是 `external` 档（marker `real_mongo` 既不在 Quick
+  # 也不在 Normal，任何档位默认都不跑），合入后的覆盖足够；而 PR 侧要保留覆盖就**必须**
+  # 留在 GitHub-hosted——不受信 PR 代码不得落在持久 runner 上，`scripts/check_ci_isolation.py`
+  # 会直接拒答。这条 `if:` 正是该门禁判定「受信 push job」的依据，**不要把 `pull_request`
+  # 加回来**（加了它这一整段就会变成违规）。
+  #
+  # ⚠️ **迁移后必须检查分支保护**：required status check 按 **job 名**匹配，且只在 PR 上
+  # 评估。若 `Real MongoDB (storage layer)` 被勾成 required，push-only 之后 PR **永远等不到
+  # 它上报** → 所有 PR 卡死。请先在 Settings → Branches 取消勾选（frontend 那对 job 就是
+  # 为同一个坑而刻意保留 PR 侧原名，见上文命名说明）。
+  #
+  # 数据服务不再用 `services:`（那是 GitHub-hosted 的能力），改为 job 内自己起
+  # `docker-compose.test.yml`——与本地 `make test-real-mongo` **完全同一条路**：
+  # 端口只绑 127.0.0.1:27018、无 volume、跑完 `down` 归零。
+  # 为什么必须等 healthy 再跑：`RUN_REAL_MONGO_TESTS=1` 的语义是"**连不上就 fail**"，
+  # 但"容器还没起来"会把 fail 变成一串连接错误——先等健康，等不到就 fail-closed 退出
+  # （绝不退化成 skip，那正是"环境不满足"型假绿）。
   real-mongo:
-    # S2-R6-1：真实 MongoDB 测试层。**PR 可达 job → 必须 GitHub-hosted**
-    # （信任边界见文件头与 `scripts/check_ci_isolation.py`）：不读宿主 .env、
-    # 不用 self-hosted runner，数据服务用 GitHub 自己的 service container。
-    # 为什么单独一个 job：这些用例默认在**任何**档位都不跑（marker `real_mongo`
-    # 且不在 Normal 里），只有这里显式 `-m real_mongo` + `RUN_REAL_MONGO_TESTS=1`；
-    # 而 `RUN_REAL_MONGO_TESTS=1` 的语义是"**连不上就 fail**"——服务容器没起来
-    # 不会退化成 skip（那正是"环境不满足"型假绿）。
     name: Real MongoDB (storage layer)
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
-    services:
-      mongo:
-        image: mongo:8
-        ports:
-          - 27018:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      ELYSIA_TEST_MONGODB_URI: mongodb://127.0.0.1:27018/elysia_test
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install deps (clean-room, 无真实凭据)
+      - name: Checkout (retry x4, hermetic clean)
+        # 与 backend / frontend job **同一套** checkout + 密闭清理方案（不另造第三套 shell）：
+        # 写法理由（为什么 find 而不是 glob、为什么不用 `set -e`）见 backend job 同段注释。
+        shell: bash
+        env:
+          REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
         run: |
-          python -m pip install -U pip
-          python -m pip install -r requirements.txt -r requirements-dev.txt
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-      - name: Run real MongoDB layer
+          set -uo pipefail
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            echo "== checkout attempt ${attempt}/4 =="
+            WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE 未设置——拒绝在未知目录下清理}"
+            if [ "$WS" = "/" ]; then
+              echo "FATAL: GITHUB_WORKSPACE 解析为 / ——拒绝清理"
+              exit 1
+            fi
+            # fail-closed：显式检查清理退出码（`set -e` 不算，理由见 backend job）
+            if ! find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; then
+              echo "FATAL: workspace 清理失败（$WS 未清空）——拒绝在残留目录上继续"
+              exit 1
+            fi
+            if git init -q . &&
+               (git remote add origin "$REPO_URL" || git remote set-url origin "$REPO_URL") &&
+               git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
+               git checkout --quiet --force refs/remotes/origin/target; then
+              echo "checkout succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "checkout failed on attempt ${attempt}"
+            if [ "$attempt" -ge 4 ]; then
+              echo "FATAL: checkout failed after 4 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+      # 本 job **刻意不加载 .env**：真实 MongoDB 测试层只需要 `ELYSIA_TEST_MONGODB_URI`
+      # 指向本地一次性容器，零凭据（与 frontend job 同一取舍：少一个 .env 就少一条外泄路径）。
+      - name: Setup conda env (Elysia)
+        run: echo "/home/yomu/data/anaconda3/envs/Elysia/bin" >> $GITHUB_PATH
+      - name: Start test MongoDB (compose, loopback only)
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! docker compose -f docker-compose.test.yml up -d; then
+            echo "FATAL: 测试 Mongo 容器启动失败"
+            exit 1
+          fi
+          state=unknown
+          for _ in $(seq 1 30); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' elysia-mongo-test 2>/dev/null || echo missing)
+            if [ "$state" = "healthy" ]; then
+              echo "elysia-mongo-test healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "FATAL: elysia-mongo-test 未在 60s 内 healthy（当前状态=$state）——拒绝继续"
+          docker logs elysia-mongo-test 2>&1 | tail -30 || true
+          exit 1
+      - name: Run real MongoDB layer (marker real_mongo)
+        env:
+          ELYSIA_TEST_MONGODB_URI: mongodb://127.0.0.1:27018/elysia_test
         run: make test-real-mongo
+      - name: Teardown test MongoDB (always, fail-closed)
+        # 三层用意：① `always()` —— 用例失败也要收摊，否则下一次运行撞端口/留残留；
+        # ② **显式检查退出码**（`set -e` 不算，与 workspace 清理同一条纪律）；
+        # ③ 再断言容器**确实没了**——`down` 返回 0 不等于清理生效（容器可能因
+        #    `--remove-orphans` 之外的缘故残留），残留会污染下一次运行。
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! docker compose -f docker-compose.test.yml down --remove-orphans; then
+            echo "FATAL: 测试 Mongo 容器清理失败——会污染下一次运行"
+            exit 1
+          fi
+          leftover=$(docker ps -a --filter name=elysia-mongo-test --format '{{.Names}}')
+          if [ -n "$leftover" ]; then
+            echo "FATAL: elysia-mongo-test 仍存在（清理未生效）：$leftover"
+            exit 1
+          fi
 
   frontend:
     name: Frontend (vue-tsc + build, self-hosted)

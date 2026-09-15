@@ -220,6 +220,21 @@ docker compose -f docker-compose.test.yml down        # 用完即弃（无 volum
 | 目标必须是测试库 | `tests/real_mongo/conftest.py` 校验库名含 `test`，且**核验仓储真连到哪个库** | 不像测试库 → **fail**（本层会 `drop_database`） |
 | 环境必须真满足 | 显式要求时连不上 → `pytest.fail` | 容器没起来 → **fail** 而非 skip（假绿③） |
 
+**CI 归属（2026-09-16 迁移）**：`ci.yml` 的 `real-mongo` job 是 **push-only + self-hosted**，
+job 内自己 `docker compose -f docker-compose.test.yml up -d`（等 healthy 才跑用例）、跑完
+`down --remove-orphans`，并在 `always()` 的收尾步骤里**显式检查退出码 + 断言容器确实没了**
+（`down` 返回 0 不等于清理生效）。不再用 GitHub-hosted 的 `services:`——那按分钟计费，
+账户额度一旦见底 job **根本不启动**，会给每次 push/PR 挂一个与代码无关的红叉
+（比没有这个 job 更糟：训练人忽略红色）。
+
+PR 侧不再跑本层：要保留 PR 覆盖就**必须**留在 GitHub-hosted（不受信 PR 代码不得落在持久
+runner 上，`check-ci-isolation` 会拒答）。本层是 `external` 档、任何默认档位都不跑，
+合入后的覆盖足够。
+
+> ⚠️ **迁移后必须检查分支保护**：required status check 按 **job 名**匹配、且只在 PR 上评估。
+> 若 `Real MongoDB (storage layer)` 被勾成 required，push-only 之后所有 PR 都会**永远等不到
+> 它上报**而卡死——需先在 Settings → Branches 取消勾选。
+
 > ⚠️ **实测踩到的坑，写在这里防复发**：`base_url` 只给连接串，**目标库由
 > `database_name` 决定**。第一次跑本层时用 `Repo(base_url="…/elysia_test")` 构造，
 > 库名却取默认 `"default"` → 索引与文档全写进了**生产库**。所以本层只允许经
