@@ -126,6 +126,9 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("character_integrity", "_check_character_data_integrity"),
         ("schema_drift",     "_check_schema_drift"),
         ("attachment_repo",  "_start_attachment_repo"),
+        # #41：启动补做提交后清理 journal（放在 attachment_repo 之后、GC 之前——
+        # 先释放 refs 再扫 GC，GC 才能看见归零的条目）
+        ("pending_cleanups", "_retry_pending_cleanups"),
         ("attachment_gc",    "_start_attachment_gc"),
     ]
 

@@ -68,6 +68,10 @@ class ProjectPath(str, Enum):
     # 会话删除提交后清理失败 journal（review 复核 #5 D2）：doc 已删但 refs/归档
     # 未清，健康循环按此重试（与 memory_pending_deletes 同模式）
     SESSION_PENDING_CLEANUP = "data/session_pending_cleanup.json"
+    # 附件引用释放失败 journal（#41 / CR-04 彻底版）：主操作（清空归档/会话、删除
+    # 单条消息）已提交、但附带的消息→附件 refs 未释放——按 (message_id, attachment_ids)
+    # 落盘，启动时 + 健康恢复边界重试（与 session_pending_cleanup 同模式）。
+    PENDING_ATTACHMENT_RELEASE = "data/pending_attachment_release.json"
 
     def resolve(self, **kwargs: Any) -> Path:
         """返回绝对路径。

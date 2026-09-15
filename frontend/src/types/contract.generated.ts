@@ -1050,6 +1050,8 @@ export interface DebugResult {
   deleted?: number
   /** 同步清理的 session 消息数，可缺省 */
   session_purged?: number
+  /** 附件引用释放失败已登记重试（主操作已提交，重试本请求无用），可缺省 */
+  cleanup_pending?: boolean
 }
 
 /** 流式文字增量。 */

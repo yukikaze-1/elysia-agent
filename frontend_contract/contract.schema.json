@@ -8837,6 +8837,19 @@
     "DebugResult": {
       "description": "Debug 增删改操作通用结果（ok 判别 + 可选计数）。",
       "properties": {
+        "cleanup_pending": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "附件引用释放失败已登记重试（主操作已提交，重试本请求无用），可缺省",
+          "title": "Cleanup Pending"
+        },
         "deleted": {
           "anyOf": [
             {
@@ -25405,6 +25418,6 @@
     }
   },
   "protocolVersion": "2.0",
-  "schemaHash": "1397295aa02775b6",
+  "schemaHash": "ba1dd2b0231d4c6c",
   "transportVersion": "2"
 }

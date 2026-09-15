@@ -237,6 +237,103 @@ class TestSchemaDriftStep:
         assert agent._schema_drift_report.scanned is False  # noqa: SLF001
 
 
+class TestPendingCleanupsStartupStep:
+    """#41：启动补做「主操作已提交、提交后清理未完成」的两条 journal。
+
+    为什么必须是**启动步骤**而不只挂健康恢复边界：`_recover_dependency("session")`
+    只在 False→True 边界触发，干净重启（Mongo 全程健康、首轮 `prev={}`）没有这个
+    边界 —— 上一进程留下的 journal 会一直躺到 Mongo 某次抖动才被读到。本用例钉住
+    "启动即补做"这条语义。
+    """
+
+    def test_step_registered_between_attachment_repo_and_gc(self):
+        names = [name for name, _ in AgentLifecycle._STARTUP_STEPS]
+        assert "pending_cleanups" in names
+        assert names.index("attachment_repo") < names.index("pending_cleanups"), \
+            "必须在 attachment_repo 之后（释放 refs 要连库）"
+        assert names.index("pending_cleanups") < names.index("attachment_gc"), \
+            "必须在 GC 之前（先释放 refs，GC 才看得见归零的条目）"
+
+    @pytest.mark.asyncio
+    async def test_retries_both_journals(self, tmp_path, monkeypatch):
+        from core.agent._lifecycle_persistence import _LifecyclePersistence
+        from core.schema.types import AttachmentId
+        from core.storage import pending_attachment_release as par
+
+        monkeypatch.setenv("ELYSIA_PATH_PENDING_ATTACHMENT_RELEASE",
+                           str(tmp_path / "pending_release.json"))
+        par.reset_journal()
+        par.get_journal().register([("m1", [AttachmentId("att_1")])])
+
+        released: list[str] = []
+
+        async def _release(agent, message_id, ids):
+            released.append(str(message_id))
+
+        class _Agent(_LifecyclePersistence):
+            pass
+
+        agent = _Agent()
+        agent._session_manager = mock.MagicMock()              # noqa: SLF001
+        agent._session_manager.retry_pending_cleanup = mock.AsyncMock()
+
+        with mock.patch("core.storage.pending_attachment_release.release_attachment_refs",
+                        new=_release):
+            await agent._retry_pending_cleanups()              # noqa: SLF001
+
+        assert released == ["m1"]
+        assert par.get_journal().pending_count() == 0
+        agent._session_manager.retry_pending_cleanup.assert_awaited_once()
+        par.reset_journal()
+
+    @pytest.mark.asyncio
+    async def test_failure_does_not_break_startup(self, tmp_path, monkeypatch, caplog):
+        """journal 重试抛异常 → 只记日志，启动步骤不抛（否则整个 start() 回滚）。"""
+        from core.agent._lifecycle_persistence import _LifecyclePersistence
+        from core.storage import pending_attachment_release as par
+
+        monkeypatch.setenv("ELYSIA_PATH_PENDING_ATTACHMENT_RELEASE",
+                           str(tmp_path / "pending_release.json"))
+        par.reset_journal()
+
+        class _Agent(_LifecyclePersistence):
+            pass
+
+        agent = _Agent()
+        agent._session_manager = mock.MagicMock()              # noqa: SLF001
+        agent._session_manager.retry_pending_cleanup = mock.AsyncMock(
+            side_effect=RuntimeError("mongo down"))
+
+        with mock.patch.object(par.PendingAttachmentRelease, "retry",
+                               new=mock.AsyncMock(side_effect=RuntimeError("boom"))):
+            with caplog.at_level(logging.WARNING):
+                await agent._retry_pending_cleanups()          # noqa: SLF001
+
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING]
+        par.reset_journal()
+
+    @pytest.mark.asyncio
+    async def test_empty_journal_is_noop(self, tmp_path, monkeypatch):
+        from core.agent._lifecycle_persistence import _LifecyclePersistence
+        from core.storage import pending_attachment_release as par
+
+        monkeypatch.setenv("ELYSIA_PATH_PENDING_ATTACHMENT_RELEASE",
+                           str(tmp_path / "pending_release.json"))
+        par.reset_journal()
+
+        class _Agent(_LifecyclePersistence):
+            pass
+
+        agent = _Agent()
+        agent._session_manager = mock.MagicMock()              # noqa: SLF001
+        agent._session_manager.retry_pending_cleanup = mock.AsyncMock()
+
+        await agent._retry_pending_cleanups()                  # noqa: SLF001
+
+        agent._session_manager.retry_pending_cleanup.assert_awaited_once()
+        par.reset_journal()
+
+
 def _real_service_agent(*, stt_default: bool = False, tts_default: bool = False):
     """`object.__new__(Agent)` 真身替身——**#43 之后必须用它**。
 

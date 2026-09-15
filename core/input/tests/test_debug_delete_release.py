@@ -1,5 +1,5 @@
 # 测试文件：core/input/tests/test_debug_delete_release.py
-"""S2-F2：debug 删除路径不得吞掉附件释放失败。
+"""S2-F2 + #41：debug 删除路径的附件释放语义。
 
 `core/storage/attachment_release.py` 的契约明确写：
 
@@ -7,11 +7,18 @@
 > caller（会话删除 manager、debug 路由）无法感知释放失败，refs 残留导致附件被 GC
 > 永久跳过或删除「假成功」。
 
-而 debug 的两个删除路径用 `except Exception: logger.warning` 吞掉它，然后照常删除 →
-**会话已删、refs 残留、响应称成功、无 journal 无重试**
-（REST 侧 `SessionManager.delete` 有 cleanup + journal 通道）。
+S2-F2 的修法是「释放失败 ⇒ 503 且什么都不删」（未删除语义）。**#41 之后这条修法
+换了方向**：主操作（删会话 / 清空归档 / 删单条消息）改成**先提交再释放**，
+于是——
 
-修法：保持**「未删除」语义**——释放失败即 503、什么都不删，客户端可安全重试。
+- 提交**之前**失败（快照读取失败）→ 503 + 什么都没删（S2-F2 原语义保留）；
+- 提交**之后**失败 → 200 + `cleanup_pending=true` + journal 登记（此时已无可回滚，
+  再报"未删除（可重试）"是**谎报**：东西已经删了，而重试时快照已空、清理也不会
+  再发生）。
+
+两条合起来保证的是同一件事：**不存在"响应说没生效、实际却已发生不可逆副作用"的
+状态**。断言因此分两半：旧的一半（读失败不删）在新文件前半段，新的一半
+（提交后失败必须可见 + 可重试）在后半段。
 """
 
 from __future__ import annotations
@@ -35,9 +42,23 @@ def _request(agent, match_info=None, query=None):
     return request
 
 
+@pytest.fixture(autouse=True)
+def _isolate_journal(tmp_path, monkeypatch):
+    """journal 落到 tmp_path（不碰真实 data/），并在用例后重置单例。"""
+    from core.storage import pending_attachment_release as par
+
+    monkeypatch.setenv("ELYSIA_PATH_PENDING_ATTACHMENT_RELEASE",
+                       str(tmp_path / "pending_release.json"))
+    par.reset_journal()
+    yield
+    par.reset_journal()
+
+
 class TestDebugDeleteDoesNotSwallowReleaseFailure:
+    """提交**前**读不到引用 → 拒绝删除（未删除语义，S2-F2 保留）。"""
+
     @pytest.mark.asyncio
-    async def test_session_delete_refuses_when_release_fails(self):
+    async def test_session_delete_refuses_when_snapshot_fails(self):
         from core.input.debug_routes import archive as mod
         from core.storage.base import StorageUnavailableError
 
@@ -51,18 +72,18 @@ class TestDebugDeleteDoesNotSwallowReleaseFailure:
 
         request = _request(agent, {"session_id": "conv_f2"})
 
-        with mock.patch.object(mod, "release_session_attachments",
+        with mock.patch.object(mod, "collect_session_attachment_refs",
                                new=AsyncMock(side_effect=StorageUnavailableError("mongo"))):
             resp = await mod.session_delete_handler(request)
 
-        assert resp.status == 503, f"释放失败必须 503，实得 {resp.status}"
+        assert resp.status == 503, f"快照失败必须 503，实得 {resp.status}"
         repo.delete.assert_not_awaited()          # **未删除**语义
         body = json.loads(resp.body.decode())
         assert body["code"] == "STORAGE_UNAVAILABLE"
         assert body["retryable"] is True
 
     @pytest.mark.asyncio
-    async def test_sessions_clear_refuses_when_release_fails(self):
+    async def test_sessions_clear_refuses_when_snapshot_fails(self):
         from core.input.debug_routes import archive as mod
         from core.storage.base import StorageUnavailableError
 
@@ -75,7 +96,7 @@ class TestDebugDeleteDoesNotSwallowReleaseFailure:
 
         request = _request(agent, {}, {"confirm": SESSION_CONFIRM_TOKEN})
 
-        with mock.patch.object(mod, "release_all_attachments",
+        with mock.patch.object(mod, "collect_all_attachment_refs",
                                new=AsyncMock(side_effect=StorageUnavailableError("mongo"))):
             resp = await mod.sessions_clear_handler(request)
 
@@ -84,28 +105,27 @@ class TestDebugDeleteDoesNotSwallowReleaseFailure:
         assert json.loads(resp.body.decode())["code"] == "STORAGE_UNAVAILABLE"
 
     @pytest.mark.asyncio
-    async def test_archive_delete_refuses_when_release_fails(self):
+    async def test_archive_clear_refuses_when_snapshot_fails(self):
         from core.input.debug_routes import archive as mod
         from core.storage.base import StorageUnavailableError
 
-        msg = MagicMock()
         repo = MagicMock()
-        repo.get_by_id = AsyncMock(return_value=msg)
-        repo.delete_one = AsyncMock(return_value=True)
+        repo.clear_all = AsyncMock(return_value=5)
         agent = MagicMock()
         agent.message_repo = repo
+        agent.session.clear = MagicMock()
 
-        request = _request(agent, {"msg_id": "m1"})
+        request = _request(agent, {}, {"confirm": "archive"})
 
-        with mock.patch.object(mod, "release_message_attachments",
+        with mock.patch.object(mod, "collect_all_attachment_refs",
                                new=AsyncMock(side_effect=StorageUnavailableError("mongo"))):
-            resp = await mod.archive_delete_handler(request)
+            resp = await mod.archive_clear_handler(request)
 
-        assert resp.status == 503, f"应给精确的 503（而非冒泡成 500），实得 {resp.status}"
-        repo.delete_one.assert_not_awaited()
+        assert resp.status == 503
+        repo.clear_all.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_unknown_release_error_also_refuses(self):
+    async def test_unknown_snapshot_error_also_refuses(self):
         """非存储类异常同样不得"删了再说"——refs 残留的后果与错误类型无关。"""
         from core.input.debug_routes import archive as mod
 
@@ -117,16 +137,16 @@ class TestDebugDeleteDoesNotSwallowReleaseFailure:
 
         request = _request(agent, {"session_id": "conv_f2b"})
 
-        with mock.patch.object(mod, "release_session_attachments",
+        with mock.patch.object(mod, "collect_session_attachment_refs",
                                new=AsyncMock(side_effect=RuntimeError("boom"))):
             resp = await mod.session_delete_handler(request)
 
-        assert resp.status == 503, f"释放失败不得继续删除，实得 {resp.status}"
+        assert resp.status == 503, f"快照失败不得继续删除，实得 {resp.status}"
         repo.delete.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_successful_release_still_deletes(self):
-        """回归网：释放成功时行为不变。"""
+        """回归网：一切正常时行为不变。"""
         from core.input.debug_routes import archive as mod
 
         repo = MagicMock()
@@ -138,11 +158,106 @@ class TestDebugDeleteDoesNotSwallowReleaseFailure:
 
         request = _request(agent, {"session_id": "conv_ok"})
 
-        with mock.patch.object(mod, "release_session_attachments", new=AsyncMock()):
+        with mock.patch.object(mod, "collect_session_attachment_refs", new=AsyncMock(return_value=[])):
             resp = await mod.session_delete_handler(request)
 
         assert resp.status == 200
         repo.delete.assert_awaited_once()
+
+
+class TestPostCommitReleaseFailureIsVisible:
+    """提交**后**释放失败 → 200 + cleanup_pending + journal（#41 新增的一半）。
+
+    这一半同样是"不得静默"：释放失败不再抛（抛了只能谎报"未删除"），但必须
+    在响应里可见、并在磁盘上留下可重试的记录。
+    """
+
+    @pytest.mark.asyncio
+    async def test_archive_clear_reports_cleanup_pending(self):
+        from core.input.debug_routes import archive as mod
+
+        repo = MagicMock()
+        repo.clear_all = AsyncMock(return_value=5)
+        agent = MagicMock()
+        agent.message_repo = repo
+        agent.session.messages = []
+
+        request = _request(agent, {}, {"confirm": "archive"})
+
+        with mock.patch.object(mod, "collect_all_attachment_refs",
+                               new=AsyncMock(return_value=[("m1", ["att_1"])])), \
+             mock.patch.object(mod, "release_after_commit", new=AsyncMock(return_value=True)):
+            resp = await mod.archive_clear_handler(request)
+
+        assert resp.status == 200, "主操作已提交，不得报错（那会是谎报）"
+        body = json.loads(resp.body.decode())
+        assert body["ok"] is True
+        assert body["deleted"] == 5
+        assert body["cleanup_pending"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_delete_reports_cleanup_pending(self):
+        from core.input.debug_routes import archive as mod
+
+        repo = MagicMock()
+        repo.health_check = AsyncMock(return_value=True)
+        repo.delete = AsyncMock(return_value=1)
+        agent = MagicMock()
+        agent.session_repo = repo
+        agent.session.session_id = "other"
+
+        request = _request(agent, {"session_id": "conv_p"})
+
+        with mock.patch.object(mod, "collect_session_attachment_refs",
+                               new=AsyncMock(return_value=[("m1", ["att_1"])])), \
+             mock.patch.object(mod, "release_after_commit", new=AsyncMock(return_value=True)):
+            resp = await mod.session_delete_handler(request)
+
+        assert resp.status == 200
+        assert json.loads(resp.body.decode())["cleanup_pending"] is True
+        repo.delete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_archive_delete_reports_cleanup_pending(self):
+        from core.input.debug_routes import archive as mod
+
+        msg = MagicMock()
+        msg.content = [{"attachment_id": "att_9"}]
+        repo = MagicMock()
+        repo.get_by_id = AsyncMock(return_value=msg)
+        repo.delete_one = AsyncMock(return_value=True)
+        agent = MagicMock()
+        agent.message_repo = repo
+        agent.purge_message_from_session = MagicMock(return_value=0)
+
+        request = _request(agent, {"msg_id": "m9"})
+
+        with mock.patch.object(mod, "release_after_commit",
+                               new=AsyncMock(return_value=True)):
+            resp = await mod.archive_delete_handler(request)
+
+        assert resp.status == 200
+        assert json.loads(resp.body.decode())["cleanup_pending"] is True
+
+    @pytest.mark.asyncio
+    async def test_cleanup_pending_absent_on_success(self):
+        """成功路径不得发射该字段（wire 与 #41 之前逐字节一致）。"""
+        from core.input.debug_routes import archive as mod
+
+        repo = MagicMock()
+        repo.clear_all = AsyncMock(return_value=5)
+        agent = MagicMock()
+        agent.message_repo = repo
+        agent.session.messages = []
+
+        request = _request(agent, {}, {"confirm": "archive"})
+
+        with mock.patch.object(mod, "collect_all_attachment_refs",
+                               new=AsyncMock(return_value=[])):
+            resp = await mod.archive_clear_handler(request)
+
+        assert resp.status == 200
+        assert "cleanup_pending" not in json.loads(resp.body.decode())
 
 
 # ══════════════════════════════════════════════════════════════════

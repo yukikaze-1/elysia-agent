@@ -392,6 +392,11 @@ class DebugResult(ContractModel):
     ok: bool = Field(description="操作是否成功")
     deleted: Optional[int] = Field(default=None, description="删除/清空计数，可缺省")
     session_purged: Optional[int] = Field(default=None, description="同步清理的 session 消息数，可缺省")
+    # #41（CR-04 彻底版）：主操作已提交、但附带的消息→附件 refs 释放失败，已落 journal
+    # 待重试（启动 + Mongo 恢复边界）。仅在失败时发射——成功路径 wire 与从前一致。
+    cleanup_pending: Optional[bool] = Field(
+        default=None,
+        description="附件引用释放失败已登记重试（主操作已提交，重试本请求无用），可缺省")
 
 
 class RollbackResult(ContractModel):

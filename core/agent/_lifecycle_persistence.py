@@ -6,7 +6,7 @@ import datetime
 import os
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from Module.embedding import EmbeddingFactory
 
@@ -381,6 +381,41 @@ class _LifecyclePersistence:
         except Exception:
             logger.warning("附件 GC 扫描失败", exc_info=True)
 
+    async def _retry_pending_cleanups(self) -> None:
+        """启动补做「主操作已提交、提交后清理未完成」的两个 journal（#41）。
+
+        - `pending_attachment_release`：debug 归档/会话删除改成「先提交后释放」后，
+          释放失败不再能回滚，改为落 journal（见 `core/storage/pending_attachment_release.py`）；
+        - `SESSION_PENDING_CLEANUP`：`SessionManager.delete` 的同类 journal（doc 已删、
+          refs/归档未清）。
+
+        **为什么必须放在启动而不是只挂健康恢复边界**：`_recover_dependency("session")`
+        只在 False→True 边界触发，而**干净重启（Mongo 全程健康）没有这个边界**——
+        `prev={}` 首轮既不产生边界、`_dependency_needs_recovery("session")` 也恒 False，
+        于是上一进程留下的 journal 会一直躺到 Mongo 某次抖动才被读到（实测确认的
+        既有空洞；本次把两条 journal 一起补上）。
+
+        best-effort：失败只记日志——下轮健康循环或下次启动再试，不影响启动流程。
+        """
+        try:
+            from core.storage.pending_attachment_release import get_journal
+
+            journal = get_journal()
+            if journal.pending_count():
+                # 运行时 self 就是 Agent（本 mixin 只被 Agent 组合）；pyright 看不到
+                # MRO 组合，故显式 cast（先例：core/agent/server.py 的 cast(Any, self)）。
+                released = await journal.retry(cast(Any, self))
+                remaining = journal.pending_count()
+                if remaining:
+                    logger.warning(
+                        "启动补做附件引用释放：成功 %d 条，仍剩 %d 条待重试", released, remaining)
+        except Exception:
+            logger.warning("启动补做附件引用释放失败（下轮/下次启动再试）", exc_info=True)
+        try:
+            await self._session_manager.retry_pending_cleanup()
+        except Exception:
+            logger.warning("启动补做会话待清理失败（下轮/下次启动再试）", exc_info=True)
+
     async def _stop_attachment_gc(self) -> None:
         """取消并等待附件 GC 后台任务（置于 _stop_attachment_repo 前）。"""
         await cancel_and_drain(
@@ -508,6 +543,10 @@ class _LifecyclePersistence:
                 await self._session_manager.load_active()
                 # review 复核 #5 D2：重试「删除已提交但 refs/归档未清」的待清理会话
                 await self._session_manager.retry_pending_cleanup()
+                # #41：同一类空洞的第二条 journal（主操作已提交、附件 refs 未释放）
+                from core.storage.pending_attachment_release import get_journal
+
+                await get_journal().retry(cast(Any, self))
                 # clean-start 会话发现（BE-P1-05）：repo 已连接，best-effort 确保
                 # default 文档存在（$setOnInsert——不覆盖既有会话上下文，重启不清空
                 # LLM 上下文窗口）。仅在恢复边界调用：__init__ 时 repo 未连接无法落库。

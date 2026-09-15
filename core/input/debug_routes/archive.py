@@ -22,9 +22,10 @@ from core.input.debug_routes._shared import (
 )
 from core.input.debug_routes._common import sessions_to_client
 from core.storage.attachment_release import (
-    release_all_attachments,
-    release_message_attachments,
-    release_session_attachments,
+    attachment_ids_from_message,
+    collect_all_attachment_refs,
+    collect_session_attachment_refs,
+    release_after_commit,
 )
 from core.storage.base import StorageUnavailableError
 from core.storage.message_repo import InvalidMessageIdError
@@ -101,18 +102,7 @@ async def archive_delete_handler(request: web.Request) -> web.Response:
     msg_id = request.match_info.get("msg_id", "")
     if not msg_id:
         return _protocol_error_response("CONTRACT_VALIDATION", "缺少 msg_id", 400)
-    # 批次 7：删除前列出消息释放附件 refs（附件软删联动）
     msg = await repo.get_by_id(msg_id)
-    if msg is not None:
-        try:
-            await release_message_attachments(agent, msg)
-        except StorageUnavailableError:
-            # S2-F2：今天会冒泡成 500（经错误信封中间件）；给精确的 503 +
-            # 保持"未删除"语义——消息仍在，可重试。
-            logger.warning("archive_delete 附件释放失败 msg_id=%s——拒绝删除", msg_id)
-            return _protocol_error_response(
-                "STORAGE_UNAVAILABLE", "附件引用释放失败，消息未删除（可重试）",
-                503, retryable=True)
     try:
         ok = await repo.delete_one(msg_id)
     except InvalidMessageIdError:
@@ -126,13 +116,31 @@ async def archive_delete_handler(request: web.Request) -> web.Response:
         return _protocol_error_response(
             "STORAGE_UNAVAILABLE", "存储暂不可用，消息未删除（可重试）", 503,
             retryable=True)
+    # #41（CR-04 彻底版）：附件释放移到**提交之后**。原先"先释放后删除"在存储故障时
+    # 留下「refs 已软删 + 消息还在」——不可逆损失方向（附件 24h 后被 GC 物理删除，
+    # 而消息仍引用它）；改成"先删除后释放"后最坏是「消息已删 + refs 待释放」，
+    # 由 pending_release journal 重试，只延迟不丢数据。
+    cleanup_pending = False
+    if msg is not None:
+        ids = attachment_ids_from_message(msg)
+        if ids:
+            # 释放键必须是**消息自身的 message_id**（`attachments.refs` 里存的是它），
+            # 不是 URL 上的 `msg_id`——后者对归档消息是 `metadata["_mongo_id"]`。
+            # 用错键时 `remove_ref` 的条件 update 一行都不命中、refs 静默不递减
+            # （实测被 test_attachment_message 抓住：ref_count 停在 2）。
+            ref_message_id = str(getattr(msg, "message_id", "") or msg_id)
+            cleanup_pending = await release_after_commit(
+                agent, [(ref_message_id, ids)])
     # 同步清理当前 session —— archive 和 session 是独立存储，
     # 只删 archive 不改 session 会导致 LLM prompt 仍包含已删消息
     session_purged = agent.purge_message_from_session(msg_id)
     if session_purged:
         await agent.session.save()
-    logger.info("DEBUG API: archive_delete msg_id=%s, ok=%s, session_purged=%d", msg_id, ok, session_purged)
-    return web.json_response(contract.DebugResult(ok=ok, session_purged=session_purged).wire_dict())
+    logger.info("DEBUG API: archive_delete msg_id=%s, ok=%s, session_purged=%d, cleanup_pending=%s",
+                msg_id, ok, session_purged, cleanup_pending)
+    return web.json_response(contract.DebugResult(
+        ok=ok, session_purged=session_purged,
+        cleanup_pending=True if cleanup_pending else None).wire_dict())
 
 
 async def archive_update_handler(request: web.Request) -> web.Response:
@@ -193,22 +201,34 @@ async def archive_clear_handler(request: web.Request) -> web.Response:
                         confirm=confirm, operation="清空归档")
     except DestructiveConfirmRequired as e:
         return _protocol_error_response("CONTRACT_VALIDATION", str(e), 400)
-    # 批次 7：清空前列出全部消息释放附件 refs（附件软删联动）
-    await release_all_attachments(agent)
+    # 批次 7 + #41：附件软删联动改为「快照 → 提交 → 释放」。快照必须在提交前读
+    # （clear_all 之后消息不存在，无法反查它们引用了哪些附件）；释放排在提交之后，
+    # 使"提交失败 → 无副作用"成立——反过来（先释放）会在提交失败时留下
+    # 「refs 已软删 + 消息还在」的不可逆损失。
+    try:
+        refs = await collect_all_attachment_refs(agent)
+    except StorageUnavailableError as e:
+        return _protocol_error_response(
+            "STORAGE_UNAVAILABLE", f"读取附件引用失败，未清空任何数据（可重试）: {e}",
+            503, retryable=True)
     try:
         deleted = await agent.message_repo.clear_all(confirm=confirm)
     except DestructiveConfirmRequired as e:
         return _protocol_error_response("CONTRACT_VALIDATION", str(e), 400)
     except StorageUnavailableError as e:
         return _protocol_error_response("STORAGE_UNAVAILABLE", str(e), 503, retryable=True)
+    cleanup_pending = await release_after_commit(agent, refs)
     # 同步清空当前 session：archive 删光后 session 也要保持一致
     session = agent.session
     n_session = len(session.messages)
     if n_session:
         session.clear()
         await session.save()
-    logger.warning("DEBUG API: archive_clear deleted=%d, session_cleared=%d", deleted, n_session)
-    return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
+    logger.warning("DEBUG API: archive_clear deleted=%d, session_cleared=%d, cleanup_pending=%s",
+                   deleted, n_session, cleanup_pending)
+    return web.json_response(contract.DebugResult(
+        ok=True, deleted=deleted,
+        cleanup_pending=True if cleanup_pending else None).wire_dict())
 
 
 async def sessions_list_handler(request: web.Request) -> web.Response:
@@ -331,28 +351,29 @@ async def session_delete_handler(request: web.Request) -> web.Response:
         return _protocol_error_response(
             "STORAGE_UNAVAILABLE", "MongoDB 不可用", 503, retryable=True)
     try:
-        # 批次 7：删除前释放该会话归档消息的附件 refs（附件软删联动）
+        # 批次 7 + #41：先快照 → 提交删会话 → 再释放附件 refs（理由同 archive_clear）
         #
-        # S2-F2：**不得吞掉释放失败**。`attachment_release` 的契约明确写
-        # "`StorageUnavailableError` 必须传播，否则 refs 残留导致附件被 GC 永久跳过
-        # 或删除「假成功」"。原先这里是 `except Exception: logger.warning` 后继续删 →
-        # 会话已删、refs 残留、响应称成功、无 journal 无重试。
-        # 现在保持**"未删除"语义**：释放失败即 503，什么都不删（可安全重试）。
+        # S2-F2 的"未删除语义"在 #41 后换了方向：主操作提交**之前**失败 → 503、
+        # 什么都没删（保持原语义）；提交**之后**释放失败 → 200 + cleanup_pending
+        # + journal 重试（此时已无可回滚，"未删除"会是谎报）。
         try:
-            await release_session_attachments(agent, SessionId(sid))
+            refs = await collect_session_attachment_refs(agent, SessionId(sid))
         except Exception as e:
-            logger.warning("session_delete 附件释放失败 sid=%s——拒绝删除（未删除语义）",
-                           sid, exc_info=True)
+            logger.warning("session_delete 读取附件引用失败 sid=%s——拒绝删除", sid,
+                           exc_info=True)
             code = ("STORAGE_UNAVAILABLE"
                     if isinstance(e, StorageUnavailableError) else "INTERNAL")
             return _protocol_error_response(
-                code, "附件引用释放失败，会话未删除（可重试）", 503, retryable=True)
+                code, "读取附件引用失败，会话未删除（可重试）", 503, retryable=True)
         deleted = await agent.session_repo.delete(SessionId(sid))
-        logger.warning("DEBUG API: session_delete sid=%s, current=%s, deleted=%d",
-                      sid, str(agent.session.session_id), deleted)
+        cleanup_pending = await release_after_commit(agent, refs)
+        logger.warning("DEBUG API: session_delete sid=%s, current=%s, deleted=%d, cleanup_pending=%s",
+                       sid, str(agent.session.session_id), deleted, cleanup_pending)
         if sid == str(agent.session.session_id):
             agent.session.clear()
-        return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
+        return web.json_response(contract.DebugResult(
+            ok=True, deleted=deleted,
+            cleanup_pending=True if cleanup_pending else None).wire_dict())
     except Exception:
         logger.warning("DEBUG API: 删除归档消息失败", exc_info=True)
         return _protocol_error_response(
@@ -389,21 +410,25 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
     except DestructiveConfirmRequired as e:
         return _protocol_error_response("CONTRACT_VALIDATION", str(e), 400)
     try:
-        # 批次 7：清空前释放全部归档消息的附件 refs（附件软删联动）
-        # S2-F2：同 session_delete——释放失败必须让调用方看见（未清空语义）
+        # 批次 7 + #41：清空前释放全部归档消息的附件 refs（附件软删联动）
+        # S2-F2 + #41：读取引用失败 → 什么都别删（未清空语义，可重试）；提交后释放
+        # 失败 → 已无可回滚，登记 journal 并在响应里暴露 cleanup_pending。
         try:
-            await release_all_attachments(agent)
+            refs = await collect_all_attachment_refs(agent)
         except Exception as e:
-            logger.warning("sessions_clear 附件释放失败——拒绝清空（未删除语义）",
-                           exc_info=True)
+            logger.warning("sessions_clear 读取附件引用失败——拒绝清空", exc_info=True)
             code = ("STORAGE_UNAVAILABLE"
                     if isinstance(e, StorageUnavailableError) else "INTERNAL")
             return _protocol_error_response(
-                code, "附件引用释放失败，未清空任何数据（可重试）", 503, retryable=True)
+                code, "读取附件引用失败，未清空任何数据（可重试）", 503, retryable=True)
         deleted = await agent.session_repo.clear_all(confirm=confirm)
-        logger.warning("DEBUG API: sessions_clear deleted=%d", deleted)
+        cleanup_pending = await release_after_commit(agent, refs)
+        logger.warning("DEBUG API: sessions_clear deleted=%d, cleanup_pending=%s",
+                       deleted, cleanup_pending)
         agent.session.clear()
-        return web.json_response(contract.DebugResult(ok=True, deleted=deleted).wire_dict())
+        return web.json_response(contract.DebugResult(
+            ok=True, deleted=deleted,
+            cleanup_pending=True if cleanup_pending else None).wire_dict())
     except DestructiveConfirmRequired as e:
         return _protocol_error_response("CONTRACT_VALIDATION", str(e), 400)
     except StorageUnavailableError as e:

@@ -2,7 +2,7 @@
 // raw wire 形状快照（无 Vue 装饰）
 // transportVersion: 2 — X-Protocol-Version 握手头可用值
 // protocolVersion: 2.0 — 仅展示（server_info 下发），不可用作握手头
-// schemaHash: 1397295aa02775b6
+// schemaHash: ba1dd2b0231d4c6c
 
 /** 用户消息接受确认（v2）：accepted → 后续 generation.* 事件；无 error。
 
@@ -1054,6 +1054,8 @@ export interface DebugResult {
   deleted?: number
   /** 同步清理的 session 消息数，可缺省 */
   session_purged?: number
+  /** 附件引用释放失败已登记重试（主操作已提交，重试本请求无用），可缺省 */
+  cleanup_pending?: boolean
 }
 
 /** 流式文字增量。 */
