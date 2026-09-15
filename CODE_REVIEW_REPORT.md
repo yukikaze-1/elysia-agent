@@ -617,6 +617,57 @@ owner 对 #8 的裁定（一律 fail-closed）覆盖那三条读路径；剩下 
 
 ---
 
+### §0.4.11 Tier 1 A–E 完成 + 决策落地（2026-09-14，8 个提交）
+
+owner 指定「Tier 1 全做：A→B→C→D→E」并给出 12 项决策。逐项独立提交，
+每项都带**注入/回退反证**。
+
+| 项 | 提交 | 修的是什么 | 反证 |
+|---|---|---|---|
+| **A-①** | `c2f15024` | `SafetyPipeline` 把**外部取消**归一为 `"用户取消"` 业务结果 → 外层 `wait_for` 失去超时语义（超时伪报、跳过重试、任务标成功、bridge 登记被跳过） | 去掉判据 → `DID NOT RAISE TimeoutError` |
+| **A-②** | `becf3df2` | 调度器一律 60s 硬切插件**按设计声明**的 120s（S2-G2）；门禁 **R4** 补"字段传参"盲区 | 声明改 300 → 红；不可解析 → 拒答红；扫描面失效 → 拒答红 |
+| **B** | `7affe932` | 读白名单的 `{session_id}` **从不替换** → 模板项是死配置、裸根放行一切（跨会话读整个 sandbox） | 读侧改回不替换 → 本会话读被拒（2 红） |
+| **C** | `346bad7f` | `_broadcast` 无预算 → 一个不读数据的客户端**永久挂起**整条生产者链（FSM 卡 SPEAKING） | 改回裸 `gather` → `TimeoutError` 红 |
+| **D** | `4d924af2` | WS `attachments` 无上限（16MB 帧≈十万条引用）、重复引用逐条 Mongo 往返 | 去上限 → `DID NOT RAISE`；去掉重 → 3 次查询 |
+| **E-①** | `099f38b9` | 空 `src` 的 `ImagePart` 产出 `{"url": ""}` → provider 判非法，legacy 会话**每轮**复现 | 短路守卫 → 红 |
+| **E-②** | `0aec4bc8` | `/restart` 只换 `self._config` 却打印"配置已重新加载"（构造期配置全不生效） | 不重建 → 红；`prefer_config_model` 恒 False → 红 |
+| **决策 #8** | `114f6668` | 版本历史三条读路径静默返回空 → 改 fail-closed（503） | 去掉 503 映射 → 红；读退回空 → 约定门禁红 |
+
+**A 引入的回归（已修，`a7c7e43a`）**：给取消路径加的 best-effort 标记**无条件**把调用
+标成 `cancelled`，撞上模块自己 D-o 规则（accepted/running 必须留出"重连重传 result →
+succeeded"闭环）。发现路径值得记：C 批跑下游套件时 `core/input/tests/
+test_desktop_roundtrip.py` 红了 → `git worktree` 在 A 之前的提交复跑确认通过 →
+插桩打印被标记时的 repo 状态拿到 `'offline'`。**单看 A 自己的 414 条全绿**。
+
+**四项证伪/收窄（旧清单不能再照做）**：
+
+1. **S2-H10 的一半已被 CR-09 修掉**：`resolve_image_source("")` 抛 `IsADirectoryError`
+   来自已删除的相对路径兜底分支（`Path("")` == `.`）。实测现在返回 `""`、不抛异常、
+   不碰文件系统。**故报告建议的 `validate_default=True` 也不可行**——`Src` 的默认值就是
+   `""`，打开默认值校验会让所有省略 `src` 的 Part 构造直接失败。仍成立的残留是
+   "空 src 产出坏 image 块"，已在产出点跳过。
+2. **CR-10（S1）已收口**：`embedding_provider` 改为 `retry_cooldown` 冷却可重试
+   （docstring 点名 CR-10），`/health` 增 `embedding_ok` 并计入 `fullReady`。
+3. **决策表 10 条里 4 条已过期**（#1/#2/#4/#9，随 S2-E2~E5 / S3-21 / CR-02 / S2-C1 落地）；
+   **#7 的编号引用有误**（它指向的 `S3-16` 实为 `get_self_state`，已修）。
+4. **`_PENDING_DECISION` 的 8 条里只有 3 条是产品决策**（已按 #8 落地）；另 5 条是
+   "同仓写路径一半 `raise` 一半静默返回"的缺陷——**本轮未做**，见下。
+
+**本项未做（如实标注）——下一轮的队列**：
+
+| 项 | 来源 | 内容 | 量级 |
+|---|---|---|---|
+| `#3` | 决策 #3 | `desktop_call_repo.mark()` 的迁移守卫改 **CAS**（"两种部署都正确"，多 worker 下不退化为最后写入者胜） | 1–2h |
+| `#6` | 决策 #6 | 后台任务终态**跨重启不丢** → 给 `AgentInfra` 加持久化 repo（停机落库 + 启动补投） | 0.5–1d |
+| `#7` | 决策 #7 | 打断/流中途失败时把半截回复**落 `AssistantMessage` 并标 `incomplete`**（= S2-H5） | 2–4h |
+| `#10` | 决策 #10 | consolidator buffer **落盘 + 下次启动补提**（现为每 runtime 5s 超时即丢） | 0.5d |
+| 写路径 5 条 | 本表 (b3) | `MemoryRepository.insert/delete`、`SessionRepository.rename`、`TokenRepository.flush/clear_all` 的静默返回 | 0.5d |
+| owner 解禁项 | 决策表 | `#41` / `#45` / `#44` / `#46`（全部解禁）、`S2-R6-1` 完整版真实库专层 | 4–6d |
+
+那 5 条写路径需要**逐调用点定语义**（用户可见写入 → 上抛；后台 best-effort 清理 →
+记日志继续），而 `long_term.py` 有 6+ 处调用点、无统一收口，改错会把"静默丢写"变成
+"打断回合"，故留作独立一项。
+
 **(2) 正文写了、但从未排进任何计划（38 条）**
 
 > 另有本轮补进来的三类（路线图【新增】项 / 门禁登记缺口 / 5 条写路径缺陷）见 §0.4.10(b)。
