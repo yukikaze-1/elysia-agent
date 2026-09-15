@@ -445,12 +445,20 @@ class TestDisconnect:
 class TestTimeout:
     @pytest.mark.asyncio
     async def test_timeout_marks_expired(self):
-        """deliver 挂起 → wait_for 超时 → TIMEOUT + repo expired。"""
+        """deliver 挂起 → wait_for 超时 → TIMEOUT + repo expired。
+
+        附带钉住**来源标注**：桥合成的超时会以"插件返回的 ToolResult"形态到达调度器，
+        不标 `synthesised_timeout` 就等于绕过 `idempotent` 门控——`desktop.file.write` /
+        `file.select` / `screen.capture` 会被重复执行。今天靠"桥超时 == 插件预算、管道
+        计时器先触发"侥幸不成立，但那是竞态，不是机制。
+        """
         repo, bridge, frames = _make_bridge(timeout=0.05)
         result = await bridge.request_and_wait(call=_call())
         assert not result.success
         assert result.error_type == ErrorType.TIMEOUT
         assert result.error == "桌面工具调用超时"
+        assert result.synthesised_timeout is True, \
+            "桥合成的超时必须标注来源，否则会绕过调度器的 idempotent 门控"
         call_id = frames[0]["callId"]
         assert repo.calls[call_id]["status"] == "expired"
 

@@ -316,6 +316,10 @@ class ToolCallDispatcher:
                     name=tc.function.name,
                     error=f"工具调度等待超时（>{_DISPATCH_TIMEOUT:.0f}s），已取消",
                     error_type=ErrorType.TIMEOUT,
+                    # 同样是**合成的**超时，必须如实标注来源：今天这条结果不会回到重试循环
+                    # （任务已被取消），但"数据说的来源"必须与事实一致——否则将来有人把它
+                    # 接回重试路径时，门控会以为这是插件自己的陈述而放行。
+                    synthesised_timeout=True,
                 )))
                 continue
             raw = self._outcome_of(futures[idx], st)
@@ -575,10 +579,10 @@ class ToolCallDispatcher:
     def _declares_idempotent(self, tool_name: str) -> bool:
         """插件是否声明"重复调用不产生额外副作用"（`SafetyProfile.idempotent`）。
 
-        只在结果来自**调度器自己合成的超时**时被询问（见 `_execute_tool`）：插件
-        **返回**的错误是插件的陈述，照旧按 `ErrorType.is_retryable` 重试；而
-        `asyncio.TimeoutError` → `ErrorType.TIMEOUT` 这个标签是**调度器猜的**，
-        所以必须有插件的幂等声明背书才敢再 invoke 一次。
+        只在结果**自带** `synthesised_timeout=True` 时被询问（见 `_execute_tool`）：
+        那表示 TIMEOUT 标签是**运行时自己**写的（本方法的 `asyncio.TimeoutError`
+        分支，或 `SafetyPipeline.execute` 的内层 `wait_for`），不是插件的陈述；
+        插件**返回**的错误照旧按 `ErrorType.is_retryable` 重试。
 
         与 `_timeout_for` 同一纪律：**不使用 getattr 兜底**——executor 必须实现
         `declares_idempotent`（ToolAdapter 与 ToolControlManager 都有）。缺了就在这里
@@ -597,9 +601,10 @@ class ToolCallDispatcher:
         **重试判定的两个来源**（2026-09-16，勿混淆）：
 
         - 插件**返回**的 `error_type` 是插件的陈述 → 按 `ErrorType.is_retryable` 重试；
-        - 本方法**自己合成**的超时（`asyncio.TimeoutError` → `ErrorType.TIMEOUT`）是
-          调度器的猜测 → 还要插件声明 `SafetyProfile.idempotent=True`
-          （`_declares_idempotent`）才重试。
+        - **运行时合成**的超时（`result.synthesised_timeout=True`：本方法的
+          `asyncio.TimeoutError` 分支、或 `SafetyPipeline.execute` 的内层
+          `wait_for(request_timeout)`）是运行时的猜测 → 还要插件声明
+          `SafetyProfile.idempotent=True`（`_declares_idempotent`）才重试。
 
         Args:
             task: 要执行的工具调用任务
@@ -620,10 +625,6 @@ class ToolCallDispatcher:
             # 每调用克隆一次 ctx：thread LLM tool_call_id → ctx.call_id（D6-07），
             # 且调用内写 ctx.services 落在副本不污染共享 ctx（对齐 _execute_tools_directly 惯例）
             ctx = self._tool_ctx.clone_for_call(call_id=call_id)
-            # 本次尝试的失败是不是**调度器自己合成的超时**（下面的 TimeoutError 分支）。
-            # 每次尝试都要复位：第 1 次超时、第 2 次返回 NETWORK_ERROR 时，重试依据
-            # 必须是第 2 次那个**插件自己写的**标签。
-            synthesised_timeout = False
             try:
                 result = await asyncio.wait_for(
                     self._tool_executor.execute(
@@ -634,11 +635,14 @@ class ToolCallDispatcher:
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:
-                synthesised_timeout = True
+                # 合成点②：这个 TIMEOUT 是**调度器自己**写的（单次尝试预算
+                # `per_call_timeout` 到期），不是插件的陈述——置
+                # `synthesised_timeout=True` 让门控不必依赖"这段代码在哪"。
                 result = ToolResult.fail(
                     name=tool_name,
                     error=f"执行超时 ({per_call_timeout:.0f}s)",
                     error_type=ErrorType.TIMEOUT,
+                    synthesised_timeout=True,
                 )
             except Exception as e:
                 result = ToolResult.fail(
@@ -652,17 +656,24 @@ class ToolCallDispatcher:
             # 仅对可重试的错误类型重试；shutdown 期间不重试。
             #
             # 区分"谁说的"（2026-09-16）：插件**返回**的 error_type 是插件的陈述，
-            # 直接按 is_retryable 走；`synthesised_timeout` 那一条是**调度器自己**写上的
-            # TIMEOUT 标签——猜的，只有插件声明 `SafetyProfile.idempotent=True`
-            # （经 executor.declares_idempotent 问到）才允许再 invoke 一次，
-            # 否则有副作用的工具会在这条路径上被重复 invoke。
+            # 直接按 is_retryable 走；`result.synthesised_timeout` 为真的那条是
+            # **运行时自己**写上的 TIMEOUT（本方法的 `asyncio.TimeoutError` 分支，或
+            # `SafetyPipeline.execute` 的内层 `wait_for`）——猜的，只有插件声明
+            # `SafetyProfile.idempotent=True`（经 executor.declares_idempotent 问到）
+            # 才允许再 invoke 一次，否则有副作用的工具会在这条路径上被重复 invoke。
+            #
+            # 判据只读**结果上的字段**（不是"哪个分支产生的"）：于是新增合成点只需
+            # 置这个标记，不必再往这个表达式里补一条——管道层正是漏在这里。
+            # 字段每次尝试由结果自带，无需在循环内复位（上一版靠局部变量，第 1 次
+            # 超时、第 2 次返回 NETWORK_ERROR 时必须手动复位才不会串味）。
             error_type = result.error_type
             retryable = (
                 self._running
                 and error_type is not None
                 and hasattr(error_type, "is_retryable")
                 and error_type.is_retryable
-                and (not synthesised_timeout or self._declares_idempotent(tool_name))
+                and (not result.synthesised_timeout
+                     or self._declares_idempotent(tool_name))
                 and task.can_retry()
             )
             if not retryable:

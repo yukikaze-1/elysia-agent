@@ -78,10 +78,14 @@ class SafetyProfile:
 
     # 重试语义：声明"重复调用不产生额外副作用"（只读 / 可安全重入）。
     #
-    # 调度器**只**在插件声明 True 时重试**它自己合成的超时**——`scheduler._execute_tool`
-    # 把 `asyncio.TimeoutError` 收成 `ErrorType.TIMEOUT` 那一条：那个标签是调度器**猜的**，
-    # 不是插件的陈述。插件**自己返回**的可重试错误（`NETWORK_ERROR` / `RATE_LIMITED` /
-    # `TIMEOUT`）不受本字段影响——那是插件自己的声明，照旧按 `ErrorType.is_retryable` 重试。
+    # 调度器**只**在插件声明 True 时重试**运行时自己合成的超时**——两个合成点都算：
+    # ① 本模块 `SafetyPipeline.execute` 的内层 `wait_for(request_timeout)`；
+    # ② `scheduler._execute_tool` 的 `asyncio.TimeoutError` 分支。
+    # 两处都在结果上置 `ToolResult.synthesised_timeout=True`，调度器的门控只读那一个
+    # 字段（"谁合成的"由数据承载，不由代码位置推断）。
+    #
+    # 插件**自己返回**的可重试错误（`NETWORK_ERROR` / `RATE_LIMITED` / `TIMEOUT`）
+    # 不受本字段影响——那是插件自己的陈述，照旧按 `ErrorType.is_retryable` 重试。
     #
     # 默认 False 是 fail-safe：忘记声明 → 少重试一次，而不是把副作用做两遍。
     idempotent: bool = False
@@ -562,9 +566,15 @@ class SafetyPipeline:
                 )
             except asyncio.TimeoutError:
                 self._stats["timeout"] += 1
+                # 合成点①：这个 TIMEOUT 是**管道自己**写的（内层预算
+                # `plugin.safety.request_timeout` 到期），不是插件的陈述——必须置
+                # `synthesised_timeout=True`，否则它以"插件返回的结果"形态到达调度器，
+                # 未声明 `SafetyProfile.idempotent` 的工具会被同一个 `call_id` 再
+                # invoke 一次（副作用落地两遍）。而这条内层预算几乎总是先于调度器的
+                # `_timeout_for` 触发（= max(60, declared+5) > declared）。
                 return _finish(ToolResult.fail(
                     name=name, error=f"执行超时 ({timeout}s)",
-                    error_type=ErrorType.TIMEOUT,
+                    error_type=ErrorType.TIMEOUT, synthesised_timeout=True,
                 ))
             except asyncio.CancelledError:
                 if cancellation_is_external():

@@ -837,6 +837,9 @@ async def test_dispatch_budget_exhausted_fails_bounded_and_keeps_pool_alive(monk
     assert not r.success
     assert r.error_type == ErrorType.TIMEOUT
     assert "超时" in (r.error or "")
+    # 来源标注：这条结果今天不会回到重试循环（任务已取消），但数据必须与事实一致——
+    # 否则将来有人把它接回重试路径时，门控会误以为这是插件自己的陈述而放行。
+    assert r.synthesised_timeout is True
 
     # 池子仍然可用（worker 没被取消掉）
     monkeypatch.undo()

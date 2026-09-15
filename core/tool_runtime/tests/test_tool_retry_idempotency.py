@@ -24,17 +24,23 @@
      `ErrorType.is_retryable`（TIMEOUT / RATE_LIMITED / NETWORK_ERROR）决定，
      与 `SafetyProfile.idempotent` **无关**；`ToolResult.fail` 的 `error_type`
      缺省是 `None` → 不带类型的失败**不重试**。
-   - 调度器**自己合成**的超时（`_execute_tool` 的 `asyncio.TimeoutError` 分支把它
-     写成 `ErrorType.TIMEOUT`）是**调度器的猜测**：那个标签不是插件说的，所以
-     **只有**插件声明 `SafetyProfile.idempotent=True` 才重试。默认 `False`
-     = fail-safe（忘记声明 → 少重试一次，而不是把副作用做两遍）。
-4. **重试安全的声明面**是 `SafetyProfile.idempotent`（"重复调用不产生额外副作用"，
+   - 运行时**自己合成**的超时（**两个**合成点：调度器 `_execute_tool` 的
+     `asyncio.TimeoutError` 分支、管道 `SafetyPipeline.execute` 围绕
+     `plugin.execute(...)` 的 `wait_for(request_timeout)`）是**运行时的猜测**：
+     那个 TIMEOUT 标签不是插件说的，所以**只有**插件声明
+     `SafetyProfile.idempotent=True` 才重试。默认 `False` = fail-safe
+     （忘记声明 → 少重试一次，而不是把副作用做两遍）。
+4. **"谁合成的"由数据承载，不由代码位置推断**：合成点在结果上置
+   `ToolResult.synthesised_timeout=True`（`Module/tool/protocol.py`），调度器的门控
+   只读这一个字段（`not result.synthesised_timeout or declares_idempotent(...)`）。
+   插件自己返回的 TIMEOUT 保持缺省 `False`——那是插件的陈述。
+5. **重试安全的声明面**是 `SafetyProfile.idempotent`（"重复调用不产生额外副作用"，
    只读/可安全重入）；调度器经 `executor.declares_idempotent(tool_name)` 询问
    （与 `declared_request_timeout` 同一委托链，**不使用 getattr 兜底**）。
 
 因此：**插件自己声明可重试的失败，第一次尝试已落地的副作用仍会在重试里再落地
-一次**（§一、§二）；调度器合成的超时只在插件声明幂等时才重试（§五）。
-本文件把这两个现实都显式断言出来，而不是断言一个代码并未提供的保证。
+一次**（§一、§二）；运行时合成的超时只在插件声明幂等时才重试——**两个合成点都是**
+（§五）。本文件把这两个现实都显式断言出来，而不是断言一个代码并未提供的保证。
 """
 
 from __future__ import annotations
@@ -66,6 +72,11 @@ _PIPELINE_TYPES: tuple[ErrorType, ...] = (
     ErrorType.TOOL_ERROR,      # 不可重试（插件内部异常经 safety 管道归一到这里）
     ErrorType.PERMISSION_DENIED,
 )
+
+#: 生产默认重试上限，**现算**而不是写死 3：改了 `QueuedToolCall.max_retries` 的缺省值，
+#: "声明幂等 → 首发 + max_retries 次尝试"的期望次数自动跟着变（§五）。
+_DEFAULT_MAX_RETRIES: int = int(
+    next(f.default for f in fields(QueuedToolCall) if f.name == "max_retries"))
 
 
 def _tc(id_: str = "c1", name: str = "tool", args: str = "{}") -> ToolCall:
@@ -598,22 +609,31 @@ async def test_same_tool_call_id_submitted_twice_executes_twice():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 五、调度器合成的超时：**只**在插件声明 idempotent 时才重试
+# 五、运行时合成的超时：**只**在插件声明 idempotent 时才重试
 #
-#     `_execute_tool` 的 `asyncio.TimeoutError` 分支把超时写成
-#     `ErrorType.TIMEOUT`——这个标签是**调度器猜的**，不是插件说的。
-#     修复前它和插件自己返回的 TIMEOUT 走同一个 gate（`is_retryable` 为真即重试），
-#     于是 write_file / set_reminder / desktop.* 这些**有副作用**的工具在超时后
-#     会被用同一个 `call_id` 再 invoke 一次。
+#     "合成"= TIMEOUT 标签不是插件说的，是运行时自己写上去的。判据跟着
+#     `ToolResult.synthesised_timeout` 走，而不是"这段代码在哪"：
 #
-#     **范围（诚实声明）**：本节的判据只覆盖**调度器这一层**合成的超时。
-#     还有第二个合成点——`Module/tool/safety.py::SafetyPipeline.execute` 在
-#     `plugin.safety.request_timeout` 处的 wait_for 也合成 TIMEOUT，而它以
-#     "插件返回的 ToolResult"形态到达调度器，门控看不见它。算术上它几乎总是
-#     先触发（`_timeout_for` = max(60, declared+5) > declared：write_file 30 vs 60、
-#     desktop.file.write 120 vs 125），所以**未声明幂等的工具在真实预算下仍会因
-#     超时被重试**。该残余由本节末尾的 strict-xfail 用例钉住（等待 owner 决定是否
-#     把管道层也纳入门控）。
+#       ① **调度器**：`_execute_tool` 的 `asyncio.TimeoutError` 分支（单次尝试
+#          预算由 `_timeout_for` 决定）；
+#       ② **管道**：`SafetyPipeline.execute` 围绕 `plugin.execute(...)` 的
+#          `wait_for(plugin.safety.request_timeout)`。
+#
+#     2026-09-16 的第一版修复只门控了 ①。② 以"插件返回的 ToolResult"形态到达
+#     调度器，门控看不见它——而算术上它**几乎总是先触发**
+#     （`_timeout_for` = max(60, declared+5) > declared：write_file 30 vs 60、
+#     desktop.file.write 120 vs 125），于是真实预算下"未声明幂等的工具因超时被
+#     重试"仍然发生（实测 3 次 plugin 调用）。缺口由此前的 strict-xfail
+#     `test_pipeline_synthesised_timeout_is_not_gated_yet` 钉住，现已闭合：
+#     两个合成点都在结果上置 `synthesised_timeout=True`，门控收敛为一条
+#     `not result.synthesised_timeout or declares_idempotent(tool_name)`。
+#
+#     插件**自己返回**的 TIMEOUT（`ToolResult.fail(error_type=TIMEOUT)`）不带该
+#     标记 → 照旧按 `is_retryable` 重试（§五末两条锁死这一侧）。
+#
+#     已知**尚未**打标的第三个合成点：`core/desktop/bridge.py::_timeout_result`
+#     （Desktop 桥自己合成 TIMEOUT 后交给 desktop 插件**原样返回**）。它不在
+#     本次改动范围（该文件不可改），且判据是同一套——补标记即可纳入门控。
 # ═══════════════════════════════════════════════════════════════════
 
 @pytest.mark.service
@@ -785,46 +805,155 @@ async def test_synthesised_timeout_gate_through_real_pipeline(
         assert result.error_type is ErrorType.TIMEOUT
 
 
-@pytest.mark.service
-@pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "**范围外残余**（2026-09-16）：本次修复只门控『调度器自己合成』的超时。"
-        "`SafetyPipeline.execute` 在 `plugin.safety.request_timeout` 处的 wait_for "
-        "**也**合成 TIMEOUT，而它以『插件返回的 ToolResult』形态到达调度器——"
-        "调度层无法与插件自己写的 TIMEOUT 区分（这正是『谁说的』判据的边界）。"
-        "而且它几乎总是先触发：`_timeout_for` = max(60, declared+5) > declared"
-        "（实测 write_file 30 vs 60、desktop.file.write 120 vs 125），"
-        "所以真实预算下『未声明幂等的工具因超时被重试』仍然会发生。"
-        "本用例断言的是更宽的原则（未声明幂等的工具超时后只应被调用一次）；"
-        "若 owner 决定把管道层也纳入 `idempotent` 门控（例如让管道合成的 TIMEOUT "
-        "按 idempotent 降级为不可重试），本用例会 XPASS（strict → 红）→ 届时改为正例。"
-    ),
-)
-async def test_pipeline_synthesised_timeout_is_not_gated_yet(fast_backoff):
-    """已知残余：**管道层**合成的超时不受 `idempotent` 门控（预期 XFAIL）。
+def _pipeline_timeout_plugin_class(*, idempotent: bool, seen: list[int],
+                                   cancelled: list[int], succeed_on_retry: bool):
+    """构造一个"在**管道层**内层预算下超时"的真实插件类（经完整 safety 管道执行）。
 
-    插件声明 `request_timeout=0.05`（模拟"内层预算先于调度器 60s 触发"）后挂起：
-    先触发的是 `SafetyPipeline` 的 wait_for，它返回 `ToolResult.fail(TIMEOUT)`；
-    调度器把这条当"插件自己返回的可重试错误"，于是照旧重试
-    （3 次 = 首发 + 默认 max_retries=2，`fast_backoff` 只影响等待时长）。
+    两个声明都落在 `SafetyProfile` 上，各自的作用面不同：
+
+    - `request_timeout=0.05`：让 `SafetyPipeline.execute` 的 `wait_for` 成为**先触发**
+      的那条超时（调度器的单次预算 `_timeout_for` 至少 `_TOOL_TIMEOUT`=60s），
+      即本节的被测合成点；
+    - `idempotent`：经 `ToolAdapter.declares_idempotent` → `ToolManager` 的**生产
+      委托链**被调度器问到——这正是门控要接上的那一环。
+
+    `succeed_on_retry=True` 时第 2 次起直接成功（用于断言"声明幂等 → 重试能恢复"）；
+    False 时每次都挂到内层预算触发（用于断言重试**次数**：修复前 3 次）。
     """
-    seen: list[int] = []
 
     class _PipelineTimeout(ToolPlugin):
         name = "pipeline_timeout_tool"
-        description = "side-effecting tool that hangs under a tiny declared budget"
+        description = "hangs under its own declared budget (pipeline-synthesised timeout)"
         param_model = None
         capabilities = set()
-        safety = SafetyProfile(request_timeout=0.05)  # idempotent 缺省 False
+        safety = SafetyProfile(request_timeout=0.05, idempotent=idempotent)
 
         async def execute(self, *, ctx: ToolContext, emit=None, params=None) -> ToolResult:
             seen.append(1)
-            await asyncio.sleep(5)
-            return ToolResult.ok(name=self.name, content="ok", duration_ms=0.0)
+            if succeed_on_retry and len(seen) > 1:
+                return ToolResult.ok(name=self.name, content="ok", duration_ms=0.0)
+            try:
+                # 只是让"挂起"可观测；0.05s 的内层预算会先取消它。
+                await asyncio.wait_for(asyncio.Event().wait(), timeout=5.0)
+            except asyncio.CancelledError:
+                cancelled.append(1)
+                raise
+            raise AssertionError("插件未被管道层的内层预算取消——用例前提不成立")
 
-    tm = ToolAdapter([_PipelineTimeout], session_id="test")
+    return _PipelineTimeout
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_pipeline_synthesised_timeout_carries_provenance_flag():
+    """管道层合成 TIMEOUT 时，`ToolResult.synthesised_timeout=True` 随**数据**走。
+
+    直接驱动 `ToolAdapter.execute`（不经调度器），把"谁合成的"钉在结果对象上：
+    插件声明 `request_timeout=0.05` 却挂 5s → `SafetyPipeline.execute` 的 `wait_for`
+    先触发 → 它返回的失败结果必须自带 `synthesised_timeout=True`。
+
+    这是本修复的核心不变式：调度器只读这一个字段，不再靠"这段代码在哪"推断——
+    否则每多一个合成点就要在门控上再补一条（管道层就是这么漏掉的）。
+    """
+    seen: list[int] = []
+    cancelled: list[int] = []
+    tm = ToolAdapter([_pipeline_timeout_plugin_class(
+        idempotent=False, seen=seen, cancelled=cancelled, succeed_on_retry=False)],
+        session_id="test")
+    await tm.start()
+    try:
+        result = await tm.execute(
+            "pipeline_timeout_tool", ctx=ToolContext(session_id="test"))
+    finally:
+        await tm.shutdown()
+
+    assert not result.success
+    assert result.error_type is ErrorType.TIMEOUT
+    assert result.synthesised_timeout is True, (
+        "管道层合成的超时必须自报家门（否则调度器会把它当成插件的陈述而重试）")
+    assert result.error_type.is_retryable, (
+        "被标记的是**重试门控**，不是错误分类：TIMEOUT 仍是可重试分类")
+    assert cancelled == [1], "第 1 次尝试不是被管道层内层预算取消的——用例前提不成立"
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_plugin_returned_timeout_is_not_marked_as_synthesised():
+    """插件**自己**返回 TIMEOUT（插件的陈述）→ 标记保持 `False`，管道原样透传。
+
+    判据的边界：`SafetyPipeline._wrap_result` 对插件返回的 `ToolResult` 不做任何
+    改写，所以"插件的陈述"与"运行时的猜测"在数据上可分。与上一条一起，
+    这个字段的两个取值都被钉住。
+    """
+
+    class _SelfTimeout(ToolPlugin):
+        name = "self_timeout_tool"
+        description = "returns TIMEOUT itself (plugin's own statement)"
+        param_model = None
+        capabilities = set()
+        safety = SafetyProfile()  # 立刻返回，不经过任何 wait_for
+
+        async def execute(self, *, ctx: ToolContext, emit=None, params=None) -> ToolResult:
+            return ToolResult.fail(
+                name=self.name, error="上游限流", error_type=ErrorType.TIMEOUT)
+
+    tm = ToolAdapter([_SelfTimeout], session_id="test")
+    await tm.start()
+    try:
+        result = await tm.execute("self_timeout_tool", ctx=ToolContext(session_id="test"))
+    finally:
+        await tm.shutdown()
+
+    assert result.error_type is ErrorType.TIMEOUT
+    assert result.synthesised_timeout is False, (
+        "插件自己写的 TIMEOUT 是插件的陈述——不得被标成'合成'，否则它的重试会被误关掉")
+
+
+@pytest.mark.unit
+def test_synthesised_timeout_field_defaults_to_false():
+    """`ToolResult.synthesised_timeout` 存在且**缺省 False**（fail-safe 的另一侧）。
+
+    缺省 False = "这是插件说的"——`fail()` 的所有既有调用点（插件失败路径、
+    `tool_failure()` 助手、Desktop 桥…）语义不变；只有运行时**自己**合成超时的
+    那两处显式置 True。字段名进 `fields()` 是为了让"数据承载判据"这条契约可断言。
+    """
+    assert "synthesised_timeout" in {f.name for f in fields(ToolResult)}
+    assert ToolResult.fail(
+        name="t", error="e", error_type=ErrorType.TIMEOUT).synthesised_timeout is False
+    assert ToolResult.ok(name="t", content="ok", duration_ms=0.0).synthesised_timeout is False
+    assert ToolResult.fail(
+        name="t", error="e", error_type=ErrorType.TIMEOUT,
+        synthesised_timeout=True).synthesised_timeout is True
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "idempotent,expected_invocations",
+    [(True, 1 + _DEFAULT_MAX_RETRIES), (False, 1)],
+    ids=["declared_idempotent", "not_declared"],
+)
+async def test_pipeline_synthesised_timeout_is_gated_by_declaration(
+        fast_backoff, idempotent, expected_invocations):
+    """**管道层**合成的超时同样受 `idempotent` 门控（strict-xfail 的转正用例）。
+
+    本用例是 `test_pipeline_synthesised_timeout_is_not_gated_yet`（strict-xfail）
+    的转正：当时管道层合成的 TIMEOUT 以"插件返回的 ToolResult"形态到达调度器，
+    门控看不见它，于是**未声明幂等**的工具在管道层超时后仍被用同一个 `call_id`
+    重复 invoke（实测 3 次 = 首发 + 默认 `max_retries=2`）——`write_file` /
+    `set_reminder` / `save_memory` 这类有副作用的工具因此把副作用做两遍，且这条
+    路径在真实预算下**先于**调度器那条触发。
+
+    修复后（合成点自报家门，门控只读 `result.synthesised_timeout`）：
+    - 未声明 `idempotent` → **恰好 1 次**（缺口已闭合）；
+    - 声明 `idempotent=True` → 照旧重试（3 次；本用例的插件每次都挂到内层预算），
+      即门控不是"取消超时重试"，而是把依据换成插件自己的声明。
+    """
+    seen: list[int] = []
+    cancelled: list[int] = []
+    tm = ToolAdapter([_pipeline_timeout_plugin_class(
+        idempotent=idempotent, seen=seen, cancelled=cancelled, succeed_on_retry=False)],
+        session_id="test")
     await tm.start()
     sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
     await sched.start()
@@ -835,13 +964,51 @@ async def test_pipeline_synthesised_timeout_is_not_gated_yet(fast_backoff):
         await sched.stop()
 
     _call, result = results[0]
+    assert len(seen) == expected_invocations, (
+        f"idempotent={idempotent} 时应调用 {expected_invocations} 次——"
+        f"修复前两种参数下都是 3 次（管道层合成点未被门控，副作用重复落地）")
+    assert len(cancelled) == expected_invocations, (
+        "每次尝试都必须是被管道层内层预算取消的（否则测的不是这条合成点）")
     assert not result.success
-    assert result.error_type is ErrorType.TIMEOUT
-    assert len(seen) == 1, "未声明幂等的工具不应因管道层合成的超时被重复调用"
+    assert result.error_type is ErrorType.TIMEOUT, (
+        "失败原因仍如实上报为 TIMEOUT——被门控的是**重试**，不是错误分类")
+
+
+@pytest.mark.service
+@pytest.mark.asyncio
+async def test_pipeline_synthesised_timeout_retry_recovers_when_declared_idempotent(
+        fast_backoff):
+    """声明幂等的插件：管道层超时后重试**能成功**，且 `retry_count` 如实累计。
+
+    与上一条的正向边界互补——那里的插件每次都超时（只看次数），这里第 2 次成功
+    （看恢复）。这条同时说明"声明幂等"的语义是插件给的**背书**：重试照旧发生。
+    """
+    seen: list[int] = []
+    cancelled: list[int] = []
+    tm = ToolAdapter([_pipeline_timeout_plugin_class(
+        idempotent=True, seen=seen, cancelled=cancelled, succeed_on_retry=True)],
+        session_id="test")
+    await tm.start()
+    sched = ToolCallDispatcher(tool_executor=tm, num_workers=1, checkpoint_path=None)
+    await sched.start()
+
+    t = QueuedToolCall.new_tool_call("req-1", "pipeline_timeout_tool", {})
+    fut = t.get_future()
+    try:
+        await sched.submit(t)
+        result = await asyncio.wait_for(fut, timeout=2.0)
+    finally:
+        await sched.stop()
+
+    assert result.success, "声明幂等的插件在管道层超时后应重试并成功"
+    assert len(seen) == 2, "重试未发生——把重试整个关掉了"
+    assert t.retry_count == 1
+    assert cancelled == [1], "第 1 次尝试是被管道层内层预算取消的"
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 六、可重试性的事实源：ErrorType 管"插件说的"，idempotent 管"调度器猜的"
+# 六、可重试性的事实源：ErrorType 管"插件说的"，idempotent 管"运行时猜的"
+#     （"运行时"= 两个合成点：管道层 + 调度器层，见 §五）
 # ═══════════════════════════════════════════════════════════════════
 
 @pytest.mark.unit

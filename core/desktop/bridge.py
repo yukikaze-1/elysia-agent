@@ -510,8 +510,18 @@ class DesktopToolBridge:
 
     @staticmethod
     def _timeout_result(tool_name: str) -> ToolResult:
+        """桌面调用超时的结果——**合成**的超时，必须标注来源。
+
+        这条结果会以"插件返回的 ToolResult"形态到达调度器，所以不标注就等于绕过
+        `idempotent` 门控：`desktop.file.write` / `desktop.file.select` /
+        `desktop.screen.capture` 都会被重复执行。今天它是**潜在**的——桥超时（120s）恰好
+        等于桌面插件声明的 `request_timeout`（120s），而管道里那个计时器先武装、先触发，
+        于是（已标注的）管道超时赢了竞态。但只要将来把桥超时配得比插件预算小，这个洞
+        立刻变成活的。
+        """
         return ToolResult.fail(
-            name=tool_name, error="桌面工具调用超时", error_type=ErrorType.TIMEOUT)
+            name=tool_name, error="桌面工具调用超时", error_type=ErrorType.TIMEOUT,
+            synthesised_timeout=True)
 
     async def _reject_tampering(self, call_id: str, doc: dict) -> bool:
         """篡改拒绝（BE-043）：锁内 mark failed + 立即 resolve 明确失败态 + return False。

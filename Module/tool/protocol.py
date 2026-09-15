@@ -602,6 +602,20 @@ class ToolResult:
     # 非空表示此工具调用了后台任务，CognitiveLoop 检测后结束当前回合
     async_task_id: str | None = None
 
+    # 标记"这个 TIMEOUT 是**管道/调度器合成的**，不是插件自己返回的"。
+    #
+    # 判据必须跟着数据走——否则每多一个合成点就要在门控上再补一条（管道层
+    # `SafetyPipeline.execute` 就是这么漏掉的：它合成的 TIMEOUT 以"插件返回的
+    # ToolResult"形态到达调度器，门控看不见它，于是未声明幂等的工具被重复 invoke，
+    # 副作用落地两遍）。合成点（当前两处：`SafetyPipeline.execute` 的内层
+    # `wait_for(request_timeout)`、`ToolCallDispatcher._execute_tool` 的
+    # `asyncio.TimeoutError` 分支）置 True，调度器的重试门控只读这一个字段：
+    # `not result.synthesised_timeout or declares_idempotent(tool_name)`。
+    #
+    # **插件自己返回 `ErrorType.TIMEOUT` 时该字段保持 False**（那是插件的陈述）——
+    # 插件声明的可重试错误照旧按 `ErrorType.is_retryable` 重试，不受幂等声明影响。
+    synthesised_timeout: bool = False
+
     # ---- Factory methods ----
 
     @classmethod
@@ -630,11 +644,18 @@ class ToolResult:
     def fail(
         cls, name: str, error: str, duration_ms: float = 0.0,
         error_type: ErrorType | None = None,
+        synthesised_timeout: bool = False,
     ) -> "ToolResult":
-        """创建失败结果。"""
+        """创建失败结果。
+
+        `synthesised_timeout=True` 只给**运行时自己合成**的超时用（管道 / 调度器的
+        `wait_for` 超时分支）；插件**自己返回** `ErrorType.TIMEOUT` 时保持缺省 False
+        ——那是插件的陈述，调度器的幂等门控不得作用于它。
+        """
         return cls(
             success=False, tool_name=name, error=error,
             duration_ms=duration_ms, error_type=error_type,
+            synthesised_timeout=synthesised_timeout,
         )
 
     # ---- Helpers ----
