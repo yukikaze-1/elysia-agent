@@ -812,3 +812,48 @@ class TestStripedLocks:
         for t in (t1, t2):
             t.cancel()
         await asyncio.gather(t1, t2, return_exceptions=True)
+
+
+class TestReuserDoesNotOwnTheFirstPartyRegistration:
+    """S2-G2 残余：**复用者**（命中去重的那次调用）不得接管**首方**的登记。
+
+    机制：复用分支原先 `owner_id = existing_id`（首方的 callId），于是复用者被取消/超时时
+    会走 `#33c` 的清理与 `_mark_cancelled_best_effort(existing_id)`，把**首方**的
+    `_pending`/`_dedup` 释放掉、并把首方的调用标成终态。后果两条：
+      ① 首方的 future 从此无人 resolve（客户端回帧时 `_pending` 里找不到登记）
+         ⇒ 首方**挂到桥超时**；
+      ② dedup 键被清掉 ⇒ 同参重试**重新投递**（非幂等桌面动作可能执行两遍）。
+    正确的所有权：登记属于**登记它的那次调用**，复用者只是等同一个 future。
+
+    **只钉取消这一路，不单独钉"复用者超时"**：两者的终态会收敛（首方自己的超时路径
+    同样把它标 EXPIRED），构造不出能区分新旧行为的判据——**宁可少一条用例，
+    也不留一条在两种实现下都绿的**（那正是本仓反复出现的假绿）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_reuser_cancel_leaves_first_party_intact(self):
+        repo, bridge, frames = _make_bridge(timeout=120.0)
+        call = _call()
+
+        first = asyncio.create_task(bridge.request_and_wait(call=call))
+        await _until(lambda: len(frames) == 1)
+        first_id = frames[0]["callId"]
+
+        second = asyncio.create_task(bridge.request_and_wait(call=call))
+        await asyncio.sleep(0.02)                       # 让第二次进入复用分支
+        assert len(frames) == 1, "复用分支不该二次投递"
+
+        second.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await second
+
+        assert first_id in bridge._pending, "复用者取消了，却把**首方**的 pending 登记释放了"  # noqa: SLF001
+        assert bridge._dedup.get(("desktop.file.read", "sha256-abc")) == first_id, (  # noqa: SLF001
+            "复用者把首方的 dedup 键清掉了 → 同参重试会重新投递")
+        assert repo.calls[first_id]["status"] == "pending", (
+            f"首方的调用被复用者改了状态：{repo.calls[first_id]['status']}")
+
+        # 首方仍能被正常 resolve（不挂到超时）——这是"future 无人 resolve"的直接反证
+        await bridge.handle_status(_status(first_id, "result", output="ok"))
+        result = await asyncio.wait_for(first, timeout=2.0)
+        assert result.success and result.content == "ok"

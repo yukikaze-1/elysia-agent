@@ -219,17 +219,19 @@ class DesktopToolBridge:
                     if (existing is not None
                             and is_active_desktop_call_state(existing.get("status"))
                             and reuse_future is not None):
-                        owner_id = existing_id
+                        # S2-G2 残余：**不设 owner_id** —— 这次调用没有登记任何东西，
+                        # 登记属于**首方**。原先把 owner_id 设成 existing_id，于是复用者
+                        # 被取消/超时时会释放**首方**的 `_pending`/`_dedup` 并把首方的调用
+                        # 标 EXPIRED：首方的 future 从此无人 resolve（客户端回帧时找不到
+                        # 登记）→ 首方挂到桥超时；dedup 键被清掉后同参重试还会**重新投递**
+                        # （非幂等桌面动作可能执行两遍）。
+                        #
                         # 复用原 future（锁内 await——同参并发串行化为一次投递）
                         result = await self._await_with_timeout(reuse_future)
                         if result is None:
-                            # 超时：清理登记 + mark expired（幂等——首方可能已标）
-                            self._pending.pop(existing_id, None)
-                            self._dedup.pop(key, None)
-                            await self._repo.mark(existing_id, status=STATUS_EXPIRED)
+                            # 只是**我这次等待**到期：首方的调用与登记一概不动
+                            # （它有自己的超时与清理路径）。
                             return self._timeout_result(tool_name)
-                        self._pending.pop(existing_id, None)
-                        self._dedup.pop(key, None)
                         return result
                     # 已终态/offline（或 future 异常缺失）：不参与去重，清除后按新调用处理
                     self._dedup.pop(key, None)
