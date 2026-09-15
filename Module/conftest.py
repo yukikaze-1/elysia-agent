@@ -89,11 +89,33 @@ def vectordb_backend():
 # ============================================================
 
 @pytest.fixture
-def documentdb_backend():
-    with patch("motor.motor_asyncio.AsyncIOMotorClient", MagicMock()):
+def documentdb_backend(monkeypatch):
+    """DocumentDB 内存替身——**绝不构造真 `AsyncIOMotorClient`**。
+
+    **patch 目标必须打在模块属性上**（S3-R6-2）：`mongodb.py:6` 是
+    `from motor.motor_asyncio import AsyncIOMotorClient`——名字在**导入期**就绑进了
+    `Module.database.documentdb.mongodb` 的命名空间，patch 源模块
+    （`motor.motor_asyncio.AsyncIOMotorClient`）对已存在的绑定无效。
+    原实现正是打错了目标：`test_documentdb.py` 里 25 个用例请求本 fixture，
+    于是**每个用例都真的构造了一个 `AsyncIOMotorClient`**（motor 构造是惰性的，
+    不产生 I/O，随后唯一引用又被 `b._client = MagicMock()` 顶掉，所以不是硬泄漏
+    ——但守卫的意图完全落空，而且 `close()` 用例断言的是 fixture 塞进去的 mock）。
+    下面两道自检把"patch 是否真的生效"变成 fixture 自己会报错的事。
+
+    **同时把 `MONGODB_URI` 显式钉住**（同一次重核发现的第二个问题）：
+    `DocumentDBFactory.create` 在连接串缺失时抛 ValueError，而此前没有任何测试基建
+    保证它存在——本文件**单跑必错**（实测改动前 `1 failed / 11 passed / 25 errors`），
+    在全量里能过只是因为**同一 worker 里恰好有别的测试先加载了 `.env`**——靠顺序偶然，
+    不是靠事实。这里显式设一个**指向非生产端口**的测试串（client 已被替身、不会有 I/O；
+    万一替身失效，也不会真的连到 27017 的生产库）。
+    """
+    monkeypatch.setenv("MONGODB_URI", "mongodb://127.0.0.1:27099/elysia_unit_test")
+    with patch("Module.database.documentdb.mongodb.AsyncIOMotorClient") as client_cls:
         from Module.database.documentdb.registry import DocumentDBFactory
         b = DocumentDBFactory.create("mongodb/elysia")
-        b._client = MagicMock()  # type: ignore[attr-defined]
+        client_cls.assert_called_once()      # 构造确实经过了替身（打错目标即红）
+        assert isinstance(b._client, MagicMock), (  # type: ignore[attr-defined]
+            "patch 目标失效：真的 AsyncIOMotorClient 被构造了（S3-R6-2）")
         b._db = {}  # type: ignore[attr-defined]
         return b
 

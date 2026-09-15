@@ -6,6 +6,19 @@ from Module.database.documentdb.protocol import DocumentDBBackend
 from Module.database.documentdb.registry import DocumentDBFactory
 
 
+@pytest.fixture(autouse=True)
+def _mongodb_uri(monkeypatch):
+    """本文件全部用例显式钉住 `MONGODB_URI`（S3-R6-2 重核的第二个发现）。
+
+    `DocumentDBFactory.create` 在连接串缺失时抛 ValueError。此前没有任何测试基建
+    保证它有值——本文件**单跑必错**（`1 failed / 11 passed / 25 errors`），在全量里
+    能过只是因为**同一 worker 里恰好有别的测试先加载了 `.env`**。那是靠顺序偶然。
+    端口刻意用 27099（非生产 27017）：client 已被替身、不会有 I/O，万一替身失效也
+    不会真连到生产库。
+    """
+    monkeypatch.setenv("MONGODB_URI", "mongodb://127.0.0.1:27099/elysia_unit_test")
+
+
 # ============================================================
 # 协议 —— ABC 抽象约束
 # ============================================================
@@ -63,8 +76,16 @@ class TestDocumentDBFactory:
             DocumentDBFactory.create("unknown/db")
 
     def test_mongodb_parsing(self):
-        with patch("motor.motor_asyncio.AsyncIOMotorClient", MagicMock()):
+        """工厂解析 provider_id → 后端（client 走替身）。
+
+        S3-R6-2：patch 目标必须是 `Module.database.documentdb.mongodb.AsyncIOMotorClient`
+        （`mongodb.py:6` 按名导入，名字已绑进该模块命名空间）——原写法打的是源模块
+        `motor.motor_asyncio.AsyncIOMotorClient`，**恒无效**，这里会真的构造一个
+        `AsyncIOMotorClient`。
+        """
+        with patch("Module.database.documentdb.mongodb.AsyncIOMotorClient") as client_cls:
             backend = DocumentDBFactory.create("mongodb/elysia")
+        client_cls.assert_called_once()
         assert backend._db is not None
 
 
