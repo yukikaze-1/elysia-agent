@@ -455,20 +455,46 @@ class TestCognitiveLoopSync:
         assert loop._fsm.state == AgentState.IDLE
 
     @pytest.mark.asyncio
-    async def test_process_lock_serializes(self, loop):
-        """并发的 process() 调用由锁串行化。"""
-        started = []
+    async def test_process_lock_serializes(self, loop, monkeypatch):
+        """S3-R6-1：并发的 `process()` **不得同时进入临界区**。
 
-        async def tracked_process(msg):
-            started.append(msg)
-            await loop.process(msg)
+        原用例断言的是 `len(started) == 2`——那与锁无关：把锁删掉、或换成
+        `Semaphore(2)`，它**照样绿**（"门禁的三种假绿"之一：判据写错）。它唯一能证明的
+        是"两个协程都启动了"。
 
-        t1 = asyncio.create_task(tracked_process("A"))
-        t2 = asyncio.create_task(tracked_process("B"))
-        await asyncio.gather(t1, t2)
+        这里改为在**锁内**被调用的 `_prepare_turn` 上挂重叠计数，直接观测"有没有两个
+        回合同时在跑"；并同时断言"两次都真的进了临界区"——否则第二次若在锁外就被
+        相位/生命周期判定拒收，`max_active == 1` 又会变成假绿。
+        """
+        active = 0
+        max_active = 0
+        calls = 0
+        original = loop._prepare_turn  # noqa: SLF001
 
-        # 两者都应已启动（B 等待 A）
-        assert len(started) == 2
+        class _Probe(Exception):
+            """哨兵：记录完重叠就退出，**不继续跑真实流水线**。
+
+            为什么不继续：真流水线并发跑会先撞上 mock 未配置的 await（TypeError），
+            那样用例虽然也红，但红的原因不是锁——判据被噪声掩盖了。
+            """
+
+        async def _tracked(*args, **kwargs):
+            nonlocal active, max_active, calls
+            calls += 1
+            active += 1
+            max_active = max(max_active, active)
+            try:
+                await asyncio.sleep(0.05)      # 拉长临界区 → 没有锁就必然重叠
+                raise _Probe
+            finally:
+                active -= 1
+
+        monkeypatch.setattr(loop, "_prepare_turn", _tracked)
+        await asyncio.gather(loop.process("A"), loop.process("B"),
+                             return_exceptions=True)
+
+        assert calls == 2, "前置条件不成立：只有一次调用进了临界区（用例区分不了锁）"
+        assert max_active == 1, f"两个回合同时在临界区内跑：max_active={max_active}"
 
 
 # ============================================================================
