@@ -667,7 +667,7 @@ test_desktop_roundtrip.py` 红了 → `git worktree` 在 A 之前的提交复跑
 | `#6` | 决策 #6 | 后台任务终态**跨重启不丢** → 给 `AgentInfra` 加持久化 repo（停机落库 + 启动补投） | 0.5–1d |
 | ~~`#7`~~ | 决策 #7 | ✅ **已完成**（`ff80204e`）：半截回复落 `AssistantMessage` + `metadata[incomplete]`，两条 except 路径（interrupted/error）都覆盖 | — |
 | `#10` | 决策 #10 | consolidator buffer **落盘 + 下次启动补提**（现为每 runtime 5s 超时即丢） | 0.5d |
-| 写路径 5 条 | 本表 (b3) | ✅ **1/5 已完成**（`d153152d`：`SessionRepository.rename` 离线改 raise，容忍在 manager 里显式化）；**剩 4 条**：`MemoryRepository.insert/delete`、`TokenRepository.flush/clear_all`（`long_term.py` 6+ 调用点、无统一收口，需逐点定语义） | 0.5d |
+| 写路径 5 条 | 本表 (b3) | ✅ **3/5 已完成**：`SessionRepository.rename`（`d153152d`，离线容忍显式化）、`TokenRepository.clear_all`（`6ed39b81`）；`TokenRepository.flush` **本就已修**（门禁条目陈旧，同批清掉）。配套新增 `TestPendingDecisionIsNotStale` 守卫（已 fail-closed 却仍登记 → 红）。**剩 2 条**：`MemoryRepository.insert/delete`（`long_term.py` 6+ 调用点、无统一收口，需先定『上抛 vs 记日志继续』的边界） | 0.25d |
 | ~~`#45`~~ | 决策表 | ✅ **已完成**（`23819361`）：三个字段的声明改为与执行现实一致（`max_context_tokens` 预留/无执行点、`max_mutations` 软、`max_retries_per_node` 硬且有执行点），并纠正门禁登记表里两条不准确的理由 | — |
 | owner 解禁项（其余） | 决策表 | `#41`（CR-04 彻底版，**需先把不可逆删除路径读透**）、`#44`、`#46`、`S2-R6-1` 完整版 | 4–6d |
 
