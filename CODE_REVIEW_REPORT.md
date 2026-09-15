@@ -659,6 +659,16 @@ test_desktop_roundtrip.py` 红了 → `git worktree` 在 A 之前的提交复跑
 4. **`_PENDING_DECISION` 的 8 条里只有 3 条是产品决策**（已按 #8 落地）；另 5 条是
    "同仓写路径一半 `raise` 一半静默返回"的缺陷——**本轮未做**，见下。
 
+**Tier 1 批次最终验收（2026-09-14，本机 24 核，xdist `-n 8`）**：
+
+- `pytest -q`（含 slow）→ **5106 passed / 9 skipped / 0 failed**（68.9s）
+- `pytest -m "not slow and not external"` → **5074 passed / 2 skipped**（69.7s）
+- 门禁全绿（12）：lint / pyright(0 error) / check-arch / check-types(含 17 golden frames) /
+  check-timeouts(含新 R4) / check-contract / check-debug-auth / check-secrets /
+  check-test-sets / check-ci-isolation / check_error_codes / check_env_lock
+- 本批共 **19 个独立提交**（A–E 12 个 + 决策落地 #8/#3/#7/#45 4 个 + 回归修复 1 个
+  + `_locks` 补完 1 个 + 文档 1 个），每项都带注入/回退反证
+
 **本项未做（如实标注）——下一轮的队列**：
 
 | 项 | 来源 | 内容 | 量级 |
