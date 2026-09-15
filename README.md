@@ -238,6 +238,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | [快速开始](#快速开始) | 安装、启动、配置、故障排查 |
 | [docs/README.md](docs/README.md) | docs/ 文档索引 |
 | [docs/testing.md](docs/testing.md) | 测试命令速查 + 分层体系 |
+| [docs/ci.md](docs/ci.md) | **CI 架构与信任边界**：job 布局 / self-hosted 化原因（账单）/ 开放 PR 的恢复清单 |
 | [docs/legacy/companion-roadmap.md](docs/legacy/companion-roadmap.md) | 伴侣化改造路线（⚠️ 已废弃，保留作历史参考） |
 | [docs/legacy/companion-prompt-guide.md](docs/legacy/companion-prompt-guide.md) | Prompt 编写指南（⚠️ 已废弃，保留作历史参考） |
 
@@ -276,7 +277,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | Schema | [core/schema/README.md](core/schema/README.md) | 基础类型层（AgentState/事件/多模态消息 Part） |
 | Config | [core/config/README.md](core/config/README.md) | 应用配置 + 角色配置 dataclass |
 | Adapter | [core/adapter/README.md](core/adapter/README.md) | 适配器层（LLM + TTS + Tool） |
-| Task | [core/task/README.md](core/task/README.md) | 任务数据模型 + Worker Pool 调度器 |
+| Task | [core/tool_runtime/README.md](core/tool_runtime/README.md) | 工具调用运行时：任务数据模型 + Worker Pool 调度器（ARCH-INC-P1-01 由 `core/task/` 改名） |
 | Prompt | [core/prompt/README.md](core/prompt/README.md) | System prompt 组装层（MessageBuilder + PromptAssembler） |
 | Character | [core/character/README.md](core/character/README.md) | 角色域领域模型 + 运行时容器 + Custom CRUD + instance-scoped RuntimeState + RuntimeRegistry（Definition/Revision/Instance + Runtime/Registry + Draft/Service，C+E/D/E）+ 阶段 F memory_view/consolidator/reflector 持有 |
 | Profile | [core/profile/README.md](core/profile/README.md) | 用户最小身份 UserIdentity + Store CAS（user_pronoun 正位 + update_if_revision，C+E/D） |

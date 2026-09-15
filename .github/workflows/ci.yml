@@ -49,21 +49,12 @@ permissions:
 #   它训练人忽略红色，而本仓的门禁文化正是靠"红=有事"支撑的。
 #   （2026-09-14 frontend 批次已因同一原因踩过一次，见 git 历史。）
 #
-#   ### PR 门禁（已移除）——**开放 PR 时按此清单恢复**，不是加回几行 YAML
-#   ① `pr-gate`（PR Gate）：lint / pyright / 契约漂移 / check-arch / 超时预算 /
-#      契约可达性 / debug 鉴权 / check-ci-isolation / check-secrets / 测试集合代数
-#      / `pytest -m "unit or service" -x`。它曾是 PR 侧**唯一**的静态门禁。
-#   ② `frontend-pr`（Frontend (vue-tsc + build)，`ubuntu-latest`）：与 push 侧
-#      `frontend` 逐字等价。**PR 侧必须保持 GitHub-hosted**——宿主上没有隔离/临时
-#      的 PR runner，把 PR job 放到持久 trusted runner 上等于让任意 PR 通过
-#      `npm ci` 的 postinstall 在宿主用户下执行任意代码（`check_ci_isolation.py`
-#      会直接拒答）。要自建化必须先有 ephemeral/容器/VM 隔离 runner。
-#   ③ 恢复 `on: pull_request`，并同步 `contract-frames.yml`（也一并去掉了 PR 触发）。
-#   ④ **检查分支保护**：required status check 按 **job 名**匹配、且只在 PR 上评估。
-#      `Frontend (vue-tsc + build)` 与 `Real MongoDB (storage layer)` 这两个名字
-#      现在都不在 PR 侧上报了——开放 PR 前必须在 Settings → Branches 里把对应的
-#      required 项重新对齐（否则 PR 会**永远等不到上报**而卡死）。
-#   ⑤ 恢复后跑 `make check-ci-isolation`（静态校验信任边界）。
+#   ### 开放 PR 时
+#   **不是把 `pull_request` 加回来就完事**——完整清单（两个待恢复的 job、PR 侧必须
+#   GitHub-hosted 的理由、分支保护 required check 的陷阱、恢复后要跑的门禁）见
+#   **`docs/ci.md`**（CI 的唯一权威说明）。本文只留一句提醒：
+#   required status check 按 **job 名**匹配、且只在 PR 上评估，`Frontend (vue-tsc + build)`
+#   与 `Real MongoDB (storage layer)` 现在都不在 PR 侧上报——不对齐会让 PR 永远等不到上报。
 # ---------------------------------------------------------------------------
 
 jobs:

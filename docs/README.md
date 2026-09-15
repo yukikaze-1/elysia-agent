@@ -8,6 +8,7 @@
 |------|------|
 | [architecture.md](architecture.md) | 完整架构详解（数据流、模块、目录结构） |
 | [testing.md](testing.md) | 测试命令速查 + 分层体系（unit/service/integration/slow）+ 真实库防线 + 残留清理脚本 |
+| [ci.md](ci.md) | **CI 架构与信任边界**（唯一权威）：job 布局 / 为什么全部 self-hosted（账单教训）/ `check_ci_isolation` 四条规则 / **开放 PR 的恢复清单（含分支保护陷阱）** / job 内几条非洁癖约定 |
 | [readme-conventions.md](readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 | [database-storage.md](database-storage.md) | 数据库存储设计（MongoDB + Milvus 集合/索引） |
 | [code-style-guide.md](code-style-guide.md) | 代码风格与类型约束（ID NewType 体系 + 权威归属 + StrEnum/coerce + getattr 纪律） |
