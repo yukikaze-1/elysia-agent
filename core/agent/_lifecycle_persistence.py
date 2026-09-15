@@ -602,7 +602,11 @@ class _LifecyclePersistence:
                 from core.storage.idempotency import get_store
                 await get_store().recover()
                 logger.info("IdempotencyRepository 恢复，幂等表 reconcile 完成")
-            # 其余 repo：health_check 内部已重连，无需额外补偿
+            # 其余 repo：无需额外补偿——它们的 connect()/health_check() 各自保证重连。
+            # 角色三仓储**不在本探测表内**（#14c）：修复后 `_ensure_connected` 按
+            # "标志 + 后端句柄" 判据在**每次操作**上自愈，故角色域不再有"抖动一次就
+            # 503 到进程重启"。但它们同样不在 `/ready` 的判据里（mongo 只查
+            # session/message/attachment）——是否纳入属产品决定，见 §0.4.18。
             return True
         except Exception:
             logger.warning("依赖恢复 hook 失败: %s", name, exc_info=True)

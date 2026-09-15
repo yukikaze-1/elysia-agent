@@ -43,6 +43,16 @@ if TYPE_CHECKING:
     from core.storage.character_instance_repo import CharacterInstanceRepository
 
 
+def _backend_gone(repo: object) -> bool:
+    """仓储的后端句柄是否已失效（`_mark_unavailable()` 之后的状态）。
+
+    只在**能确认**句柄存在且为 None 时判失效：仓储 ABC 都提供 `backend` 属性，但
+    测试替身未必有——`hasattr` 为假时返回 False（当作仍然可用，不去重连），
+    否则每次调用都会穿透替身的 `connect` 计数、"惰性连接只连一次"这类用例会失真。
+    """
+    return hasattr(repo, "backend") and getattr(repo, "backend") is None
+
+
 class CharacterServiceBase:
     """共享管道基类——三条链的公共 `__init__` 与取定义/校验/草稿转换。"""
 
@@ -71,11 +81,27 @@ class CharacterServiceBase:
         ] | None = None
 
     async def _ensure_connected(self) -> None:
-        if self._connected:
+        """确保定义/版本两个仓储已连接（**可自愈**）。
+
+        #14c：原先只看 `self._connected` 这个**粘性**标志——置 True 后再不复位。
+        而仓储在非业务异常后会 `_mark_unavailable()`（先 close 再 `_db = None`），
+        此后 `_require_connected` 直接抛 `StorageUnavailableError("…未连接")`。
+        两者叠加的后果不是"慢一次"：**一次网络抖动就让角色域整体 503，直到进程重启**
+        ——而探针表、`/ready`、debug 面板都看不见它（它们的 mongo 判据只有
+        session/message/attachment）。
+
+        判据改为"标志为真 **且** 后端句柄仍在"：句柄没了就重连（`connect()` 幂等），
+        与 `core/storage/base.py::_health_check()` 的重连语义对齐。
+        **只重连失效的那一半**——另一半健康时不动它（真实仓储的 `connect()` 会短路，
+        但没必要为一次无谓调用留歧义）。
+        """
+        needs_repo = not self._connected or _backend_gone(self.repo)
+        needs_rev = not self._connected or _backend_gone(self.rev_repo)
+        if not needs_repo and not needs_rev:
             return
-        if not await self.repo.connect():
+        if needs_repo and not await self.repo.connect():
             raise CharacterStorageUnavailableError("CharacterRepository 连接失败")
-        if not await self.rev_repo.connect():
+        if needs_rev and not await self.rev_repo.connect():
             raise CharacterStorageUnavailableError("CharacterRevisionRepository 连接失败")
         self._connected = True
 
@@ -119,12 +145,14 @@ class CharacterServiceBase:
         repo = self.instance_repo
         if repo is None:
             return None
-        if not self._instances_connected:
-            if not await repo.connect():
-                raise CharacterStorageUnavailableError(
-                    "CharacterInstanceRepository 连接失败"
-                )
-            self._instances_connected = True
+        # #14c：与 `_ensure_connected` 同一条判据——粘性标志 + 失效句柄 = 永久不可用。
+        if self._instances_connected and not _backend_gone(repo):
+            return repo
+        if not await repo.connect():
+            raise CharacterStorageUnavailableError(
+                "CharacterInstanceRepository 连接失败"
+            )
+        self._instances_connected = True
         return repo
 
     # ---- internal helpers ----
