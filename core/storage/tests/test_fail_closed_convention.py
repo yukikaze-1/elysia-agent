@@ -233,8 +233,6 @@ _PENDING_DECISION: dict[tuple[str, str], str] = {
         "静默丢失，调用方无从知晓。与 append_version 的写路径约定不一致。"
     ),
     ("MemoryRepository", "delete"): "写路径静默返回 0（同仓 clear_all 已 fail-closed）",
-    ("TokenRepository", "flush"): "写路径离线时静默返回 None（与 record 的 raise 不一致）",
-    ("TokenRepository", "clear_all"): "写路径离线时静默返回 0（与 delete_by_session 的 raise 不一致）",
 }
 
 # 构造仓储时的 db 参数名（默认 "db"；DesktopCallRepository 用 mongodb=）
@@ -530,3 +528,40 @@ class TestRenameOfflineToleranceIsExplicit:
         assert "except StorageUnavailableError:" in src, \
             "manager 的离线容忍消失/改成隐式了——容忍可以保留，但必须看得见"
         assert "persisted = False" in src
+
+
+class TestPendingDecisionIsNotStale:
+    """`_PENDING_DECISION` 的条目**必须仍然成立**——它是"约定未定"的清单，不是许愿池。
+
+    实测（2026-09-14）：`TokenRepository.flush` 早已改成 raise（源码 docstring 写着
+    "修复前静默 no-op + 删文件丢数据"），条目却还挂在 `_PENDING_DECISION` 里——
+    下一个人会重复处理一件已完成的事。本类把"已修好就不许再登记"钉住。
+    """
+
+    @pytest.mark.asyncio
+    async def test_token_flush_is_fail_closed_and_unregistered(self):
+        from core.storage.base import StorageUnavailableError
+        from core.storage.token_repo import TokenRepository
+
+        repo = TokenRepository(db=None)
+        with pytest.raises(StorageUnavailableError):
+            await repo.flush([_fake_usage()])
+        assert ("TokenRepository", "flush") not in _PENDING_DECISION, \
+            "已经 fail-closed 了却还登记在待决策表里（陈旧项）"
+
+    @pytest.mark.asyncio
+    async def test_token_clear_all_is_fail_closed_and_unregistered(self):
+        from core.storage.base import StorageUnavailableError
+        from core.storage.token_repo import TokenRepository
+
+        repo = TokenRepository(db=None)
+        with pytest.raises(StorageUnavailableError):
+            await repo.clear_all()
+        assert ("TokenRepository", "clear_all") not in _PENDING_DECISION
+
+
+def _fake_usage():
+    """最小可用 TokenUsage（flush 只在 entries 非空时才检查连接）。"""
+    from core.schema.token import TokenUsage
+    return TokenUsage(session_id="s", model="m", round_num=1,
+                      input_tokens=1, output_tokens=1, total_tokens=2)

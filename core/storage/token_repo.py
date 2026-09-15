@@ -170,10 +170,16 @@ class TokenRepository(Repository):
         """清空全部 Token 用量记录。
 
         Returns:
-            删除的记录数。若数据库不可用返回 0。
+            删除的记录数（0 **仅**表示"本来就没有记录"）。
+
+        Raises:
+            StorageUnavailableError: MongoDB 离线。
+
+        与同仓 `record`/`flush` 对齐：此前离线静默返回 `0`，把"清空了 0 条"与
+        "一条都没清（库不可用）"压成同一个结果——运维据此以为已清空。
         """
         if self._db is None:
-            return 0
+            raise StorageUnavailableError("TokenRepository 未连接（MongoDB 不可用）")
         result = await self._db.delete_many(COLLECTION, {})
         logger.warning("TokenRepository clear_all: deleted=%d records", result)
         return result
