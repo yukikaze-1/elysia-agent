@@ -99,6 +99,10 @@ _LEAF_BUDGETS: dict[str, str] = {
     "STT_TIMEOUT": "单次 STT 调用超时，目标是 STT 后端（外部 provider）",
     "_CLOSE_FLUSH_BUDGET_S": "关帧前刷音频缓冲，目标是 aiohttp 发送（外部 I/O）",
     "_TOOL_TIMEOUT": "单次工具执行超时，目标是插件（外部副作用），是预算链的最内层",
+    "_TASK_RESULT_STORE_TIMEOUT": "任务终态结果的一次 Mongo 读写（#6），目标是驱动"
+                                  "（外部 I/O），仓库内没有更内层的预算；它同时是关停"
+                                  "路径的**活性**上界——驱动默认 serverSelectionTimeout 30s，"
+                                  "网络黑洞下一条落库能把停机拖住 30s（超时即降级为不落库）",
     "_CHANNEL_SEND_TIMEOUT": "输出通道单帧写预算，目标是 WS 客户端/终端（外部 I/O）；\n                              它同时是**活性**上界：客户端不读数据时背压会让 send_json 永久挂起，\n                              而 _broadcast 是所有帧的必经之路（S2-H1）",
 }
 

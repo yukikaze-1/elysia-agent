@@ -111,10 +111,9 @@ class TestExpectedIndexesPinnedToCode:
     def test_expected_table_is_non_trivial(self):
         """防止解析器故障导致表被"清空"却测试通过。"""
         total = sum(len(v) for v in EXPECTED_INDEXES.values())
-        assert len(EXPECTED_INDEXES) == 12
-        # 26 = 24（S3-20 前）+ generations.user_message_id_1_created_at_-1
-        #    + character_instances.character_id_1_instance_id_1
-        assert total == 26, f"期望 26 个索引，实际 {total}"
+        assert len(EXPECTED_INDEXES) == 13
+        # 28 = 26（#6 前）+ background_task_results.{task_id_1, ttl_expires_at_1}
+        assert total == 28, f"期望 28 个索引，实际 {total}"
 
 
 @pytest.mark.unit
@@ -323,6 +322,7 @@ class TestIndexOptionConflicts:
                  **({"unique": True} if n == "user_id_1" and coll == "user_identity_profiles" else {}),
                  **({"unique": True} if n == "character_id_1_revision_-1" and coll == "character_revisions" else {}),
                  **({"unique": True} if n == "session_id_1_content_type_1_version_-1" and coll == "character_versions" else {}),
+                 **({"unique": True} if n == "task_id_1" and coll == "background_task_results" else {}),
                  }
                 for n in EXPECTED_INDEXES[coll]
             ],

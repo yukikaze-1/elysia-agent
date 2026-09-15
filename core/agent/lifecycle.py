@@ -122,6 +122,9 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         ("tts",              "_start_tts"),
         ("task_system",      "_start_task_system"),
         ("mailbox_polling",  "_start_mailbox_polling"),
+        # #6：启动补投上次进程未送达的后台任务终态（消费者此时已就绪——
+        # `idle_and_events` 在前，投进去的事件真的会被人读）
+        ("task_result_redelivery", "_redeliver_pending_task_results"),
         ("db_health",        "_start_db_health"),
         ("character_integrity", "_check_character_data_integrity"),
         ("schema_drift",     "_check_schema_drift"),

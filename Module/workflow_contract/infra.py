@@ -45,6 +45,7 @@ class AgentInfra:
                         在途工具任务集合。executor 创建工具任务时登记、done 回调
                         回收；stop() 采集未完成任务等待 3s 后 cancel。跨任务存活
                         （任务清理后 stop() 仍能从共享 infra 枚举孤儿工具）。
+        background_task_results: 后台任务终态结果的持久化 repo（#6 / 决策 #6）。
     """
 
     llm: AsyncOpenAI
@@ -56,3 +57,11 @@ class AgentInfra:
     llm_model: str = field(
         default_factory=lambda: os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro")
     )  # LLM 模型名，Planner/Executor/Evaluator 共用（env: TASK_SYSTEM_MODEL）
+    background_task_results: object | None = None
+    """后台任务终态结果仓储（`BackgroundTaskResultRepository`，core 侧构造注入）。
+
+    #6（决策 #6）：终态跨重启不丢——Agent 的 mailbox 排空在**投递之前**落库
+    （`delivered=False`），活跃事件循环消费后置 True，启动时补投未投递的记录。
+    类型为 `object`：契约层不依赖 core.storage（与 `tool_registry` 同一处理），
+    消费方按鸭子类型调用。
+    """

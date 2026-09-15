@@ -108,6 +108,7 @@ from core.schema.event import (
 from Module.embedding import EmbeddingFactory
 from core.tool_runtime import ToolCallDispatcher
 from core.storage.session_repo import SessionRepository
+from core.storage.background_task_repo import BackgroundTaskResultRepository
 from core.storage.message_repo import MessageRepository
 from core.storage.token_repo import TokenRepository
 from core.storage.memory_repo_v2 import MemoryRepositoryV2
@@ -175,6 +176,12 @@ class Agent(AgentLifecycle, AgentServer):
             require_assistant_character=_require_char,
         )
         self._token_repo = TokenRepository(
+            database_name=db_cfg.db_name,
+            base_url=db_cfg.mongodb_uri,
+        )
+        # #6（决策 #6）：后台任务终态结果仓储——"停机落库 + 启动补投"的持久面。
+        # 与 token/message repo 同模式：此处只构造，建连在 _start_persistence。
+        self._background_task_result_repo = BackgroundTaskResultRepository(
             database_name=db_cfg.db_name,
             base_url=db_cfg.mongodb_uri,
         )
@@ -717,7 +724,7 @@ class Agent(AgentLifecycle, AgentServer):
         """
         while self._state == RunState.RUNNING:
             await asyncio.sleep(0.5)
-            self.drain_mailboxes_once()
+            await self.drain_mailboxes_once()
 
     # ---- Event dispatching ----
 
@@ -1071,6 +1078,11 @@ class Agent(AgentLifecycle, AgentServer):
     def token_repo(self):
         """token 用量仓库。"""
         return self._token_repo
+
+    @property
+    def background_task_repo(self):
+        """后台任务终态结果仓库（#6：跨重启不丢 + 启动补投）。"""
+        return self._background_task_result_repo
 
     @property
     def attachment_repo(self):

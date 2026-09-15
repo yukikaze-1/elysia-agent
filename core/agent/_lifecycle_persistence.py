@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from core.storage.token_repo import TokenRepository
     from core.storage.attachment_repo import AttachmentRepository
     from core.storage.idempotency_repo import IdempotencyRepository
+    from core.storage.background_task_repo import BackgroundTaskResultRepository
     from core.memory.session_manager import SessionManager
     from core.memory.long_term import LongTermMemory
     from core.personality import CharacterEngine
@@ -69,6 +70,7 @@ class _LifecyclePersistence:
         _attachment_repo: AttachmentRepository | None
         attachment_repo: AttachmentRepository  # 类型占位：运行时来自 Agent @property（lazy 构造，首访必非 None）
         _idempotency_repo: IdempotencyRepository | None
+        _background_task_result_repo: BackgroundTaskResultRepository | None
         idempotency_repo: IdempotencyRepository  # 类型占位：运行时来自 Agent @property（D6c，首访必非 None）
         _generation_registry: GenerationRegistry
         _desktop_bridge: DesktopToolBridge
@@ -116,6 +118,19 @@ class _LifecyclePersistence:
         # 与 message/session repo 对称：失败记 warning、不阻塞启动。
         if not await self._token_repo.connect():
             logger.warning("TokenRepository 离线")
+        # #6：后台任务终态结果仓储建连（跨重启不丢的持久面）。失败记 warning、
+        # 不阻塞启动——离线时 drain 只投递不落库（见 _persist_task_result）。
+        # TypeError 分支：MagicMock agent（单测替身）的 connect() 不是 awaitable。
+        bg_repo = getattr(self, "_background_task_result_repo", None)
+        if bg_repo is not None:
+            try:
+                if not await bg_repo.connect():
+                    logger.warning(
+                        "BackgroundTaskResultRepository 离线（后台任务终态只在本进程内投递）")
+            except TypeError:
+                logger.debug("_background_task_result_repo 未接线（test mock），跳过 connect")
+            except Exception:
+                logger.warning("BackgroundTaskResultRepository 建连失败", exc_info=True)
         # 批次 4：Desktop 调用注册表建连（desktop_calls 集合）。
         # bridge 在 Agent.__init__ 创建（早于 _start_persistence），此处 connect_db
         # 全量 reload 入进程内缓存；Mongo 离线降级为进程内缓存（幂等去重不失效）。
@@ -469,6 +484,11 @@ class _LifecyclePersistence:
                 "version": self._version_repo.health_check,
                 "idempotency": self.idempotency_repo.health_check,
             }
+            # #6：后台任务终态仓储也在探测表内——它掉线时 drain 会自动降级为
+            # "只投递不落库"，但恢复后要让"跨重启不丢"重新生效（health_check 内含重连）。
+            bg_repo = getattr(self, "_background_task_result_repo", None)
+            if bg_repo is not None:
+                probes["background_task"] = bg_repo.health_check
             attachment = getattr(self, "_attachment_repo", None)
             if attachment is not None:
                 probes["attachment"] = attachment.health_check

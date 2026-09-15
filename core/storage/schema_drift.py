@@ -50,6 +50,10 @@ _ID_INDEX = "_id_"
 #: `EXPECTED_INDEXES` 同一机制），故不会静默过期。
 EXPECTED_INDEX_OPTIONS: dict[str, dict[str, dict[str, object]]] = {
     "attachments": {"attachment_id_1": {"unique": True}},
+    "background_task_results": {
+        "task_id_1": {"unique": True},
+        "ttl_expires_at_1": {"expireAfterSeconds": "BACKGROUND_TASK_RESULT_TTL_SECONDS"},
+    },
     "character_instances": {"instance_id_1": {"unique": True}},
     "character_revisions": {"character_id_1_revision_-1": {"unique": True}},
     "character_versions": {"session_id_1_content_type_1_version_-1": {"unique": True}},
@@ -100,6 +104,7 @@ EXPECTED_INDEXES: dict[str, frozenset[str]] = {
     "attachments": frozenset({
         "attachment_id_1", "created_at_1", "ref_count_1", "status_1",
     }),
+    "background_task_results": frozenset({"task_id_1", "ttl_expires_at_1"}),
     "character_instances": frozenset({
         "character_id_1_instance_id_1", "instance_id_1",
         "owner_user_id_1_character_id_1_canonical_1",
@@ -122,7 +127,7 @@ EXPECTED_INDEXES: dict[str, frozenset[str]] = {
     "token_usage": frozenset({"session_id_1"}),
     "user_identity_profiles": frozenset({"user_id_1"}),
 }
-"""collection → 期望存在的索引名集合（24 项 / 12 集合，由单测钉住与代码一致）。"""
+"""collection → 期望存在的索引名集合（26 项 / 13 集合，由单测钉住与代码一致）。"""
 
 
 @dataclass(frozen=True)

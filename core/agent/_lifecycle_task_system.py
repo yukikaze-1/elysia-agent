@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from Module._common.task_scope import AsyncTaskScope, cancel_and_drain
+from core.agent._types import RunState
 from core.schema.event import TaskResultData
 
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     from core.cognitive.delegation import DelegationPreparer
     from core.adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
-    from core.agent._types import RunState, _BackgroundTaskEntry
+    from core.agent._types import _BackgroundTaskEntry
     from Module.workflow_contract.schema import WorkflowId
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,77 @@ class _LifecycleTaskSystem:
         _lifecycle_tasks: AsyncTaskScope
         _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
         _background_tasks: dict[WorkflowId, _BackgroundTaskEntry]
+        _background_task_result_repo: Any
         _state: "RunState"
+
+    #: 任务终态结果的一次 Mongo 读写预算（#6）。目标 = Mongo 驱动（外部 I/O，仓库内
+    #: 没有更内层的预算）→ 按"叶子预算"登记在 `scripts/check_timeout_budget.py`。
+    #: **为什么必须有界**：upsert/投递标记跑在**关停路径**上，而驱动默认
+    #: `serverSelectionTimeoutMS` 是 30s——"Mongo 网络黑洞（连不上但也没报错）"会让
+    #: 一条落库把停机拖住 30s，用户看到的是"关不掉"。2s 远超本地 Mongo 的单次写
+    #: （毫秒级），超时即降级为"本次不落库"（只记 warning，投递不受影响）。
+    _TASK_RESULT_STORE_TIMEOUT = 2.0
+
+    def _bg_result_repo(self) -> Any:
+        """终态结果仓储（#6）；未接线（单测替身 / 从未建连）→ None（只投递不落库）。
+
+        只读 `_background_task_result_repo` 这**一个**字段、不走 `agent.background_task_repo`
+        属性：关停路径上绝不能触发懒构造（那会在停机中途新开一条 Mongo 连接）。
+        """
+        return getattr(self, "_background_task_result_repo", None)
+
+    async def _persist_task_result(
+        self, data: TaskResultData, *, status: str, delivered: bool,
+    ) -> bool:
+        """把一条终态结果落库，返回是否落库成功（失败只记日志，绝不抛）。
+
+        **为什么落库不能失败即中断投递**：跨重启不丢是"更好"，而"当下就告诉用户"
+        是"必须"——Mongo 离线时宁可只丢跨重启保障，也不能连本次投递一起丢。
+        故失败降级为 warning（日志里有明确的一行，不是静默）。
+
+        Args:
+            data: 终态事件数据（消费侧看到的同一条）。
+            status: completed / failed / cancelled / interrupted。
+            delivered: 是否已投递给活跃 Agent（关停路径恒 False → 下次启动补投）。
+
+        Returns:
+            True 表示已落库。
+        """
+        repo = self._bg_result_repo()
+        if repo is None:
+            return False
+        try:
+            await asyncio.wait_for(
+                repo.upsert_pending(
+                    task_id=data.task_id,
+                    result=data.result,
+                    original_intent=data.original_intent,
+                    dispatched_at=data.dispatched_at,
+                    status=status,
+                    is_error=data.is_error,
+                    delivered=delivered,
+                ),
+                timeout=self._TASK_RESULT_STORE_TIMEOUT)
+            return True
+        except Exception:
+            logger.warning(
+                "后台任务终态落库失败（本次投递不受影响；跨重启保障降级）task_id=%s",
+                data.task_id, exc_info=True)
+            return False
+
+    async def _mark_task_result_delivered(self, task_id: Any) -> None:
+        """标记终态结果已投递给活跃 Agent（失败只记日志——最坏是下次启动重复投递）。"""
+        repo = self._bg_result_repo()
+        if repo is None:
+            return
+        try:
+            await asyncio.wait_for(
+                repo.mark_delivered(task_id),
+                timeout=self._TASK_RESULT_STORE_TIMEOUT)
+        except Exception:
+            logger.warning(
+                "后台任务终态标记已投递失败（下次启动可能重复投递）task_id=%s",
+                task_id, exc_info=True)
 
     async def _start_task_system(self) -> None:
         """创建 WorkflowEngine + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
@@ -53,6 +124,8 @@ class _LifecycleTaskSystem:
             http=None,
             tool_registry=self._tool_adapter,
             constraints=ConstraintConfig(),
+            # #6：终态结果持久化面（engine 侧可读、Agent 侧读写；停机落库 + 启动补投）
+            background_task_results=self._bg_result_repo(),
         )
 
         from core.hitl import EventBusHITLNotifier
@@ -81,8 +154,8 @@ class _LifecycleTaskSystem:
 
     # ---- mailbox 排空与投递（唯一实现点）----
 
-    def drain_mailboxes_once(self) -> int:
-        """同步排空所有活跃后台任务的 mailbox 并投递终态事件，返回投递条数。
+    async def drain_mailboxes_once(self) -> int:
+        """排空所有活跃后台任务的 mailbox 并投递终态事件，返回投递条数。
 
         **轮询路径（`_poll_mailboxes`）与关停路径（`_stop_mailbox`）共用本方法**。
         两条路径各写一份必然漂移——本项目反复出现的「两条路径不对称」缺陷族。
@@ -95,8 +168,17 @@ class _LifecycleTaskSystem:
 
         mailbox 本身是**有界保留**队列（终态事件优先保留，只淘汰最旧的 progress），
         所以"晚一点统一读"不会丢事件，只要求读的时候注册表还在。
+
+        #6（决策 #6）：`self._state == RUNNING` 时事件消费者（`_process_events`）活着，
+        投进总线就会被消费 → 落库标记 `delivered=True`（审计痕迹）；关停路径
+        `_state` 已是 STOPPED，`_process_events` 早在第一步就被取消，**投进去是死队列**
+        → 落库保持 `delivered=False`，由启动补投真正送达。落库一律先于投递，
+        这样"投了但没人消费"这一点在磁盘上是可判定的。
+
+        是 async 方法：落库要 await。落库失败不阻断投递（见 `_persist_task_result`）。
         """
         delivered = 0
+        consumer_alive = self._state == RunState.RUNNING
         for task_id, info in list(self._background_tasks.items()):
             mailbox = info.mailbox
             if mailbox is None:
@@ -115,20 +197,22 @@ class _LifecycleTaskSystem:
                     data = event.data or {}
                     kind = event.type.value
                     if kind == "completed":
-                        self._bus.post(TaskResultData(
+                        payload = TaskResultData(
                             task_id=task_id,
                             result=data.get("result", ""),
                             original_intent=info.intent,
                             dispatched_at=info.dispatched_at,
-                        ))
+                        )
+                        status = "completed"
                     elif kind == "failed":
-                        self._bus.post(TaskResultData(
+                        payload = TaskResultData(
                             task_id=task_id,
                             result=f"任务执行失败: {data.get('error', '未知错误')}",
                             original_intent=info.intent,
                             dispatched_at=info.dispatched_at,
                             is_error=True,
-                        ))
+                        )
+                        status = "failed"
                         logger.warning(
                             "后台任务失败: %s — %s",
                             info.intent, data.get('error', '未知错误'),
@@ -136,19 +220,28 @@ class _LifecycleTaskSystem:
                     elif kind == "cancelled":
                         # E3：取消事件改推 CANCELLED——消费侧须 pop 条目 + 呈现结果，
                         # 否则 _background_tasks 条目永久驻留（直到下次 start 清理）。
-                        self._bus.post(TaskResultData(
+                        payload = TaskResultData(
                             task_id=task_id,
                             result=f"任务已取消: {data.get('reason', '用户取消')}",
                             original_intent=info.intent,
                             dispatched_at=info.dispatched_at,
                             is_error=True,
-                        ))
+                        )
+                        status = "cancelled"
                         logger.info(
                             "后台任务已取消: %s — %s",
                             info.intent, data.get('reason', '用户取消'),
                         )
                     else:
                         continue  # progress / approval_needed 等非终态：不投递、不 pop
+                    # #6：先落库（delivered 反映"总线那头有没有人"），再投递。
+                    await self._persist_task_result(
+                        payload, status=status, delivered=consumer_alive)
+                    self._bus.post(payload)
+                    if consumer_alive:
+                        # 消费者活着 → 这条马上会被 `_handle_task_result` 取走，
+                        # 记成已投递（否则下次启动会重复告知用户）。
+                        await self._mark_task_result_delivered(task_id)
                     delivered += 1
                     self._background_tasks.pop(task_id, None)
                     break  # task 已终态，处理下一个 task
@@ -170,23 +263,74 @@ class _LifecycleTaskSystem:
           的事件只有这一次同步排空能读到；
         - 注册表**必须**留到本步才清——在 `stop()` 入口清会让上面这次排空无条目可查
           （这正是 S2-A4 的原缺陷）。
+
+        #6（决策 #6）：本步的投递落进的是**死总线**（`_process_events` 是关停第一步就
+        被取消的），所以那些事件只落库不送达——由下次启动的补投真正送给用户。
+        仍未终态的任务（引擎已停，终态事件不会再有了）也**落库为 interrupted**：
+        否则"用户等一个永远不会来的结果"只留在日志里，重启后连日志都没有。
         """
-        delivered = self.drain_mailboxes_once()
+        delivered = await self.drain_mailboxes_once()
         if delivered:
             logger.info(
-                "mailbox 收尾排空：投递 %d 条后台任务终态事件（停机窗口内完成）", delivered)
+                "mailbox 收尾排空：%d 条后台任务终态事件已落库待补投（停机窗口内完成）",
+                delivered)
         await cancel_and_drain(
             self._mailbox_task, timeout=3.0, label="agent-mailbox")
         self._mailbox_task = None
         # 仍未终态的任务：终态事件不会再有了（引擎已停）。不留静默丢失——逐条记
-        # warning，至少让"用户等不到唤醒"这件事在日志里可归因。
+        # warning，并落库为 interrupted（#6：跨重启不丢，启动时告知用户"被重启打断"）。
         stranded = [(tid, e.intent) for tid, e in self._background_tasks.items()]
         if stranded:
             logger.warning(
                 "停机时仍有 %d 个后台任务未见终态——本次进程内不会再投递"
                 "（/restart 会新建 WorkflowEngine，旧任务与 mailbox 一并丢弃）: %s",
                 len(stranded), stranded)
+            for task_id, intent in stranded:
+                entry = self._background_tasks[task_id]
+                interrupted = TaskResultData(
+                    task_id=task_id,
+                    result="任务因服务重启被中断，未产生结果",
+                    original_intent=intent,
+                    dispatched_at=entry.dispatched_at,
+                    is_error=True,
+                )
+                await self._persist_task_result(
+                    interrupted, status="interrupted", delivered=False)
         self._background_tasks.clear()
+
+    async def _redeliver_pending_task_results(self) -> None:
+        """启动补投（#6）：把上一进程未送达的后台任务终态重新投进总线。
+
+        为什么必须在**启动**做：关停路径的排空只能把事件投进死总线（见 `_stop_mailbox`），
+        而那些事件是用户唯一能得到的"任务结果"。补投后由 `_handle_task_result` 唤醒
+        认知循环，用户下次看会话就能看到结果（回复同样落归档）。
+
+        读失败（Mongo 离线）→ 记 warning 后返回，记录仍在库里，下轮启动再补投。
+        """
+        repo = self._bg_result_repo()
+        if repo is None:
+            return
+        try:
+            pending = await asyncio.wait_for(
+                repo.list_pending(), timeout=self._TASK_RESULT_STORE_TIMEOUT)
+        except Exception:
+            logger.warning("启动补投后台任务终态失败（记录仍在库中，下次启动再试）",
+                           exc_info=True)
+            return
+        if not pending:
+            return
+        for doc in pending:
+            payload = TaskResultData(
+                task_id=doc.get("task_id", ""),
+                result=doc.get("result", ""),
+                original_intent=doc.get("original_intent", ""),
+                dispatched_at=str(doc.get("dispatched_at") or ""),
+                is_error=bool(doc.get("is_error", False)),
+            )
+            self._bus.post(payload)
+            # 标记在补投之后：投递本身是同步入队，入队即由活跃事件循环取走。
+            await self._mark_task_result_delivered(payload.task_id)
+        logger.info("启动补投 %d 条后台任务终态（上次进程未送达）", len(pending))
 
     # 外层预算必须 ≥ `WorkflowEngine.stop()` 的**整条最坏路径**，不是它的单个
     # `timeout` 参数。S2-A3 的缺陷正是外层 5.0s < 内层 10.0s：只要有任意任务仍在

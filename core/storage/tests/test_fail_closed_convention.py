@@ -78,6 +78,17 @@ _CONVENTION: dict[str, dict[str, str]] = {
         "find_unreferenced_older_than": READ_FAIL_CLOSED,
         "find_by_stored_name": READ_FAIL_CLOSED,
     },
+    # #6（决策 #6）：后台任务终态结果——整仓 fail-closed。
+    # 调用方（mailbox 排空 / 启动补投）**必须能区分**"没有待补投的记录"与"库读不到"：
+    # 前者是常态（该干啥干啥），后者要降级为"本次不落库/下轮再补投"并记 warning。
+    # 若读路径静默返回空，Mongo 离线就会伪装成"没有待补投的任务"——那正是"终态跨重启
+    # 不丢"被悄悄取消的样子。
+    "BackgroundTaskResultRepository": {
+        "upsert_pending": WRITE,
+        "mark_delivered": WRITE,
+        "list_pending": READ_FAIL_CLOSED,
+        "count_pending": READ_FAIL_CLOSED,
+    },
     # 角色运行时实例：整仓 fail-closed（角色状态不可臆造）
     "CharacterInstanceRepository": {
         "get": READ_FAIL_CLOSED,
