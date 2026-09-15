@@ -1423,8 +1423,8 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
 |---|---|---|---|
 | `#14c` ✅**已修** `d3f84342` | `core/character/service/base.py:73-81`（粘性 `_connected` **无任何重置**）+ `_lifecycle_persistence.py:479-504` 探针表无 character 键 | **一次网络抖动 → 角色域 503 直到进程重启**，L2/C6/mood flush 停写；`/ready` 与 debug 面板都看不见；**零守卫**。`:605` 那句"其余 repo：health_check 内部已重连"对这三个 repo **不成立**（它们的 `health_check` 全仓零调用点） | 1–2 天 |
 | `S2-B7b` ✅**已修** `5f2a86bc` | `core/storage/secret_store.py:63-79`（损坏 → `return {}`）+ `set_secret` 整份覆盖 | 密钥文件损坏后**第一次写入即抹掉其余全部 provider 密钥**。更糟：`test_secret_store.py:90-94` 把破坏性行为**钉成预期** ——不先改这条用例，洞不会被任何回归网挡住 | 0.5–1 天 |
-| `S3-08` | `core/input/ws_handlers/voice.py:81-151`（先发 `ended{stt_disabled}` 再进 try）+ `voice_sessions.py:729-743` + `_require_session:723-727` | 另一连接关 STT 后，本连接**任一** `voice_session.*` 返回**两帧且语义矛盾**（先 ended 再 NOT_FOUND）。现用例 `test_voice_ws.py:154-172` 恰好把这多出来的一帧放过 → 等于零防线 | ~1 天 |
-| `S3-R6-2` | `Module/conftest.py:91-98` | patch 目标写错（`motor.motor_asyncio.AsyncIOMotorClient`，而 `mongodb.py:8` 已按名绑进本模块命名空间）→ fixture **恒无效**、`return` 无 teardown；`test_documentdb.py` **25 个用例**各泄漏一个真 `AsyncIOMotorClient`。首次报告后**未修**（`git log -S` 0 命中） | 0.5 天 |
+| `S3-08` ✅**已修** `485dfa2e` | `core/input/ws_handlers/voice.py:81-151`（先发 `ended{stt_disabled}` 再进 try）+ `voice_sessions.py:729-743` + `_require_session:723-727` | 另一连接关 STT 后，本连接**任一** `voice_session.*` 返回**两帧且语义矛盾**（先 ended 再 NOT_FOUND）。现用例 `test_voice_ws.py:154-172` 恰好把这多出来的一帧放过 → 等于零防线 | ~1 天 |
+| `S3-R6-2` ✅**已修** `2ab86002` | `Module/conftest.py:91-98` | patch 目标写错（`motor.motor_asyncio.AsyncIOMotorClient`，而 `mongodb.py:8` 已按名绑进本模块命名空间）→ fixture **恒无效**、`return` 无 teardown；`test_documentdb.py` **25 个用例**各泄漏一个真 `AsyncIOMotorClient`。首次报告后**未修**（`git log -S` 0 命中） | 0.5 天 |
 
 **档 2 · 关停与恢复路径**
 
@@ -1604,6 +1604,57 @@ Mongo 离线时 `_persist` 直接 `return`（**没有 dirty 跟踪、没有恢�
 - 新增/改写用例：character 3 + secret_store 4（含 1 条改写）+ providers_api 1 = 8 条，
   每条都有对应注入反证
 - `core/agent` + `core/character` + `core/storage` → 1001 passed；ruff / pyright 全绿
+
+---
+
+### §0.4.21 档 1 后两条收口：S3-08 一条命令两帧矛盾 / S3-R6-2 恒无效的 patch（2026-09-16，2 个提交）
+
+**档 1 至此全部收口**（`#14c` / `S2-B7b` / `S3-08` / `S3-R6-2`，另 `#21c`）。
+
+#### (a) `S3-08`：门禁终结会话后命令仍在跑 → 同一条命令两帧矛盾 → `485dfa2e`
+
+`_voice_stt_gate` 在 stt 关闭时对 REALTIME 会话 `_teardown_session()`（mode→IDLE）并发
+`ended{stt_disabled}`；但 8 个命令入口是"先跑门禁、再跑命令"，于是命令继续往下走时
+`_require_session` 抛 `VOICE_SESSION_NOT_FOUND` → 同一条命令的第二帧。
+**现用例恰好放过了多出来的那帧**（只断言"最后那帧是 ended"，error 由**另一条** stop 产生）
+——零防线。
+
+修法：把"门禁已终结会话"变成**返回值**（`notify_stt_disabled() -> bool` →
+`_voice_stt_gate(...) -> bool` → 8 个调用点 `if ...: return`）。
+**语义边界写进 docstring**："一条命令一帧"≠"错误帧消失"——会话已死之后，**另一条**命令
+仍会正常报 NOT_FOUND（那正是它该报的）。
+
+反证三条，其中第三条是**过度触发**控制：门禁恒 True → 4 failed，含
+`TestProfileDictationSttGate` 的两条独立性用例 ⇒ 早退是**有条件**的，
+没把不依赖全局 STT 的会话一起掐掉。
+
+#### (b) `S3-R6-2`：patch 恒无效 + 该文件其实**单跑必错** → `2ab86002`
+
+两个问题（第二个是核这条时顺带实测出来的）：
+1. **patch 打错目标**：`mongodb.py:6` 是 `from motor.motor_asyncio import AsyncIOMotorClient`，
+   名字在导入期就绑进本模块命名空间；patch 源模块对**已存在的绑定**无效 ⇒
+   `test_documentdb.py` 里 25 个用例各构造一个真 `AsyncIOMotorClient`
+   （motor 构造惰性、无 I/O，唯一引用随后又被 `b._client = MagicMock()` 顶掉，
+   故不是硬泄漏——但守卫意图完全落空，且 `close()` 断言的是 fixture 塞进去的 mock）。
+2. **该文件单跑必错**：`DocumentDBFactory.create` 缺连接串即抛，而没有任何测试基建保证
+   `MONGODB_URI` 有值。实测**改动前**单跑：`1 failed / 11 passed / 25 errors`；
+   全量里能过只因**同一 worker 恰好有别的测试先加载了 `.env`**——靠顺序偶然。
+
+修法：patch 目标改为模块属性 + fixture 内两道自检（`assert_called_once` + `isinstance`）；
+本文件加 autouse fixture 显式钉 `MONGODB_URI`（端口 27099，非生产 27017）。
+改完单跑该文件 37 passed、目录 40 passed。
+
+反证三条：patch 打回源模块 → 25 errors；删 autouse 的 env → 1 failed；
+`test_mongodb_parsing` 打回源模块 → 1 failed。
+**范围核对**：全仓 `motor.motor_asyncio.AsyncIOMotorClient` 只剩本文件注释与
+`Module/config/preflight.py:357` 的**生产**连通性检查（正当用法，不动）。
+
+#### (c) 验收
+
+- 档 1 四条共新增/收紧用例 15 条（character 3 / secret_store 4 / providers_api 1 /
+  voice_ws 1 收紧 / documentdb 2 处 + autouse / desktop 存量）
+- `core/input` 840 passed、`Module/database` + `Module/config` 208 passed、ruff / pyright 全绿
+- 全量复跑见提交内数字
 
 ---
 
