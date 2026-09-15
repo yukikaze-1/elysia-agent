@@ -13,7 +13,9 @@ WS 帧构造、REST `json_response`、SSE。产物里漏出一个 `datetime`，�
 
 from __future__ import annotations
 
+import enum
 import json
+import pathlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -21,7 +23,7 @@ from decimal import Decimal
 import pytest
 from pydantic import Field
 
-from frontend_contract.base import ContractModel
+from frontend_contract.base import ContractModel, ContractSerializationError
 
 pytestmark = pytest.mark.unit
 
@@ -46,6 +48,12 @@ class _Native:
     """
 
 
+class _NativeEnum(enum.Enum):
+    """`Enum` 成员——归一化契约要求"取它的值"，而不是 `str(member)`（`E.A`）。"""
+
+    ALPHA = "alpha"
+
+
 def test_datetime_in_dict_is_normalized():
     """核心：`metadata` 里的 `datetime` 必须变成 ISO 串。"""
     model = _Holder(metadata={"created": datetime(2026, 1, 1, tzinfo=timezone.utc)})
@@ -62,13 +70,49 @@ def test_datetime_in_dict_is_normalized():
     (Decimal("1.50"), (str, int, float)),
     (uuid.UUID("12345678-1234-5678-1234-567812345678"), str),
     ({1, 2}, (list, tuple, str)),
+    # #46 行 7 点名的两个边角：Enum 与 Path
+    (_NativeEnum.ALPHA, str),
+    (pathlib.Path("/tmp/x.json"), str),
 ])
 def test_non_native_values_are_normalized(value, expected_type):
-    """`datetime` / `timedelta` / `Decimal` / `UUID` / `set` 一律归一化。"""
+    """`datetime` / `timedelta` / `Decimal` / `UUID` / `set` / `Enum` / `Path` 一律归一化。"""
     data = _Holder(metadata={"v": value}).wire_dict()
     assert isinstance(data["metadata"]["v"], expected_type), (
         f"{type(value).__name__} 未归一化：{data['metadata']['v']!r}")
     json.dumps(data)
+
+
+def test_enum_is_normalized_to_its_value_not_its_repr():
+    """`Enum` 必须落成**成员值**（`"alpha"`），不是 `Enum.A` / `"ALPHA"`。"""
+    data = _Holder(metadata={"v": _NativeEnum.ALPHA}).wire_dict()
+    assert data["metadata"]["v"] == "alpha", data["metadata"]["v"]
+
+
+def test_arbitrary_object_raises_instead_of_being_stringified():
+    """#46 行 7 的契约定性：**认不得的任意对象必须抛**，不得 `str()` 兜底。
+
+    反面（静默兜底）为什么不可接受：本层是契约层，`str()` 会往 wire 上发一个**没有任何
+    消费者声明**的类型——客户端按契约取 object/int，实际拿到 string，且**没有任何报错**。
+    这正是本仓反复出现的"静默降级"缺陷族。抛异常把问题钉在发送点，测试里立刻可见。
+
+    这条此前**完全缺失**：`_Native` 这个测试替身早就写好了，却从没被任何用例引用。
+    """
+    model = _Holder(metadata={"good": 1, "bad": _Native()})
+    with pytest.raises(ContractSerializationError):
+        model.wire_dict()
+
+
+def test_serialization_error_names_the_offending_field():
+    """错误消息必须点出**哪个顶层字段**——175 个调用点，只有类型名等于没定位。
+
+    注意"能归因"本身也要有守卫：下面同时断言**没有**把无关字段（good）算进坏字段。
+    """
+    model = _Holder(metadata={"good": 1}, items=[_Native()])
+    with pytest.raises(ContractSerializationError) as exc_info:
+        model.wire_dict()
+    msg = str(exc_info.value)
+    assert "items" in msg, f"没点出出错字段：{msg}"
+    assert "metadata" not in msg, f"把无关字段算成坏字段：{msg}"
 
 
 def test_datetime_inside_list_is_normalized():
