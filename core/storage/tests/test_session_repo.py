@@ -172,10 +172,19 @@ class TestSessionRepository:
         ok = asyncio.run(repo.rename(SessionId("s1"), "同名"))
         assert ok is False  # 无字段实际变化 → modified_count=0
 
-    def test_rename_returns_false_when_db_none(self):
+    def test_rename_raises_when_db_none(self):
+        """离线必须 raise（消除"会话不存在 vs 库离线"共用一个 False 的歧义）。
+
+        旧用例断言 `is False`，正是把该缺陷固化成了契约——`#45/#8` 同族的写路径对齐。
+        """
         import asyncio
+
+        import pytest
+
+        from core.storage.base import StorageUnavailableError
         repo = SessionRepository(db=None)
-        assert asyncio.run(repo.rename(SessionId("s1"), "标题")) is False
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.rename(SessionId("s1"), "标题"))
 
     def test_save_derives_auto_title_from_first_user_message(self):
         import asyncio

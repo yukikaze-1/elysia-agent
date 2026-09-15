@@ -233,7 +233,6 @@ _PENDING_DECISION: dict[tuple[str, str], str] = {
         "静默丢失，调用方无从知晓。与 append_version 的写路径约定不一致。"
     ),
     ("MemoryRepository", "delete"): "写路径静默返回 0（同仓 clear_all 已 fail-closed）",
-    ("SessionRepository", "rename"): "写路径离线时返回 False（与 save/create 的 raise 不一致）",
     ("TokenRepository", "flush"): "写路径离线时静默返回 None（与 record 的 raise 不一致）",
     ("TokenRepository", "clear_all"): "写路径离线时静默返回 0（与 delete_by_session 的 raise 不一致）",
 }
@@ -513,3 +512,21 @@ def test_convention_table_covers_all_discovered_repositories():
 # 让 asyncio 在本模块的同步用例里也能用（无需 event loop 依赖）
 def test_module_imports_cleanly():
     assert asyncio is not None
+
+
+class TestRenameOfflineToleranceIsExplicit:
+    """`SessionManager.rename` 的**离线容忍必须有出处**（写路径对齐的配套守卫）。
+
+    仓库层现在对离线 raise（`False` 只表示"会话不存在"）；manager 想把离线当
+    "未持久化但仍更新进程内摘要"就必须**显式** catch——而不是像以前那样靠
+    "repo 把两种语义压进同一个 False"隐式成立。
+    """
+
+    @pytest.mark.unit
+    def test_manager_catches_storage_unavailable_explicitly(self):
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parents[3]
+               / "core/memory/session_manager.py").read_text(encoding="utf-8")
+        assert "except StorageUnavailableError:" in src, \
+            "manager 的离线容忍消失/改成隐式了——容忍可以保留，但必须看得见"
+        assert "persisted = False" in src

@@ -502,7 +502,14 @@ class SessionManager:
         if sid in self._deleting or sid in self._deleted:
             return False
         known_local = sid in self._sessions or sid in self._local_summaries
-        persisted = await self._repo.rename(sid, title)
+        try:
+            persisted = await self._repo.rename(sid, title)
+        except StorageUnavailableError:
+            # **有意的离线容忍，现在显式可见**：Mongo 离线时仍更新进程内摘要
+            # （REST 读后写一致）。此前它靠"repo 把离线也返回 False"隐式成立——
+            # 那是把两种语义压进一个返回值里；现在仓库只对"会话不存在"返回 False，
+            # 容忍必须在这里 catch 出来，读代码的人才知道这是选择而不是巧合。
+            persisted = False
         if not persisted and not known_local:
             return False
         current = self._local_summaries.get(sid)

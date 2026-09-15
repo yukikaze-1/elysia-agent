@@ -291,10 +291,19 @@ class SessionRepository(Repository):
             title: 新标题。
 
         Returns:
-            True 表示会话存在且已更新，False 表示会话不存在或数据库不可用。
+            True 表示会话存在且已更新；False **仅**表示"会话不存在"。
+
+        Raises:
+            StorageUnavailableError: MongoDB 离线。
+
+        #45/#8 同族（写路径对齐）：此前离线也返回 `False`，与"会话不存在"共用同一个
+        返回值——调用方无法区分，只能二选一地解释。现与同仓 `save`/`create` 对齐：
+        离线 **raise**，`False` 只留一种含义。需要"离线也继续"的调用方（如
+        `SessionManager.rename` 的进程内摘要兜底）必须**显式**捕获——容忍要看得见。
         """
         if self._db is None:
-            return False
+            raise StorageUnavailableError(
+                "SessionRepository 未连接——rename 无法执行，不得静默当作'会话不存在'")
         db = self._db
         result = await self._call(
             lambda: db.update_one(
