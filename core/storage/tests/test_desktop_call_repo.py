@@ -299,6 +299,57 @@ class TestConnect:
         assert asyncio.run(repo.get("call_0")) is not None
         assert asyncio.run(repo.get("call_149")) is not None
 
+    def test_reconnect_keeps_offline_writes_and_still_loads_db_rows(self):
+        """#46 行 6：恢复边界（重连 → reload）**不得丢掉离线期间的写入**。
+
+        机制：缓存是写权威，Mongo 离线时 `_persist` 直接 return（没有 dirty 跟踪），
+        而 `_health_check()` 的重连路径会走 `connect()` → `reload_from_db()`。
+        原实现 `self._cache = loaded` **整体替换** ⇒ 离线期新建/更新的调用在恢复那一刻
+        从缓存里消失 ⇒ `core/desktop/bridge.py:217-219` 的去重分支判"不参与去重"、
+        清除 `_dedup` 并**重新投递**同一调用的 `tool.request`。
+        """
+        db = FakeDocumentDBBackend()
+        # 上一条进程留下的记录（DB 有、缓存没有 → 仍应被载入）
+        asyncio.run(db.insert_one(COLLECTION, _call(call_id="from_db", status="succeeded")))
+        repo = DesktopCallRepository(mongodb=db)
+        repo._db = None                     # 等价于探测判死后的 _mark_unavailable()
+        asyncio.run(repo.upsert(_call(call_id="offline_new", status="pending")))
+        assert asyncio.run(repo.get("offline_new")) is not None
+
+        repo._db = db                       # Mongo 恢复 → 重连
+        assert asyncio.run(repo.connect()) is True
+
+        assert asyncio.run(repo.get("offline_new")) is not None, (
+            "恢复边界丢掉了离线期间的写入——桥的去重复用分支会因此重新投递 tool.request")
+        assert asyncio.run(repo.get("from_db")) is not None, "DB 里的行仍须载入"
+        assert asyncio.run(repo.get("from_db"))["status"] == "succeeded"
+
+    def test_reload_merge_prefers_the_newer_updated_at(self):
+        """合并规则不得退化成"无条件信本地"：DB 侧更新时必须以 DB 为准。
+
+        多写者场景（决策 #3：按"两种部署都正确"实现）下，本进程的缓存可能是旧的。
+        """
+        db = FakeDocumentDBBackend()
+        asyncio.run(db.insert_one(COLLECTION, _call(
+            call_id="both", status="succeeded", updated_at="2099-01-01T00:00:00+00:00")))
+        repo = DesktopCallRepository(mongodb=db)
+        repo._cache["both"] = _call(          # 本地更旧（离线期未更新的残留）
+            call_id="both", status="pending", updated_at="2000-01-01T00:00:00+00:00")
+        asyncio.run(repo.connect())
+        assert asyncio.run(repo.get("both"))["status"] == "succeeded", (
+            "本地更旧时不该覆盖 DB（合并退化成'无条件信本地'）")
+
+    def test_reload_merge_keeps_local_when_local_is_newer(self):
+        """反向：本地更新（离线期改过）→ 以本地为准。"""
+        db = FakeDocumentDBBackend()
+        asyncio.run(db.insert_one(COLLECTION, _call(
+            call_id="both", status="pending", updated_at="2000-01-01T00:00:00+00:00")))
+        repo = DesktopCallRepository(mongodb=db)
+        repo._cache["both"] = _call(
+            call_id="both", status="succeeded", updated_at="2099-01-01T00:00:00+00:00")
+        asyncio.run(repo.connect())
+        assert asyncio.run(repo.get("both"))["status"] == "succeeded"
+
     def test_health_check_reflects_db(self, monkeypatch):
         # B1/P1-05：未连接时 health_check 尝试自愈重连——模拟后端不可达（确定性 False）
         def _create_fail(*a, **kw):

@@ -389,11 +389,25 @@ class DesktopCallRepository(Repository):
         return modified
 
     async def reload_from_db(self) -> None:
-        """connect 成功后从 Mongo 全量载入进程内缓存（缓存以 db 快照重建）。
+        """connect 成功后从 Mongo 载入进程内缓存（**合并**，不整体替换）。
 
         分页载入（skip/limit 循环）——DocumentDBBackend.find 默认 limit=100 会截断，
-        超 100 条调用只载入前 100。db 不可用时静默跳过（保持现有缓存）。
-        启动时缓存为空，重建即全量载入。
+        超 100 条调用只载入前 100。db 不可用时静默跳过（保持现有缓存）；启动时缓存
+        为空，合并即等价于全量载入。
+
+        **为什么是合并而不是 `self._cache = loaded`**（#46 行 6 重核时发现）：
+        本仓储的缓存是**写权威**（见 `upsert`），而 Mongo 离线期间的写入只落在缓存里
+        ——`_persist` 在 `_db is None`（或写失败）时直接 return，**没有 dirty 跟踪、
+        也没有恢复后回灌**。偏偏 `_health_check()` 的重连路径会走到 `connect()` →
+        本方法，于是整体替换等于把"离线期间的全部写入"在恢复那一刻丢掉。下游实证：
+        `core/desktop/bridge.py:217-219` 的去重复用分支要求 `get(existing_id) is not None`
+        且状态活跃，丢了它就走"不参与去重"分支、清除 `_dedup` 并**重新投递**同一调用的
+        `tool.request`（非幂等的桌面动作可能重复执行）。同一族缺陷在会话上早已修掉
+        （CR-06：恢复时按 message_id 去重**合并**，而不是整体替换）——这里是同一条纪律。
+
+        合并规则：**DB 行为基底，本地条目在"DB 里没有"或"`updated_at` 不更旧"时覆盖**。
+        `updated_at` 是 `now_iso()` 产出的 ISO-8601 UTC 串，字典序即时间序；这样多写者
+        场景下仍以较新的一侧为准，而不是无条件信本地。
         """
         if self._db is None:
             return
@@ -413,6 +427,13 @@ class DesktopCallRepository(Repository):
         except Exception as e:
             logger.warning("DesktopCallRepository: 从 Mongo 全量载入失败 (%s)", e)
             return
+        for call_id, cached in self._cache.items():
+            db_doc = loaded.get(call_id)
+            if db_doc is None or (
+                str(cached.get("updated_at") or "")
+                >= str(db_doc.get("updated_at") or "")
+            ):
+                loaded[call_id] = cached
         self._cache = loaded
         if loaded:
             logger.info("DesktopCallRepository: reload_from_db 载入 %d 条调用", len(loaded))

@@ -1067,7 +1067,7 @@ mailbox 里"的那一刻。
 | 3 | `Agent.stop()` 全 20 步含每步抛错 | 🔧 **本次补**（63 条逐格矩阵） |
 | 4 | 单 token 配置的管理端点鉴权 | ✅ 已覆盖（`TestAdminAuthStrictSeparation` 8 例，三种配置对照） |
 | 5 | `AgentFSM` 完整迁移矩阵 | 🔧 **本次补**（36 格全矩阵 + 非法格不得改动 state/previous） |
-| 6 | 依赖恢复路径（down→up） | ✅ 已覆盖（idempotency 与 LTM 各有一条真 down→up）；**未逐一确证** `generation`/`desktop` 两条 probe 分支 |
+| 6 | 依赖恢复路径（down→up） | ✅ **已收口**（§0.4.19）：`generation` / `desktop` 两条 probe 分支的 down→up 已补守卫，顺带修掉一处恢复边界丢写入 |
 | 7 | `wire_dict()` 对非 JSON 原生值 | ✅ 已覆盖（正是该行要的 `datetime in metadata`）；边角（`Enum`/`Path`/任意对象）**未定契约** |
 | 8 | 跨集合写序列的中间失败 | 🔧 **本次补**（18 条）——并暴露 4 处真实缺陷 |
 | 9 | 幂等三态 | ✅ 已覆盖（可用/不可用/不存在三态齐备） |
@@ -1494,6 +1494,66 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
    改公共路径，先定语义再动手；`#21b`/`S2-H9` 是产品级范围决定。
 4. `S3-G7` 与 `S3-R2-1` 建议**降级观察**：前者是有意设计 + 文档未披露，后者危害未能证成
    （唯一登记点的产物被父 tail await、父被 cancel 时子被连带 cancel）。
+
+---
+
+### §0.4.19 #46 行 6 收口：两条 probe 分支的 down→up 覆盖（顺带修掉恢复边界丢写入）
+
+#### (a) 行 6 的真实缺口：不是"没测"，是"测不到"
+
+`core/agent/tests/test_lifecycle_idempotency.py` 的 `_make_health_agent` 把
+**optional repo 一律置 None**（`_attachment_repo` / `_generation_registry` /
+`_desktop_bridge`），所以 `generation` / `desktop` 两条 probe 分支连"名字进没进探测表"
+都没有用例——它们此前唯一的证据是 I 类（静态读表）。而两条分支的语义**并不相同**：
+
+| 分支 | 恢复语义 |
+|---|---|
+| `generation` | **有显式分支**：按 5 分钟阈值把崩溃残留的 `running` 标 `interrupted`。**这是第二层**——启动路径的同类清理在 `_start_persistence`（守卫在 `test_multi_session.py:335-382`），本层管"运行中掉线又恢复" |
+| `desktop` | **刻意没有分支**：`storage_health_check()` → `repo.health_check()` → 基类 `_health_check()` ping 失败即 `_mark_unavailable()` 并**自己重连**，故"无需额外补偿" |
+
+新增 `core/agent/tests/test_probe_recovery_paths.py`（6 条，marker=service），
+钉住三件事：两条分支**在探测表里**、恢复**只在 False→True 边界触发一次**、
+以及那条最容易写错的不变量——**`_recover_dependency` 对没有分支的名字必须返回 `True`**。
+返回 `False` 的后果不是"少做一件事"：协调器会把 `results[name]` 翻回 False，
+下一轮又是 False→True 边界 → **每轮重复触发**，且该依赖在结果里永久显示不健康。
+
+**反证 3 条**（注入 → 红 → 逐字节还原 → 绿）：
+
+| 注入 | 结果 |
+|---|---|
+| 删掉 `generation` 恢复分支（变 no-op） | 2 failed |
+| 未处理的名字改成返回 `False` | 2 failed |
+| `identity` 装载失败也报成功（反向对照） | 1 failed |
+
+#### (b) 顺带挖出的真缺陷：desktop 恢复边界**整体替换缓存** → 离线期写入消失
+
+写行 6 的用例时读 `_recover_dependency("desktop")` 为什么不补偿，顺着发现：
+`DesktopCallRepository` 的缓存是**写权威**（`upsert` docstring 明说），
+Mongo 离线时 `_persist` 直接 `return`（**没有 dirty 跟踪、没有恢复后回灌**）；
+而 `_health_check()` 的重连路径会走到 `connect()` → `reload_from_db()`，
+后者原本是 `self._cache = loaded` —— **整体替换**。⇒ 离线期间新建/更新的 desktop
+调用，在 Mongo 恢复那一刻从缓存里消失。
+
+**下游实证**（不是推演）：`core/desktop/bridge.py:217-219` 的去重复用分支要求
+`await self._repo.get(existing_id) is not None` 且状态活跃；丢了它就走
+"不参与去重"分支、清除 `_dedup` 并**重新投递**同一调用的 `tool.request`
+——非幂等的桌面动作（写文件 / 选择文件）可能重复执行。
+
+**修法**：`reload_from_db` 改为**合并**——DB 行为基底，本地条目在"DB 里没有"或
+"`updated_at` 不更旧"时覆盖。`updated_at` 是 `now_iso()` 的 ISO-8601 UTC 串，
+字典序即时间序，故多写者场景（决策 #3）下仍以较新一侧为准，而不是无条件信本地。
+**同一族缺陷在会话上早已修掉**（CR-06：恢复时按 message_id 去重合并，而非整体替换）
+——这里是同一条纪律，只是当时没人检查 desktop 这一份。
+
+**反证**：把合并退回 `self._cache = loaded` → 2 failed（离线写入丢失 + 本地更新被覆盖），
+**而"DB 更新时以 DB 为准"那条仍绿**——证明两条用例钉的是相反方向，合并没有退化成
+"无条件信本地"。
+
+#### (c) 验收
+
+- 新增 6（probe/recovery）+ 3（reload 合并）= 9 条用例，全部带注入反证
+- `core/storage/tests` + `core/agent/tests` + `core/desktop/tests` → **887 passed**
+- `#46` 十四行表**至此全部收口**（行 1–14 各有结论，见 §0.4.14(c) 与本节）
 
 ---
 
