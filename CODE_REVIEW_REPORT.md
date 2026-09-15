@@ -633,6 +633,12 @@ owner 指定「Tier 1 全做：A→B→C→D→E」并给出 12 项决策。逐�
 | **E-②** | `0aec4bc8` | `/restart` 只换 `self._config` 却打印"配置已重新加载"（构造期配置全不生效） | 不重建 → 红；`prefer_config_model` 恒 False → 红 |
 | **决策 #8** | `114f6668` | 版本历史三条读路径静默返回空 → 改 fail-closed（503） | 去掉 503 映射 → 红；读退回空 → 约定门禁红 |
 
+**`#33c` 的另一半（`838884c2`）**：清单写的是"登记/清理改 try/finally **+ `_locks`
+有界化**"。`c2f15024` 只做了前半，条纹化当时被留作独立项；本批收口为**固定 64 桶条纹锁**
+（同 key 恒同锁 ⇒ 互斥语义不变，空间 O(1)），注入反证：退回无界 dict → "锁表 1280 项"红。
+**明确不改**的是 key 空间本就有两种（request 用 `(tool_name, args_hash)`、cancel 用
+`call_id`）——那是既有设计，不假装修好了。
+
 **A 引入的回归（已修，`a7c7e43a`）**：给取消路径加的 best-effort 标记**无条件**把调用
 标成 `cancelled`，撞上模块自己 D-o 规则（accepted/running 必须留出"重连重传 result →
 succeeded"闭环）。发现路径值得记：C 批跑下游套件时 `core/input/tests/
