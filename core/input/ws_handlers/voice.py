@@ -85,7 +85,8 @@ async def _dispatch_voice_session_start(
     if ctx.voice_mgr is None or not _is_v2(ctx.agent, ctx.ws):
         logger.debug("voice_session.start: 非 v2，忽略")
     else:
-        await _voice_stt_gate(ctx.agent, ctx.voice_mgr)
+        if await _voice_stt_gate(ctx.agent, ctx.voice_mgr):
+            return  # S3-08：门禁已发终态帧，本命令不得再产出第二帧
         try:
             await ctx.voice_mgr.start_realtime(
                 msg.sessionId if msg is not None else data.get("sessionId", ""),
@@ -101,7 +102,8 @@ async def _dispatch_voice_session_pause(
     if ctx.voice_mgr is None or not _is_v2(ctx.agent, ctx.ws):
         logger.debug("voice_session.pause: 非 v2，忽略")
     else:
-        await _voice_stt_gate(ctx.agent, ctx.voice_mgr)
+        if await _voice_stt_gate(ctx.agent, ctx.voice_mgr):
+            return  # S3-08：门禁已发终态帧，本命令不得再产出第二帧
         try:
             await ctx.voice_mgr.pause_session(
                 msg.sessionId if msg is not None else data.get("sessionId", ""))
@@ -115,7 +117,8 @@ async def _dispatch_voice_session_resume(
     if ctx.voice_mgr is None or not _is_v2(ctx.agent, ctx.ws):
         logger.debug("voice_session.resume: 非 v2，忽略")
     else:
-        await _voice_stt_gate(ctx.agent, ctx.voice_mgr)
+        if await _voice_stt_gate(ctx.agent, ctx.voice_mgr):
+            return  # S3-08：门禁已发终态帧，本命令不得再产出第二帧
         try:
             await ctx.voice_mgr.resume_session(
                 msg.sessionId if msg is not None else data.get("sessionId", ""))
@@ -129,7 +132,8 @@ async def _dispatch_voice_session_stop(
     if ctx.voice_mgr is None or not _is_v2(ctx.agent, ctx.ws):
         logger.debug("voice_session.stop: 非 v2，忽略")
     else:
-        await _voice_stt_gate(ctx.agent, ctx.voice_mgr)
+        if await _voice_stt_gate(ctx.agent, ctx.voice_mgr):
+            return  # S3-08：门禁已发终态帧，本命令不得再产出第二帧
         try:
             await ctx.voice_mgr.stop_session(
                 msg.sessionId if msg is not None else data.get("sessionId", ""))
@@ -143,7 +147,8 @@ async def _dispatch_voice_session_cancel(
     if ctx.voice_mgr is None or not _is_v2(ctx.agent, ctx.ws):
         logger.debug("voice_session.cancel: 非 v2，忽略")
     else:
-        await _voice_stt_gate(ctx.agent, ctx.voice_mgr)
+        if await _voice_stt_gate(ctx.agent, ctx.voice_mgr):
+            return  # S3-08：门禁已发终态帧，本命令不得再产出第二帧
         try:
             await ctx.voice_mgr.cancel_session(
                 msg.sessionId if msg is not None else data.get("sessionId", ""))
@@ -157,7 +162,8 @@ async def _dispatch_dictation_start(
     if ctx.voice_mgr is None or not _is_v2(ctx.agent, ctx.ws):
         logger.debug("dictation.start: 非 v2，忽略")
     else:
-        await _voice_stt_gate(ctx.agent, ctx.voice_mgr)
+        if await _voice_stt_gate(ctx.agent, ctx.voice_mgr):
+            return  # S3-08：门禁已发终态帧，本命令不得再产出第二帧
         try:
             await ctx.voice_mgr.start_dictation(
                 msg.clientRequestId if msg is not None else data.get("clientRequestId", ""),
@@ -173,7 +179,8 @@ async def _dispatch_dictation_stop(
     if ctx.voice_mgr is None or not _is_v2(ctx.agent, ctx.ws):
         logger.debug("dictation.stop: 非 v2，忽略")
     else:
-        await _voice_stt_gate(ctx.agent, ctx.voice_mgr)
+        if await _voice_stt_gate(ctx.agent, ctx.voice_mgr):
+            return  # S3-08：门禁已发终态帧，本命令不得再产出第二帧
         try:
             await ctx.voice_mgr.stop_dictation(
                 msg.clientRequestId if msg is not None else data.get("clientRequestId", ""))
@@ -187,7 +194,8 @@ async def _dispatch_dictation_cancel(
     if ctx.voice_mgr is None or not _is_v2(ctx.agent, ctx.ws):
         logger.debug("dictation.cancel: 非 v2，忽略")
     else:
-        await _voice_stt_gate(ctx.agent, ctx.voice_mgr)
+        if await _voice_stt_gate(ctx.agent, ctx.voice_mgr):
+            return  # S3-08：门禁已发终态帧，本命令不得再产出第二帧
         try:
             await ctx.voice_mgr.cancel_dictation(
                 msg.clientRequestId if msg is not None else data.get("clientRequestId", ""))
@@ -260,18 +268,26 @@ def _voice_descriptor(msg: Any, data: dict) -> AudioInputDescriptor | None:
         return None
 
 async def _voice_stt_gate(agent: "Agent",
-                          voice_mgr: "VoiceSessionManager | None") -> None:
+                          voice_mgr: "VoiceSessionManager | None") -> bool:
     """会话 JSON 消息入口检查 stt_enabled（spec §5.3 NEW-D/NEW-W）。
 
     stt 关闭 → 结束活动 REALTIME/DICTATION 会话——暂停中会话无帧流入、idle 计时
     挂起，靠此入口检测避免静默悬挂至连接关闭；RECORDING 由 notify_stt_disabled
     内部忽略（spec §3.2 NEW-XA）。9abc P1-2：仅对依赖全局 STT 的会话生效——
     profile dictation（`_dictation_stt` 快照）独立于全局开关，stop 不被此门禁取消。
+
+    Returns:
+        True 表示**门禁已终结会话并发出终态帧**——调用方必须**直接 return**，
+        不得再执行原命令（S3-08）。否则：会话已 IDLE，命令的 `_require_session` 抛
+        `VOICE_SESSION_NOT_FOUND`，客户端对**同一条命令**收到两帧语义矛盾的消息
+        （先 `ended{stt_disabled}` 再 `NOT_FOUND`）。RECORDING / 无关会话返回 False，
+        命令照常执行。
     """
     if (voice_mgr is not None and not getattr(agent, "stt_enabled", False)
             and voice_mgr.depends_on_global_stt()):
         try:
-            await voice_mgr.notify_stt_disabled()
+            return await voice_mgr.notify_stt_disabled()
         except Exception:
             logger.debug("voice stt 门控 notify 失败", exc_info=True)
+    return False
 

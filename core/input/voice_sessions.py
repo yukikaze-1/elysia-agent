@@ -726,21 +726,31 @@ class VoiceSessionManager:
         if self._mode != VoiceMode.REALTIME or self._session_id != session_id:
             raise VoiceSessionError(ERR_SESSION_NOT_FOUND, "会话不存在")
 
-    async def notify_stt_disabled(self) -> None:
-        """set_service('stt', False) 成功后由 ws_handler 调用（spec §3.2 NEW-X/XA）。"""
+    async def notify_stt_disabled(self) -> bool:
+        """set_service('stt', False) 成功后由 ws_handler 调用（spec §3.2 NEW-X/XA）。
+
+        Returns:
+            True 表示**本次调用终结了一个会话**（已发出终态帧）——调用方据此决定还要不要
+            执行原命令（S3-08：会话已 IDLE，再执行必然抛 `VOICE_SESSION_NOT_FOUND`，
+            客户端会收到两帧语义矛盾的消息）。RECORDING 不处理 ⇒ 返回 False
+            （spec §3.2 NEW-XA：录音模式由 `voice.record.*` 自己收尾）。
+        """
         if self._mode == VoiceMode.REALTIME:
             sid = self._session_id  # teardown 前缓存（review #2）
             self._teardown_session()
             from frontend_contract.ws_message import VoiceEndReason, VoiceSessionEndedMessage
             await self._emit(VoiceSessionEndedMessage(
                 sessionId=sid or "", reason=VoiceEndReason("stt_disabled")).wire_dict())
-        elif self._mode == VoiceMode.DICTATION:
+            return True
+        if self._mode == VoiceMode.DICTATION:
             rid = self._dict_request_id  # teardown 前缓存
             self._teardown_session()
             from frontend_contract import DictationCancelledMessage
             await self._emit(DictationCancelledMessage(
                 clientRequestId=rid).wire_dict())
+            return True
         # RECORDING 不处理（spec §3.2 NEW-XA）
+        return False
 
     async def _end_session_stt_disabled(self) -> None:
         if self._mode == VoiceMode.REALTIME:
