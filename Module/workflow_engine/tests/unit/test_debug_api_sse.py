@@ -144,3 +144,43 @@ class TestDisconnectStopsPolling:
         assert api._poll_task is None
         assert api._subscribers == {}
         resp.close()
+
+
+class TestStopIsNonBlocking:
+    """S3-05：`stop()` 绝不能被慢/半开订阅者卡住——它是关停路径上的一步。
+
+    原实现 `await q.put(_SENTINEL)`：队列 maxsize=256，一个不读数据的 SSE 客户端
+    就能把队列打满，于是**关停永久挂起**。广播路径早就把满队列当可丢弃
+    （`put_nowait` + QueueFull 跳过），停止路径必须同理。
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_returns_with_a_full_subscriber_queue(self):
+        api = WorkflowDebugAPI(_FakeWorkflowEngine())
+        await api.start()
+        _sid, q = await api.subscribe()
+        # 打满队列（模拟半开客户端：TCP 窗口满 → handler 不再 drain）
+        while not q.full():
+            q.put_nowait({"event": "tick", "data": {}})
+        assert q.full()
+
+        # 必须在有限时间内返回（挂起的话这里会超时）
+        await asyncio.wait_for(api.stop(), timeout=2.0)
+        assert api._subscribers == {}
+
+    @pytest.mark.asyncio
+    async def test_full_queue_still_receives_the_sentinel(self):
+        """腾空队列是对的，但**不能连 sentinel 一起吞掉**——否则 handler 永不退出。"""
+        api = WorkflowDebugAPI(_FakeWorkflowEngine())
+        await api.start()
+        _sid, q = await api.subscribe()
+        while not q.full():
+            q.put_nowait({"event": "tick", "data": {}})
+
+        await asyncio.wait_for(api.stop(), timeout=2.0)
+
+        seen = []
+        while not q.empty():
+            seen.append(q.get_nowait())
+        assert debug_api_module._SENTINEL in seen, (
+            "队列满时 sentinel 没送到 → SSE handler 不会退出（连接吊在那儿）")

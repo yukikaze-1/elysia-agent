@@ -27,6 +27,29 @@ _POLL_INTERVAL = 0.5            # 500ms 内部轮询
 _SENTINEL: dict = {}            # shutdown 信号，替代 None（Queue[dict] 不接受 None）
 
 
+def _force_put(q: "asyncio.Queue[dict]", item: dict) -> None:
+    """**绝不阻塞**地把 `item` 放进队列：满了先丢弃排队事件（S3-05）。
+
+    关停语义下排队的事件已无意义，而 sentinel 必须送达才能让 SSE handler 退出。
+    无 `await` 间隔，故"腾空后仍满"只在有并发生产者的极端情形下可能——那时记一条
+    warning 而不是把关停卡住。
+    """
+    try:
+        q.put_nowait(item)
+        return
+    except asyncio.QueueFull:
+        pass
+    while not q.empty():
+        try:
+            q.get_nowait()
+        except asyncio.QueueEmpty:  # pragma: no cover —— 无 await 间隔，理论不可达
+            break
+    try:
+        q.put_nowait(item)
+    except asyncio.QueueFull:       # pragma: no cover —— 同上
+        logger.warning("WorkflowDebugAPI: sentinel 投递失败（队列仍满）")
+
+
 class WorkflowDebugAPI:
     """收集 WorkflowEngine 运行时状态，diff 后 SSE 推送给前端。
 
@@ -78,12 +101,20 @@ class WorkflowDebugAPI:
             _POLL_INTERVAL)
 
     async def stop(self) -> None:
-        """停止轮询循环并通知所有订阅者断开（幂等）。"""
+        """停止轮询循环并通知所有订阅者断开（幂等）。
+
+        **本方法不得阻塞**（S3-05）：原实现是 `await q.put(_SENTINEL)`，队列（maxsize=256）
+        被慢/半开 SSE 客户端打满时会**永久挂起**——而调用方正是关停路径
+        （`core/input/debug_routes/__init__.py::_on_shutdown` → 这里），
+        即"一个不读数据的调试面板能把关停卡死"。广播路径本来就把满队列当作可丢弃
+        （`put_nowait` + `QueueFull` 跳过），停止路径同理：**腾空后再放 sentinel**
+        ——关停时排队的事件已无意义，而 sentinel 必须送达，否则 handler 不会退出。
+        """
         self._started = False
         await self._stop_polling()
         # 通知所有订阅者关闭连接
         for q in self._subscribers.values():
-            await q.put(_SENTINEL)  # sentinel——通知 SSE handler 退出
+            _force_put(q, _SENTINEL)
         self._subscribers.clear()
         logger.info("WorkflowDebugAPI: 已停止")
 
