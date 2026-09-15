@@ -31,7 +31,7 @@ class TimePlugin(ToolPlugin):
     description = "获取当前日期和时间，支持指定时区和格式"
     param_model = TimeParams
     capabilities: set = set()
-    safety = SafetyProfile()
+    safety = SafetyProfile(idempotent=True)  # 纯读时间：超时重试安全（2026-09-16 幂等声明）
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: TimeParams,

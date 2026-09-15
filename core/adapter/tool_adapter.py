@@ -271,6 +271,14 @@ class ToolAdapter:
         """插件声明的单次执行预算（透传 manager；调度器预算用，S2-G2）。"""
         return self._manager.declared_request_timeout(tool_name)
 
+    def declares_idempotent(self, tool_name: str) -> bool:
+        """插件是否声明幂等（透传 manager；调度器超时重试门控用，2026-09-16）。
+
+        只在调度器**自己合成**的超时上被询问；插件自己返回的可重试错误不看它。
+        未知工具 → False。
+        """
+        return self._manager.declares_idempotent(tool_name)
+
     @property
     def tool_names(self) -> list[str]:
         """已注册工具名列表。

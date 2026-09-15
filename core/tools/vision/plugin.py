@@ -58,7 +58,10 @@ class DescribeImagePlugin(ToolPlugin):
     )
     param_model: type = DescribeImageParams
     capabilities: set = set()
-    safety = SafetyProfile(requires_human_approval=False, request_timeout=120.0)
+    # idempotent=True：只读用户消息中的图片（写 data/cache/vision 的是内容寻址缓存），
+    # 重跑安全——且它是最慢的工具（120s），最需要超时重试（2026-09-16 幂等声明）。
+    safety = SafetyProfile(
+        requires_human_approval=False, request_timeout=120.0, idempotent=True)
 
     async def setup(self, ctx: PluginContext) -> None:
         """初始化插件，保存插件上下文。

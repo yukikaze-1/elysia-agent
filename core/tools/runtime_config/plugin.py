@@ -36,7 +36,7 @@ class RuntimeConfigPlugin(ToolPlugin):
     param_model = RuntimeConfigParams
     capabilities = {Capability.PROCESS}
     risk_level = "medium"  # 读进程内存/服务配置/后台任务状态（§3.3）
-    safety = SafetyProfile()
+    safety = SafetyProfile(idempotent=True)  # 只读快照：超时重试安全（2026-09-16 幂等声明）
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: RuntimeConfigParams,

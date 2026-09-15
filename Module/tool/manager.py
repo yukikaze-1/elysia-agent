@@ -522,6 +522,21 @@ class ToolManager:
         declared = getattr(safety, "request_timeout", None)
         return float(declared) if isinstance(declared, (int, float)) else None
 
+    def declares_idempotent(self, tool_name: str) -> bool:
+        """插件是否声明"重复调用不产生额外副作用"（`SafetyProfile.idempotent`）。
+
+        调度器**只**在重试**自己合成的超时**时询问本项（`scheduler._execute_tool`：
+        那个 `ErrorType.TIMEOUT` 是调度器写的标签，不是插件的陈述）。插件自己返回的
+        可重试错误不受它影响。
+
+        未知工具 / 未声明 → False（fail-safe：少重试一次，而不是重复副作用）。
+        **只认真正的 bool**：`config.yaml` 若把该键写成字符串（`idempotent: "true"`）
+        不得静默打开重试——有意不用 `bool(declared)` 的真值判定。
+        """
+        plugin = self._plugins.get(tool_name)
+        safety = getattr(plugin, "safety", None)
+        return getattr(safety, "idempotent", None) is True
+
     async def cancel_all(self, *, drain_timeout: float = 0.0) -> int:
         """取消所有 in-flight 工具执行任务（按 call_id 全量，C2/P1-13）。
 

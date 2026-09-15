@@ -572,8 +572,34 @@ class ToolCallDispatcher:
             return _TOOL_TIMEOUT
         return min(_MAX_TOOL_TIMEOUT, max(_TOOL_TIMEOUT, declared + _TIMEOUT_SLACK))
 
+    def _declares_idempotent(self, tool_name: str) -> bool:
+        """插件是否声明"重复调用不产生额外副作用"（`SafetyProfile.idempotent`）。
+
+        只在结果来自**调度器自己合成的超时**时被询问（见 `_execute_tool`）：插件
+        **返回**的错误是插件的陈述，照旧按 `ErrorType.is_retryable` 重试；而
+        `asyncio.TimeoutError` → `ErrorType.TIMEOUT` 这个标签是**调度器猜的**，
+        所以必须有插件的幂等声明背书才敢再 invoke 一次。
+
+        与 `_timeout_for` 同一纪律：**不使用 getattr 兜底**——executor 必须实现
+        `declares_idempotent`（ToolAdapter 与 ToolControlManager 都有）。缺了就在这里
+        AttributeError 报出来；静默兜底成 True 恰好会掩盖本项要消除的"重复副作用"，
+        兜底成 False 又会让缺失无声无息。executor 未注入时返回 False（fail-safe，
+        该分支此时本就不可达：`_execute_tool` 会先抛 RuntimeError）。
+        """
+        executor = self._tool_executor
+        if executor is None:
+            return False
+        return executor.declares_idempotent(tool_name)
+
     async def _execute_tool(self, task: QueuedToolCall) -> ToolResult:
         """执行工具子任务，含重试逻辑和超时保护。
+
+        **重试判定的两个来源**（2026-09-16，勿混淆）：
+
+        - 插件**返回**的 `error_type` 是插件的陈述 → 按 `ErrorType.is_retryable` 重试；
+        - 本方法**自己合成**的超时（`asyncio.TimeoutError` → `ErrorType.TIMEOUT`）是
+          调度器的猜测 → 还要插件声明 `SafetyProfile.idempotent=True`
+          （`_declares_idempotent`）才重试。
 
         Args:
             task: 要执行的工具调用任务
@@ -594,6 +620,10 @@ class ToolCallDispatcher:
             # 每调用克隆一次 ctx：thread LLM tool_call_id → ctx.call_id（D6-07），
             # 且调用内写 ctx.services 落在副本不污染共享 ctx（对齐 _execute_tools_directly 惯例）
             ctx = self._tool_ctx.clone_for_call(call_id=call_id)
+            # 本次尝试的失败是不是**调度器自己合成的超时**（下面的 TimeoutError 分支）。
+            # 每次尝试都要复位：第 1 次超时、第 2 次返回 NETWORK_ERROR 时，重试依据
+            # 必须是第 2 次那个**插件自己写的**标签。
+            synthesised_timeout = False
             try:
                 result = await asyncio.wait_for(
                     self._tool_executor.execute(
@@ -604,6 +634,7 @@ class ToolCallDispatcher:
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:
+                synthesised_timeout = True
                 result = ToolResult.fail(
                     name=tool_name,
                     error=f"执行超时 ({per_call_timeout:.0f}s)",
@@ -618,13 +649,20 @@ class ToolCallDispatcher:
             if result.success:
                 return result
 
-            # 仅对可重试的错误类型重试；shutdown 期间不重试
+            # 仅对可重试的错误类型重试；shutdown 期间不重试。
+            #
+            # 区分"谁说的"（2026-09-16）：插件**返回**的 error_type 是插件的陈述，
+            # 直接按 is_retryable 走；`synthesised_timeout` 那一条是**调度器自己**写上的
+            # TIMEOUT 标签——猜的，只有插件声明 `SafetyProfile.idempotent=True`
+            # （经 executor.declares_idempotent 问到）才允许再 invoke 一次，
+            # 否则有副作用的工具会在这条路径上被重复 invoke。
             error_type = result.error_type
             retryable = (
                 self._running
                 and error_type is not None
                 and hasattr(error_type, "is_retryable")
                 and error_type.is_retryable
+                and (not synthesised_timeout or self._declares_idempotent(tool_name))
                 and task.can_retry()
             )
             if not retryable:

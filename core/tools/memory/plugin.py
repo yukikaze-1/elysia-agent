@@ -23,7 +23,11 @@ class MemorySearchPlugin(ToolPlugin):
     description = "在长期记忆中搜索相关信息，比如计划、偏好、历史对话等"
     param_model = SearchMemoryParams
     capabilities = {Capability.DATABASE_READ}
-    safety = SafetyProfile(database_allowed=True, database_readonly=True)
+    safety = SafetyProfile(
+        database_allowed=True,
+        database_readonly=True,
+        idempotent=True,  # 只读查询：超时重试安全（2026-09-16 幂等声明）
+    )
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: SearchMemoryParams,

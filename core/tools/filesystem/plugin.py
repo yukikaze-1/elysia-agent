@@ -120,6 +120,7 @@ class ReadFilePlugin(ToolPlugin):
         read_dirs=["/home/yomu/data/sandbox"],
         max_file_bytes=10 * 1024 * 1024,
         allow_symlinks=False,
+        idempotent=True,  # 只读：超时重试安全（2026-09-16 幂等声明）
     )
 
     async def execute(
@@ -212,6 +213,7 @@ class ListDirPlugin(ToolPlugin):
         read_dirs=["/home/yomu/data/sandbox"],
         max_dir_depth=3,
         allow_symlinks=False,
+        idempotent=True,  # 只读：超时重试安全（2026-09-16 幂等声明）
     )
 
     async def execute(

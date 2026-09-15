@@ -11,7 +11,7 @@ class SelfStatePlugin(ToolPlugin):
     description = "查看 agent 的当前运行状态：FSM 状态、会话信息、工具使用情况"
     param_model = None
     capabilities: set = set()
-    safety = SafetyProfile()
+    safety = SafetyProfile(idempotent=True)  # 只读快照：超时重试安全（2026-09-16 幂等声明）
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: Any = None,

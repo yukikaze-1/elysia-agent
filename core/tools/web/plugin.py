@@ -122,6 +122,7 @@ class WebSearchPlugin(ToolPlugin):
         network_allowed=True,
         block_private_ips=True,
         max_concurrency=3,
+        idempotent=True,  # 只读检索：超时重试安全（2026-09-16 幂等声明）
     )
 
     async def execute(
@@ -240,6 +241,7 @@ class WebFetchPlugin(ToolPlugin):
         max_redirects=5,
         max_response_bytes=5 * 1024 * 1024,
         request_timeout=30.0,
+        idempotent=True,  # 只读抓取：超时重试安全（2026-09-16 幂等声明）
     )
 
     async def execute(

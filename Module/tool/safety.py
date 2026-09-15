@@ -76,6 +76,16 @@ class SafetyProfile:
     # 安全审批
     requires_human_approval: bool = False
 
+    # 重试语义：声明"重复调用不产生额外副作用"（只读 / 可安全重入）。
+    #
+    # 调度器**只**在插件声明 True 时重试**它自己合成的超时**——`scheduler._execute_tool`
+    # 把 `asyncio.TimeoutError` 收成 `ErrorType.TIMEOUT` 那一条：那个标签是调度器**猜的**，
+    # 不是插件的陈述。插件**自己返回**的可重试错误（`NETWORK_ERROR` / `RATE_LIMITED` /
+    # `TIMEOUT`）不受本字段影响——那是插件自己的声明，照旧按 `ErrorType.is_retryable` 重试。
+    #
+    # 默认 False 是 fail-safe：忘记声明 → 少重试一次，而不是把副作用做两遍。
+    idempotent: bool = False
+
 
 # ============================================================================
 # Token 估算 + 截断工具

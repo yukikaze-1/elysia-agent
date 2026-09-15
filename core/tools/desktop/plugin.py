@@ -90,6 +90,9 @@ class _DesktopPluginBase(ToolPlugin):
 
     runtime: str = "desktop"
     version: str = "1.0.0"
+    # 基类声明保持 idempotent 缺省 False（fail-safe）：四个 desktop 工具里只有
+    # `desktop.file.read` 是纯读，只有它显式覆盖为 True（见该类）。select / capture /
+    # write 都会在用户桌面上留下一次可见动作，超时重试 = 再来一次（2026-09-16 幂等声明）。
     safety = SafetyProfile(request_timeout=_DESKTOP_REQUEST_TIMEOUT)
 
     async def _delegate(self, ctx: ToolContext, params: Any) -> ToolResult:
@@ -163,6 +166,12 @@ class DesktopFileReadPlugin(_DesktopPluginBase):
     param_model = FileReadParams
     capabilities = set()
     risk_level = "medium"  # 读用户电脑文件（D-g）
+    # 唯一的纯读 desktop 工具：超时重试只会再读一次，不产生桌面侧的新动作
+    # （2026-09-16 幂等声明）。
+    safety = SafetyProfile(
+        request_timeout=_DESKTOP_REQUEST_TIMEOUT,
+        idempotent=True,
+    )
 
     async def execute(
         self, *, ctx: ToolContext, emit: ToolEmitter | None = None, params: Any = None,
