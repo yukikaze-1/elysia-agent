@@ -682,6 +682,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 return
 
             self._current_task = asyncio.current_task()
+            # S2-H5：本回合"已对外发出"文本的落痕槽——由 `_stream_llm_response` 在
+            # 异常/取消时填充，`_archive_partial_reply` 消费后清空。
+            self._partial_reply_text = ""
             try:
                 await self._think_loop(user_message, user_name,
                                        stt_emotion=stt_emotion, stt_events=stt_events,
@@ -702,8 +705,10 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                     self._timing_history = self._timing_history[-100:]
             except asyncio.CancelledError:
                 logger.info("<<< 用户打断")
+                await self._archive_partial_reply(setup.target, reason="interrupted")
                 await self._handle_interrupt()
             except Exception as e:
+                await self._archive_partial_reply(setup.target, reason="error")
                 await self._handle_turn_exception(e)
             finally:
                 self._clock = None

@@ -61,6 +61,7 @@ class CognitiveFinalize:
     """轮次收尾阶段 mixin。"""
 
     # 类型占位：运行时由 CognitiveLoop.__init__ / configure() 初始化
+    _partial_reply_text: str          # S2-H5：本轮"已发出"文本的落痕槽
     _engine: "CharacterEngineProtocol | None"
     _mood_applied: bool
     _tts_mgr: "TTSStreamManager"
@@ -148,6 +149,39 @@ class CognitiveFinalize:
                 ctx.close_segment()
         else:
             await self._output.send(MessageObj(content=public_text))
+
+    async def _archive_partial_reply(self, target: "SessionMemory", *,
+                                    reason: str) -> None:
+        """把**已经发出**的半截回复落进会话（S2-H5 / 决策 #7）。
+
+        为什么必须落：句子在解析出来时就立即进 TTS 队列并发 v2 段帧，而 assistant
+        消息只在 `_archive_final_turn` 写。中途 provider 失败或用户打断时异常穿透
+        `_stream_llm_response`，那条消息**永远不存在**——用户听得到、看得到，历史里
+        却没有。归档时用 `metadata["incomplete"]=True` 标明它是半截（下游可据此区分
+        "完整回复"与"被打断的回复"），并不发 `generation.completed`（该轮仍以
+        failed/interrupt 收口）。
+
+        Args:
+            target: 本回合的目标会话（`setup.target`）。
+            reason: `interrupted`（用户打断）或 `error`（流中途失败）。
+        """
+        text = self._partial_reply_text
+        self._partial_reply_text = ""
+        if not text:
+            return
+        parts, content_type = build_parts([text], [])
+        message_id = (self._generation_ctx.assistant_message_id
+                      if self._generation_ctx is not None else new_message_id())
+        target.add_message(AssistantMessage(
+            content=parts,
+            message_id=message_id,
+            block_index=content_type,
+            session_id=target.session_id,
+            metadata={"incomplete": True, "reason": reason},
+        ))
+        logger.warning(
+            "已归档**半截**回复（%s，%d 字符）——用户已看到，历史不得缺失",
+            reason, len(text))
 
     async def _archive_final_turn(
         self,

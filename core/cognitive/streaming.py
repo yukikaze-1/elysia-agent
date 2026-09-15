@@ -78,6 +78,7 @@ class CognitiveStreaming:
     """流式阶段 mixin：认知循环中所有逐 chunk 副作用收口在此。"""
 
     # 类型占位：运行时由 CognitiveLoop.__init__ 初始化
+    _partial_reply_text: str          # S2-H5：本轮"已发出"文本的落痕槽
     _llm: "LLMAdapter"
     _prompt_recorder: "PromptRecorder | None"
     _token_tracker: "TokenTracker | None"
@@ -162,7 +163,20 @@ class CognitiveStreaming:
                             round_num=round_num,
                             session_id=session_id,
                         )
-        except asyncio.CancelledError:
+        except BaseException:
+            # S2-H5（决策 #7）：中断/失败时把**已经对外发出**的句子留痕。
+            # 修前 `proc` 连同 tokenizer/splitter 缓冲区（可达 2000 字符）一起丢弃，
+            # **归档不发生**——而用户已经听到并看到这部分回复：下一轮 prompt、
+            # `/api/sessions/{id}/messages` 历史、ResponseRecorder 里都没有它，
+            # 模型可能重复或自相矛盾，前端"刚看到的"与"刷新后的历史"也不一致。
+            # 只记 `all_sentences`（回合级累加、已 dispatch 出去的那部分），
+            # 与用户所见严格一致；还压在缓冲区里、从未发出的字符不记。
+            # 记"**客户端已经收到过**的公共文本"：`rebuild_public_text()` 去掉 META
+            # 且只含已 emit 的 token（= 已通过 TEXT_DELTA/SENTENCE 发出去的那部分），
+            # 与用户所见一致。分句器/词法器**仍持有**的尾部不在其中——它也没到用户眼前。
+            # 兜底用已 dispatch 的句子（两者在正常交错下等价）。
+            public_so_far = proc.rebuild_public_text().strip()
+            self._partial_reply_text = public_so_far or "".join(all_sentences).strip()
             raise
 
         for event in proc.flush():

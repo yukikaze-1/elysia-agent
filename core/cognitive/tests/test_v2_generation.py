@@ -54,6 +54,22 @@ class _UsageLLM:
             req = object()
             resp = type("R", (), {"status_code": 503})()
             raise httpx.HTTPStatusError("unavailable", request=req, response=resp)
+        if self.fault in ("http_503_after_text", "cancelled_after_text"):
+            # S2-H5：先真的吐出一句**正文**（分句器会把它 dispatch 出去），再失败/打断。
+            # 这样才测得到"用户已经看到一半"的那条路径——`http_503`（首 token 前失败）
+            # 是既有覆盖，它必须继续**不**产生任何半截归档。
+            import httpx
+            toks = self._tok.findall(self.response)
+            for tok in [*toks, "\n", "\n"]:
+                # 整段 + 空行：词法器会**持有**直到段落边界才释放（实测：只吐一两句时
+                # 客户端其实什么都还没收到，那不是"用户已看到一半"那条路径）。
+                # 真实触发场景正是"整段已显示、后续断流"。
+                yield {"content": tok, "tool_calls": None}
+            if self.fault == "cancelled_after_text":
+                raise asyncio.CancelledError()
+            req = object()
+            resp = type("R", (), {"status_code": 503})()
+            raise httpx.HTTPStatusError("unavailable", request=req, response=resp)
         for tok in self._tok.findall(self.response):
             yield {"content": tok, "tool_calls": None}
         yield {
@@ -493,5 +509,92 @@ class TestV2Cancellation:
                 docs = await _registry_docs(agent)
                 assert len(docs) == 1
                 assert docs[0]["status"] == "failed"
+        finally:
+            await agent.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# S2-H5（决策 #7）：半截回复必须落库并标 incomplete
+# ═══════════════════════════════════════════════════════════════════
+
+def _last_assistant(agent):
+    """取会话里最后一条 assistant 消息（没有则 None）。"""
+    for msg in reversed(list(agent.session._messages)):  # noqa: SLF001
+        if msg.role == "assistant":
+            return msg
+    return None
+
+
+def _text_of(msg) -> str:
+    from core.schema.part import TextPart
+    return "".join(p.content for p in msg.content if isinstance(p, TextPart))
+
+
+@pytest.mark.service
+class TestPartialReplyArchived:
+    """修前：句子在解析出来时就进 TTS 队列并发 v2 段帧，而 assistant 消息只在
+    `_finalize_turn` 落库——中途失败/打断时那条消息**永远不存在**，而用户已经
+    听到并看到它。"""
+
+    @pytest.mark.asyncio
+    async def test_stream_failure_archives_incomplete_reply(self, aiohttp_client):
+        """流中途失败（provider 5xx）：已发出的那部分必须落库且标 incomplete。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM(fault="http_503_after_text"))
+        await agent.start()
+        agent.session._messages.clear()      # noqa: SLF001
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            await _send_and_collect(client, {"X-Protocol-Version": "2"}, "hi",
+                                    client_request_id=f"req_{time.monotonic_ns()}")
+            msg = _last_assistant(agent)
+            assert msg is not None, "半截回复必须落库（否则用户看到的内容从历史里消失）"
+            assert msg.metadata.get("incomplete") is True
+            assert msg.metadata.get("reason") == "error"
+            assert "第二句话" in _text_of(msg)
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_user_interrupt_archives_incomplete_reply(self, aiohttp_client):
+        """用户打断（CancelledError）：同一口径，reason=interrupted。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM(fault="cancelled_after_text"))
+        await agent.start()
+        agent.session._messages.clear()      # noqa: SLF001
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            await _send_and_collect(client, {"X-Protocol-Version": "2"}, "hi",
+                                    client_request_id=f"req_{time.monotonic_ns()}")
+            msg = _last_assistant(agent)
+            assert msg is not None
+            assert msg.metadata.get("incomplete") is True
+            assert msg.metadata.get("reason") == "interrupted"
+            assert "第二句话" in _text_of(msg)
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_nothing_sent_archives_nothing(self, aiohttp_client):
+        """对照：首 token 前就失败（用户什么都没看到）→ **不得**造一条空消息。
+
+        这是"半截归档"最容易过度的地方：没有内容却落一条空 AssistantMessage，
+        会让历史里多出一条莫名其妙的空回复。
+        """
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM(fault="http_503"))
+        await agent.start()
+        agent.session._messages.clear()      # noqa: SLF001
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            await _send_and_collect(client, {"X-Protocol-Version": "2"}, "hi",
+                                    client_request_id=f"req_{time.monotonic_ns()}")
+            assert _last_assistant(agent) is None, "什么都没发出时不得归档半截回复"
         finally:
             await agent.stop()
