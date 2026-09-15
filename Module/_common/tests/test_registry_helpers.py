@@ -224,3 +224,76 @@ class TestRealConsumersLoggerName:
 
         explicit = logging.getLogger("explicit.consumer")
         assert OutputManager(logger=explicit)._logger is explicit
+
+
+class TestEmptyBaseUrlDoesNotOverrideDefaults:
+    """S2-H7：空 `base_url` 不得顶掉内置默认值（三层：显式/环境/provider 默认）。
+
+    原状：`providers.yaml` 里所有 provider 的 `base_url` 都是空串，且 `resolve_base_url`
+    对**空字符串**的环境变量也照原样返回 ⇒ 后端拿到 `base_url=""`（SDK 只对 None 回退）
+    ⇒ 静默降级成"连不上"，而从配置上看不出哪里错了。STT 早已按"空 → 内置默认"修过
+    （`36f11449`），LLM/TTS 没有。
+    """
+
+    def test_provider_default_is_used_when_nothing_set(self, monkeypatch):
+        from Module._common.registry_helpers import resolve_base_url
+
+        monkeypatch.delenv("ELYSIA_TEST_URL", raising=False)
+        cfg = {"base_url": "https://declared.example.com"}
+        assert resolve_base_url("ELYSIA_TEST_URL", cfg) == "https://declared.example.com"
+
+    def test_empty_env_does_not_override_provider_default(self, monkeypatch):
+        """**空串视为未设置**——这是本条的核心（原先 `is not None` 就直接返回空串）。"""
+        from Module._common.registry_helpers import resolve_base_url
+
+        monkeypatch.setenv("ELYSIA_TEST_URL", "")
+        cfg = {"base_url": "https://declared.example.com"}
+        assert resolve_base_url("ELYSIA_TEST_URL", cfg) == "https://declared.example.com"
+
+    def test_nonempty_env_still_wins(self, monkeypatch):
+        """回归网：非空环境变量照旧优先（别把"空"的处理做成"环境变量失效"）。"""
+        from Module._common.registry_helpers import resolve_base_url
+
+        monkeypatch.setenv("ELYSIA_TEST_URL", "https://from-env.example.com")
+        cfg = {"base_url": "https://declared.example.com"}
+        assert resolve_base_url("ELYSIA_TEST_URL", cfg) == "https://from-env.example.com"
+
+    def test_explicit_still_wins(self, monkeypatch):
+        from Module._common.registry_helpers import resolve_base_url
+
+        monkeypatch.setenv("ELYSIA_TEST_URL", "https://from-env.example.com")
+        cfg = {"base_url": "https://declared.example.com"}
+        assert resolve_base_url(
+            "ELYSIA_TEST_URL", cfg, "https://explicit.example.com"
+        ) == "https://explicit.example.com"
+
+
+class TestShippedDefaultsAreNonEmpty:
+    """配置层的守卫：`providers.yaml` 的内置 provider 必须声明**非空**默认地址。
+
+    留空就是"配置上写了 provider，实际连不上"——本仓已为此修过三次（STT/LLM/TTS）。
+    `gemini` 与 `custom` 例外：前者未实现（工厂直接 raise），后者必须由调用方提供。
+    """
+
+    #: 允许为空的例外——每一项都必须写清理由（"留空"要么是刻意的、要么已被别的机制兜住）
+    _MAY_BE_EMPTY = {
+        "gemini",   # 未实现：LLMFactory 直接 raise NotImplementedError
+        "custom",   # 必须由调用方提供 base_url（否则工厂 raise）
+        "minimax",  # 云端端点由运营商提供；为空时 Module/tts/registry.py 抛可操作错误
+        "mimo",     # 同上，且 LLMFactory 现在也改为**建连即报错**（见 registry.py）
+    }
+
+    def test_llm_and_tts_defaults_are_declared(self):
+        import yaml
+        from pathlib import Path
+
+        cfg = yaml.safe_load(
+            Path("Module/config/providers.yaml").read_text(encoding="utf-8"))
+        empty: list[str] = []
+        for service in ("llm", "tts"):
+            for name, entry in (cfg.get(service) or {}).items():
+                if name in self._MAY_BE_EMPTY:
+                    continue
+                if not (entry or {}).get("base_url"):
+                    empty.append(f"{service}/{name}")
+        assert not empty, f"这些 provider 的 base_url 是空的（会静默降级成连不上）：{empty}"

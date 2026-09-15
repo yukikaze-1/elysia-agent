@@ -4,7 +4,10 @@
 
 llm:
   deepseek:
-    base_url: ""
+    # S2-H7：内置默认值必须写在配置里——留空会让 `AsyncOpenAI(base_url="")` 拿到空串
+    # （SDK 只对 None 回退），env 一空就**静默降级**成"连不上"。
+    # 该值与 Module/llm/config.py 及 core/config/app_config.py 的声明一致。
+    base_url: "https://api.deepseek.com"
     url_key: "DEEPSEEK_URL"
     beta_url: ""
     beta_url_key: "DEEPSEEK_BETA_URL"
@@ -13,14 +16,14 @@ llm:
     supports_multimodal: false
     models: ["deepseek-v4-flash", "deepseek-v4-pro"]
   openai:
-    base_url: ""
+    base_url: "https://api.openai.com/v1"   # 与 Module/embedding/config.py 一致
     url_key: "OPENAI_URL"
     env_key: "OPENAI_API_KEY"
     supports_prefix: false
     supports_multimodal: false
     models: ["gpt-4", "gpt-4o", "gpt-5"]
   ollama:
-    base_url: ""
+    base_url: "http://localhost:11434/v1"   # ollama 的 OpenAI 兼容端点
     url_key: "OLLAMA_URL"
     env_key: ""
     local: true
@@ -51,7 +54,9 @@ llm:
 
 tts:
   gpt-sovits:
-    base_url: ""
+    # S2-H7：与 Module/tts/gpt_sovits.py 的 DEFAULT_BASE_URL 一致——那个默认值此前是
+    # **死代码**（注册表把空串直接传进后端，把它覆盖了）。
+    base_url: "http://localhost:9880"
     url_key: "GPT_SOVITS_URL"
     env_key: ""
     local: true

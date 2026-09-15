@@ -51,7 +51,10 @@ def resolve_base_url(
     if explicit_url is not None:
         return explicit_url
     env_val = os.getenv(env_key)
-    if env_val is not None:
+    # S2-H7：**空串视为未设置**。`.env` 里留一行 `DEEPSEEK_URL=` 此前会把 provider
+    # 默认值顶掉、返回空串；而空 base_url 到后端就是"连不上"（SDK 只对 None 回退）
+    # ——静默降级，从配置上也看不出哪里错了。
+    if env_val:
         return env_val
     return provider_cfg.get(config_key, "")
 

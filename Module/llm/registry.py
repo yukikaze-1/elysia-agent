@@ -59,6 +59,14 @@ class LLMFactory:
         # custom provider 必须提供 base_url
         if provider == "custom" and not base_url:
             raise ValueError("custom provider requires base_url")
+        # S2-H7：内置 provider 若**没有**默认地址（云端端点须由运营商提供，如 mimo），
+        # 必须在**建连时**说清楚——否则空串会被交到后端，直到首次请求才以一个
+        # 莫名其妙的 URL 错误暴露（实测 AsyncOpenAI(base_url="") 的 base_url 就是空串，
+        # SDK 只对 None 回退）。MiniMax TTS 早就是这个做法（Module/tts/registry.py:101）。
+        if not base_url:
+            raise ValueError(
+                f"{provider} 的 base_url 未设置。请在 .env 中设置 "
+                f"{cfg.get('url_key', '')}，或把默认值写进 providers.yaml")
 
         # 批次 8a（T12）：custom + base_url 非空 → 初始配置 SSRF 守卫。
         # 复用保存/切换/测试三入口同一校验（Module._common.ssrf.validate_endpoint），
