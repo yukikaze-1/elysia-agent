@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-remainder test-full test-external test-real-mongo test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-arch check-debug-auth check-timeouts check-contract check-secrets check-secrets-history check-ci-isolation check-test-sets check check-full
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-remainder test-full test-external test-real-mongo test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-env-lock check-arch check-debug-auth check-timeouts check-contract check-secrets check-secrets-history check-ci-isolation check-test-sets check check-full
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -116,6 +116,14 @@ check-types:
 check-compose:
 	conda run -n $(CONDA_ENV) python scripts/check_compose_security.py
 
+# 环境锁门禁（F2）：requirements*.txt 的每个顶层包都必须在 environment.lock.yml 里
+# 有精确 pin 且版本满足声明。纯 stdlib、~0.1s。
+# 存在理由：锁与声明漂移时，"从锁建 env"与"按声明装包"会得到两个不同的环境——
+# 而那正是复现失败最贵的一种。2026-09-16：本门禁此前**只**在已删除的 PR job 里跑，
+# 于是它一度没有任何自动执行点（见 docs/ci.md）。
+check-env-lock:
+	python scripts/check_env_lock.py
+
 # 架构边界门禁（ARCH-INC-P1-03）：依赖方向（Module→core / 零依赖层 / 领域层→input）
 # + 跨包私有符号 + eager import 环。纯 AST、无外部依赖、秒级。
 # 存量泄漏在脚本内 allowlist 逐项登记理由，新增即红。
@@ -141,7 +149,8 @@ check-debug-auth:
 	python scripts/check_debug_auth.py
 
 # Secret scanning（CR-01 步骤 4）：扫**被跟踪文件**里的凭据形态（key/Bearer/私钥/
-# `.env` 入库/文档抄录赋值）。纯 stdlib、秒级，进 CI pr-gate 阻断。
+# `.env` 入库/文档抄录赋值）。纯 stdlib、秒级，进 CI push 侧静态门禁
+# （`ci.yml` 的 `backend` job）阻断——PR 门禁已于 2026-09-16 移除，见 docs/ci.md。
 check-secrets:
 	python scripts/check_secrets.py
 

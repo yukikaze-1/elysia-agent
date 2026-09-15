@@ -1294,6 +1294,87 @@ StorageUnavailableError}` 三类，其余在 revision + 指针**已提交后**�
 
 ---
 
+### §0.4.17 CI 收尾：被我改红的 4 条断言 + 三处「声明了却没接线」的门禁（2026-09-16，1 个提交）
+
+#### (a) 先认账：那批 CI 提交当时**没复跑全量**，红了一天才被机械核对抓出来
+
+删掉 PR 门禁（`3d7b347f`）之后我跑了 13 道门禁与相关单测，**没有复跑全量套件**，
+就把它当成了"改完"。本次收尾时机械复跑，立刻红 4 条——全部在
+`scripts/tests/test_check_ci_isolation.py::TestRealRepoWorkflows`，全部是钉住**旧结构**的断言：
+
+| 断言 | 为什么红 |
+|---|---|
+| `test_frontend_is_split_into_push_self_hosted_and_pr_hosted` | 它要求 `frontend-pr` job 存在 |
+| `test_pr_frontend_keeps_the_historical_check_name` | 同上 |
+| `test_frontend_jobs_keep_equivalent_build_semantics` | 逐个遍历 `frontend` + `frontend-pr` |
+| `test_every_self_hosted_cleanup_site_is_fail_closed` | 钉死 4 个清理点，实际已是 5 个（新增 `ci.yml:real-mongo`） |
+
+**教训（两条，都值得进流程）**：
+1. **删 job ≠ 删 YAML 里一段**：它会带走**只有它才有的步骤**（见 (b2)），而那些步骤没有人会
+   注意到——除非有人去机械核对。
+2. **"相关文件绿了"不等于"没改坏别的"**：改 CI 结构必须复跑**全量**，因为钉住结构的断言
+   散落在与改动看起来无关的文件里（本例是 `scripts/tests/`）。
+
+#### (b1) 改写而不是删断言（删断言 = 把契约交给下一个人重新猜）
+
+| 守卫 | 钉什么 | 反证（注入 → 红 → 逐字节还原 → 绿） |
+|---|---|---|
+| `test_push_workflows_are_exactly_the_two_that_must_run_on_main` | push 触发器恰好是 `ci.yml` + `contract-frames.yml`（少一个 = 门禁在 main 上**永不执行**） | — |
+| `test_no_workflow_is_reachable_from_pull_requests` | 任何 `pull_request` 触发器都是未走恢复清单的改动，失败消息直指 `docs/ci.md` | ✅ 加回触发器 → 2 failed |
+| `test_historical_pr_check_names_are_accounted_for` | 两个历史 required check 名要么有承载 job（PR 已恢复），要么留在恢复清单里——**两个分支都非空转** | ✅ 从 `docs/ci.md` 删掉其中一个名字 → 1 failed |
+| `test_every_declared_gate_is_wired_to_ci` | 声明的门禁必须有执行点；豁免须登记理由，**登记陈旧也红** | ✅ 见 (b2) |
+| `test_frontend_job_keeps_build_semantics` | `npm ci` + `npm run build` 不变（只把"两个 job"收成"一个 job"） | — |
+| `test_every_self_hosted_cleanup_site_is_fail_closed` | 清理点列表更新为 **5 处**，条数仍钉死 | ✅ 把 backend 的 fail-closed 守卫退回裸 `find` → 1 failed |
+
+**一个值得记录的盲区**：把 `pull_request` 触发器加回去时，`scripts/check_ci_isolation.py`
+**判定通过**——因为所有 job 都带显式的 `if: github.event_name == 'push'`，它们确实不是
+PR 可达的。也就是说门禁**看不见**"PR 恢复了但没有任何 job 会跑"这种状态：它是信任边界
+门禁，不是策略门禁。所以"本仓不开放 PR"这条策略必须由**测试**钉住，不能指望它。
+
+#### (b2) 机械核对「声明 vs 执行」：三处门禁没有任何自动执行点
+
+`pr-gate` 被删时，我逐项对照过它的步骤，但**只对照了 push 侧有对应物的那些**。实际有
+两步在 push 侧没有对应物，删掉 job = 这两道门禁彻底消失：`python scripts/check_env_lock.py`
+与 `make audit`。顺着查，又发现第三处从未接过 CI：
+
+| 门禁 | 原状（本次核对） | 处置 |
+|---|---|---|
+| `check-compose` | **从未**接过任何 CI，只在本地手跑 | ✅ 接进 `backend` job（纯静态解析、0.084s） |
+| `check-env-lock` | 只活在已删除的 `pr-gate` 里；且**只有脚本、没有 make 目标**——这正是它容易掉队的原因 | ✅ 补 `make check-env-lock` + 接进 `backend`（纯 stdlib、0.077s） |
+| `audit`（pip-audit + bandit） | 同上，随 `pr-gate` 消失 | ⏸ **刻意不接**，理由见下 |
+
+**`audit` 为什么不接**——不是"忘了"，是**实测它现在就是红的**：
+
+```
+$ make audit
+Found 2 known vulnerabilities, ignored 2 in 1 package
+pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
+```
+
+红的是 **Elysia env 自己的 pip**（`pip=26.1.2`，`environment.lock.yml:21` 也 pin 着它），
+与本仓代码无关。接线会让 main 因为**没人提交过任何东西**的原因变红——那正是
+`docs/ci.md` 开头反对的事（"它训练人忽略红色"）。**解除条件**：升级 env 的 pip →
+`make lock-env` 重生成锁 → 接进 `backend` job。**不使用 `--ignore-vuln` 消除红色**：
+把安全门禁挖空来换一个绿，和它要防的东西是同一件事。这条豁免连同理由与解除条件登记在
+`_GATES_NOT_IN_CI`，由 `test_every_declared_gate_is_wired_to_ci` 守着（陈旧也报）。
+
+> 顺带证伪了一条**看似合理**的猜想：`audit` 当年在 `pr-gate` 里是绿的，是因为那个 job
+> 在 GitHub-hosted runner 上**现装依赖**（`pip install --upgrade pip` → 拿到当时的 pip）。
+> 所以把它"接回 push"**不是**等价恢复：自托管 env 是长期存在的环境，它的 pip 版本由锁决定。
+> 这也解释了为什么它当年被放在 PR 侧而不是 push 侧。
+
+#### (c) 本轮验收
+
+- `pytest -q -n 8 --dist loadfile`（含 slow）→ **5578 passed / 17 skipped / 1 xfailed / 0 failed**；
+  本轮改造前是 `4 failed / 5572 passed`（4 条已如上改写）
+- 门禁：`lint` / `pyright` / `check-types` / `check-compose` / `check-env-lock` / `check-arch` /
+  `check-timeouts` / `check-contract` / `check-debug-auth` / `check-secrets` / `check-test-sets` /
+  `check-ci-isolation` 逐道复跑全绿（`audit` 见 (b2)，**已知为红且未接线**）
+- 反证 5 条（(b1) 表内），每条都逐字节还原后复绿
+- 文档：`docs/ci.md` 新增「门禁的接线：声明 ≠ 执行」节 + job 表更新 + 恢复清单补注
+
+---
+
 # Executive Summary
 
 ## 总体判断

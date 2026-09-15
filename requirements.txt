@@ -49,8 +49,9 @@ setuptools<81
 # pip-audit、bandit）一律在 `requirements-dev.txt`——`environment.yml` 同时装两者。
 #
 # 2026-09-14 RC 修正：pytest-timeout 与 pytest-xdist 此前被放在本文件，理由是
-# 「CI pr-gate 只安装 requirements.txt」。那个理由已不成立——pr-gate 现在装
-# `-r requirements.txt -r requirements-dev.txt`（见 .github/workflows/ci.yml），
-# 所以两个 pytest 插件回到了它们该在的位置。**不要因为"CI 少装一个文件"再把
-# 测试插件挪回来**：把 dev 依赖混进 runtime 声明会让部署环境多装 pytest 全家桶，
-# 而真正的修法是修 CI 的安装行。
+# 「CI 只安装 requirements.txt」。该理由已不存在——CI（`ci.yml` 的 push 侧 job）
+# 跑在自托管 runner **预置的 Elysia env** 上，不安装任何 requirements 文件；那个
+# env 由 `environment.yml` / `setup.sh` 装出，两者都同时覆盖本文件与
+# `requirements-dev.txt`。所以两个 pytest 插件回到了它们该在的位置。
+# **不要因为"CI 少装一个文件"再把测试插件挪回来**：把 dev 依赖混进 runtime 声明
+# 会让部署环境多装 pytest 全家桶，而正确的修法是让 runner 的 env 装齐 dev 依赖。

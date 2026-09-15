@@ -161,6 +161,15 @@ jobs:
       - name: Test set algebra gate (Quick ∪ remainder == Normal)
         # 保证 make test-quick / test-remainder 仍然互斥且不遗漏；约 35s（3 次收集）。
         run: make check-test-sets
+      - name: Compose security policy check (P1-19)
+        # 2026-09-16：此前**从未**接过任何 CI（只在本地手跑）——声明了却不执行的
+        # 门禁与不存在的门禁，在给人虚假安全感上是等价的。纯静态解析、~0.1s。
+        run: make check-compose
+      - name: Env lock drift check (F2)
+        # 2026-09-16：本步此前**只**在已删除的 PR job 里跑（删 PR 时被一并带走，
+        # 无人察觉）——锁与声明漂移会让"从锁建 env"与"按声明装包"得到两个环境。
+        # 纯 stdlib、~0.1s。
+        run: make check-env-lock
       - name: Run offline suite (not slow and not external, xdist)
         # 完整离线集**只跑一遍**（此前 Quick + Normal 把 98.5% 的用例跑了两遍）。
         run: |

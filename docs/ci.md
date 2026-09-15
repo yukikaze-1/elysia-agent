@@ -12,7 +12,7 @@
 
 | workflow | job | 触发 | runs-on | 内容 |
 |---|---|---|---|---|
-| `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / 密钥扫描 / 集合代数）+ 离线用例 `make test-normal` |
+| `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / 密钥扫描 / 集合代数 / compose 安全策略 / 环境锁）+ 离线用例 `make test-normal` |
 | `ci.yml` | `real-mongo` | push | `[self-hosted, Linux, X64]` | 真实 MongoDB 层：job 内自起 `docker-compose.test.yml`，`make test-real-mongo`，收尾 `down` |
 | `ci.yml` | `frontend` | push | `[self-hosted, Linux, X64]` | `npm ci` + `vue-tsc --noEmit && vite build` |
 | `contract-frames.yml` | `frames` | push（路径过滤） | `[self-hosted, Linux, X64]` | golden frames + 契约三产物漂移检查 |
@@ -20,6 +20,33 @@
 
 **已移除（2026-09-16）**：`ci.yml` 的 `pr-gate`（PR 侧静态门禁）与 `frontend-pr`
 （Frontend PR 侧），以及两个 workflow 的 `pull_request` 触发器。
+
+> ⚠️ **删 job 会带走它独有的步骤**：`pr-gate` 里有两步在 push 侧**没有对应物**——
+> `check_env_lock.py` 与 `make audit`。删掉它俩之后，这两道门禁**没有任何自动执行点**，
+> 而无人察觉。现状见下节（一道已接回，一道刻意不接）。
+
+## 门禁的接线：声明 ≠ 执行
+
+`Makefile` 里的门禁目标必须在某个 workflow 里**真的被调用**。"声明了却没接线"与
+"永远不触发的门禁"是同一类假绿——它比没有门禁更糟，因为它会被人当成已经有网了。
+2026-09-16 机械核对（逐目标 grep 全部 workflow）实测出三处：
+
+| 门禁 | 原状 | 处置 |
+|---|---|---|
+| `check-compose` | **从未**接过 CI，只在本地手跑 | ✅ 已接进 `backend`（纯静态解析、~0.1s） |
+| `check-env-lock` | 只活在已删除的 `pr-gate` 里，随删 PR 被静默带走 | ✅ 已接进 `backend`，并补上 `make check-env-lock` 目标——此前**只有脚本、没有目标**，这正是它容易掉队的原因 |
+| `audit`（pip-audit + bandit） | 同上，随 `pr-gate` 一起消失 | ⏸ **刻意不接**，理由见下 |
+
+**`audit` 为什么不接**：`make audit` 在自托管 env 上**当前为红**——Elysia env 的
+`pip 26.1.2` **自身**命中 `PYSEC-2026-3721`（修复版 26.2），而 `environment.lock.yml` 也
+pin 着 26.1.2。接线会让 main 因**与本仓提交无关**的原因变红，而那正是本文开头反对的事
+（"它训练人忽略红色"）。解除条件：升级 env 的 pip → `make lock-env` 重生成锁 → 接进
+`backend` job。**不要用 `--ignore-vuln` 让它变绿**——那是把安全门禁挖空来消除红色。
+
+> 这条纪律由 `scripts/tests/test_check_ci_isolation.py` 的
+> `TestRealRepoWorkflows::test_every_declared_gate_is_wired_to_ci` 机械强制：新门禁必须
+> 接线，或进该文件的 `_GATES_NOT_IN_CI` 写明理由与解除条件；**登记陈旧也会红**
+> （已接线却还挂着豁免，等于让"已豁免"的理由继续冒充事实）。
 
 ## 为什么全部走 self-hosted：账单
 
@@ -73,7 +100,8 @@ GitHub 托管 runner **按分钟计费**。账号额度/账单被卡之后，这
    - `pr-gate`（名 `PR Gate (backend lint + types + contract + quick)`）：lint / pyright /
      契约漂移 / check-arch / 超时预算 / 契约可达性 / debug 鉴权 / check-ci-isolation /
      check-secrets / 测试集合代数 / `pytest -m "unit or service" -x`。它曾是 PR 侧**唯一**
-     的静态门禁。
+     的静态门禁。（`check-env-lock` 与 `check-compose` 现已常驻 push 侧 `backend`，
+     PR 侧**不必**重复；`audit` 的接线见上节解除条件。）
    - `frontend-pr`（名 `Frontend (vue-tsc + build)`，**必须 `ubuntu-latest`**）：与 push 侧
      `frontend` 逐字等价的步骤。**PR 侧不得 self-hosted**——宿主上没有隔离/临时/untrusted 的
      PR runner。要自建化，必须先有 ephemeral / 容器 / VM 隔离 runner。

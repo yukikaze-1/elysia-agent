@@ -2,15 +2,16 @@
 # runtime 在 requirements.txt；两者由 environment.lock.yml 锁精确版本（make lock-env 重新生成）。
 #
 # 2026-09-14：两个 pytest 插件从 requirements.txt 挪到此处——它们此前被放在 runtime 声明里，
-# 理由是"CI pr-gate 只装 requirements.txt"；该理由已由 pr-gate 改装本文件取代（见 ci.yml）。
+# 理由是"CI pr-gate 只装 requirements.txt"；该理由已不存在（CI 跑在自托管 runner 预置的
+# Elysia env 上，不装 requirements 文件；那个 env 由 environment.yml / setup.sh 装出）。
 pytest
 # 全局测试超时（P2）：pytest.ini 的 `timeout = 300` 依赖本插件；缺它时无界 `await`
 # 回归会永久挂死本地 `make test-full`，CI 也只能等 job 级超时。
 pytest-timeout>=2.4,<3
 # 测试并行（2026-09-14 CI 性能专项）：`make test-quick` / `make test-normal` 默认带
-# `-n 8 --dist loadfile`（pytest.ini 无 addopts，参数由 Makefile 显式给出），
-# PR Gate 的 quick 用例走 `-n 4`。缺插件时 pytest 直接以 "unrecognized arguments: -n"
-# 失败，**不是**退化成串行——所以它必须被 CI 的安装行覆盖。
+# `-n 8 --dist loadfile`（pytest.ini 无 addopts，参数由 Makefile 显式给出）。缺插件时
+# pytest 直接以 "unrecognized arguments: -n" 失败，**不是**退化成串行——所以自托管
+# runner 的 env 必须装齐本文件（`environment.yml` / `setup.sh` 都包含它）。
 # 实测档位表见 docs/testing.md「并行执行」。
 pytest-xdist>=3.8,<4
 ruff

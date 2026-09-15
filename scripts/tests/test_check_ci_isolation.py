@@ -6,7 +6,7 @@
   显式 if 限定 push-only 后可 self-hosted。
 - 拒绝无法静态判定的 runs-on（表达式）——拒答而非判绿。
 - self-hosted job 的 workspace 清理必须密闭（禁裸 glob）且带两道守卫。
-- 真实 workflow 的结构（Frontend push/PR 分流）必须被钉住。
+- 真实 workflow 的结构（push-only 拓扑 + 5 个清理点 + 历史 required check 名）必须被钉住。
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def _write(tmp_path, workflow_yaml: str):
 
 
 # 规范写法：两道守卫 + **显式检查清理退出码**（fail-closed）。
-# 四处真实复用点（ci backend/frontend、nightly full/external）都是这个形状。
+# 五处真实复用点（ci backend/real-mongo/frontend、nightly full/external）都是这个形状。
 _GUARDED_CLEANUP = (
     '          WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE 未设置——拒绝清理}"\n'
     '          if [ "$WS" = "/" ]; then\n'
@@ -513,11 +513,59 @@ class TestCleanupFailClosedRule:
 class TestRealRepoWorkflows:
     """守卫必须装在**真实**文件上（"反证后全绿≠守卫强"）。
 
-    Frontend push/PR 分流是 2026-09-14 迁移批次的核心结构：push 侧自建、PR 侧托管。
-    这层断言把它钉住——顺手删掉 `if:`、或把 PR 侧改成 self-hosted，都会先在这里红。
+    2026-09-16 起本仓**不开放 PR**（owner 决定，见 `docs/ci.md`）：`ci.yml` 与
+    `contract-frames.yml` 只监听 push，`nightly.yml` 只有受信手工 dispatch。
+
+    旧结构（Frontend push/PR 分流）的三条断言随之**改写**而非删除——删断言不等于
+    改了契约，只等于把契约交给下一个人重新猜。这里钉的是新拓扑，外加**恢复 PR 时
+    必须满足的机械约束**（名字一丢，分支保护的 required check 就永远等不到上报）。
     """
 
     _ROOT = Path(__file__).resolve().parents[2]
+    # 分支保护的 required status check 按 **job 名**匹配、且**只在 PR 上评估**。
+    # 这两个名字是历史上 PR 侧配置过的：恢复 PR 时对不上 ⇒ 每个 PR 永久 pending。
+    _HISTORICAL_CHECK_NAMES = (
+        "Frontend (vue-tsc + build)",
+        "Real MongoDB (storage layer)",
+    )
+    # 每个门禁的"接线证据" = `make <目标>` 或直接调 `scripts/<脚本>.py`（两种写法都算）。
+    _DECLARED_GATES = (
+        "lint", "pyright", "check-types", "check-compose", "check-env-lock",
+        "check-arch", "check-timeouts", "check-contract", "check-debug-auth",
+        "check-secrets", "check-test-sets", "check-ci-isolation", "audit",
+    )
+    # 声明了但**当前没有**接进 CI 的门禁——每一项必须写明理由与解除条件。
+    _GATES_NOT_IN_CI = {
+        "audit": (
+            "`make audit` 在自托管 env 上**当前为红**：Elysia env 的 pip 26.1.2 自身命中 "
+            "PYSEC-2026-3721（修复版 26.2），而 environment.lock.yml 也 pin 着 26.1.2。"
+            "接线会让 main 因与本仓提交无关的原因变红。解除条件：升级 env 的 pip + "
+            "重生成 environment.lock.yml（owner 动作，会改动锁文件），之后接进 backend job "
+            "并删除本条。**不要用 --ignore-vuln 让它变绿**——那是把安全门禁挖空。"
+        ),
+    }
+
+    def _invoked(self, gate: str, workflows: str) -> bool:
+        """门禁是否被某个 workflow 执行（`make <目标>` 或直接跑脚本）。"""
+        if f"make {gate}\n" in workflows:
+            return True
+        script = "scripts/" + gate.replace("check-", "check_").replace("-", "_") + ".py"
+        return script in workflows
+
+    def _workflows(self) -> dict:
+        """{文件名: workflow 数据}。"""
+        out = {}
+        for path in sorted((self._ROOT / ".github" / "workflows").glob("*.yml")):
+            out[path.name] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return out
+
+    def _triggers(self, data: dict) -> dict:
+        """取 `on:` 块。
+
+        PyYAML 实现 YAML 1.1，裸 `on:` 被解析成**布尔 True**（不是字符串 "on"）——
+        两种键都试，免得测试因为解析器口味差异而静默看到空的触发器集合（假绿③）。
+        """
+        return data.get("on") or data.get(True) or {}
 
     def _jobs(self, name: str) -> dict:
         path = self._ROOT / ".github" / "workflows" / name
@@ -527,36 +575,73 @@ class TestRealRepoWorkflows:
         for path in sorted((self._ROOT / ".github" / "workflows").glob("*.yml")):
             assert check_workflow_file(path) == [], path
 
-    def test_frontend_is_split_into_push_self_hosted_and_pr_hosted(self):
-        jobs = self._jobs("ci.yml")
-        push_job, pr_job = jobs["frontend"], jobs["frontend-pr"]
-        assert push_job["if"] == "github.event_name == 'push'"
-        assert "self-hosted" in push_job["runs-on"]
-        # 平台 label 显式化：将来加 Windows / PR 隔离 / GPU runner 时不会被误接
-        assert {"Linux", "X64"} <= set(push_job["runs-on"])
-        assert pr_job["if"] == "github.event_name == 'pull_request'"
-        assert pr_job["runs-on"] == "ubuntu-latest"
+    def test_push_workflows_are_exactly_the_two_that_must_run_on_main(self):
+        """push 触发器集合钉死：少一个 = 一道门禁在 main 上**永不执行**。
 
-    def test_pr_frontend_keeps_the_historical_check_name(self):
-        """PR 侧必须沿用历史 job 名。
-
-        分支保护的 required status check 按 job 名匹配、且**只在 PR 上评估**；
-        把名字挪到 push 侧会让已配的 required check 永远等不到上报，PR 卡死。
+        `nightly.yml` 刻意只有 `workflow_dispatch`（受信手工入口，不等价于 push）。
+        判据若因解析不到 `on:` 而恒为空集，那条"一个 push workflow 都没有"的退化
+        也会被这里拦住——空集不是通过。
         """
-        assert self._jobs("ci.yml")["frontend-pr"]["name"] == "Frontend (vue-tsc + build)"
+        push = sorted(
+            name for name, data in self._workflows().items()
+            if "push" in self._triggers(data)
+        )
+        assert push == ["ci.yml", "contract-frames.yml"], push
 
-    def test_frontend_jobs_keep_equivalent_build_semantics(self):
-        """两侧做同一件事：`npm ci` + `npm run build`（=`vue-tsc --noEmit && vite build`）。
+    def test_no_workflow_is_reachable_from_pull_requests(self):
+        """本仓当前不开放 PR —— 任何 `pull_request` 触发器都是**未走恢复清单**的改动。
 
-        迁移不允许"因为换成 self-hosted 就"改成 `npm install` / 跳过 lockfile /
+        红了**不要删断言**：先读 `docs/ci.md`「开放 PR 的恢复清单」（两个待恢复 job、
+        PR 侧必须 GitHub-hosted 的安全理由、分支保护 required check 名、恢复后要跑的门禁）。
+        """
+        reachable = sorted(
+            name for name, data in self._workflows().items()
+            if "pull_request" in self._triggers(data)
+        )
+        assert reachable == [], (
+            f"{reachable} 声明了 pull_request，但本仓当前不开放 PR；"
+            "恢复清单见 docs/ci.md——别只把这几行加回来"
+        )
+
+    def test_historical_pr_check_names_are_accounted_for(self):
+        """两个历史 required check 名必须**落了地**：要么有承载 job（已恢复 PR），
+        要么留在恢复清单里（当前不开放 PR）。
+
+        这条替代了旧的 `frontend-pr` 结构断言。名字一旦从代码与文档里同时消失，
+        恢复 PR 时没人会想起来它——而 GitHub 的失败方式是"每个 PR 永远挂着"，
+        不是报错。两个分支都**非空转**：任一分支的判据都真的会红。
+        """
+        pr_reachable = {
+            job.get("name")
+            for data in self._workflows().values()
+            if "pull_request" in self._triggers(data)
+            for job in (data.get("jobs") or {}).values()
+        }
+        if pr_reachable:
+            missing = sorted(n for n in self._HISTORICAL_CHECK_NAMES if n not in pr_reachable)
+            assert missing == [], (
+                f"已声明 pull_request，却没有任何 job 名等于 {missing} —— "
+                "required check 只在 PR 上评估，名字对不上 ⇒ 每个 PR 永久 pending"
+            )
+            return
+        checklist = (self._ROOT / "docs" / "ci.md").read_text(encoding="utf-8")
+        missing = sorted(n for n in self._HISTORICAL_CHECK_NAMES if n not in checklist)
+        assert missing == [], (
+            f"不开放 PR 时 {missing} 必须留在 docs/ci.md 的恢复清单里——"
+            "否则恢复 PR 时没人知道 required check 该叫什么名"
+        )
+
+    def test_frontend_job_keeps_build_semantics(self):
+        """前端 job 仍是 `npm ci` + `npm run build`（=`vue-tsc --noEmit && vite build`）。
+
+        迁移/重构不允许"因为换成 self-hosted 就"改成 `npm install` / 跳过 lockfile /
         跳过 typecheck / 复用上一轮 node_modules——这条把它钉住。
         """
-        jobs = self._jobs("ci.yml")
-        for job_id in ("frontend", "frontend-pr"):
-            joined = "\n".join(str(s.get("run", "")) for s in jobs[job_id]["steps"])
-            assert "cd frontend && npm ci" in joined, job_id
-            assert "cd frontend && npm run build" in joined, job_id
-            assert "npm install" not in joined, job_id
+        joined = "\n".join(
+            str(s.get("run", "")) for s in self._jobs("ci.yml")["frontend"]["steps"])
+        assert "cd frontend && npm ci" in joined
+        assert "cd frontend && npm run build" in joined
+        assert "npm install" not in joined
 
     def test_self_hosted_frontend_touches_no_host_credentials(self):
         """前端构建不需要任何凭据——本 job 刻意不加载 .env（少一条外泄路径）。"""
@@ -565,12 +650,41 @@ class TestRealRepoWorkflows:
         assert ".env" not in joined
         assert "cp /home/" not in joined
 
-    def test_every_self_hosted_cleanup_site_is_fail_closed(self):
-        """**全部 4 处**复用同一 cleanup 模式的地方都必须 fail-closed。
+    def test_every_declared_gate_is_wired_to_ci(self):
+        """声明的门禁必须真的有执行点——「声明了但从不跑」是本项目反复出现的假绿。
 
-        ci.yml backend / ci.yml frontend / nightly.yml full / nightly.yml external ——
-        一处漏掉就是一条跨 job 泄漏路径。条数也钉住：新增或删除清理点必须同步改这里，
-        否则「守卫没装在改动上」。
+        2026-09-16 实测出三处：`check-compose` **从未**接过 CI（只在本地手跑）；
+        `check-env-lock` 与 `audit` 只活在已删除的 PR job 里，删 PR 时被静默带走。
+        这条把它们钉住：新门禁必须接线，或进 `_GATES_NOT_IN_CI` 写明理由与解除条件；
+        **登记陈旧也会红**（与 `check_contract` 的登记纪律一致）。
+
+        刻意不列入本表的 Makefile 目标：生成器（`gen-types`/`gen-frames`，由
+        `check-types` 的漂移检测覆盖）、起服务的预检（`check`/`check-full`，需要运行期
+        配置）、以及 `check-secrets-history`——它按设计**当前预期为红**
+        （CR-01 待清历史），是判据而非门禁，接线等于让 main 常红。
+        """
+        workflows = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((self._ROOT / ".github" / "workflows").glob("*.yml"))
+        )
+        wired = {g for g in self._DECLARED_GATES if self._invoked(g, workflows)}
+        unregistered = sorted(set(self._DECLARED_GATES) - wired - set(self._GATES_NOT_IN_CI))
+        assert unregistered == [], (
+            f"{unregistered} 在 Makefile 里是门禁，但没有任何 workflow 执行它；"
+            "要么接线（`make <目标>`），要么在 _GATES_NOT_IN_CI 写明理由"
+        )
+        stale = sorted(set(self._GATES_NOT_IN_CI) & wired)
+        assert stale == [], (
+            f"{stale} 已经接进 CI，请删掉 _GATES_NOT_IN_CI 里的陈旧登记"
+            "——留着会让'已豁免'的理由继续冒充事实"
+        )
+
+    def test_every_self_hosted_cleanup_site_is_fail_closed(self):
+        """**全部 5 处**复用同一 cleanup 模式的地方都必须 fail-closed。
+
+        ci.yml backend / ci.yml real-mongo / ci.yml frontend / nightly.yml full /
+        nightly.yml external —— 一处漏掉就是一条跨 job 泄漏路径。条数也钉住：
+        新增或删除清理点必须同步改这里，否则「守卫没装在改动上」。
         """
         sites = []
         for name in ("ci.yml", "nightly.yml"):
@@ -586,6 +700,6 @@ class TestRealRepoWorkflows:
                     assert "${GITHUB_WORKSPACE:?" in run, f"{name}:{job_id} 缺「未设置即失败」守卫"
                     assert '= "/"' in run, f"{name}:{job_id} 缺「拒绝 /」守卫"
         assert sorted(sites) == [
-            "ci.yml:backend", "ci.yml:frontend",
+            "ci.yml:backend", "ci.yml:frontend", "ci.yml:real-mongo",
             "nightly.yml:external", "nightly.yml:full",
         ], sites
