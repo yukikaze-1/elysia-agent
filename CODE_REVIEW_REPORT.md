@@ -657,7 +657,7 @@ test_desktop_roundtrip.py` 红了 → `git worktree` 在 A 之前的提交复跑
 
 | 项 | 来源 | 内容 | 量级 |
 |---|---|---|---|
-| `#3` | 决策 #3 | `desktop_call_repo.mark()` 的迁移守卫改 **CAS**（"两种部署都正确"，多 worker 下不退化为最后写入者胜） | 1–2h |
+| ~~`#3`~~ | 决策 #3 | ✅ **已完成**（`7cbff545`）：`desktop_call_repo.mark()` 改**状态 CAS** + 读回判定 + 有界重试 | — |
 | `#6` | 决策 #6 | 后台任务终态**跨重启不丢** → 给 `AgentInfra` 加持久化 repo（停机落库 + 启动补投） | 0.5–1d |
 | `#7` | 决策 #7 | 打断/流中途失败时把半截回复**落 `AssistantMessage` 并标 `incomplete`**（= S2-H5） | 2–4h |
 | `#10` | 决策 #10 | consolidator buffer **落盘 + 下次启动补提**（现为每 runtime 5s 超时即丢） | 0.5d |
