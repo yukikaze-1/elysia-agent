@@ -183,7 +183,8 @@ class MemoryConsolidator:
 
     def __init__(self, llm: MemoryLLM, memory: ScopedLongTermMemory | LongTermMemory,
                  character_name: str = "Elysia",
-                 user_name: str = "用户", buffer_threshold: int | None = None):
+                 user_name: str = "用户", buffer_threshold: int | None = None,
+                 pending_key: str | None = None):
         """初始化记忆整合器。
 
         Args:
@@ -193,6 +194,9 @@ class MemoryConsolidator:
             user_name: 用户名，用于格式化对话文本。
             buffer_threshold: 缓冲阈值，攒够此数量的消息后触发提取。
                 默认使用 BUFFER_THRESHOLD (6)。
+            pending_key: 待整合缓冲 journal 的键（生产传 instance_id；None → 不落盘，
+                测试与一次性 consolidator 用默认 None）。构造时读回上次进程留下的
+                缓冲——**决策 #10：关机时最后 <6 轮不做提取，改为落盘 + 下次启动补提**。
         """
         self._llm = llm
         self._memory = memory
@@ -210,6 +214,39 @@ class MemoryConsolidator:
         self._last_extracted: int = 0
         self._last_inserted: int = 0
         self._last_error: str = ""
+        # 待整合缓冲持久化（#10）：构造即读回上次进程的残留缓冲，并把
+        # `_pending_restored` 置真——下一次 consolidate 跳过阈值立刻补提一次
+        # （否则"补提"要等用户再聊够 6 轮才发生，而用户可能根本不再聊）。
+        self._pending_key = pending_key
+        self._pending_restored = False
+        if pending_key:
+            restored = self._pending_store().get(pending_key)
+            if restored:
+                self._buffer = list(restored)
+                self._pending_restored = True
+                logger.info(
+                    "Consolidator 读回上次进程未整合的 %d 轮对话（待补提）", len(restored))
+
+    def _pending_store(self):
+        """待整合缓冲 journal store（延迟 import：避免 memory 包内循环导入）。"""
+        from core.memory.consolidator_pending import get_store
+
+        return get_store()
+
+    def save_pending(self) -> None:
+        """把当前缓冲落盘（#10）。
+
+        何时调用：① 关机 flush 之后（无论成败——成功则缓冲已空、journal 被清掉，
+        超时/失败则 requeue 后的缓冲被写下来）；② 任何 requeue 失败路径
+        （见 `_requeue`），使"提取失败"在**进程意外退出**时也不丢。
+        """
+        if not self._pending_key:
+            return
+        self._pending_store().put(self._pending_key, list(self._buffer))
+
+    def has_pending_restore(self) -> bool:
+        """是否有上次进程遗留、尚未补提的缓冲（启动补提路径据此决定是否 spawn）。"""
+        return self._pending_restored and bool(self._buffer)
 
     def set_user_name(self, user_name: str) -> None:
         """投影本轮身份的有效称呼（P0-2：preferredAddress 优先，否则 displayName）。
@@ -241,16 +278,24 @@ class MemoryConsolidator:
 
         self._buffer.append((user_message, assistant_response))
 
-        if len(self._buffer) < self._threshold:
+        # #10：上次进程遗留的缓冲在**下一次对话**就补提，不等攒满阈值——否则
+        # "补提"要求用户再聊够 6 轮，而他可能再也不聊（残留缓冲无限期躺在内存/盘上）。
+        restored = self._pending_restored
+        if len(self._buffer) < self._threshold and not restored:
+            self.save_pending()   # 轮次落盘：进程被 kill（无 shutdown 钩子）也不丢
             return []
 
         if self._consolidate_lock.locked():
             logger.debug("Consolidation skipped — previous run still active")
+            self.save_pending()
             return []
 
         async with self._consolidate_lock:
-            if len(self._buffer) < self._threshold:
+            if len(self._buffer) < self._threshold and not restored:
                 return []  # 已被并发 consolidate 处理
+            # 补提标志只在**真的走到提取**时消费：抢锁失败/已被并发处理时保留标志，
+            # 让下一次对话继续尝试（否则标志丢一次，补提就要再等攒够阈值）。
+            self._pending_restored = False
             # 原子 detach 当前 batch——之后 append 的新消息进新 buffer
             batch = self._buffer
             self._buffer = []
@@ -274,6 +319,7 @@ class MemoryConsolidator:
         async with self._consolidate_lock:
             if not self._buffer:
                 return []
+            self._pending_restored = False
             batch = self._buffer
             self._buffer = []
             return await self._do_consolidate(batch)
@@ -363,6 +409,9 @@ class MemoryConsolidator:
         # **无条件** INFO：提取 0 条也是有效结果，必须与「没跑」「跑挂了」可区分
         logger.info("Consolidation: %d turns → 提取 %d 条，入库 %d 条",
                     self._last_turns, len(items), inserted)
+        # #10：本批已消化 → journal 里属于它的部分该消失（若 LLM 等待期间又来了新
+        # 轮次，写下去的是那些新轮次——正是"仍未整合"的准确集合）。
+        self.save_pending()
         return items
 
     def _requeue(self, batch: list[tuple[str, str]]) -> None:
@@ -391,6 +440,11 @@ class MemoryConsolidator:
                 self.MAX_BUFFER_TURNS, overflow, self._dropped_turns + overflow,
             )
             self._dropped_turns += overflow
+        # #10：requeue 之后立刻落盘。**这是达到阈值之后的唯一落盘点**——未达阈值时
+        # 由 append 路径写，但一旦攒够阈值 batch 就被 detach 出 buffer，此后只有
+        # "失败重入队"（本处）与"成功消化"（_do_consolidate 末）两个同步点。少了本处，
+        # 磁盘上留的是 detach 前那份（内容上少一批、且不带本轮的丢弃修正）。
+        self.save_pending()
 
     def _finish_run(self, *, extracted: int, inserted: int, error: str = "") -> None:
         """记录本次运行结果（debug 面板 / 日志用）。"""

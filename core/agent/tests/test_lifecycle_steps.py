@@ -237,6 +237,60 @@ class TestSchemaDriftStep:
         assert agent._schema_drift_report.scanned is False  # noqa: SLF001
 
 
+class TestConsolidatorCatchupStartupStep:
+    """#10：启动补提上次进程遗留的未整合对话缓冲（后台任务，不阻塞启动）。"""
+
+    def test_step_registered(self):
+        names = [name for name, _ in AgentLifecycle._STARTUP_STEPS]
+        assert "consolidator_catchup" in names
+
+    @pytest.mark.asyncio
+    async def test_spawns_only_for_consolidators_with_pending_restore(self):
+        from types import SimpleNamespace
+
+        pending = mock.MagicMock()
+        pending.has_pending_restore = mock.MagicMock(return_value=True)
+        pending.flush = mock.AsyncMock(return_value=[])
+        clean = mock.MagicMock()
+        clean.has_pending_restore = mock.MagicMock(return_value=False)
+
+        class _Agent(AgentLifecycle):
+            pass
+
+        agent = _Agent()
+        agent._runtime_registry = SimpleNamespace(_runtimes={          # noqa: SLF001
+            "chi_a": SimpleNamespace(consolidator=pending),
+            "chi_b": SimpleNamespace(consolidator=clean),
+            "chi_c": SimpleNamespace(consolidator=None),
+        })
+        spawned: list = []
+        agent._lifecycle_tasks = SimpleNamespace(                    # noqa: SLF001
+            spawn=lambda coro, name=None: spawned.append((name, coro)))
+
+        await agent._reflush_pending_consolidation()                 # noqa: SLF001
+
+        assert [name for name, _ in spawned] == ["consolidator-catchup-chi_a"]
+        clean.has_pending_restore.assert_called_once()
+        # 把 spawn 的协程跑掉（否则 "coroutine was never awaited" 警告）
+        await spawned[0][1]
+        pending.flush.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_flush_failure_does_not_escape(self, caplog):
+        """后台补提抛异常 → 只记日志（缓冲已落盘，下次启动再试），不得冒泡。"""
+        class _Agent(AgentLifecycle):
+            pass
+
+        agent = _Agent()
+        bad = mock.MagicMock()
+        bad.flush = mock.AsyncMock(side_effect=RuntimeError("llm down"))
+
+        with caplog.at_level(logging.WARNING):
+            await agent._reflush_one_consolidator(bad)               # noqa: SLF001
+
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
 class TestPendingCleanupsStartupStep:
     """#41：启动补做「主操作已提交、提交后清理未完成」的两条 journal。
 

@@ -72,6 +72,10 @@ class ProjectPath(str, Enum):
     # 单条消息）已提交、但附带的消息→附件 refs 未释放——按 (message_id, attachment_ids)
     # 落盘，启动时 + 健康恢复边界重试（与 session_pending_cleanup 同模式）。
     PENDING_ATTACHMENT_RELEASE = "data/pending_attachment_release.json"
+    # 未完成整合的对话缓冲 journal（#10 / 决策 #10）：关机时 flush 只有 5s 预算，
+    # 一次记忆提取要调 LLM → 超时即丢最后 <6 轮；落盘后下次启动补提。
+    # 单文件多 key（instance_id 作 key，不拼进文件名——避免路径穿越与降级串档）。
+    CONSOLIDATOR_PENDING = "data/consolidator_pending.json"
 
     def resolve(self, **kwargs: Any) -> Path:
         """返回绝对路径。

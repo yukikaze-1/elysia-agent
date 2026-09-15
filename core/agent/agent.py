@@ -312,6 +312,9 @@ class Agent(AgentLifecycle, AgentServer):
                     memory=memory_view,
                     character_name=character_config.name,
                     user_name=self._user_name,
+                    # #10（决策 #10）：未整合缓冲按 instance 落盘，下次启动补提。
+                    # key 用 instance_id（不落文件名 → 无路径穿越面、不会降级串档）。
+                    pending_key=instance.instanceId,
                 ),
                 # MemoryReflector 的 session 原用于 save_state() 计数器持久化；per-runtime
                 # 后计数持久化改经 runtime.state（spec §2.6），构造不依赖 session——传 None。

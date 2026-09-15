@@ -331,6 +331,10 @@ def _isolate_shared_journals(tmp_path, monkeypatch):
         "MEMORY_PENDING_DELETES",
         "MEMORY_PENDING_SYNCS",
         "SESSION_PENDING_CLEANUP",
+        # #41：提交后附件引用释放 journal（debug 删除路径 + 启动重试）。
+        "PENDING_ATTACHMENT_RELEASE",
+        # #10：未整合对话缓冲 journal（consolidator 构造时就读、每轮/失败/关机时写）。
+        "CONSOLIDATOR_PENDING",
     ):
         monkeypatch.setenv(f"ELYSIA_PATH_{name}", str(tmp_path / f"{name.lower()}.json"))
 

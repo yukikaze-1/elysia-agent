@@ -129,6 +129,8 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         # #41：启动补做提交后清理 journal（放在 attachment_repo 之后、GC 之前——
         # 先释放 refs 再扫 GC，GC 才能看见归零的条目）
         ("pending_cleanups", "_retry_pending_cleanups"),
+        # #10：启动补提上次进程遗留的未整合对话缓冲（后台任务，不阻塞启动）
+        ("consolidator_catchup", "_reflush_pending_consolidation"),
         ("attachment_gc",    "_start_attachment_gc"),
     ]
 
@@ -331,6 +333,14 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         RuntimeRegistry 遍历各 instance runtime 的 consolidator，对每个触发 flush。
         与 _flush_reflector 同模式：getattr(self, "_runtime_registry", None)——agent 属性
         是 _runtime_registry（非 _registry）。
+
+        #10（决策 #10）：5s 预算对"要调一次 LLM 的提取"通常不够——超时后
+        `_do_consolidate` 会把 batch requeue 回内存缓冲，而进程随即退出，那批轮次
+        就随内存一起没了。**本步骤不再负责落盘**：持久化落在 consolidator 自己的
+        三个写入点上（每轮 append、requeue 之后、成功提取之后，见
+        `MemoryConsolidator.save_pending` 的调用点）——它们同时覆盖"进程被 kill
+        （无关机钩子）"这种本步骤根本不会被调用的情形。本步骤的职责是**尽快把
+        缓冲消化掉**（成功即无需补提），失败则由那些写入点保证下次启动读得回来。
         """
         registry = getattr(self, "_runtime_registry", None)
         if registry is None:
@@ -342,9 +352,49 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
                     if items:
                         logger.info("Flushed %d consolidator items on shutdown", len(items))
                 except asyncio.TimeoutError:
-                    logger.warning("Consolidator flush timed out during shutdown")
+                    logger.warning(
+                        "Consolidator flush timed out during shutdown"
+                        "（缓冲已 requeue 并落盘，下次启动补提）")
                 except Exception:
                     logger.warning("Consolidator flush failed", exc_info=True)
+
+    async def _reflush_pending_consolidation(self) -> None:
+        """#10 启动补提：把上次进程遗留的未整合缓冲后台补提一次。
+
+        consolidator 在**构造时**已读回 journal（`pending_key=instance_id`），本步骤
+        只负责"推它一把"——否则那批轮次要等用户再聊够阈值才会被提取（而他可能再也
+        不聊），而 `flush()` 是按显式意图提取、不看阈值。
+
+        **不套外层 `wait_for`**：一次提取内含 LLM 调用，外层预算写小了就是 S2-A3 那类
+        「外层 < 内层」；写大了则启动被拖住。所以用后台任务 + 自身 LLM 超时收尾，
+        失败路径由 `_requeue → save_pending` 兜住（下次启动再试，不丢）。
+
+        只覆盖**启动时已注册**的 runtime。懒加载的自定义实例在构造时读回缓冲，并由
+        `consolidate()` 的 `_pending_restored` 在它的下一次对话立刻补提——两条路径合起
+        来覆盖全部 runtime（见 `MemoryConsolidator.consolidate`）。
+        """
+        registry = getattr(self, "_runtime_registry", None)
+        if registry is None:
+            return
+        for instance_id, rt in list(registry._runtimes.items()):  # noqa: SLF001
+            consolidator = rt.consolidator
+            if consolidator is None or not consolidator.has_pending_restore():
+                continue
+            logger.info("Consolidator 启动补提：instance=%s 有未整合缓冲，后台补提", instance_id)
+            self._lifecycle_tasks.spawn(
+                self._reflush_one_consolidator(consolidator),
+                name=f"consolidator-catchup-{instance_id}")
+
+    @staticmethod
+    async def _reflush_one_consolidator(consolidator: Any) -> None:
+        """单个 consolidator 的启动补提（异常不外泄——由内部 requeue/落盘兜底）。"""
+        try:
+            items = await consolidator.flush()
+            if items:
+                logger.info("Consolidator 启动补提完成：提取 %d 条", len(items))
+        except Exception:
+            logger.warning("Consolidator 启动补提失败（缓冲已落盘，下次启动再试）",
+                           exc_info=True)
 
     async def _flush_reflector(self) -> None:
         """CharacterReflector buffer 落盘，防止未持久化的性格反思丢失。
