@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.character.definition import CharacterDefinition
-from core.storage.base import is_duplicate_key, Repository, StorageUnavailableError
+from core.storage.base import (
+    is_duplicate_key,
+    Repository,
+    StorageUnavailableError,
+    search_regex_filter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +171,14 @@ class CharacterRepository(Repository):
         if owner_user_id:
             filt["owner_user_id"] = owner_user_id
         if search:
-            # Definition 无 displayName 字段——search 用 slug（create 时 slug=displayName）
-            filt["slug"] = {"$regex": search, "$options": "i"}
+            # Definition 无 displayName 字段——search 用 slug（create 时 slug=displayName）。
+            # S2-B7c：用户输入不得当正则执行；超长按"无匹配"（**不能忽略过滤**——
+            # 忽略会返回全部角色，比空结果更危险）。
+            clause = search_regex_filter(search)
+            if clause is None:
+                logger.warning("角色搜索词非法（超长 %d）——按无匹配处理", len(search))
+                return []
+            filt["slug"] = clause
         docs = await self._call(
             lambda: self._db.find(COLLECTION, filt, sort=[("updated_at", -1)], limit=limit),  # type: ignore[union-attr]
             reason="CharacterRepository.list_definitions 查失败",

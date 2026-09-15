@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar
@@ -72,6 +73,23 @@ def is_duplicate_key(exc: BaseException) -> bool:
         return True
     cause = getattr(exc, "__cause__", None)
     return getattr(type(cause), "__name__", "") == "DuplicateKeyError"
+
+
+#: 搜索词长度上限——与作者搜索（`MessageRepository.query_search`）既有口径一致。
+MAX_SEARCH_LEN = 200
+
+
+def search_regex_filter(value: str, *, options: str = "i") -> dict | None:
+    """构造**已转义**的 `$regex` 子句；空值或超长返回 None（调用方按"无匹配"处理）。
+
+    **为什么要收口（S2-B7c）**：本层有三处"用户输入直接进 `$regex`"的写法，此前只有
+    `MessageRepository._build_search_filter` 转了义，另两处（debug 归档搜索、
+    角色列表搜索）会把用户输入当**正则**执行——元字符要么改变语义（`a.b` 匹配 `axb`），
+    要么构成 ReDoS 面（嵌套量词 + 大量回溯）。收成一处，新增搜索路径不会再各写一遍。
+    """
+    if not value or len(value) > MAX_SEARCH_LEN:
+        return None
+    return {"$regex": re.escape(value), "$options": options}
 
 
 class Repository(ABC):

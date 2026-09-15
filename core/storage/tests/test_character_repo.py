@@ -100,6 +100,28 @@ class TestCharacterRepository:
         assert [d.characterId for d in lst] == ["a"]
 
     @pytest.mark.asyncio
+    async def test_search_is_literal_not_regex(self, repo):
+        """S2-B7c：`list_definitions(search=...)` 的用户输入按**字面量**匹配。
+
+        修复前这里直接把 search 塞进 `$regex`——`a.b` 会连 `axb` 一起命中（点号被当通配符）。
+        """
+        await repo.insert_definition(_def(characterId="a", slug="a.b"))
+        await repo.insert_definition(_def(characterId="b", slug="axb"))
+        lst = await repo.list_definitions(search="a.b")
+        assert [d.characterId for d in lst] == ["a"], (
+            f"点号被当成通配符：{[d.characterId for d in lst]}")
+
+    @pytest.mark.asyncio
+    async def test_overlong_search_returns_empty_even_if_a_slug_matches(self, repo):
+        """超长搜索词 → 空结果，**即使真的有这个 slug**（上限是预算，不是匹配语义）。
+
+        这样写用例才能区分"有没有上限"——随便搜一个没人有的长串两种实现都是空。
+        """
+        await repo.insert_definition(_def(characterId="a", slug="y" * 300))
+        lst = await repo.list_definitions(search="y" * 300)
+        assert lst == [], "超长搜索词被当成正常搜索执行了（上限失效）"
+
+    @pytest.mark.asyncio
     async def test_offline_insert_raises(self):
         r = CharacterRepository(db=None)
         with pytest.raises(StorageUnavailableError):

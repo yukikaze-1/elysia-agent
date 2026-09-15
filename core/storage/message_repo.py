@@ -10,7 +10,11 @@ from bson import ObjectId
 from bson.errors import InvalidId
 
 from Module.database.documentdb import DocumentDBFactory, DocumentDBBackend
-from core.storage.base import Repository, StorageUnavailableError
+from core.storage.base import (
+    Repository,
+    StorageUnavailableError,
+    search_regex_filter,
+)
 from core.storage.character_write_guard import (
     is_assistant_without_character,
     warn_missing_character_snapshot,
@@ -124,10 +128,10 @@ def _build_search_filter(*, session_id: SessionId | None, query: str,
     elem_text: dict = {}
     elem_type: dict = {}
     if query:
-        if len(query) > 200:
+        clause = search_regex_filter(query)      # S2-B7c：转义 + 上限单源
+        if clause is None:
             return None
-        elem_text = {"type": "text",
-                     "content": {"$regex": re.escape(query), "$options": "i"}}
+        elem_text = {"type": "text", "content": clause}
     if category == SearchCategory.LINK:
         elem_type = {"type": "text",
                      "content": {"$regex": r"(https?://|www\.)", "$options": "i"}}
@@ -658,7 +662,12 @@ class MessageRepository(Repository):
             return [], 0
         filter_expr: dict = {}
         if search:
-            filter_expr["content"] = {"$elemMatch": {"content": {"$regex": search, "$options": "i"}}}
+            # S2-B7c：用户输入不得当正则执行（转义 + 长度上限走收口助手）。
+            clause = search_regex_filter(search)
+            if clause is None:
+                logger.warning("归档搜索词非法（超长 %d）——按无匹配处理", len(search))
+                return [], 0
+            filter_expr["content"] = {"$elemMatch": {"content": clause}}
         if role is not None:
             filter_expr["role"] = role.value
         sort = [("_id", -1)]

@@ -598,3 +598,59 @@ class TestWritePathsFailClosed:
 
         assert asyncio.run(repo.update_text(str(oid), "改过")) == 1
         assert asyncio.run(repo.delete_one(str(oid))) == 1
+
+
+# ═══════════════════════════════════════════════════════════════════
+# S2-B7c：归档搜索的用户输入**不得当正则执行**
+# ═══════════════════════════════════════════════════════════════════
+
+def _seed_search(db, texts: list[str]) -> None:
+    from core.storage.tests._fake_documentdb import FakeDocumentDBBackend  # noqa: F401
+    for i, text in enumerate(texts):
+        asyncio.run(db.insert_one("message_archive", {
+            "message_id": f"m{i}",
+            "session_id": "sid",
+            "role": "user",
+            "content": [{"type": "text", "content": text}],
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        }))
+
+
+@pytest.mark.unit
+class TestArchiveSearchIsLiteral:
+    """`query_offset(search=...)` 的输入必须按**字面量**匹配（转义 + 长度上限收口）。"""
+
+    def _repo(self):
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        db = FakeDocumentDBBackend()
+        _seed_search(db, ["a.b", "axb", "abc"])
+        return MessageRepository(db=db)
+
+    def test_metacharacter_is_not_a_wildcard(self):
+        """`a.b` 只匹配字面量 `a.b`——修复前 `$regex` 未转义，`axb` 也会命中。"""
+        repo = self._repo()
+        msgs, total = asyncio.run(repo.query_offset(search="a.b"))
+        contents = [p.content for m in msgs for p in m.content]
+        assert contents == ["a.b"], f"点号被当成通配符：{contents}"
+        assert total == 1
+
+    def test_overlong_search_matches_nothing_even_if_a_doc_contains_it(self):
+        """超长搜索词 → 无匹配，**即使文档里真的有这个长串**。
+
+        上限是"搜索预算"而不是匹配语义；这样写是为了让用例**能区分**有没有上限——
+        否则"随便搜一个没人有的长串"在两种实现下都是空结果（等于没测）。
+        """
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+        db = FakeDocumentDBBackend()
+        _seed_search(db, ["x" * 300])
+        repo = MessageRepository(db=db)
+        assert asyncio.run(repo.query_offset(search="x" * 299))[1] == 0, (
+            "前置条件：299 个 x 不该命中 300 个 x 的文档")
+        msgs, total = asyncio.run(repo.query_offset(search="x" * 300))
+        assert (msgs, total) == ([], 0), "超长搜索词被当成正常搜索执行了（上限失效）"
+
+    def test_plain_search_still_works(self):
+        """回归网：正常搜索词照常命中（别把转义做成"永不匹配"）。"""
+        repo = self._repo()
+        msgs, _ = asyncio.run(repo.query_offset(search="abc"))
+        assert [p.content for m in msgs for p in m.content] == ["abc"]
