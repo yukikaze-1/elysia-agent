@@ -1441,12 +1441,12 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
 
 | 条目 | 位置 | 说明 |
 |---|---|---|
-| `S3-G4` | `Module/tool/safety.py:213-234` | `_validate_url` 只认字面量 IP：`localhost`/`2130706433`/`0177.0.0.1`/`metadata.google.internal` 全放行。`block_private_ips` 形同虚设；**正面对照仍成立**：唯一带 url 的 `web_fetch` 走 `ssrf.build_guarded_http_client` 逐跳校验。修法：复用 `ssrf.validate_endpoint` |
+| `S3-G4` ✅**已修** `ed66fcc3` | `Module/tool/safety.py:213-234` | `_validate_url` 只认字面量 IP：`localhost`/`2130706433`/`0177.0.0.1`/`metadata.google.internal` 全放行。`block_private_ips` 形同虚设；**正面对照仍成立**：唯一带 url 的 `web_fetch` 走 `ssrf.build_guarded_http_client` 逐跳校验。修法：复用 `ssrf.validate_endpoint` |
 | `S2-B7c` ✅**已修** `571b8f19` | `core/storage/message_repo.py:660-661`（+ 同型 `character_repo.py:170`） | debug 归档搜索的 `$regex` 未 `re.escape`、无长度上限；**同文件 `:126-130` 的 `query_search` 早已是 `re.escape` + ≤200 上限**，对照强烈 |
 | `S3-06` | `core/input/ws_handler.py:105-113` + `ws_handlers/voice.py:238` | 错误帧 `requestId` 取自 ContextVar 且**每帧不重置** → 指向已成功的旧请求；现用例把该来源钉成合法 |
-| `S3-G5` | `core/tools/vision/plugin.py:285-322` | 缓存写 `created_at` 但**无人读**，无上限/TTL/淘汰；`core/tools/tests/` **无 test_vision.py**（零覆盖） |
+| `S3-G5` ✅**已修** `02f93442` | `core/tools/vision/plugin.py:285-322` | 缓存写 `created_at` 但**无人读**，无上限/TTL/淘汰；`core/tools/tests/` **无 test_vision.py**（零覆盖） |
 | `S3-R6-1` ✅**已修** `1e83c6c4` | `core/tests/test_phase3.py:457-471` | `_process_lock` 的唯一并发用例是**空断言**（断言的是 `len(started)==2`，与锁无关）——删锁仍绿 |
-| `S2-G4` 残余 | `core/tools/filesystem/plugin.py:120,213` | 类默认仍是**裸根**；`config.yaml` 缺失时 `manager.py:165-186` 静默 return → 回退裸根 |
+| `S2-G4` 残余 ✅**已修** `d841f88f` | `core/tools/filesystem/plugin.py:120,213` | 类默认仍是**裸根**；`config.yaml` 缺失时 `manager.py:165-186` 静默 return → 回退裸根 |
 
 **档 4 · 设计决策型**（不是"快修"，需要 owner 定）
 
@@ -1787,6 +1787,47 @@ mock 未配置的 await（TypeError）——用例虽然也红，但**红的原�
 - 档 3 剩余 4 条：`S3-06`（陈旧 `requestId`）、`S3-G5`（vision 缓存无上限/TTL，零覆盖）、
   `S3-G4`（`_validate_url` 只认字面量 IP）、`S2-G4` 残余（插件类默认裸根）
 - 全量 5623 passed / 17 skipped / 1 xfailed / 0 failed
+
+### §0.4.25 档 3 后三条：S3-G4 URL 预筛 / S2-G4 残余 / S3-G5 vision 缓存（2026-09-16，3 个提交）
+
+档 3 仅剩 `S3-06`（陈旧 `requestId`，需先定"每帧重置 vs 显式传参"的 wire 语义）。
+
+#### (a) `S3-G4`：`block_private_ips` 是装饰 → `ed66fcc3`
+
+`_validate_url` 只试 `ipaddress.ip_address(hostname)`：`2130706433`（十进制）、
+`0177.0.0.1`（八进制）、`0x7f.0.0.1`、`metadata.google.internal` **全部放行**
+——前三种系统解析器认得、`ipaddress` 不认，字面量黑名单压根没查。
+
+修法：`ssrf.literal_host_is_blocked()`（**非 DNS**，与 `validate_endpoint` 共用
+`_BLOCKED_HOSTS` + `_is_blocked_ip`，补 `socket.inet_aton` 这条路径）。
+**为什么不直接复用 `validate_endpoint`**：它做同步 DNS，而 `_check_safety` 是 async
+——在事件循环里阻塞解析不可接受。
+**边界写进 docstring 并用例钉住**：`localhost` 这类普通主机名不在本层（一律拉黑会打死
+ollama / gpt-sovits 的本地 `base_url`），由 DNS 层与出站客户端逐跳校验兜住。
+
+#### (b) `S2-G4` 残余：类默认值也是裸根 → `d841f88f`
+
+`config.yaml` 的读白名单早已是模板，但**插件类默认值**仍是 `/home/yomu/data/sandbox`，
+而 `manager._load_safety_config` 在配置缺失时**静默 return** —— 此刻生效的正是那个裸根。
+同一份隔离里两套默认（写路径一直是模板）。修法：两个读插件的默认值改成模板形态；
+配置缺失改为记 warning（"正在用类默认值"必须是可见事实）。
+
+#### (c) `S3-G5`：vision 缓存只有 TTL 的一半 → `02f93442`
+
+写侧记 `created_at`、**读侧从不读它**，也无淘汰 ⇒ 只增不减；该文件此前零覆盖。
+修法：读侧过 TTL（7 天）即未命中**并删文件**；时间戳缺失不当作过期；写后按上限
+（500）淘汰最旧。
+
+**两个我自己的坑**：淘汰最初放在**写之前**（那时条数还等于上限、条件不成立 →
+每次多一条、永远超上限）；用例第一版把"最旧"标错了（实现是对的，**判据写错**）
+——修正并补了"最新那条不许被淘汰"的同向对照。
+
+#### (d) 验收
+
+- 本轮 3 条提交、新增用例 16 条（URL 形态矩阵 11 + 类默认值 2 + 缓存 7 中新增部分），
+  注入反证 5 条
+- 全量 5644 passed / 17 skipped / 1 xfailed / 0 failed；13 道门禁全绿
+- 档 3 剩余：`S3-06`；档 4（8 条，多数需 owner 决策）未动
 
 ---
 
