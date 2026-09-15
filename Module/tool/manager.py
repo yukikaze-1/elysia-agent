@@ -67,6 +67,9 @@ class ToolManager:
         self._plugins: dict[str, ToolPlugin] = {}
         self._plugin_classes: dict[str, type[ToolPlugin]] = {}
         self._plugin_modules: dict[str, str] = {}
+        # S3-G3：`load_all` 收到的**那张类列表**（组合根给的就是 `core.tools.ALL_PLUGINS`）。
+        # 热重载成功后要把新类回写进去，否则同进程 restart 会重新实例化旧类。
+        self._class_registry: list[type[ToolPlugin]] | None = None
         self._plugin_context: PluginContext | None = None
         self._pipeline = SafetyPipeline()
         self._history: deque[ToolResult] = deque(maxlen=50)
@@ -100,6 +103,8 @@ class ToolManager:
             ctx: 依赖注入容器。
         """
         self._plugin_context = ctx
+        # 记住这张列表的**身份**（不 import core.tools：Module 不得反向依赖 core，见 R1）
+        self._class_registry = plugin_classes
         for cls in plugin_classes:
             instance = cls()
             try:
@@ -813,8 +818,18 @@ class ToolManager:
                     new_sem = asyncio.Semaphore(new_instance.safety.max_concurrency)
                 old_tasks = set(self._inflight.get(name, ()))   # 快照：排空目标 = 替换前已在执行的任务
                 self._plugins[name] = new_instance
+                old_cls = type(old)
                 self._plugin_classes[name] = new_cls
                 self._plugin_modules[name] = module_path
+                # S3-G3：**回写到调用方那张列表**（按身份替换，不做名字匹配——同名插件会误伤）。
+                # 不回写的话：热重载在当次进程有效，而 `stop()→start()` 的 restart 会
+                # `load_all(ALL_PLUGINS)` 重新实例化**旧类**——"修了但静默回退"。
+                registry = self._class_registry
+                if registry is not None:
+                    for i, cls in enumerate(registry):
+                        if cls is old_cls:
+                            registry[i] = new_cls
+                            break
                 if new_sem is not None:
                     self._semaphores[name] = new_sem
                 else:

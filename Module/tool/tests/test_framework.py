@@ -1126,6 +1126,35 @@ class TestReloadPlugin:
         assert result.content == "exec-v2"      # 新 class 行为生效
 
     @pytest.mark.asyncio
+    async def test_reload_writes_back_into_the_class_registry(self, plugin_dir, write_simple):
+        """S3-G3：热重载必须把新类**回写**到调用方给的那张类列表里。
+
+        不回写的话：热重载在当次进程有效，而 `stop()→start()` 的同进程 restart 会
+        `load_all(ALL_PLUGINS)` 重新实例化**旧类**——"修了但静默回退"，比不生效更难发现
+        （`core/tools/__init__.py` 的 `ALL_PLUGINS` 是 import 期绑定的旧类，全仓无回写点）。
+        """
+        write_simple(plugin_dir, suffix="v1")
+        import reload_plugins.simple as mod_v1
+        registry = [mod_v1.SimplePlugin]          # 模拟组合根持有的那张列表
+        tm = ToolManager()
+        ctx = PluginContext()
+        await tm.load_all(registry, ctx)
+        old_cls = registry[0]
+
+        write_simple(plugin_dir, suffix="v2")
+        ok, reason = await tm.reload_plugin("simple")
+        assert ok is True and reason == ""
+        assert registry[0] is not old_cls, (
+            "类列表没被回写——restart 后 load_all(registry) 会退回旧类")
+
+        # 端到端：用**回写后的列表**重新装配（= 同进程 restart）→ 行为必须是 v2
+        tm2 = ToolManager()
+        await tm2.load_all(registry, ctx)
+        result = await tm2.execute("simple", ctx=ToolContext())
+        assert result.content == "exec-v2", (
+            f"restart 后跑的还是旧类：{result.content}")
+
+    @pytest.mark.asyncio
     async def test_reload_setup_failure_keeps_old(self, plugin_dir, write_simple):
         write_simple(plugin_dir, suffix="v1")
         import reload_plugins.simple as mod_v1
