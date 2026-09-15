@@ -259,6 +259,10 @@ def _real_service_agent(*, stt_default: bool = False, tts_default: bool = False)
     a._cognitive = mock.MagicMock()
     a._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
     a._tts = None
+    # S2-A5：`Agent.__init__` 设置的"重启时以配置为准"标志。替身绕过 `__init__`，
+    # 必须显式补上——否则 `_apply_service_state` 会 AttributeError（它不是可选能力，
+    # 真身上恒有值；用 getattr 兜底会把"忘了设"变成静默回退，正是本仓忌讳的那种写法）。
+    a._prefer_config_model = False
     return a
 
 

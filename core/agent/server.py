@@ -189,6 +189,53 @@ def _resolve_switch_params(
     return params, runtime, http_client_factory
 
 
+async def run_agent_service(
+    *,
+    config: Any,
+    config_path: str | None,
+    app_factory: Callable[..., web.Application],
+    agent_factory: Callable[..., Any],
+) -> None:
+    """进程级服务循环：**/restart = 重建 Agent 实例**（S2-A5）。
+
+    为什么循环必须在实例之外：绝大多数配置在 `Agent.__init__` 就被**值拷贝**进组件
+    （`LLMAdapter(model=…)`、各 Repository(`base_url=db_cfg.mongodb_uri`)、
+    `LongTermMemory(max_entries/max_age_days)`、`SessionManager(max_messages)`、
+    `CharacterConfig.from_yaml`、`self._user_name`），只换 `self._config` 不会让它们
+    生效——旧实现却打印"配置已重新加载"。实测生效面：`server.*` / `wake_word.enabled`
+    / `stt.*` / `tts.*` / `agent.max_pending_messages` 生效，`database.*` /
+    `agent.character` / `agent.user_name` / `memory.*` / `llm.model` 不生效。
+
+    Args:
+        config: 首次使用的配置（`config_path` 存在时会在每轮开头重新加载）。
+        config_path: YAML 路径；None 表示无法重新加载（复用传入的 config）。
+        app_factory: aiohttp Application 工厂（`core.input.server.create_app`）。
+        agent_factory: Agent 构造器（`core.agent.Agent`）——**由装配入口注入**，
+            避免 `core.agent` 包内循环导入（server.py 是 `Agent` 的 mixin 之一）。
+    """
+    from Module.config.loader import ConfigLoader
+
+    from core.config import AppConfig
+
+    previous: Any = None
+    while True:
+        if config_path is not None:
+            config = ConfigLoader(AppConfig, yaml_path=config_path).load()
+        # S2-A5 第二半：文件里的 llm.model 变了 → **文件优先**。否则
+        # `_apply_service_state` 会拿持久化的 `service_state.llm_model` 把运行期旧选择
+        # 再切回去，用户的 YAML 修改永远不生效。
+        model_changed_in_file = (previous is not None
+                                 and config.llm.model != previous.llm.model)
+        agent = agent_factory(
+            config=config, config_path=config_path,
+            prefer_config_model=model_changed_in_file,
+        )
+        restart = await agent.run_server(app_factory=app_factory)
+        if not restart:
+            return
+        previous = config
+
+
 class AgentServer:
     """Server/REPL 生命周期 mixin——运行时与 Agent 组合，session 等属性来自 Agent。
 
@@ -506,15 +553,26 @@ class AgentServer:
         self,
         *,
         app_factory: Callable[..., web.Application] | None = None,
-    ) -> None:
-        """以 WebSocket 服务模式运行 agent。阻塞直至 Ctrl+C 或关闭。
+        rebuild_on_restart: bool = True,
+    ) -> bool:
+        """以 WebSocket 服务模式运行 agent（**单次**：start → 服务 → stop）。
 
-        支持通过 /restart 端点在停止后重新加载配置并重启服务。
+        **不再原地重启**（S2-A5）：绝大多数配置在 `Agent.__init__` 就被值拷贝进组件
+        （`LLMAdapter(model=…)`、各 Repository(`base_url=…`)、`LongTermMemory(...)`、
+        `SessionManager(...)`、`CharacterConfig`、`_user_name`），原地 `start()` 只会让
+        它们保持旧值——却照样打印"配置已重新加载"（日志显示成功、实际未生效）。
+        收到重启请求时本方法**直接返回**，由进程级循环 `run_agent_service` 重建实例。
 
         Args:
             app_factory: aiohttp Application 工厂（通常为
                 ``core.input.server.create_app``），由装配入口 app.py 注入。
                 为 None 时拒绝启动——Agent 层不再反向依赖 core.input。
+            rebuild_on_restart: True（默认）= 重启请求交由调用方重建实例；
+                False = 保留旧的**原地**重启语义（仅为直接调用本方法的老入口兜底，
+                会在日志里标明降级）。
+
+        Returns:
+            True 表示收到重启请求（调用方应重建实例）；False = 正常退出。
         """
         if app_factory is None:
             raise RuntimeError(
@@ -644,6 +702,16 @@ class AgentServer:
                 await _shutdown_server(self, runner)
 
             if was_restarting:
+                if rebuild_on_restart:
+                    # S2-A5：**重建实例**才能让 __init__ 期值拷贝的配置生效。
+                    logger.info(
+                        "重启请求：退出当前服务循环，交由 run_agent_service 重建 Agent 实例"
+                        "（原地 start() 只会让配置保持旧值）")
+                    return True
+                logger.warning(
+                    "重启请求：rebuild_on_restart=False —— 原地重启，"
+                    "database.* / agent.character / agent.user_name / memory.* / llm.model "
+                    "等构造期配置**不会**生效")
                 if self._config_path is not None:
                     from Module.config.loader import ConfigLoader
                     from core.config import AppConfig
@@ -661,6 +729,7 @@ class AgentServer:
                 break
 
         print("再见！")
+        return False
 
     async def run_repl(self) -> None:
         """运行交互式 REPL 循环（stdin）。阻塞直至 /quit 或 Ctrl+D。"""

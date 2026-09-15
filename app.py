@@ -17,6 +17,7 @@ import asyncio
 import sys
 import warnings
 from pathlib import Path
+from typing import Any
 
 # Suppress noisy library warnings BEFORE any imports that trigger them
 warnings.filterwarnings("ignore", ".*pynvml.*", category=FutureWarning)
@@ -47,10 +48,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from core.utils import setup as setup_logging
 from core.agent import Agent
+from core.agent.server import run_agent_service
 from core.input.server import create_app
 
 
-async def run_interactive(config) -> None:
+async def run_interactive(config: Any) -> None:
     """交互终端模式 (--cli)。"""
     agent = Agent(config=config)
     await agent.start()
@@ -130,8 +132,11 @@ def main():
     if args.cli:
         asyncio.run(run_interactive(config))
     else:
-        agent = Agent(config=config, config_path=args.config)
-        asyncio.run(agent.run_server(app_factory=create_app))
+        # S2-A5：**重启 = 重建 Agent 实例**——进程级循环在 core.agent.server，
+        # 构造器由本入口注入（避免 core.agent 包内循环导入）。
+        asyncio.run(run_agent_service(
+            config=config, config_path=args.config,
+            app_factory=create_app, agent_factory=Agent))
 
 
 if __name__ == "__main__":

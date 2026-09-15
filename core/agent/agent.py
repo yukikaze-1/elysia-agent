@@ -124,15 +124,21 @@ logger = logging.getLogger(__name__)
 class Agent(AgentLifecycle, AgentServer):
     """由 L0/L1/L2 各组件装配而成的完整 Agent。"""
 
-    def __init__(self, *, config: AppConfig, config_path: str | None = None):
+    def __init__(self, *, config: AppConfig, config_path: str | None = None,
+                 prefer_config_model: bool = False):
         """初始化 Agent 并创建所有 L0/L1/L2 组件。
 
         Args:
             config: 应用配置（AppConfig 实例）。
             config_path: 配置文件路径，用于 /restart 时重新加载配置。
+            prefer_config_model: 本次启动**以 config 的 llm.model 为准**（忽略持久化的
+                运行期模型选择，并把它写回）。由 `run_agent_service` 在"重启且
+                YAML 里的模型变了"时置位——否则 `_apply_service_state` 会用旧选择把
+                用户刚改的模型切回去（S2-A5 第二半）。
         """
         self._config = config
         self._config_path = config_path
+        self._prefer_config_model = prefer_config_model
         self._user_name = config.agent.user_name
         # Task 7（B1）：用户身份存储——启动用 config.agent.user_name 建 bootstrap profile，
         # 供 _prepare_turn 读 pronouns（全局唯一「她」）。

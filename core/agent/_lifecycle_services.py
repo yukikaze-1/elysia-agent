@@ -35,6 +35,7 @@ class _LifecycleServices:
         _response_recorder: ResponseRecorder
         _cognitive: CognitiveLoop
         _config: AppConfig
+        _prefer_config_model: bool
         _tts: TTSBackend | None
         _stt: STTBackend | None
         _llm: LLMAdapter
@@ -127,8 +128,18 @@ class _LifecycleServices:
         """
         await self._apply_service_enabled()
         ss = self.session.service_state
-        if ss.llm_model and ss.llm_model != self._config.llm.model:
-            await self.switch_llm(ss.llm_model)
+        if not ss.llm_model or ss.llm_model == self._config.llm.model:
+            return
+        if self._prefer_config_model:
+            # S2-A5 第二半：本次是"重启 + YAML 里的模型变了"→ **文件优先**。直接切到
+            # config 的模型（`switch_llm` 会把它写回 service_state，下次启动不再冲突），
+            # 而不是把持久化的旧选择再套回来。
+            logger.info(
+                "重启后以配置文件为准：llm_model %s → %s（覆盖持久化的运行期选择）",
+                ss.llm_model, self._config.llm.model)
+            await self.switch_llm(self._config.llm.model)
+            return
+        await self.switch_llm(ss.llm_model)
 
     async def _start_tts(self) -> None:
         """创建 TTS 后端（条件执行——建门 = 有效 enabled 三态）。
