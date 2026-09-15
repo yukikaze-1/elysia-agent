@@ -1431,8 +1431,8 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
 | 条目 | 位置 | 后果 | 成本 |
 |---|---|---|---|
 | `S2-R2-4` ✅**已修**（准入面）`c029110e` | `core/agent/lifecycle.py:86-112`（20 步**无任何 WS/语音步**）+ `voice_sessions.py:682` 直接 `bus.post` | 停机窗口内语音段仍可进"消费者已死"的 bus；**CR-08 的准入闸只装在 `process_message` 一个口**。跨 `/restart` 的污染**仅在 `rebuild_on_restart=False`（同实例重启）成立**——默认路径重建 Agent ⇒ 新 `EventBus`（`agent.py:246`），旧队列随对象丢弃 | 0.5 天 |
-| `S2-G3` | `core/adapter/tts_adapter.py:161-164`（reset 仍 `clear()` 重建）、`:413` 裸下标、`:503-505` finally 写**新** dict、`:236-249` `wait_all` 无超时、**:374-390 两个早退 `return` 落在 try/finally 之外** | 门控丢失**不依赖**那个时序窗口；后果 `wait_all`/`finish_turn` 无界等待 → Agent 永久 SPEAKING。**无修复提交、全仓无守卫** | 0.5 天 |
-| `#20b` | `core/agent/lifecycle.py:326-333`（外层 `wait_for(...,10.0)`）+ `loop.py:1087-1107`（逐任务 5s + `clear()`） | 外层超时会取消 flush 本身，剩余 task 既不取消也不等待，随后 `_stop_persistence` 关库。**代码库自己的 `drain` docstring（`task_scope.py:214-222`）逐字点名本处未迁移** | 0.5–1 天 |
+| `S2-G3` ✅**已修**（两条挂起源）`9f323f07` | `core/adapter/tts_adapter.py:161-164`（reset 仍 `clear()` 重建）、`:413` 裸下标、`:503-505` finally 写**新** dict、`:236-249` `wait_all` 无超时、**:374-390 两个早退 `return` 落在 try/finally 之外** | 门控丢失**不依赖**那个时序窗口；后果 `wait_all`/`finish_turn` 无界等待 → Agent 永久 SPEAKING。**无修复提交、全仓无守卫** | 0.5 天 |
+| `#20b` ✅**已修** `b3e513df` | `core/agent/lifecycle.py:326-333`（外层 `wait_for(...,10.0)`）+ `loop.py:1087-1107`（逐任务 5s + `clear()`） | 外层超时会取消 flush 本身，剩余 task 既不取消也不等待，随后 `_stop_persistence` 关库。**代码库自己的 `drain` docstring（`task_scope.py:214-222`）逐字点名本处未迁移** | 0.5–1 天 |
 | `S3-05` ✅**已修** `10acc315` | `Module/workflow_engine/debug_api.py:86` `await q.put(_SENTINEL)` 无超时（队列 `maxsize=256`，广播用 `put_nowait`） | 半开 SSE 客户端 → 队列打满 → `stop()` 挂起。**减轻事实**：`core/agent/server.py:74-79` 的 `wait_for(...,3.0)` 只覆盖 agent 自身服务循环这一条路径 | 0.5 天 |
 | `S3-R2-2` ✅**已修** `8b0f6c9c` | `core/input/voice_sessions.py:553-554`（`discard` 在**提交之前**）vs 提交在 `:557-561` | `stop_session` 漏掉"已摘除、仍在提交中"的段 → teardown 抬 epoch 后该段被丢 → 用户收到 `ended` 但**无回复**；DICTATION 末尾文本被截断。现有两条用例都只阻塞在 transcribe 阶段 | 0.5–1 天 |
 | `S2-R2-3`（部分） | `core/memory/embedding_provider.py:110-113` 仍是 `wait_for(run_in_executor(...))` | 超时后线程仍跑且 `_failed_at` 已置 → 冷却 60s 后可**叠加第二个加载线程**；`shutdown_default_executor` 全仓 0 命中 | 2–3h |
@@ -1701,6 +1701,59 @@ Mongo 离线时 `_persist` 直接 `return`（**没有 dirty 跟踪、没有恢�
   （S2-R2-4 与 S3-05 各含"修过头"的反向对照）
 - `core/input` 846 passed、`Module/workflow_engine` unit 376 passed；ruff / pyright 全绿
 - 档 2 剩余：`#20b`（`flush_after_response` → `drain`）、`S2-G3`、`S2-R2-3` 残余
+
+### §0.4.23 档 2 后两条收口：#20b 收尾域收口 / S2-G3 门控挂起源（2026-09-16，2 个提交）
+
+#### (a) `#20b`：after-response 收尾收口到 `AsyncTaskScope.drain` → `b3e513df`
+
+原状是一张**手维护的列表**：全仓 append ×2 / prune ×1 / clear ×1 各自维护同一个集合；
+`flush_after_response` 逐任务 `wait_for(t, 5.0)`，`lifecycle` 外层再套 `wait_for(10.0)`
+——两层各自计时，靠后的任务被外层直接砍掉（连取消都来不及），随后 `.clear()` 让它们
+变成无人观察的孤儿。`drain` 的 docstring 一直逐字点名本处未迁移。
+
+修法：所有权收口到一个作用域。要点有三个：
+1. 用 `AsyncTaskScope`（`cancel_all` + `drain`）而**非** `aclose`——本 loop 是可重启 owner
+   （同一 Agent 实例 stop→start），封闭 scope 会让重启后一律 `TaskScopeClosedError`；
+2. 新增 `AsyncTaskScope.adopt()`：把"引擎自己创建、收尾归我"的 tail task 纳入**同一**
+   收尾域（没有它就只能另立一张列表 = 同一作用域两条收尾路径）；
+3. `_pending_after_response` 变**只读视图**；重启复位从"丢掉引用"改为"取消残余"
+   （丢引用 = 留下无人观察的孤儿）。
+
+**守卫不删只改写**：`test_task_ownership.py` 的两条用例原先钉专用回调
+`finalize._observe_after_response`；迁移把那个回调删了，但它防的东西一个字没变
+（尾任务失败必须有日志）——故改写为对着新所有者断言。
+
+**反证含门禁**：注入"退回逐任务 wait_for" → 2 failed；注入"adopt 不登记" → 1 failed；
+注入"退回裸 create_task 而 allowlist 条目已删" → **check-arch 红**（证明迁移与删条目必须同步）。
+
+#### (b) `S2-G3`：TTS 门控的两条永久等待 + 轮次隔离 → `9f323f07`
+
+两条挂起源都让 `wait_all()`（无超时）永久等待 ⇒ `finish_turn` 卡死 ⇒ Agent 停在 SPEAKING：
+1. `_download_and_forward` 的两个早退分支在 try/finally **之外**，不放行后继门控
+   （可达窗口：后端切换与本轮排队句交错）；
+2. `reset_for_turn` 直接 `clear()` 重建 dict，而卡在 `await event.wait()` 的任务
+   **已持有旧对象** ⇒ 无从唤醒。
+
+修法：`_release_gate()` 统一放行；早退分支同样放行；reset 先放行全部旧门控再清空；
+新增轮次代号 `_turn_epoch`，任务在门控等待前后各判一次（旧句放弃转发），
+`finally` 只在同轮次内放行（否则残留任务会**提前**放开新一轮的句子）。
+
+> ⚠️ **本条我先写了两版假绿用例，都是"测试没走到被测路径"——如实记录**：
+> (a) `set_enabled` 是 **async**，我漏了 `await` ⇒ 那条用例根本没走禁用分支却"通过"；
+> (b) 假 output 缺 `audio_start` ⇒ 转发路径抛 `AttributeError` 被 `except` 吞掉，
+> "有没有转发"这件事**根本观测不到**，于是把 epoch 守卫整个去掉也照样绿。
+> 第二版还发现"注入只去掉两处 epoch 检查中的一处"是**无效注入**（另一处兜住了）。
+> 三处修正后注入才生效。**这正是"门禁三种假绿"的第三种在单测层面的翻版。**
+
+**residual（未做，如实标注）**：`wait_all()` 仍无超时预算——两个挂起源已消除并各有守卫，
+再加预算需先定"超时后放弃等待（音频迟到、与 IDLE 竞争）还是继续等"的产品语义。
+
+#### (c) 验收
+
+- 档 2 五条全收：`S3-05` `10acc315`、`S2-R2-4` `c029110e`、`S3-R2-2` `8b0f6c9c`、
+  `#20b` `b3e513df`、`S2-G3` `9f323f07`；档 2 仅剩 `S2-R2-3` 残余（线程不可回收那一半）
+- 本轮新增/改写用例 11 条，注入反证 6 条（含 1 条门禁级）
+- 全量 5618 passed / 17 skipped / 1 xfailed / 0 failed；13 道门禁全绿
 
 ---
 
