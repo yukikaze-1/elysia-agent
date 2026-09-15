@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from core.character.definition import CharacterDefinition
@@ -43,6 +44,33 @@ from frontend_contract.rest import (
     CharacterDetail,
     CharacterMutationResult,
 )
+
+logger = logging.getLogger("core.character.service")
+
+
+async def _compensate_delete_revision(
+    rev_repo: object, character_id: str, revision: int,
+) -> None:
+    """补偿删除刚追加、但没能发布的 revision——**失败只记 warning，绝不顶替原始异常**。
+
+    #46 缺口行 8 · 6 号缺陷：原来的补偿是裸 `await delete_revision(...)`。补偿自己抛
+    （比如存储已经从"写失败"恶化到"删也失败"）时会**顶替**正在抛出的那个异常——
+    调用方看到的是补偿的错误，原始成因既不在异常链上（无 `__cause__`）也不在日志里。
+    善后动作不该把病因挤掉；孤儿 revision 是可对账的（`list_revisions` 里看得见），
+    所以这里降级成一条带 traceback 的 warning。
+
+    Args:
+        rev_repo: `CharacterRevisionRepository`。
+        character_id: 角色 ID。
+        revision: 要删的 revision 号。
+    """
+    try:
+        await rev_repo.delete_revision(character_id, revision)  # type: ignore[attr-defined]
+    except Exception:
+        logger.warning(
+            "角色写链补偿失败：revision 未被删除（孤儿，需对账）character_id=%s revision=%d",
+            character_id, revision, exc_info=True,
+        )
 
 
 async def _append_revision_or_conflict(rev_repo: object, revision: object,
@@ -81,6 +109,90 @@ async def _append_revision_or_conflict(rev_repo: object, revision: object,
 class CharacterDefinitionWriteChain(CharacterQueryChain, CharacterInstanceStateWriteChain):
     """定义写链混入：角色定义的创建/更新/克隆/归档/回滚。"""
 
+    async def _fresh_current_revision(self, character_id: str) -> int | None:
+        """**绕过缓存**回读库里的当前版本；读不到 → None（=未知，绝不猜）。
+
+        缓存里的那份定义在 CAS 失败路径上按定义就是过期的（且它与本方法调用方手里的
+        对象是同一个，见 `CharacterRepository.insert_definition` 的 `_cache_put`）。
+        """
+        try:
+            fresh = await self.repo.get_definition(character_id, fresh=True)
+        except Exception:
+            logger.warning(
+                "回读角色当前版本失败——上报「未知」而不是过期值 character_id=%s",
+                character_id, exc_info=True,
+            )
+            return None
+        return None if fresh is None else fresh.currentRevision
+
+    async def _commit_revision_pointer(
+        self, character_id: str, *, expected_revision: int, new_revision: int,
+    ) -> str:
+        """推进 `currentRevision` 指针；失败时按**指针到哪了**决定补偿，未知时不猜。
+
+        判据是"指针位置"而不是"有没有抛异常"——这正是 #46 缺口行 8 · 4 号缺陷的根因
+        （旧代码只补偿 `ok is False` 分支，抛异常那条路径直接漏过）。三条路径：
+
+        1. **CAS 返回 False**：filter 未命中 → 指针**确定**没到 `new_revision`。刚刚
+           append 的 revision 不可能被别人发布（`(character_id, revision)` 唯一索引
+           让并发写者拿到的是冲突，不是同一个号），故**确定是孤儿** → 删掉它 → 抛 409。
+           409 里的当前版本**回读**得到；回读失败则报 `None`（路由层会省略
+           `details.currentRevision`）——**绝不再回报内存里那个过期值**：客户端按它重试
+           必然再次冲突（5 号缺陷）。
+        2. **CAS 抛异常**：指针**未知**——写可能已经落库、只是响应丢了（驱动超时的
+           典型形态）。回读判定：已在 `new_revision` → 视为成功（记 warning 说明那次
+           异常是响应路径的）；仍在 `expected_revision` → 指针确定没动 → 补偿删除后
+           抛出原始异常；**其余（回读失败 / 第三种值）→ 一个字节都不删**，留孤儿 + error。
+        3. 补偿删除自身失败 → 只记 warning（见 `_compensate_delete_revision`），
+           原始异常照常抛出。
+
+        **为什么未知时宁可留孤儿**：删掉一条**已发布**的 revision 是数据丢失（指针指向
+        不存在的版本 / 历史出现空洞 / 回滚目标消失），留孤儿只是泄漏——#41 已为这类
+        「两个失败方向不对称」定过调：选可恢复的那一侧。
+
+        Args:
+            character_id: 角色 ID。
+            expected_revision: CAS 的期望版本（调用方读到的）。
+            new_revision: 已 append、待发布的版本号。
+
+        Returns:
+            CAS 使用的 `updated_at`（调用方回填内存定义时用同一个值）。
+
+        Raises:
+            RevisionConflictError: CAS 确定未命中。
+            Exception: CAS 抛出的原始异常（指针未推进或无法判定时原样上抛）。
+        """
+        updated_at = now_iso()
+        try:
+            ok = await self.repo.cas_revision_pointer(
+                character_id, expected_revision, new_revision, updated_at=updated_at
+            )
+        except Exception:
+            current = await self._fresh_current_revision(character_id)
+            if current == new_revision:
+                # 写其实成功了，只是响应丢了。当成成功——否则调用方会以为失败而重试，
+                # 而库里已经是新版本了（重试的 CAS 必然因为 expected 过期而失败）。
+                logger.warning(
+                    "角色指针 CAS 抛异常但指针已推进到目标版本（响应丢失）——按成功处理 "
+                    "character_id=%s revision=%d", character_id, new_revision, exc_info=True,
+                )
+                return updated_at
+            if current == expected_revision:
+                await _compensate_delete_revision(self.rev_repo, character_id, new_revision)
+            else:
+                logger.error(
+                    "角色指针 CAS 抛异常且指针位置无法判定（回读=%s）——保留孤儿 revision "
+                    "待对账，不猜着删 character_id=%s revision=%d",
+                    current, character_id, new_revision, exc_info=True,
+                )
+            raise
+        if not ok:
+            await _compensate_delete_revision(self.rev_repo, character_id, new_revision)
+            raise RevisionConflictError(
+                character_id, await self._fresh_current_revision(character_id)
+            )
+        return updated_at
+
     async def create(
         self, draft: CharacterDraft, *, owner_user_id: str,
         created_by: CharacterCreatedBy = CharacterCreatedBy.USER,
@@ -106,7 +218,8 @@ class CharacterDefinitionWriteChain(CharacterQueryChain, CharacterInstanceStateW
             )
             await self.repo.insert_definition(definition)
         except Exception:
-            await self.rev_repo.delete_revision(character_id, 1)
+            # 补偿走受保护版本：补偿自身失败只记 warning，不顶替这里的原始异常（6 号缺陷）。
+            await _compensate_delete_revision(self.rev_repo, character_id, 1)
             raise
         return _detail(definition, revision)
 
@@ -142,13 +255,9 @@ class CharacterDefinitionWriteChain(CharacterQueryChain, CharacterInstanceStateW
             character_id, draft, revision=new_revision, state_policy=policy
         )
         await _append_revision_or_conflict(self.rev_repo, content, character_id)
-        updated_at = now_iso()
-        ok = await self.repo.cas_revision_pointer(
-            character_id, expected_revision, new_revision, updated_at=updated_at
+        updated_at = await self._commit_revision_pointer(
+            character_id, expected_revision=expected_revision, new_revision=new_revision
         )
-        if not ok:
-            await self.rev_repo.delete_revision(character_id, new_revision)
-            raise RevisionConflictError(character_id, definition.currentRevision)
         definition.currentRevision = new_revision
         definition.updatedAt = updated_at
         pending = await self._propagate_revision(
@@ -268,13 +377,9 @@ class CharacterDefinitionWriteChain(CharacterQueryChain, CharacterInstanceStateW
         if not content.checksum:
             content.checksum = _checksum(content)
         await _append_revision_or_conflict(self.rev_repo, content, character_id)
-        updated_at = now_iso()
-        ok = await self.repo.cas_revision_pointer(
-            character_id, expected_revision, new_revision, updated_at=updated_at
+        updated_at = await self._commit_revision_pointer(
+            character_id, expected_revision=expected_revision, new_revision=new_revision
         )
-        if not ok:
-            await self.rev_repo.delete_revision(character_id, new_revision)
-            raise RevisionConflictError(character_id, definition.currentRevision)
         definition.currentRevision = new_revision
         definition.updatedAt = updated_at
         pending = await self._propagate_revision(

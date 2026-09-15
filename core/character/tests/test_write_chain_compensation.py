@@ -16,9 +16,12 @@ grep 不到任何调用点断言。
 | clone (166-196) | 完全委托 `create`（无自有写入） | 同 create |
 | archive (198-228) | `identity.update_if_revision` → `repo.archive` | **无补偿**：profile 已改指而归档失败时半程写入保留 |
 
-标注「**当前契约**」的用例钉的是**未修**行为（孤儿 revision、补偿自身失败时的异常
-顶替、archive 半程写入、409 里的过期 currentRevision）。它们变红 = 行为被改动，
-应连同本文件一起更新，而不是把它们当成期望值。
+**2026-09-15 更新（#46 缺口行 8 的 4/5/6 号缺陷已修）**：本文件最初把四处缺陷当作
+「当前契约」钉住。修复后这些用例改成断言**修好的行为**，并补了判定分支：
+`_commit_revision_pointer` 的判据从"有没有抛异常"改成"**指针到哪了**"——
+CAS 抛异常时先回读，指针没动才补偿、已推进则按成功、无法判定则留孤儿 + error 日志
+（**宁可泄漏不可误删**）。仍未修的是 archive 的半程写入与实例传播的非白名单异常冒泡
+（见文件末尾两条「当前契约」用例），它们需要各自的设计决定。
 """
 
 import pytest
@@ -186,15 +189,19 @@ async def test_create_definition_write_failure_compensates_revision(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_create_compensation_failure_masks_original_error_with_orphan(monkeypatch):
-    """**当前契约**：补偿调用没有保护——它自己失败时顶替原始异常，孤儿 revision 留下。
+async def test_create_compensation_failure_keeps_original_error_and_orphan(monkeypatch, caplog):
+    """补偿自身失败 → **原始异常照常抛出**（不顶替），孤儿留下但有一条带 traceback 的 warning。
 
-    definitions.py:108-110 的补偿只有 `await self.rev_repo.delete_revision(...)` 一行，
-    没有 try/except：补偿抛 `StorageUnavailableError` 时
-      ① 调用方看到的是**补偿失败**（原始成因「insert_definition 失败」被掩盖，
-         异常链上也没有 `__cause__` 指向它）；
-      ② revision (cid, 1) 留在库里，而 characters 里没有对应 definition → 孤儿行。
+    修前（#46 缺口行 8 · 6 号缺陷）：补偿是裸 `await delete_revision(...)`，它抛
+    `StorageUnavailableError` 时调用方看到的是**补偿失败**——原始成因
+    「insert_definition 失败」被掩盖，异常链上也没有 `__cause__` 指回去。
+
+    修后：善后动作降级成 warning（`definitions.py::_compensate_delete_revision`），
+    病因照原样上抛。孤儿 revision 仍会留下——**这是有意的**：补偿是"尽力而为"，
+    留一条可对账的孤儿（`list_revisions` 里看得见）比把病因吞掉好。
     """
+    import logging
+
     svc = _service()
     log = _WriteLog()
     original_error = StorageUnavailableError("注入：characters 写失败")
@@ -203,15 +210,19 @@ async def test_create_compensation_failure_masks_original_error_with_orphan(monk
     log.spy(monkeypatch, svc.repo, "insert_definition", INSERT, raises=original_error)
     log.spy(monkeypatch, svc.rev_repo, "delete_revision", DELETE, raises=compensation_error)
 
-    with pytest.raises(StorageUnavailableError) as excinfo:
-        await svc.create(_draft(), owner_user_id="usr_local_default")
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(StorageUnavailableError) as excinfo:
+            await svc.create(_draft(), owner_user_id="usr_local_default")
 
-    assert excinfo.value is compensation_error           # 补偿异常顶替原始异常
-    assert excinfo.value is not original_error
+    assert excinfo.value is original_error               # 病因不被善后失败顶替
+    assert excinfo.value is not compensation_error
     character_id = log.args_for(APPEND)[0][0].characterId
+    assert log.args_for(DELETE) == [(character_id, 1)]   # 补偿确实尝试过
     assert await svc.rev_repo.get_revision(character_id, 1) is not None   # 孤儿行
     assert await svc.repo.get_definition(character_id) is None
     assert await svc.get(character_id) is None
+    assert any("补偿失败" in r.getMessage() for r in caplog.records), \
+        "补偿失败必须留痕（否则孤儿是静默产生的）"
 
 
 @pytest.mark.asyncio
@@ -283,14 +294,16 @@ async def test_update_cas_loss_compensates_appended_revision(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_update_cas_loss_reports_stale_current_revision(monkeypatch):
-    """**当前契约（真实缺陷，未修）**：CAS 落败时 409 里的 currentRevision 是**过期值**。
+async def test_update_cas_loss_reports_true_current_revision(monkeypatch):
+    """CAS 落败时 409 里的 currentRevision 必须是**回读到的真值**（5 号缺陷，已修）。
 
-    definitions.py:151 用 `definition.currentRevision`（本次调用开头读到的内存值）构造
-    `RevisionConflictError`——而 CAS 落败恰恰意味着库里已经**不是**这个值。路由层把它
-    原样放进 409 body（core/input/character_routes.py:84-91
-    `{"currentRevision": exc.current_revision}`），于是调用方被告知「当前版本 = 1」，
-    而仓库里其实是 3（最小复现：并发写者把指针推到 3 后，本调用的 409 仍报 1）。
+    修前：definitions.py 用 `definition.currentRevision`（本次调用开头读到的内存值）构造
+    `RevisionConflictError`，而 CAS 落败恰恰意味着库里**不是**这个值；路由层把它原样放进
+    409 body（`core/input/character_routes.py` 的 `details.currentRevision`）+ `retryable=True`
+    → 客户端按一个必然再次冲突的值重试（活锁）。
+
+    修后：`_commit_revision_pointer` 在补偿之后**绕过缓存**回读（`get_definition(fresh=True)`，
+    缓存里那份与内存里是同一个对象，直接读会拿到过期值），把真值填进 409。
     """
     svc = _service()
     character_id = await _create(svc)
@@ -301,21 +314,82 @@ async def test_update_cas_loss_reports_stale_current_revision(monkeypatch):
 
     definition = await svc.repo.get_definition(character_id)
     assert definition is not None and definition.currentRevision == 3   # 真实当前版本
-    assert excinfo.value.current_revision == 1                          # 报告的是过期值
+    assert excinfo.value.current_revision == 3, \
+        "409 必须回报真值——回报过期值会让客户端按必然再冲突的版本重试"
 
 
 @pytest.mark.asyncio
-async def test_update_cas_storage_failure_leaves_orphan_revision(monkeypatch):
-    """**当前契约（数据完整性隐患，未修）**：CAS **抛异常**时没有补偿。
+async def test_update_cas_loss_reports_true_revision_despite_stale_cache(monkeypatch):
+    """**跨进程写者**把指针推走后，409 仍须报真值——这条才真正压住 `fresh=True`。
 
-    definitions.py:146-151 只在 `ok is False` 分支补偿；`cas_revision_pointer` 抛出的
-    路径绕过它（真实现：character_repo.py:163-164 未连接即抛 StorageUnavailableError，
-    `Repository._call` 也会把驱动异常包装后抛，core/storage/base.py:227）。结果：
-    revision 2 已 durable 而 Definition 指针仍指向 1 → 孤儿 revision 永驻：
+    上一条用例的"并发对手"跑在**同一个 repo 实例**里，它的 CAS 成功会顺手
+    `_cache_invalidate`，于是回读即使命中缓存也能拿到新值——那条用例因此**测不到**
+    "绕过缓存"这件事（注入验证时被当场抓到：把 `fresh` 判断去掉，它照样绿）。
 
-      - `resolve_runtime_source(cid, 2)` 能解析到一个从未发布过的版本；
-      - `list_revisions` 把它当历史版本展示（用户可见的、没发布过的版本）；
-      - 下一次 update 从 max_revision()+1=3 继续（跳号，不覆盖，故不会静默丢数据）。
+    真实形态是**另一个进程**（或多实例部署）写了库：本进程的缓存不会被通知，仍然是 1，
+    而库里已经是 3。这里直接把库里指针改掉来复现（不经本 repo 的写路径，正是"别的进程
+    写的"语义），再触发一次 CAS 落败：
+
+      - `fresh=True` → 回读得 3 → 409 报 3（客户端知道该用 3 重试）；
+      - 走缓存 → 拿到内存里那个 1 → 409 报 1 → 客户端按 1 重试必然再冲突（活锁）。
+    """
+    svc = _service()
+    character_id = await _create(svc)
+    # 断言前提：此刻缓存里确实有一份（否则这条用例又白测了）
+    assert await svc.repo.get_definition(character_id) is not None
+
+    # "另一个进程"把指针推到 3（绕过本 repo，故不会 invalidate 本地缓存）
+    await svc.repo.backend.update_one(
+        CHARACTERS_COLLECTION,
+        {"character_id": character_id},
+        {"$set": {"current_revision": 3, "updated_at": now_iso()}},
+    )
+    assert svc.repo._cache[character_id].currentRevision == 1  # noqa: SLF001 — 缓存仍是旧的
+
+    with pytest.raises(RevisionConflictError) as excinfo:
+        await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
+
+    assert excinfo.value.current_revision == 3, \
+        "跨进程写者推进指针后，409 必须报库里的真值而不是本地缓存/内存里的旧值"
+
+
+@pytest.mark.asyncio
+async def test_update_cas_loss_with_unreadable_store_reports_unknown(monkeypatch):
+    """回读也失败 → 409 报 `None`（未知），**不得**退回那个过期值。
+
+    路由层对 `current_revision is None` 的处理是**省略** `details.currentRevision`
+    （`core/input/character_routes.py`），即"我不知道当前版本"——这比给一个错的版本号诚实：
+    客户端据此走"重新拉取再重试"而不是"拿这个号重试"。
+    """
+    svc = _service()
+    character_id = await _create(svc)
+    await _install_cas_loser(svc, monkeypatch)
+    original_get = svc.repo.get_definition
+
+    async def _unreadable(cid, *, fresh: bool = False):
+        # 只打断**绕过缓存的回读**：`update` 开头的普通读仍要能工作，否则用例会在更早的
+        # 地方就失败，测不到"回读失败 → 报未知"这条分支。
+        if fresh:
+            raise StorageUnavailableError("注入：回读也失败")
+        return await original_get(cid)
+
+    with pytest.raises(RevisionConflictError) as excinfo:
+        monkeypatch.setattr(svc.repo, "get_definition", _unreadable)
+        await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
+
+    assert excinfo.value.current_revision is None
+
+
+@pytest.mark.asyncio
+async def test_update_cas_storage_failure_compensates_when_pointer_unmoved(monkeypatch):
+    """CAS **抛异常**且回读证明指针没动 → **有补偿**，不留孤儿（4 号缺陷，已修）。
+
+    修前：只有 `ok is False` 分支补偿，抛异常那条路径直接漏过 → revision 2 已 durable
+    而指针仍指向 1，孤儿永驻（`resolve_runtime_source(cid, 2)` 能解析到从未发布过的版本、
+    `list_revisions` 把它当历史展示）。
+
+    修后：判据从"有没有抛"改成"**指针到哪了**"——回读 == expected 即"确定没发布"，
+    补偿删除安全；随后**原始异常照常上抛**（调用方仍需知道这次写失败了）。
     """
     svc = _service()
     character_id = await _create(svc)
@@ -330,20 +404,91 @@ async def test_update_cas_storage_failure_leaves_orphan_revision(monkeypatch):
     with pytest.raises(StorageUnavailableError):
         await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
 
-    assert log.names == [APPEND, CAS]                  # 没有补偿调用
-    assert log.args_for(DELETE) == []
+    assert log.names == [APPEND, CAS, DELETE]            # 抛异常路径也补偿了
+    assert log.args_for(DELETE) == [(character_id, 2)]
     definition = await svc.repo.get_definition(character_id)
     assert definition is not None and definition.currentRevision == 1    # 指针未动
-    assert await svc.rev_repo.max_revision(character_id) == 2            # 孤儿 revision 2
-    orphan = await svc.rev_repo.get_revision(character_id, 2)
-    assert orphan is not None and orphan.displayName == "v2"
+    assert await svc.rev_repo.max_revision(character_id) == 1            # 孤儿已清
+    assert await svc.rev_repo.get_revision(character_id, 2) is None
     revisions = await svc.list_revisions(character_id)
-    assert [item.revision for item in revisions.items] == [2, 1]         # 未发布却可见
+    assert [item.revision for item in revisions.items] == [1]
 
 
 @pytest.mark.asyncio
-async def test_update_compensation_failure_masks_conflict_and_leaves_revision(monkeypatch):
-    """**当前契约**：update 的补偿同样没有保护——它失败时 409 被顶替、revision 留在库里。"""
+async def test_update_cas_exception_with_advanced_pointer_is_treated_as_success(monkeypatch):
+    """CAS 抛异常但回读显示指针**已到目标版本** → 视为成功（响应丢失，不是写失败）。
+
+    这是"不猜着删"的另一半：驱动超时完全可能发生在**服务端已提交**之后。若此时按"抛异常
+    = 没写成功"处理并删掉 revision，就会删掉一条**已发布**的版本（指针指向不存在的版本
+    = 数据丢失，比孤儿严重得多）。故必须先回读再决定。
+    """
+    svc = _service()
+    character_id = await _create(svc)
+    log = _WriteLog()
+    log.spy(monkeypatch, svc.rev_repo, "append_revision", APPEND)
+    log.spy(monkeypatch, svc.rev_repo, "delete_revision", DELETE)
+    original_cas = svc.repo.cas_revision_pointer
+
+    async def _commit_then_raise(character_id_, expected_revision, new_revision, updated_at):
+        # 真实落库成功，然后"响应丢失"
+        assert await original_cas(
+            character_id_, expected_revision, new_revision, updated_at=updated_at)
+        raise StorageUnavailableError("注入：写已提交但响应丢失")
+
+    log.spy(monkeypatch, svc.repo, "cas_revision_pointer", CAS)
+    monkeypatch.setattr(svc.repo, "cas_revision_pointer", _commit_then_raise)
+
+    result = await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
+
+    assert log.args_for(DELETE) == [], "已发布的 revision 绝不能删"
+    assert result.character.summary.currentRevision == 2
+    definition = await svc.repo.get_definition(character_id)
+    assert definition is not None and definition.currentRevision == 2
+    assert await svc.rev_repo.get_revision(character_id, 2) is not None
+
+
+@pytest.mark.asyncio
+async def test_update_cas_exception_with_undecidable_pointer_keeps_orphan(monkeypatch, caplog):
+    """回读失败（指针位置**无法判定**）→ 一个字节都不删，留孤儿 + error 日志。
+
+    宁可泄漏不可误删：无法证明"没发布"时删掉 revision，就是把一次不确定变成一次可能的
+    数据丢失。孤儿是可见、可对账的（`list_revisions`），日志里带 traceback。
+    """
+    import logging
+
+    svc = _service()
+    character_id = await _create(svc)
+    log = _WriteLog()
+    log.spy(monkeypatch, svc.rev_repo, "append_revision", APPEND)
+    log.spy(monkeypatch, svc.rev_repo, "delete_revision", DELETE)
+    original_error = StorageUnavailableError("注入：CAS 存储失败")
+    log.spy(monkeypatch, svc.repo, "cas_revision_pointer", CAS, raises=original_error)
+    original_get = svc.repo.get_definition
+
+    async def _unreadable(cid, *, fresh: bool = False):
+        # 同上前提：只打断回读，普通读照常（否则连 expected_revision 校验都过不去）。
+        if fresh:
+            raise StorageUnavailableError("注入：回读也失败")
+        return await original_get(cid)
+
+    monkeypatch.setattr(svc.repo, "get_definition", _unreadable)
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(StorageUnavailableError) as excinfo:
+            await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
+
+    assert excinfo.value is original_error
+    assert log.args_for(DELETE) == [], "无法判定时不得删——宁可留孤儿"
+    assert await svc.rev_repo.get_revision(character_id, 2) is not None
+    assert any(r.levelno >= logging.ERROR for r in caplog.records), \
+        "留孤儿必须留 error 级痕迹（否则静默）"
+
+
+@pytest.mark.asyncio
+async def test_update_compensation_failure_keeps_conflict_error(monkeypatch, caplog):
+    """update 的补偿失败 → **409 照常抛出**（不被补偿异常顶替），孤儿留下并留痕。"""
+    import logging
+
     svc = _service()
     character_id = await _create(svc)
     log = _WriteLog()
@@ -352,12 +497,14 @@ async def test_update_compensation_failure_masks_conflict_and_leaves_revision(mo
     log.spy(monkeypatch, svc.rev_repo, "delete_revision", DELETE, raises=compensation_error)
     await _install_cas_loser(svc, monkeypatch, append_impl=append_original)
 
-    with pytest.raises(StorageUnavailableError) as excinfo:
-        await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(RevisionConflictError) as excinfo:
+            await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
 
-    assert excinfo.value is compensation_error                    # RevisionConflictError 被顶替
+    assert excinfo.value.current_revision == 3, "冲突语义不被善后失败顶替"
     assert log.args_for(DELETE) == [(character_id, 2)]
-    assert await svc.rev_repo.get_revision(character_id, 2) is not None   # 补偿未生效
+    assert await svc.rev_repo.get_revision(character_id, 2) is not None   # 孤儿（补偿未生效）
+    assert any("补偿失败" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -407,8 +554,12 @@ async def test_rollback_cas_loss_compensates_appended_revision(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_rollback_cas_storage_failure_leaves_orphan_revision(monkeypatch):
-    """**当前契约（同 update）**：CAS 抛异常 → 无补偿，孤儿 revision 3 永驻。"""
+async def test_rollback_cas_storage_failure_compensates_when_pointer_unmoved(monkeypatch):
+    """rollback 同 update：CAS 抛异常但回读证明指针没动 → 补偿删除，不留孤儿。
+
+    两条链共用 `_commit_revision_pointer`——这条用例的存在是为了防止将来有人只改
+    `update` 那条而把 `rollback` 落在后面（本项目反复出现的「两条路径不对称」）。
+    """
     svc = _service()
     character_id = await _create(svc)
     await svc.update(character_id, _draft(displayName="v2"), expected_revision=1)
@@ -423,13 +574,13 @@ async def test_rollback_cas_storage_failure_leaves_orphan_revision(monkeypatch):
     with pytest.raises(StorageUnavailableError):
         await svc.rollback(character_id, target_revision=1, expected_revision=2)
 
-    assert log.names == [APPEND, CAS]
-    assert log.args_for(DELETE) == []
+    assert log.names == [APPEND, CAS, DELETE]
+    assert log.args_for(DELETE) == [(character_id, 3)]
     definition = await svc.repo.get_definition(character_id)
     assert definition is not None and definition.currentRevision == 2
-    assert await svc.rev_repo.max_revision(character_id) == 3
+    assert await svc.rev_repo.max_revision(character_id) == 2
     revisions = await svc.list_revisions(character_id)
-    assert [item.revision for item in revisions.items] == [3, 2, 1]
+    assert [item.revision for item in revisions.items] == [2, 1]
 
 
 @pytest.mark.asyncio

@@ -113,8 +113,22 @@ class CharacterRepository(Repository):
             logger.info("角色定义已存在（并发创建竞争）：%s", definition.characterId)
         self._cache_put(definition.characterId, definition)
 
-    async def get_definition(self, character_id: str) -> CharacterDefinition | None:
-        if character_id in self._cache:
+    async def get_definition(
+        self, character_id: str, *, fresh: bool = False
+    ) -> CharacterDefinition | None:
+        """读角色定义（默认走 read-through 缓存）。
+
+        Args:
+            character_id: 角色 ID。
+            fresh: True 时**绕过缓存**直读库，并把读到的真值写回缓存。
+
+        为什么需要 `fresh`（#46 缺口行 8 · 5 号缺陷）：CAS 落败时调用方手里那份定义
+        **按定义就是过期的**（落败恰恰意味着库里已经不是那个版本），而它又是缓存里的
+        同一个对象——不回读就会把过期版本号写进 409 的 `details.currentRevision`，
+        客户端按它重试必然再次冲突（死循环）。成功写路径会 `_cache_invalidate`，
+        所以"缓存陈旧"只在失败/并发路径上暴露；这里给调用方一条拿到真值的路。
+        """
+        if not fresh and character_id in self._cache:
             return self._cache[character_id]
         if self._db is None:
             raise StorageUnavailableError("CharacterRepository 未连接")
@@ -125,6 +139,8 @@ class CharacterRepository(Repository):
         if not docs:
             return None
         got = _from_doc(docs[0])
+        # fresh 读也写缓存：它是**更权威**的值，用它顺带修正陈旧条目（否则回读只帮到
+        # 本次调用的错误消息，后续读者仍拿到旧值）。
         self._cache_put(character_id, got)
         return got
 
