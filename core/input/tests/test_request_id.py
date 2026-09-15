@@ -163,3 +163,52 @@ def test_next_request_id_returns_request_id():
     from core.agent.server import AgentServer
     hints = get_type_hints(AgentServer.next_request_id)
     assert hints["return"] is RequestId
+
+
+class _LoopWS:
+    """驱动 `_run_ws_message_loop` 的最小假 WS（异步可迭代 + 捕获 send_json）。
+
+    每次 yield 之前都**故意**把 ContextVar 设成一个陈旧 id——模拟"上一条命令留下了
+    关联 ID"，这正是 S3-06 的触发条件。
+    """
+
+    def __init__(self, frames: list[str]) -> None:
+        self._frames = frames
+        self.sent: list[dict] = []
+
+    def __aiter__(self):
+        async def _gen():
+            from aiohttp import WSMsgType
+
+            class _Msg:
+                def __init__(self, data: str) -> None:
+                    self.type = WSMsgType.TEXT
+                    self.data = data
+            for raw in self._frames:
+                set_request_id("stale_from_previous_command")
+                yield _Msg(raw)
+        return _gen()
+
+    async def send_json(self, payload: dict) -> None:
+        self.sent.append(payload)
+
+
+class TestRequestIdIsPerFrame:
+    """S3-06：关联 ID 必须**按帧**重置，不能沿用到下一条无关请求的错误帧上。"""
+
+    @pytest.mark.asyncio
+    async def test_stale_request_id_does_not_leak_into_next_frame_error(self):
+        from types import SimpleNamespace
+
+        from core.input.ws_handler import _run_ws_message_loop
+
+        ws = _LoopWS(["{ not json", "{ also bad"])
+        conn = SimpleNamespace(ws=ws, audio_buf=None, voice_mgr=None,
+                               sent_message_ids=set())
+
+        await _run_ws_message_loop(conn, None, None)
+
+        errs = [p for p in ws.sent if p.get("type") == "error"]
+        assert len(errs) == 2, ws.sent
+        assert all(p.get("requestId") is None for p in errs), (
+            f"上一帧的关联 ID 泄漏进了本帧错误：{[p.get('requestId') for p in errs]}")

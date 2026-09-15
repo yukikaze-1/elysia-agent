@@ -47,7 +47,7 @@ from core.network.rate_limiter import RateLimiter, rate_key_for_request
 from core.input.sticker_registry import get as get_sticker
 from core.input.voice_sessions import VoiceSessionError, VoiceSessionManager
 from core.storage.idempotency_repo import STATUS_ACCEPTED, STATUS_REJECTED
-from core.utils import get_request_id
+from core.utils import get_request_id, set_request_id
 from frontend_contract import (
     AcceptedUserAckMessage,
     AckError,
@@ -416,6 +416,12 @@ async def _run_ws_message_loop(
 ) -> None:
     """连接建立后的消息循环：TEXT 路由 / BINARY 音频分流 / 错误隔离。"""
     async for msg in conn.ws:
+        # S3-06：**每帧入口重置关联 ID**。ContextVar 是任务级、跨帧保留：上一条命令
+        # （如 `voice.commit`）设置的 "012" 会一直留着，于是之后某条**与本请求无关**的
+        # 错误帧会带上那个 id——客户端按它归因到一条**已成功**的旧请求，比省略更糟。
+        # "-" 是既有默认值（无请求上下文时 `_current_request_id()` 本来就返回 None），
+        # 故本改动不动 wire 契约。
+        set_request_id("-")
         if msg.type == WSMsgType.TEXT:
             try:
                 data = json.loads(msg.data)
