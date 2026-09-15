@@ -586,6 +586,11 @@ Worker 日志里都**没有** `check-timeouts` / `check-contract` 步骤（那�
 
 **(b1) 路线图【新增】项 —— 既不在"已做 48 项"、也不在"38 条未排期"**
 
+> ⚠️ **本表的"核对状态"列已过期，勿据它排期**：2026-09-16 的机械重核（§0.4.18）实测 4 行
+> 就是错的——`#33b`/`#33c` 在**同一份报告的下一节**（§0.4.11）就已登记修复，
+> `#11b`/`#11c` 在 §0.1 的 S1 表（`:95-96`）早已登记已修（= CR-05 / CR-06）。
+> **状态一律以 §0.4.18 为准**；本表保留原样，只为"当时的抽查结论"留痕。
+
 | 项 | 内容 | 核对状态 |
 |---|---|---|
 | `#33b` | `SafetyPipeline` 不得把 `CancelledError` 归一为业务结果 | ✅ 已核实未做（`Module/tool/safety.py:521`） |
@@ -1372,6 +1377,123 @@ pip  26.1.2  PYSEC-2026-3721  fix: 26.2 / 26.2.0
   `check-ci-isolation` 逐道复跑全绿（`audit` 见 (b2)，**已知为红且未接线**）
 - 反证 5 条（(b1) 表内），每条都逐字节还原后复绿
 - 文档：`docs/ci.md` 新增「门禁的接线：声明 ≠ 执行」节 + job 表更新 + 恢复清单补注
+
+---
+
+### §0.4.18 「从未排期」条目群的机械重核：真·剩余表（2026-09-16，5 个只读审计 + 主 Agent 抽验）
+
+#### (a) 为什么必须重核：账本已经陈旧
+
+起因是收尾时抽查三项，**两项的登记状态是错的**：#33b 写着"已核实未做"而 `safety.py:579`
+早就 `raise` 了（同一份报告的 §0.4.11 就登记过）；`S2-G4` 列在"从未排期"里而它早已修好并带
+10 条守卫。**按陈旧状态排优先级等于白排**——所以先把状态核实一遍。
+
+**方法**（可复现）：
+- 5 个**只读**审计（禁改仓库、禁跑测试），分批覆盖 46 条；每条必须给出**当前**代码位置
+  （报告里的行号是 2026-09-12 快照，全部漂移）。
+- 裁定词表固定为 `已修 / 部分修 / 仍存在 / 无法判定 / 已撤回`；**判 `已修` 必须给双证**
+  （守卫测试 `文件::用例` **或**修复提交），缺守卫测试一律降为 `部分修`。
+  理由：错判"已修"会让真洞**永久出队**，是最危险的裁定方向。
+- 主 Agent 独立抽验（不采信二手结论）：**跑**了 6 组"已修"背后的守卫测试（31 passed）；
+  对 `#14c`/`#21c`/`S2-H3`/`S2-H4` 亲自读码复核；对审计之间的**冲突**亲自裁决（见 (d)5）。
+
+**局限（如实标注）**：审计过程**未跑测试**，"守卫测试存在"是读源码得出的，只由我抽验的
+那 6 组背书；未做真实 Electron/HTTP 端到端复现；线上 legacy 数据存量（如 `S2-H10` 的
+`source` 键比例）未查库。
+
+#### (b) 汇总：46 条的裁定分布
+
+| 组 | 条数 | 已修 | 部分修 | 仍存在 | 已撤回 |
+|---|---:|---:|---:|---:|---:|
+| 组 H（`S2-H*`） | 9 | 2 | 1 | 6 | — |
+| 组 G + R2/R6 | 9 | 6 | 1 | 2 | — |
+| 其他（`S2-A5`/`S2-B7×3`/`S3-05~08`/`S3-R2-*`/`S3-R6-*`） | 12 | 3 | 1 | 8 | — |
+| `S3-G1`~`G7` | 7 | 0 | 0 | 6 | **1** |
+| §0.4.10(b1)【新增】9 项 | 9 | 6 | 0 | 3 | — |
+| **合计** | **46** | **17** | **3** | **25** | **1** |
+
+> 其中 `#21c` 已于本轮修复（`7518c6a3`），故当前实际开口 **24 条**。
+> 另有 4 组门禁登记缺口由主 Agent 自查（见 (c)5），不在上表内。
+
+#### (c) 真·剩余（按"值不值得今天排期"分档）
+
+**档 1 · 数据不可逆 / 用户可见 / 零守卫**（建议优先）
+
+| 条目 | 位置 | 后果 | 成本 |
+|---|---|---|---|
+| `#14c` | `core/character/service/base.py:73-81`（粘性 `_connected` **无任何重置**）+ `_lifecycle_persistence.py:479-504` 探针表无 character 键 | **一次网络抖动 → 角色域 503 直到进程重启**，L2/C6/mood flush 停写；`/ready` 与 debug 面板都看不见；**零守卫**。`:605` 那句"其余 repo：health_check 内部已重连"对这三个 repo **不成立**（它们的 `health_check` 全仓零调用点） | 1–2 天 |
+| `S2-B7b` | `core/storage/secret_store.py:63-79`（损坏 → `return {}`）+ `set_secret` 整份覆盖 | 密钥文件损坏后**第一次写入即抹掉其余全部 provider 密钥**。更糟：`test_secret_store.py:90-94` 把破坏性行为**钉成预期** ——不先改这条用例，洞不会被任何回归网挡住 | 0.5–1 天 |
+| `S3-08` | `core/input/ws_handlers/voice.py:81-151`（先发 `ended{stt_disabled}` 再进 try）+ `voice_sessions.py:729-743` + `_require_session:723-727` | 另一连接关 STT 后，本连接**任一** `voice_session.*` 返回**两帧且语义矛盾**（先 ended 再 NOT_FOUND）。现用例 `test_voice_ws.py:154-172` 恰好把这多出来的一帧放过 → 等于零防线 | ~1 天 |
+| `S3-R6-2` | `Module/conftest.py:91-98` | patch 目标写错（`motor.motor_asyncio.AsyncIOMotorClient`，而 `mongodb.py:8` 已按名绑进本模块命名空间）→ fixture **恒无效**、`return` 无 teardown；`test_documentdb.py` **25 个用例**各泄漏一个真 `AsyncIOMotorClient`。首次报告后**未修**（`git log -S` 0 命中） | 0.5 天 |
+
+**档 2 · 关停与恢复路径**
+
+| 条目 | 位置 | 后果 | 成本 |
+|---|---|---|---|
+| `S2-R2-4` | `core/agent/lifecycle.py:86-112`（20 步**无任何 WS/语音步**）+ `voice_sessions.py:682` 直接 `bus.post` | 停机窗口内语音段仍可进"消费者已死"的 bus；**CR-08 的准入闸只装在 `process_message` 一个口**。跨 `/restart` 的污染**仅在 `rebuild_on_restart=False`（同实例重启）成立**——默认路径重建 Agent ⇒ 新 `EventBus`（`agent.py:246`），旧队列随对象丢弃 | 0.5 天 |
+| `S2-G3` | `core/adapter/tts_adapter.py:161-164`（reset 仍 `clear()` 重建）、`:413` 裸下标、`:503-505` finally 写**新** dict、`:236-249` `wait_all` 无超时、**:374-390 两个早退 `return` 落在 try/finally 之外** | 门控丢失**不依赖**那个时序窗口；后果 `wait_all`/`finish_turn` 无界等待 → Agent 永久 SPEAKING。**无修复提交、全仓无守卫** | 0.5 天 |
+| `#20b` | `core/agent/lifecycle.py:326-333`（外层 `wait_for(...,10.0)`）+ `loop.py:1087-1107`（逐任务 5s + `clear()`） | 外层超时会取消 flush 本身，剩余 task 既不取消也不等待，随后 `_stop_persistence` 关库。**代码库自己的 `drain` docstring（`task_scope.py:214-222`）逐字点名本处未迁移** | 0.5–1 天 |
+| `S3-05` | `Module/workflow_engine/debug_api.py:86` `await q.put(_SENTINEL)` 无超时（队列 `maxsize=256`，广播用 `put_nowait`） | 半开 SSE 客户端 → 队列打满 → `stop()` 挂起。**减轻事实**：`core/agent/server.py:74-79` 的 `wait_for(...,3.0)` 只覆盖 agent 自身服务循环这一条路径 | 0.5 天 |
+| `S3-R2-2` | `core/input/voice_sessions.py:553-554`（`discard` 在**提交之前**）vs 提交在 `:557-561` | `stop_session` 漏掉"已摘除、仍在提交中"的段 → teardown 抬 epoch 后该段被丢 → 用户收到 `ended` 但**无回复**；DICTATION 末尾文本被截断。现有两条用例都只阻塞在 transcribe 阶段 | 0.5–1 天 |
+| `S2-R2-3`（部分） | `core/memory/embedding_provider.py:110-113` 仍是 `wait_for(run_in_executor(...))` | 超时后线程仍跑且 `_failed_at` 已置 → 冷却 60s 后可**叠加第二个加载线程**；`shutdown_default_executor` 全仓 0 命中 | 2–3h |
+
+**档 3 · 安全纵深 / 资源增长**（当前不可直接利用，但值得补守卫）
+
+| 条目 | 位置 | 说明 |
+|---|---|---|
+| `S3-G4` | `Module/tool/safety.py:213-234` | `_validate_url` 只认字面量 IP：`localhost`/`2130706433`/`0177.0.0.1`/`metadata.google.internal` 全放行。`block_private_ips` 形同虚设；**正面对照仍成立**：唯一带 url 的 `web_fetch` 走 `ssrf.build_guarded_http_client` 逐跳校验。修法：复用 `ssrf.validate_endpoint` |
+| `S2-B7c` | `core/storage/message_repo.py:660-661`（+ 同型 `character_repo.py:170`） | debug 归档搜索的 `$regex` 未 `re.escape`、无长度上限；**同文件 `:126-130` 的 `query_search` 早已是 `re.escape` + ≤200 上限**，对照强烈 |
+| `S3-06` | `core/input/ws_handler.py:105-113` + `ws_handlers/voice.py:238` | 错误帧 `requestId` 取自 ContextVar 且**每帧不重置** → 指向已成功的旧请求；现用例把该来源钉成合法 |
+| `S3-G5` | `core/tools/vision/plugin.py:285-322` | 缓存写 `created_at` 但**无人读**，无上限/TTL/淘汰；`core/tools/tests/` **无 test_vision.py**（零覆盖） |
+| `S3-R6-1` | `core/tests/test_phase3.py:457-471` | `_process_lock` 的唯一并发用例是**空断言**（断言的是 `len(started)==2`，与锁无关）——删锁仍绿 |
+| `S2-G4` 残余 | `core/tools/filesystem/plugin.py:120,213` | 类默认仍是**裸根**；`config.yaml` 缺失时 `manager.py:165-186` 静默 return → 回退裸根 |
+
+**档 4 · 设计决策型**（不是"快修"，需要 owner 定）
+
+| 条目 | 卡点 |
+|---|---|
+| `S2-H3` | `extra_body={"thinking": …}` 硬编码在 **10 个调用点**（`streaming.py:136` 等），`providers.yaml` 无 `supports_thinking`。严格 OpenAI 兼容 provider 上 100% 回合失败，而日志只显示 `GENERATION_PROVIDER_UNAVAILABLE`——**误诊成本最高** |
+| `S2-H4` | 无端到端超时 × SDK 默认重试 2 次 × 适配器 3 次 → 最坏 ~12 分钟；`GENERATION_TIMEOUT` 是**死错误码**（`loop.py:620` 只消费不抛） |
+| `S2-H7` | 空 `base_url` 覆盖内置默认（**STT 已修 `36f11449`，LLM/TTS 未修**）→ `gpt_sovits.py:35` 的 `localhost:9880` 默认成死代码 |
+| `S2-H8` | sticker/file-only → `{"role":"user","content":[]}`（用户发的贴图模型**完全看不到**），v2 路径真实可达、无守卫 |
+| `S2-H9` | prompt 无总长/预算/截断（`system_prompt_manager.py:55` 仍是 `"\n\n".join`） |
+| `S2-H6` | `send_json` 吞异常 → 桌面工具白等满 120s（且在册通道"坏"时契约无法满足）；改动落在 `Module/output` 的**全 wire 公共路径**上，需先定语义 |
+| `#21b` | 会话删除级联不全：`token_repo.delete_by_session` / `generation_repo.delete_by_session` **零生产调用**，`character_versions` 连删除方法都没有 |
+| `S3-G7` | TEXT_DELTA 粒度：行为是**有意设计**的一半（tokenizer docstring 与用例固化）+ spec 未披露的一半。**报告②③过度归因**：TTFT 只在"整条回复无换行/空格"时失真，多行时按行成簇（日志实测 700–2100ms） |
+
+#### (d) 重核顺带挖出的新缺陷（原报告没有的）
+
+1. **`DAGNode.max_duration_s` / `DBTNode.max_duration_s` 全仓零写入**（主 Agent 核）：
+   `execution.py:84-105` 把它当 `wait_for` 预算读（S2-D4④ 接上的执行点），但
+   **`parser.py:113-123` 构造 `DAGNode` 时逐键列出、不含该键**，且 `.py/.yaml/.j2/.md` 全仓
+   `max_duration_s=` / `"max_duration_s"` **0 命中**。⇒ 那个"节点级超时执行点"**今天 100% 不生效**，
+   是「声明了但到不了」的活样本（门禁只把它登记为"已知缺口"，读起来像无害）。
+2. **`S2-G2` 残余（未验证）**：`core/desktop/bridge.py:222` 的 dedup 复用分支把 `owner_id`
+   设为**首方**的 id ⇒ 复用等待者被取消时 `_mark_cancelled_best_effort(existing_id)` 并
+   `_pending.pop`，**释放的是首方的登记** → 首方挂到桥超时，且 dedup 键被清后同参重试会**重新投递**。
+3. **`S2-G3` 新证据**：`tts_adapter.py:374-390` 两个早退 `return` 落在 `try/finally` **之前**。
+4. **审计冲突 1 例，已裁决**：`/restart` 是否复用 `EventBus` —— 默认 `rebuild_on_restart=True`
+   会**重建 Agent 实例**（`server.py:229`）⇒ 新 `EventBus`（`agent.py:246`），故"跨重启污染"
+   只在同实例重启成立。两个审计各对一半，已按裁决写进上表。
+5. **`_ASYMMETRIC_JUSTIFIED` 的 3 项引用了一个已裁定的决策**（主 Agent 核）：
+   `MessageRepository` / `SessionRepository` / `GenerationRepository` 的理由栏都写
+   "整仓统一等决策项 #8"，而 owner 对 #8 的裁定是「**一律 fail-closed（503）**」、
+   落档去向却只覆盖 `CharacterVersionRepository` 三条读路径（`114f6668`）。
+   ⇒ **决策文本与其适用范围不一致**，导致 3 个仓储被"一个已经做出的决定"冻住。需 owner 明确范围。
+6. **`S3-07` 的 v1 路径未覆盖**（审计自注）：`attachments` 上限只加在 v2 契约字段上，
+   v1 的 `content`-as-parts 走 `parts_from_dicts` 不受该上限约束。
+7. **`S3-G6` 撤回**：`get_time("+99")` 的 `timezone()` 抛的正是 `ValueError`，被同一个
+   `except ValueError` 捕获 → 友好失败。**判误报**（可选：把 `OverflowError` 并入该 except）。
+
+#### (e) 建议的下一步排序
+
+1. **档 1 四条**：`#14c`（唯一"永久不可用 + 零守卫"）、`S2-B7b`（先改那条钉旧行为的用例）、
+   `S3-08`、`S3-R6-2`（各 0.5–1 天，都有现成的判定）。
+2. **档 2 的"关停路径"四条**：它们互相独立、都能独立验证，且都在"数据已提交但没落定"的窗口上。
+3. **档 4 需要先决策**：`S2-H3`（provider 能力门控）与 `S2-H6`（`send_json` 语义）都是
+   改公共路径，先定语义再动手；`#21b`/`S2-H9` 是产品级范围决定。
+4. `S3-G7` 与 `S3-R2-1` 建议**降级观察**：前者是有意设计 + 文档未披露，后者危害未能证成
+   （唯一登记点的产物被父 tail await、父被 cancel 时子被连带 cancel）。
 
 ---
 
