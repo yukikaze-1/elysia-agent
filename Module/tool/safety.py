@@ -790,12 +790,17 @@ class SafetyPipeline:
         try:
             await asyncio.wait_for(event.wait(), timeout=self._hitl_timeout)
             result = self._hitl_results.pop(request_id, (False, "expired"))
-            self._hitl_requests.pop(request_id, None)
             return result[0], result[1]
         except asyncio.TimeoutError:
+            return False, "timeout"
+        finally:
+            # S3-G2：**未落定的登记也必须出清**。取消（用户打断 → 调度器 cancel 子任务
+            # → 这里被 cancel）此前既不进成功分支、也不进 TimeoutError 分支 ⇒ 条目留在
+            # `_hitl_requests` 且 event 未 set ⇒ `get_pending_approvals()` **永远**返回它，
+            # 每次 WS 连接/刷新都重播一个没人能消费的审批框（点"批准"返回 True 但无人
+            # 接收）。放 finally 而不是每个分支各写一遍：三条路径一个都不能漏。
             self._hitl_requests.pop(request_id, None)
             self._hitl_results.pop(request_id, None)
-            return False, "timeout"
 
     def _wrap_result(
         self, raw: Any, name: str, duration_ms: float,

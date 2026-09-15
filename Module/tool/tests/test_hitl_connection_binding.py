@@ -235,3 +235,53 @@ async def test_ws_handler_passes_none_without_channel():
     await _dispatch_tool_approval(ctx, {}, msg, None)
 
     ctx.agent.tool_adapter.submit_approval.assert_called_once_with("r1", False, None)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 4. S3-G2：取消后不得留下**幽灵审批**
+# ═══════════════════════════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_cancelled_hitl_request_is_cleaned_up():
+    """取消在途审批 → 登记必须出清，禁止幽灵弹窗跨连接重播。
+
+    可达路径（活进程内，不需要重启）：用户新输入/断线 → `cancel_current` →
+    调度器取消子任务 → 这里被取消。此后每次 WS 连接都会
+    `get_pending_approvals()` 重播那个 box，而它**已经没有等待方**。
+    """
+    p = SafetyPipeline()
+    p._hitl_timeout = 30.0                      # noqa: SLF001 —— 只要不靠超时收场
+
+    async def _broadcast(*a, **kw):
+        return None
+    p.set_hitl_broadcast(_broadcast)
+
+    plugin = MagicMock()
+    task = asyncio.create_task(p._run_hitl(plugin, "write_file", {"path": "/etc/x"}))  # noqa: SLF001
+    for _ in range(20):                          # 等登记出现
+        if p.get_pending_approvals():
+            break
+        await asyncio.sleep(0.01)
+    assert p.get_pending_approvals(), "前置条件：审批请求已登记"
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert p.get_pending_approvals() == [], "被取消的审批仍挂在待办里（幽灵弹窗）"
+    assert p._hitl_requests == {} and p._hitl_results == {}   # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_timeout_still_cleans_up():
+    """回归网：超时路径原本就会出清——别在改成 finally 时弄坏它。"""
+    p = SafetyPipeline()
+    p._hitl_timeout = 0.01                      # noqa: SLF001
+
+    async def _broadcast(*a, **kw):
+        return None
+    p.set_hitl_broadcast(_broadcast)
+
+    approved, status = await p._run_hitl(MagicMock(), "write_file", {})  # noqa: SLF001
+    assert (approved, status) == (False, "timeout")
+    assert p.get_pending_approvals() == []
