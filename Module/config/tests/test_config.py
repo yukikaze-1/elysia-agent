@@ -760,6 +760,37 @@ class TestCoerceGenericUnpacking:
         assert cfg.tags == ["a", "b"], f"env 覆盖没解析：{cfg.tags!r}"
         assert cfg.limits == {"n": 3}, f"env 覆盖没解析：{cfg.limits!r}"
 
+    @pytest.mark.parametrize("env_name,field,raw", [
+        ("TAGS", "tags", "{not json"),
+        ("TAGS", "tags", '["a",'),
+        ("LIMITS", "limits", "[1,2"),
+        ("LIMITS", "limits", ""),
+    ])
+    def test_invalid_json_env_fails_closed_with_variable_name(
+            self, tmp_path, monkeypatch, env_name, field, raw):
+        """#46 行 13 的边角：**非法 JSON** 的 env 覆盖必须 fail-closed 并指出变量名。
+
+        `json.JSONDecodeError` 是 `ValueError` 子类，所以 `_override_from_env` 的
+        `except (ValueError, TypeError)` 会把它包成 `ConfigEnvFormatError`（含变量名与本值）。
+        **这条行为此前没有任何用例钉住**，而它的反面很危险：若哪天有人把"解析失败"改成
+        "退回默认值/空容器"，启动会带着一份静默错误的配置一路跑下去——本仓最难查的一类。
+        故这里同时断言"变量名出现在消息里"（不是裸 `JSONDecodeError` 冒泡）。
+        """
+        from Module.config.loader import ConfigLoader
+
+        @dataclasses.dataclass
+        class _Cfg:
+            tags: List[str] = dataclasses.field(default_factory=list)
+            limits: Optional[Dict[str, int]] = None
+
+        monkeypatch.setenv(env_name, raw)
+        with pytest.raises(ConfigEnvFormatError) as exc_info:
+            ConfigLoader(_Cfg, env_path=str(tmp_path / "none.env")).load()
+        msg = str(exc_info.value)
+        assert env_name in msg, f"错误消息没指出是哪个环境变量：{msg}"
+        assert getattr(exc_info.value, "env_key", None) == env_name, "env_key 字段丢了"
+        assert getattr(exc_info.value, "value", None) == raw, "原始值没带进异常"
+
 
 class TestOptionalContainerValidation:
     """S2-10 第二层：validator 的 `Optional[X]` 分支对**带下标的泛型**做 `isinstance`
