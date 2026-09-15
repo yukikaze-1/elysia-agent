@@ -14,13 +14,10 @@ name: Contract Frames
 #
 # 也不整体去掉 ci.yml 的 `docs/**` ignore（那会让每次纯文档提交都跑约 30 分钟）——
 # 本 workflow 只在帧或契约源变更时触发，成本极小。
+# 2026-09-16：去掉 pull_request 触发（本仓当前不开放 PR）。**恢复 PR 时与 ci.yml
+# 的「PR 门禁（已移除）」清单一并处理**——别只加回这几行。
 on:
   push:
-    branches: [main]
-    paths:
-      - "docs/archive/frontend-handoff-v2/traces/**"
-      - "frontend_contract/**"
-  pull_request:
     branches: [main]
     paths:
       - "docs/archive/frontend-handoff-v2/traces/**"
@@ -30,22 +27,64 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# 信任边界（P0-02）：pull_request 可达 → 一律 GitHub-hosted，无宿主 secret、无持久
-# 工作区、不引用宿主绝对路径凭据。由 scripts/check_ci_isolation.py 静态强制。
+# 信任边界（P0-02）：本 job 现为 **push-only（受信 ref）**，故允许 self-hosted；
+# 由 scripts/check_ci_isolation.py 静态强制（含密闭清理三条子句）。
+#
+# 2026-09-16：从 GitHub-hosted 迁到 self-hosted。原因与 ci.yml 的 real-mongo 同源——
+# 托管 runner 按分钟计费，额度见底后 job **根本不启动**（注解 "The job was not started
+# because recent account payments have failed…"），于是这个 **P0 契约漂移门禁会在
+# `frontend_contract/**` 变更时静默不跑**。那正是本 workflow 被创建出来要防的事
+# （见文件头：ci.yml 的 paths-ignore 曾让 golden frames 的守卫永不执行、漂移无声放行）
+# ——用一个"起不来的门禁"替换一个"不触发的门禁"，等于没修。
 jobs:
   frames:
     name: Contract frames drift check
-    runs-on: ubuntu-latest
+    # **必须**显式声明 push-only：门禁对"无 `if` 的 job"按 **PR 可达**保守判定
+    # （无守卫 = 任何事件都为真），于是 self-hosted + 宿主 PATH 都会被判违规。
+    # 这也正是判据该有的方向——不写清楚就当作不受信。
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install contract deps (frontend_contract 零依赖，仅需 pydantic)
-        run: python -m pip install "pydantic>=2.0"
+      - name: Checkout (retry x4, hermetic clean)
+        # 与 ci.yml 的 backend / real-mongo / frontend 三个 job **同一套** checkout +
+        # 密闭清理方案（含两道守卫与**显式退出码检查**；为什么不用 `set -e` 见 ci.yml
+        # backend job 同段注释）。
+        shell: bash
+        env:
+          REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+        run: |
+          set -uo pipefail
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            echo "== checkout attempt ${attempt}/4 =="
+            WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE 未设置——拒绝在未知目录下清理}"
+            if [ "$WS" = "/" ]; then
+              echo "FATAL: GITHUB_WORKSPACE 解析为 / ——拒绝清理"
+              exit 1
+            fi
+            if ! find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; then
+              echo "FATAL: workspace 清理失败（$WS 未清空）——拒绝在残留目录上继续"
+              exit 1
+            fi
+            if git init -q . &&
+               (git remote add origin "$REPO_URL" || git remote set-url origin "$REPO_URL") &&
+               git -c protocol.version=2 fetch --quiet --depth 1 --no-tags origin "+${{ github.sha }}:refs/remotes/origin/target" &&
+               git checkout --quiet --force refs/remotes/origin/target; then
+              echo "checkout succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "checkout failed on attempt ${attempt}"
+            if [ "$attempt" -ge 4 ]; then
+              echo "FATAL: checkout failed after 4 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+      # 本 job **刻意不加载 .env**：契约层零依赖（仅 pydantic + stdlib），无凭据需求。
+      - name: Setup conda env (Elysia)
+        run: echo "/home/yomu/data/anaconda3/envs/Elysia/bin" >> $GITHUB_PATH
       - name: Contract ts/schema/raw drift check
         run: python -m frontend_contract --check
       - name: Golden frames drift check

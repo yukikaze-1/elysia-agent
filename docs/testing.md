@@ -15,6 +15,26 @@
 > **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁。
 > 各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
 
+### CI 现状：只监听 push 到 main（2026-09-16）
+
+本仓当前**不开放 PR**，故 `ci.yml` 与 `contract-frames.yml` 都只监听 `push: [main]`，
+`pull_request` 触发器与两个 PR 侧 job（`pr-gate`、`frontend-pr`）已移除；**全部 job 都跑在
+self-hosted runner 上**。
+
+**为什么**：GitHub 托管 runner 按分钟计费，账号额度见底后这类 job **根本不会启动**（注解原文
+"The job was not started because recent account payments have failed or your spending limit
+needs to be increased"）。那与代码无关，却会给每次运行挂红叉——比没有这个 job 更糟，因为它
+训练人忽略红色。同一原因仓库此前已踩过一次（2026-09-14 frontend 批次）。
+
+**开放 PR 时必须一起恢复的东西**（清单也写在 `ci.yml` 文件头的「PR 门禁（已移除）」一节，
+**不是加回几行 YAML 就完事**）：① PR 侧静态门禁（lint / pyright / 契约 / 架构 / 超时预算 /
+契约可达性 / debug 鉴权 / check-ci-isolation / check-secrets / 集合代数 / quick 用例）；
+② Frontend PR 侧 job —— **必须**保持 GitHub-hosted（宿主上没有隔离/临时 PR runner，把 PR job
+放到持久 trusted runner 上等于让任意 PR 通过 `npm ci` 的 postinstall 在宿主用户下执行任意代码，
+`check-ci-isolation` 会拒答）；③ `contract-frames.yml` 的 PR 触发；④ **检查分支保护**：
+required status check 按 job 名匹配、只在 PR 上评估——`Frontend (vue-tsc + build)` 与
+`Real MongoDB (storage layer)` 现在都不在 PR 侧上报了，需重新对齐，否则 PR 永远等不到上报而卡死。
+
 ### 合并门禁的两个集合是**互斥**的（2026-09-14 CI 性能专项）
 
 ```bash

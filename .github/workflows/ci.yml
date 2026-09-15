@@ -15,10 +15,8 @@ on:
       # `docs/**` 保留：没有测试在运行期读 docs/（唯一例外是 golden frames
       # `docs/archive/frontend-handoff-v2/traces/**`，由 contract-frames.yml 单独覆盖）。
       - "docs/**"
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
+  # ⚠️ **2026-09-16 起不再监听 pull_request**（本仓当前不开放 PR）。要恢复 PR 门禁，
+  # 见下面「PR 门禁（已移除）」小节列的清单——不是把这几行加回来就完事。
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -42,99 +40,33 @@ permissions:
 #   - 真实凭据外部 E2E 已移出本 workflow（见下），只在 `.github/workflows/nightly.yml`
 #     的受信手动触发里跑。
 #
-# 2026-09-14（Frontend 迁移批次）：`frontend` job 拆成 push / PR 两个——
-#   `frontend`    push → `[self-hosted, Linux, X64]`（本批次迁移目标）
-#   `frontend-pr` PR   → `ubuntu-latest`（**安全边界不变**，见该 job 上方说明）
-#   触发原因是账单（与 elysia-frontend 同源）：GitHub 账号额度/账单被卡后，托管
-#   runner 上的 job 根本不会被分发，本仓 Frontend job 因此完全无法启动
-#   （对端实测 run 34688140376：6 个托管 job 在 0～3 秒内失败，注解
-#   "The job was not started because recent account payments have failed or your
-#   spending limit needs to be increased"；自建 runner 不受影响）。
-#   **注意 PR 侧仍托管**：宿主上不存在隔离/临时/untrusted 的 PR runner，把 PR job
-#   放到持久 trusted runner 上等于让任意 PR 通过 `npm ci` 的 postinstall 脚本在
-#   宿主用户 yomu 下执行任意代码——这是明确拒绝的取舍，不是遗漏。
+# 2026-09-16（PR 门禁移除）：本仓当前**不开放 PR**，故删掉两个 pull_request
+#   可达的 job（`pr-gate`、`frontend-pr`）并去掉 `pull_request` 触发器。触发原因是
+#   账单：GitHub 账号额度/账单被卡后**托管 runner 上的 job 根本不会被分发**，这类
+#   job 会在 0～3 秒内"失败"（注解原文："The job was not started because recent
+#   account payments have failed or your spending limit needs to be increased"），
+#   而它**与代码无关**——给每次运行挂一个无意义的红叉，比没有这个 job 更糟：
+#   它训练人忽略红色，而本仓的门禁文化正是靠"红=有事"支撑的。
+#   （2026-09-14 frontend 批次已因同一原因踩过一次，见 git 历史。）
+#
+#   ### PR 门禁（已移除）——**开放 PR 时按此清单恢复**，不是加回几行 YAML
+#   ① `pr-gate`（PR Gate）：lint / pyright / 契约漂移 / check-arch / 超时预算 /
+#      契约可达性 / debug 鉴权 / check-ci-isolation / check-secrets / 测试集合代数
+#      / `pytest -m "unit or service" -x`。它曾是 PR 侧**唯一**的静态门禁。
+#   ② `frontend-pr`（Frontend (vue-tsc + build)，`ubuntu-latest`）：与 push 侧
+#      `frontend` 逐字等价。**PR 侧必须保持 GitHub-hosted**——宿主上没有隔离/临时
+#      的 PR runner，把 PR job 放到持久 trusted runner 上等于让任意 PR 通过
+#      `npm ci` 的 postinstall 在宿主用户下执行任意代码（`check_ci_isolation.py`
+#      会直接拒答）。要自建化必须先有 ephemeral/容器/VM 隔离 runner。
+#   ③ 恢复 `on: pull_request`，并同步 `contract-frames.yml`（也一并去掉了 PR 触发）。
+#   ④ **检查分支保护**：required status check 按 **job 名**匹配、且只在 PR 上评估。
+#      `Frontend (vue-tsc + build)` 与 `Real MongoDB (storage layer)` 这两个名字
+#      现在都不在 PR 侧上报了——开放 PR 前必须在 Settings → Branches 里把对应的
+#      required 项重新对齐（否则 PR 会**永远等不到上报**而卡死）。
+#   ⑤ 恢复后跑 `make check-ci-isolation`（静态校验信任边界）。
 # ---------------------------------------------------------------------------
 
 jobs:
-  pr-gate:
-    name: PR Gate (backend lint + types + contract + quick)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install runtime + dev deps (clean-room, 无真实凭据)
-        # CPU-only torch 快速安装（CUDA/GPU 只在受信 push job）；一次全新安装，结果确定
-        #
-        # 2026-09-14 RC：dev/测试工具改为装 `requirements-dev.txt`，不再手写
-        # `pytest ruff pyright pip-audit bandit`——那是第二处真相：往 dev 文件里加
-        # 工具（如 pytest-xdist）而忘改这里，CI 就会以 "unrecognized arguments: -n" 失败。
-        # 生效集合 = 旧集合 + {pytest-timeout, pytest-xdist}（这两个此前由
-        # requirements.txt 顺带带进来，现已随插件一起移到 dev 文件）。逐项对比脚本见
-        # 提交说明；**没有任何包被少装**。
-        #
-        # S2-9「CI 装锁」的结论：**CI 不直接消费 environment.lock.yml**。那份锁是
-        # `conda env export`，含 linux-64 专用 conda 包（build string 形如 `=he532380_0`）
-        # 与生成机 prefix，GitHub runner 上没有 conda、也重放不了这些条目。
-        # 取而代之的是三道**可执行**约束（都在本 job 里）：
-        #   ① Dependency lock drift check（下两步）：声明必须被锁满足 + 版本比对；
-        #   ② requirements.txt 的每个依赖都带 `上限`（test_check_env_lock.py 断言），
-        #      所以"按本文件装"不会跨大版本静默换实现；
-        #   ③ pip-audit 扫已知漏洞。
-        # 换句话说：**锁是复现本机环境的凭据，CI 是"声明范围内的干净安装"**——
-        # 两者由上面 ①② 的版本比对绑在一起，而不是假装 CI 装了锁。
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-          python -m pip install -r requirements.txt -r requirements-dev.txt
-      - name: Lint (import style gate)
-        # F4：scripts/ 纳入 lint（此前遗漏 17 个 ANN）
-        run: python -m ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
-      - name: Pyright (type check gate)
-        run: python -m pyright
-      - name: Contract drift check
-        run: |
-          python -m frontend_contract --check
-          python scripts/gen_contract_frames.py --check
-          python scripts/check_error_codes.py
-      - name: Dependency lock drift check (F2)
-        # requirements.txt 顶层包必须在 environment.lock.yml 有精确 pin
-        run: python scripts/check_env_lock.py
-      - name: Security scan (F2, pip-audit + bandit)
-        # PYSEC-2026-3447 豁免理由见 Makefile audit target（webrtcvad/setuptools<81 约束）
-        run: |
-          python -m pip-audit --ignore-vuln PYSEC-2026-3447
-          python -m bandit -r core/ Module/ frontend_contract/ scripts/ -q -c bandit.yaml
-      - name: Secret scanning (CR-01)
-        # 扫被跟踪文件里的凭据形态（含 2026-06 事故的 key 指纹）。**只扫工作树**：
-        # 全历史里那份抄录（commit f1dcc803）在清历史完成前必然命中，那是
-        # `make check-secrets-history` 的判据、不是 PR 门禁（见 docs/credential-handling.md）。
-        run: python scripts/check_secrets.py
-      - name: CI trust boundary check
-        # 默认扫描 .github/workflows/*.yml **全部**（不再手写三个文件名——新增第四个
-        # workflow 此前不会被任何门禁看见）。含死 job 判定。
-        run: python scripts/check_ci_isolation.py
-      - name: Architecture boundary check (ARCH-INC-P1-03)
-        # 依赖方向（Module→core / 零依赖层 / 领域层→input）+ 跨包私有符号 + eager 环。
-        # 纯 AST、无外部依赖；存量泄漏在脚本 allowlist 逐项登记理由，新增即红。
-        run: python scripts/check_architecture.py
-      - name: Debug frontend auth guard (S2-F3)
-        # /debug/api/* 只认 SERVER_AUTH_TOKEN；所有请求必须经 debugFetch 带
-        # Authorization 头，EventSource 无法设头故禁用。纯静态扫描、无依赖。
-        run: python scripts/check_debug_auth.py
-      - name: Test set algebra gate (Quick ∪ remainder == Normal)
-        # 证明 make test-quick 与 test-remainder 互斥且不遗漏（约 35s，3 次收集）。
-        run: python scripts/check_test_sets.py
-      - name: Run quick tests (unit + service, 无外部 key; F1 含 WorkflowEngine unit/service)
-        # F1：不再 --ignore workflow——external marker 排除真实 LLM/DB E2E，
-        # WorkflowEngine 确定性 unit/service 入合并门禁（破坏 cancel/submit 的提交会阻止合并）
-        run: python -m pytest -m "unit or service" -q -x --tb=short -n 4 --dist loadfile
-
   # ---- push 到 main（受信 ref）：复用 self-hosted Elysia env，真实 .env ----
   #
   # 单一 backend job（2026-09-14 CI 性能专项）。此前是并列的 `Quick` + `Normal`
@@ -475,26 +407,3 @@ jobs:
         # 类型检查与构建一条命令，语义与迁移前完全一致。不新增 gate、不跳过 typecheck。
         run: cd frontend && npm run build
 
-  frontend-pr:
-    # PR 可达 job —— **必须**保持 GitHub-hosted（文件头信任边界）。步骤与 push 侧
-    # 逐字等价（checkout + setup-node 20 + npm ci + build）：迁移前后 PR 侧**行为
-    # 完全不变**，不是"降级成更弱的检查"。
-    # 该路径目前仍会因账单起不来（与迁移前一致）；要把 PR 侧也自建化，必须先有
-    # 独立的隔离 runner（ephemeral / 容器 / VM）——判据与完整理由见
-    # `scripts/check_ci_isolation.py` 的 docstring（第四条同时禁止用表达式
-    # `runs-on` 绕过静态判定，所以"按事件动态选 runner"这条路是故意堵死的）。
-    name: Frontend (vue-tsc + build)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install frontend deps
-        run: cd frontend && npm ci
-      - name: Frontend type-check + build
-        run: cd frontend && npm run build

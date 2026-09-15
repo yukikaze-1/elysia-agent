@@ -108,7 +108,8 @@ git push --force --tags
 
 ### 步骤 4 — 补门禁（已落地）
 
-- `make check-secrets` / CI pr-gate 的 `Secret scanning (CR-01)` 步骤：扫**被跟踪文件**
+- `make check-secrets` / CI 的 `Secret scanning (CR-01)` 步骤（**push-only**：跑在
+  `backend` job 里；2026-09-16 前 PR 侧也有一份，随 PR 门禁一并移除）：扫**被跟踪文件**
   里的凭据形态（含本次事故的 key 指纹）
 - `make check-secrets-history`：**全历史**判据。清历史完成前**预期为红**——它不是
   PR 门禁，是"步骤 3 是否做完"的验收器（浅克隆下退出 2 拒答；清完 `git filter-repo`
