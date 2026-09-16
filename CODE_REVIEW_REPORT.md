@@ -2037,19 +2037,81 @@ ollama / gpt-sovits 的本地 `base_url`），由 DNS 层与出站客户端逐�
 
 | # | 决策点 | owner 裁定 | 执行落点 | 状态 |
 |---|---|---|---|---|
-| 1 | 决策 #8 适用范围 | **整仓统一 fail-closed，清空豁免表** | `MessageRepository` 8 个读 + `SessionRepository.list_all` + `GenerationRepository` 3 个读改 fail-closed；`_ASYMMETRIC_JUSTIFIED` 清空；约定测试的期望表同步。**Milvus `MemoryRepository` 读保持返回空**，但注释从「待决策 #8」改写为**已定案豁免**（记忆检索 best-effort：Milvus 抖动不该打断整轮对话） | 待执行 |
-| 2 | `S2-H6` | **加 `raise_on_error`：定向投递 True、广播 False** | `WebSocketChannel.send_json(..., raise_on_error=False)`；`_deliver_tool_request` 捕获后立刻收敛 `DESKTOP_UNAVAILABLE`；广播路径保持吞异常 | 待执行 |
-| 3 | `S2-H3` | **`providers.yaml` 加 `supports_thinking`，未声明者丢弃该键** | 工厂注入后端能力位；未声明 provider 丢弃 `thinking` 并 warning。语义从「显式关闭」变为「不表态」——只把有证据的 provider 标 true | 待执行 |
-| 4 | `S2-H9` | **定预算 + 截历史（保 system + 近轮）** | 新增 `context_window` 能力位（未声明用保守默认，留 25% 余量）；截断优先级 F1/F2 永不截 → C4 记忆逐条截 → 历史由旧到新裁（**成对处理 assistant tool_calls 与 tool 结果**）；发送前记录 prompt 长度/token 估算 | 待执行 |
-| 5 | `S2-H8` | **当前轮 + 历史侧都注入占位文本** | 零可发射块走与图片同级的提示分支（列 kind/文件名/MIME/`attachment_id`；`StickerPart` 显式处理）；历史侧镜像 | 待执行 |
-| 6 | `#21b` | **补齐全部会话域集合的级联 + 清单守卫** | 接 `token_repo.delete_by_session` / `generation_repo.delete_by_session`；`character_version_repo` 新增按 session 删除；守卫按「会话域集合清单」断言删后零残留（将来新增集合忘接线即红） | 待执行 |
-| 7 | `S3-G7` | **修回归：句末标点加入落盘边界** | `tokenizer._feed_normal` 把 `。！？；…!?` 纳入落盘边界（内容决定 ⇒ 跨 chunk 不变式不破）；先做可行性探针，若破坏不变式则回报并退回「保持现状 + spec 补披露」 | 待执行 |
-| 8 | 预留枚举值域 | **全部保留 + 给未实现能力补「解除条件」** | `_RESERVED_ENUM_MEMBERS` 的 11 条「产品能力未实现」类（限制码 4 + DBT 4 + Experience 3）补写「何时该删值域」 | 待执行 |
-| 9 | `CR-01` | **暂不处理** | S0 **保持开启**：真实 DeepSeek key 仍在公开 remote 历史中有效；`make check-secrets-history` 继续预期为红（`_GATES_NOT_IN_CI` 的登记理由继续成立）。owner 已知悉「只轮换不清历史」是十分钟级别的低成本止血选项 | **已裁定不做** |
-| 10 | `audit` 接线 | **升级 pip + 重生成锁 + 接进 CI** | env pip 26.1.2 → 26.2；`make lock-env`；接进 CI backend job；删除 `_GATES_NOT_IN_CI["audit"]` 登记；**不得用 `--ignore-vuln`** | 待执行 |
+| 1 | 决策 #8 适用范围 | **整仓统一 fail-closed，清空豁免表** | `MessageRepository` 8 个读 + `SessionRepository.list_all` + `GenerationRepository` 3 个读改 fail-closed；`_ASYMMETRIC_JUSTIFIED` 清空；约定测试的期望表同步。**Milvus `MemoryRepository` 读保持返回空**，但注释从「待决策 #8」改写为**已定案豁免**（记忆检索 best-effort：Milvus 抖动不该打断整轮对话） | ✅ `45d3ba15` |
+| 2 | `S2-H6` | **加 `raise_on_error`：定向投递 True、广播 False** | `WebSocketChannel.send_json(..., raise_on_error=False)`；`_deliver_tool_request` 捕获后立刻收敛 `DESKTOP_UNAVAILABLE`；广播路径保持吞异常 | ✅ `6eb8789d` |
+| 3 | `S2-H3` | **`providers.yaml` 加 `supports_thinking`，未声明者丢弃该键** | 工厂注入后端能力位；未声明 provider 丢弃 `thinking` 并 warning。语义从「显式关闭」变为「不表态」——只把有证据的 provider 标 true | ✅ `5f0a6775` |
+| 4 | `S2-H9` | **定预算 + 截历史（保 system + 近轮）** | 新增 `context_window` 能力位（未声明用保守默认，留 25% 余量）；截断优先级 F1/F2 永不截 → C4 记忆逐条截 → 历史由旧到新裁（**成对处理 assistant tool_calls 与 tool 结果**）；发送前记录 prompt 长度/token 估算 | ✅ `076ebee8` + 文档 `434d807a` |
+| 5 | `S2-H8` | **当前轮 + 历史侧都注入占位文本** | 零可发射块走与图片同级的提示分支（列 kind/文件名/MIME/`attachment_id`；`StickerPart` 显式处理）；历史侧镜像 | ✅ `653b136c`（+`076ebee8` 内附注解补漏） |
+| 6 | `#21b` | **补齐全部会话域集合的级联 + 清单守卫** | 接 `token_repo.delete_by_session` / `generation_repo.delete_by_session`；`character_version_repo` 新增按 session 删除；守卫按「会话域集合清单」断言删后零残留（将来新增集合忘接线即红） | ✅ `dfca9ee8` |
+| 7 | `S3-G7` | **修回归：句末标点加入落盘边界** | `tokenizer._feed_normal` 把 `。！？；…!?` 纳入落盘边界（内容决定 ⇒ 跨 chunk 不变式不破）；先做可行性探针，若破坏不变式则回报并退回「保持现状 + spec 补披露」 | ✅ `4bb8aff7` |
+| 8 | 预留枚举值域 | **全部保留 + 给未实现能力补「解除条件」** | `_RESERVED_ENUM_MEMBERS` 的 11 条「产品能力未实现」类（限制码 4 + DBT 4 + Experience 3）补写「何时该删值域」 | ✅ `607b6f45` |
+| 9 | `CR-01` | **暂不处理** | S0 **保持开启**：真实 DeepSeek key 仍在公开 remote 历史中有效；`make check-secrets-history` 继续预期为红（它按设计**不**在 `_GATES_NOT_IN_CI` 里——那是"判据而非门禁"，见 `test_check_ci_isolation` 的说明）。owner 已知悉「只轮换不清历史」是十分钟级别的低成本止血选项 | **已裁定不做**（执行后仍开，见 §0.4.32(d)） |
+| 10 | `audit` 接线 | **升级 pip + 重生成锁 + 接进 CI** | env pip 26.1.2 → 26.2；`make lock-env`；接进 CI backend job；删除 `_GATES_NOT_IN_CI["audit"]` 登记；**不得用 `--ignore-vuln`** | ✅ `1556bed0` |
 
 **执行纪律（沿用本轮全程）**：每项 = 修复 + **可证伪的注入反证**（注入必须红在断言行，不能红在无关噪声）
 + 独立提交 + 同步文档/门禁登记。注入无法区分新旧实现时，宁可删掉用例并写明理由，也不留证明不了任何东西的绿。
+
+### §0.4.32 十项裁定的执行记录（2026-09-16，11 个提交）
+
+#### (a) 交付
+
+| # | 项 | 提交 | 关键改动 |
+|---|---|---|---|
+| 1 | 决策 #8 整仓 fail-closed | `45d3ba15` | 12 条读路径改 fail-closed（`MessageRepository` 8 / `SessionRepository.list_all` / `GenerationRepository` 3）；`_ASYMMETRIC_JUSTIFIED` 清空；Milvus 读转为**已定案豁免** |
+| 2 | `S2-H6` 定向投递 fail-fast | `6eb8789d` | `send_json(..., raise_on_error=False) -> bool`；`_deliver_tool_request` 传 `True`，bridge 的 `DESKTOP_UNAVAILABLE` 快速回退从死代码变活 |
+| 3 | `S2-H3` provider 能力门控 | `5f0a6775` | `providers.yaml::supports_thinking`（deepseek 唯一 true）；`_gate_extra_body()` 未声明即丢该键 + 每实例一次 warning；两处 extra_body 合并点共用同一门控 |
+| 4 | `S2-H9` prompt 预算 | `076ebee8` + `434d807a` | `Module/system_prompt/budget.py`（唯一执行点）+ `context_window` 能力位 + 两侧截断（system 侧 C4 逐条降/整节丢，历史侧逐条丢） |
+| 5 | `S2-H8` 媒体占位 | `653b136c` | `_media_placeholder()` 唯一定义点：sticker/file/audio/video 在当前轮与历史侧都留占位，`content: []` 不再出现 |
+| 6 | `#21b` 会话级联 | `dfca9ee8` | `CharacterVersionRepository.delete_by_session()` + `SessionManager.cascade_repos` 清单 + AST 覆盖守卫 |
+| 7 | `S3-G7` 句末标点落盘 | `4bb8aff7` | `tags.SENTENCE_END_CHARS` 单一来源；tokenizer 在句末标点即时落盘（标点并入前文）；4 条粒度守卫 |
+| 8 | 枚举值域解除条件 | `607b6f45` | 23 条登记全部补「解除条件：」，并**把它变成门禁判据**（缺标记/占位 → 红） |
+| 9 | `audit` 接线 | `1556bed0` | pip 26.2.1 + 重生成锁 + 接进 `backend` job + 清空 `_GATES_NOT_IN_CI` |
+| 10 | `CR-01` | （未执行） | owner 裁定暂不处理：**S0 保持开启** |
+| — | 裁定落档 | `7dda566f` | §0.4.31 单一落档点 |
+
+#### (b) 验收（本机实测）
+
+- 全量 `pytest -q -n 8 --dist loadfile` → **5725 passed / 17 skipped / 1 xfailed / 0 failed**（74.6s）
+- **12 道 make 门禁全绿** + `make audit`（第 13 道，本轮刚接线）：lint / pyright / check-types /
+  check-compose / check-env-lock / check-arch / check-timeouts / check-contract /
+  check-debug-auth / check-secrets / check-test-sets / check-ci-isolation / **audit**
+- 本轮新增/收紧用例 **~60 条**（预算 21 / 媒体占位 8 / 级联 7 / 能力门控 6 / 投递 5 /
+  粒度 4 / 门禁卫生 3 / fail-closed 3 / 其余）；**13 次注入反证**，全部红在断言行
+- `origin/main`（`78b0bf87`）落后 **12 个提交**（= 本轮全部；owner 已把此前积压的提交推上远端，本仓不开放 PR，push 由 owner 手动执行）
+
+#### (c) 执行期发现的新事实（都不是原报告里的判断，值得单独记住）
+
+1. **原豁免写的解除条件不完整**（`audit`）：只升级 pip 不足以让 `make audit` 变绿——
+   `bandit` 对**任何**发现（含 Low）都返回退出码 1，而本仓有 19 项 Low。照原条件直接接线，
+   CI 仍红、只是红的原因换了。处置：把判据写进 `Makefile`（pip-audit 0 项未豁免漏洞 +
+   bandit **Medium 及以上 0 项**）并记录 19 项 Low 基线（见 (d)）。
+2. **报告要求的"tool_calls 与 tool 结果成对截断"在运行时不可能触发**：实测
+   `_history_message_content` 对 `role="tool"` 返回 None、assistant 消息不带 `tool_calls` 键
+   ——工具流量被汇总成 `"[已调用: web_search]"` 一行文本。我先按报告实现了成对逻辑，
+   验证时发现它**一次都不会触发**（配不到对）⇒ 删掉，改为逐条丢，并把该前提钉成断言
+   （`TestToolTrafficPremise`：发射工具流量那天它会红并指回"必须实现成对截断"）。
+   **写一个永不触发的"守卫"比没有守卫更糟**。
+3. **架构门禁抓到我一次设计错误**：prompt 预算最初放在 `core/prompt/budget.py`，
+   而 `Module/system_prompt` 要引用它 ⇒ `make check-arch` R1 红。改为放
+   `Module/system_prompt/budget.py`（两个消费方分属两层，共享判据必须落在允许的方向上）。
+4. **我自己漏跑了一次 pyright**：`S2-H8` 提交时只跑了 lint + 测试，`_media_placeholder`
+   的 `list[Part]` vs `Sequence[Part]` 两处类型错误是**下一个 item 跑 pyright 时**才暴露的。
+   已补（`076ebee8` 内注明）——lint 与测试都拦不住它。
+5. **`S3-G7` 的 emoji 尾句合并是"缓冲"的副产品**：其实现前提正是"句子与 emoji 尾停在同一个
+   待落盘缓冲里"（即本缺陷本身）。句末标点即时落盘后该分支不可达 ⇒ 删除并把新语义钉进用例
+   （emoji 尾 = 独立 SENTENCE；TTS 侧本就有 emoji-only 门控，无音频影响）。**如实记录为行为变更。**
+6. **`#21b` 暴露 `GenerationRepository` 原本藏在 `GenerationRegistry` 内部构造**，
+   级联清单拿不到实例 ⇒ 改为在 `SessionManager` 之前显式构造并注入注册表（实例仍唯一）。
+
+#### (d) 执行后仍开着的项
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| **CR-01 凭据泄露** | **S0 未关** | owner 裁定暂不处理。真实 DeepSeek key 仍在公开 remote 历史中有效；`make check-secrets-history` 继续预期为红（它按设计不在 CI，是判据不是门禁）。低成本止血选项：只轮换凭据（不清历史）≈10 分钟 |
+| bandit **Low 19 项** | 已知基线 | B603/B607（subprocess 固定参数）17 + B112（try/except/continue）2。`make audit` 以 Medium+ 为判据（与本项目一贯声明的"0 Medium / 0 High"一致）；收紧到零容忍需逐处 `# nosec` + 理由或改绝对路径，属专项清理 |
+| 间歇性 xdist worker 死亡 | 未复现/未修 | 8 轮 soak 里 1 次，那轮被并发改动污染；本轮全量 3 次运行均正常。**不宣称修好**，下一步只能是干净环境下的定向 soak |
+| prompt 预算的 `context_window` 数值 | **估算值** | 六家 provider 都写进了 `providers.yaml` 并逐条注明来源（deepseek 131072 / openai 128000 / gemini 1048576 / ollama 8192 / mimo·custom 32768 保守值）。只影响截断时机，不影响正确性；owner 可按厂商文档校准 |
+| `S2-H9` 的写侧长度上限 | 未做 | owner 选的是"定预算 + 截历史"（运行期截断），写侧 `max_length`（记忆/工具参数）属选项 B 的内容，未纳入本次裁定 |
 
 ---
 
