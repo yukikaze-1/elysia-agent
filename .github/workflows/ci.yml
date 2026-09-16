@@ -170,6 +170,14 @@ jobs:
         # 无人察觉）——锁与声明漂移会让"从锁建 env"与"按声明装包"得到两个环境。
         # 纯 stdlib、~0.1s。
         run: make check-env-lock
+      - name: Dependency & static security scan (F2)
+        # 2026-09-16 接线（§0.4.31 #10）：此前登记在 check-ci-isolation 的
+        # `_GATES_NOT_IN_CI`——理由是 env 的 pip 26.1.2 自身命中 PYSEC-2026-3721，
+        # 接线会让 main 因与本仓提交无关的原因变红。升级 pip 26.2.1 + 重生成
+        # environment.lock.yml 后判据成立，故删除豁免并接在这里。
+        # 判据：pip-audit 0 项未豁免漏洞；bandit **Medium 及以上 0 项**（Low 19 项
+        # 为已知基线，见 CODE_REVIEW_REPORT.md 残余清单）。
+        run: make audit
       - name: Run offline suite (not slow and not external, xdist)
         # 完整离线集**只跑一遍**（此前 Quick + Normal 把 98.5% 的用例跑了两遍）。
         run: |

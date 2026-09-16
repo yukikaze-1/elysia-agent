@@ -12,7 +12,7 @@
 
 | workflow | job | 触发 | runs-on | 内容 |
 |---|---|---|---|---|
-| `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / 密钥扫描 / 集合代数 / compose 安全策略 / 环境锁）+ 离线用例 `make test-normal` |
+| `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / 密钥扫描 / 集合代数 / compose 安全策略 / 环境锁 / 依赖与静态安全扫描 `make audit`）+ 离线用例 `make test-normal` |
 | `ci.yml` | `real-mongo` | push | `[self-hosted, Linux, X64]` | 真实 MongoDB 层：job 内自起 `docker-compose.test.yml`，`make test-real-mongo`，收尾 `down` |
 | `ci.yml` | `frontend` | push | `[self-hosted, Linux, X64]` | `npm ci` + `vue-tsc --noEmit && vite build` |
 | `contract-frames.yml` | `frames` | push（路径过滤） | `[self-hosted, Linux, X64]` | golden frames + 契约三产物漂移检查 |
@@ -35,13 +35,21 @@
 |---|---|---|
 | `check-compose` | **从未**接过 CI，只在本地手跑 | ✅ 已接进 `backend`（纯静态解析、~0.1s） |
 | `check-env-lock` | 只活在已删除的 `pr-gate` 里，随删 PR 被静默带走 | ✅ 已接进 `backend`，并补上 `make check-env-lock` 目标——此前**只有脚本、没有目标**，这正是它容易掉队的原因 |
-| `audit`（pip-audit + bandit） | 同上，随 `pr-gate` 一起消失 | ⏸ **刻意不接**，理由见下 |
+| `audit`（pip-audit + bandit） | 同上，随 `pr-gate` 一起消失 | ✅ 已接进 `backend`（2026-09-16），见下 |
 
-**`audit` 为什么不接**：`make audit` 在自托管 env 上**当前为红**——Elysia env 的
-`pip 26.1.2` **自身**命中 `PYSEC-2026-3721`（修复版 26.2），而 `environment.lock.yml` 也
-pin 着 26.1.2。接线会让 main 因**与本仓提交无关**的原因变红，而那正是本文开头反对的事
-（"它训练人忽略红色"）。解除条件：升级 env 的 pip → `make lock-env` 重生成锁 → 接进
-`backend` job。**不要用 `--ignore-vuln` 让它变绿**——那是把安全门禁挖空来消除红色。
+**`audit` 的接线（2026-09-16 完成）**：原状是 `make audit` 在自托管 env 上为红——
+Elysia env 的 `pip 26.1.2` **自身**命中 `PYSEC-2026-3721`（修复版 26.2），而
+`environment.lock.yml` 也 pin 着 26.1.2；接线会让 main 因**与本仓提交无关**的原因变红。
+处置：升级 env 的 pip → `26.2.1` + `make lock-env` 重生成锁 → 接进 `backend` job
+（**没有**用 `--ignore-vuln` 消除红色）。
+
+> ⚠️ **豁免里写的解除条件不完整（实测发现，值得记住）**：只升级 pip 并不足以让
+> `make audit` 变绿——`bandit` 对**任何**发现（含 Low）都返回退出码 1，而本仓有 19 项
+> Low（B603/B607 subprocess 固定参数 17 + B112 try/except/continue 2）。照原解除条件
+> 直接接线，CI 仍然红，只是红的原因换了一个。
+> 现在的判据**写在 `Makefile` 里**：pip-audit 0 项未豁免漏洞 + bandit **Medium 及以上
+> 0 项**（`-ll`，与本项目一贯声明的"0 Medium / 0 High"一致）；19 项 Low 是**已知基线**，
+> 逐项列在 `CODE_REVIEW_REPORT.md` 的残余清单，要收紧到零容忍需逐处 `# nosec` + 理由。
 
 > 这条纪律由 `scripts/tests/test_check_ci_isolation.py` 的
 > `TestRealRepoWorkflows::test_every_declared_gate_is_wired_to_ci` 机械强制：新门禁必须
@@ -101,7 +109,7 @@ GitHub 托管 runner **按分钟计费**。账号额度/账单被卡之后，这
      契约漂移 / check-arch / 超时预算 / 契约可达性 / debug 鉴权 / check-ci-isolation /
      check-secrets / 测试集合代数 / `pytest -m "unit or service" -x`。它曾是 PR 侧**唯一**
      的静态门禁。（`check-env-lock` 与 `check-compose` 现已常驻 push 侧 `backend`，
-     PR 侧**不必**重复；`audit` 的接线见上节解除条件。）
+     PR 侧**不必**重复；`audit` 已于 2026-09-16 接进 push 侧 `backend`，PR 侧**不必**重复。）
    - `frontend-pr`（名 `Frontend (vue-tsc + build)`，**必须 `ubuntu-latest`**）：与 push 侧
      `frontend` 逐字等价的步骤。**PR 侧不得 self-hosted**——宿主上没有隔离/临时/untrusted 的
      PR runner。要自建化，必须先有 ephemeral / 容器 / VM 隔离 runner。

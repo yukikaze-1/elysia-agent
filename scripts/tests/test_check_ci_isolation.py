@@ -535,15 +535,10 @@ class TestRealRepoWorkflows:
         "check-secrets", "check-test-sets", "check-ci-isolation", "audit",
     )
     # 声明了但**当前没有**接进 CI 的门禁——每一项必须写明理由与解除条件。
-    _GATES_NOT_IN_CI = {
-        "audit": (
-            "`make audit` 在自托管 env 上**当前为红**：Elysia env 的 pip 26.1.2 自身命中 "
-            "PYSEC-2026-3721（修复版 26.2），而 environment.lock.yml 也 pin 着 26.1.2。"
-            "接线会让 main 因与本仓提交无关的原因变红。解除条件：升级 env 的 pip + "
-            "重生成 environment.lock.yml（owner 动作，会改动锁文件），之后接进 backend job "
-            "并删除本条。**不要用 --ignore-vuln 让它变绿**——那是把安全门禁挖空。"
-        ),
-    }
+    # 当前为空：`audit` 已于 2026-09-16 接线（§0.4.31 #10——升级 env 的 pip 26.2.1 +
+    # 重生成 environment.lock.yml 后判据成立）。留空表 + 上面两条结构守卫（未接线且
+    # 未登记 → 红；登记陈旧 → 红），下一个"暂时接不进 CI"的门禁必须在这里写理由。
+    _GATES_NOT_IN_CI: dict[str, str] = {}
 
     def _invoked(self, gate: str, workflows: str) -> bool:
         """门禁是否被某个 workflow 执行（`make <目标>` 或直接跑脚本）。"""

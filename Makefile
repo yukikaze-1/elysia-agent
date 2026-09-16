@@ -80,9 +80,17 @@ lock-env:
 # PYSEC-2026-3447（setuptools 80.10.2 → 83.0.0）为已接受的已知约束：修复版 83 移除
 # pkg_resources，而 webrtcvad 2.0.10 依赖它（requirements 钉 setuptools<81 即因此）。
 # 迁移到 webrtcvad-wheels（免 pkg_resources）后再解除此豁免，见 todo.md。
+#
+# 判据（**写清楚，否则读的人会以为它覆盖 Low**）：pip-audit 0 项未豁免漏洞；
+# bandit **Medium 及以上 0 项**（`-ll` = report level medium，退出码随之）。
+# 现状：Low 19 项（B603/B607 subprocess 固定参数 17 + B112 try/except/continue 2），
+# 逐项列在 CODE_REVIEW_REPORT.md 的残余清单里；它们是**已知基线、不阻断**——
+# 要收紧到零容忍，需逐处加 `# nosec B603 B607` + 理由（或改绝对路径），属专项清理。
+# 历史：本目标此前因 env 的 pip 26.1.2 自命中 PYSEC-2026-3721 而未进 CI；
+# 升级 pip 26.2.1 + 重生成 environment.lock.yml 后接线（2026-09-16，§0.4.31 #10）。
 audit:
 	conda run -n $(CONDA_ENV) pip-audit --ignore-vuln PYSEC-2026-3447
-	conda run -n $(CONDA_ENV) bandit -r core/ Module/ frontend_contract/ scripts/ -q -c bandit.yaml
+	conda run -n $(CONDA_ENV) bandit -r core/ Module/ frontend_contract/ scripts/ -q -c bandit.yaml -ll
 
 check:
 	conda run -n $(CONDA_ENV) python app.py --check

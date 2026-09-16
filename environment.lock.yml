@@ -18,7 +18,6 @@ dependencies:
   - ncurses=6.5=h7934f7d_0
   - openssl=3.5.7=h1b28b03_0
   - packaging=26.0=py312h06a4308_0
-  - pip=26.1.2=pyhc872135_0
   - pthread-stubs=0.3=h47b2149_2
   - python=3.12.13=hc5f7cf0_3
   - readline=8.3=hc2a1206_0
@@ -106,6 +105,7 @@ dependencies:
       - orjson==3.11.9
       - packageurl-python==0.17.6
       - pandas==3.0.5
+      - pip==26.2.1
       - pip-api==0.0.34
       - pip-audit==2.10.1
       - pip-requirements-parser==32.0.1
