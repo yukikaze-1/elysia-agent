@@ -21,9 +21,10 @@
   仅当调用方**能够容忍**这个歧义时才可以（例：debug 面板列表、进程内缓存读权威）。
 - `WRITE` / `LIFECYCLE`：不参与读路径一致性判定（`LIFECYCLE` = connect/close/
   health_check/ensure_indexes/reload 等）。
-- `_PENDING_DECISION`：约定**尚未定**的路径——报告决策项 #8「用户看到空历史与看到
-  503 哪个更可接受」需要产品定义。本表把每条待决路径**逐条列出**，而不是让它藏在
-  实现里；定案后把它们移进 `READ_FAIL_CLOSED`/`READ_EMPTY_OK`。
+- `_PENDING_DECISION`：约定**尚未定**的路径——本表把每条待决路径**逐条列出**，
+  而不是让它藏在实现里；定案后把它们移进 `READ_FAIL_CLOSED`/`READ_EMPTY_OK`。
+  **当前为空**：决策 #8（2026-09-16「整仓统一 fail-closed」）已把三个混向仓储改齐，
+  Milvus `MemoryRepository` 的降级是**已定案豁免**（记忆检索 best-effort）。
 
 ## 门禁
 
@@ -121,8 +122,8 @@ _CONVENTION: dict[str, dict[str, str]] = {
         "max_revision": READ_FAIL_CLOSED,
         "delete_revision": WRITE,
     },
-    # 版本历史读路径返回空：调用方是 debug 面板 / 版本列表（空列表 = "没有版本记录"，
-    # 与"存储离线"在 UI 上都表现为空）——**待决策 #8**，见 _PENDING_DECISION。
+    # 决策 #8（2026-09-14 owner「一律 fail-closed」／2026-09-16 明确适用范围为
+    # **整仓**）：版本历史读一律 fail-closed——"库离线"不得看起来像"没有历史"。
     "CharacterVersionRepository": {
         "append_version": WRITE,
         # 决策 #8（2026-09-14 owner）：**一律 fail-closed**——读不到版本历史时宁可
@@ -143,13 +144,12 @@ _CONVENTION: dict[str, dict[str, str]] = {
         "mark_stale_expired": WRITE,
         "reload_from_db": LIFECYCLE,
     },
-    # 混向（见 _ASYMMETRIC_JUSTIFIED）
     "GenerationRepository": {
         "upsert": WRITE,
-        "find_one": READ_EMPTY_OK,
-        "find_by_message": READ_EMPTY_OK,
+        "find_one": READ_FAIL_CLOSED,
+        "find_by_message": READ_FAIL_CLOSED,
         "find_by_user_message": READ_FAIL_CLOSED,
-        "find_by_session": READ_EMPTY_OK,
+        "find_by_session": READ_FAIL_CLOSED,
         "delete_by_session": WRITE,
         "mark_stale": WRITE,
     },
@@ -162,8 +162,11 @@ _CONVENTION: dict[str, dict[str, str]] = {
         "release": WRITE,
         "restore": WRITE,
     },
-    # Milvus 仓储：读返回空（向量检索"没召回"与"库离线"在调用方都退化为无记忆）
-    # ——**待决策 #8**；写路径 insert/delete 目前也静默返回空/0（见 _PENDING_DECISION）。
+    # Milvus 仓储：读返回空（向量检索"没召回"与"库离线"在调用方都退化为无记忆）。
+    # **已定案豁免（决策 #8 适用范围的例外，owner 2026-09-16）**：记忆检索是
+    # best-effort 能力——Milvus 抖动/重建索引期间不该把整轮对话打成 503；且
+    # "这次没召回"与"库离线"在**调用方语义**上确实同解（都=这轮没有相关记忆）。
+    # 写路径 insert/delete 的降级语义收在 LongTermMemory._repo_insert/_repo_delete。
     "MemoryRepository": {
         "insert": WRITE,
         "search": READ_EMPTY_OK,
@@ -172,27 +175,25 @@ _CONVENTION: dict[str, dict[str, str]] = {
         "count": READ_EMPTY_OK,
         "clear_all": WRITE,
     },
-    # 混向（见 _ASYMMETRIC_JUSTIFIED）——同仓同类读一半 fail-closed 一半返回空
     "MessageRepository": {
         "append": WRITE,
-        "query_by_session": READ_EMPTY_OK,
-        "query": READ_EMPTY_OK,
+        "query_by_session": READ_FAIL_CLOSED,
+        "query": READ_FAIL_CLOSED,
         "query_page": READ_FAIL_CLOSED,
-        "get_by_mongo_id": READ_EMPTY_OK,
-        "get_by_id": READ_EMPTY_OK,
+        "get_by_mongo_id": READ_FAIL_CLOSED,
+        "get_by_id": READ_FAIL_CLOSED,
         "query_after": READ_FAIL_CLOSED,
-        "find_context": READ_EMPTY_OK,
-        "query_search": READ_EMPTY_OK,
+        "find_context": READ_FAIL_CLOSED,
+        "query_search": READ_FAIL_CLOSED,
         "count_by_session": READ_FAIL_CLOSED,
         "count_assistant_without_character": READ_FAIL_CLOSED,
-        "count": READ_EMPTY_OK,
+        "count": READ_FAIL_CLOSED,
         "delete_by_session": WRITE,
         "clear_all": WRITE,
-        "query_offset": READ_EMPTY_OK,
+        "query_offset": READ_FAIL_CLOSED,
         "delete_one": WRITE,
         "update_text": WRITE,
     },
-    # 混向（见 _ASYMMETRIC_JUSTIFIED）
     "SessionRepository": {
         "save": WRITE,
         "create": WRITE,
@@ -200,7 +201,7 @@ _CONVENTION: dict[str, dict[str, str]] = {
         "rename": WRITE,
         "load": READ_FAIL_CLOSED,
         "delete": WRITE,
-        "list_all": READ_EMPTY_OK,
+        "list_all": READ_FAIL_CLOSED,
         "clear_all": WRITE,
         "count_incomplete_character_binding": READ_FAIL_CLOSED,
     },
@@ -220,25 +221,14 @@ _CONVENTION: dict[str, dict[str, str]] = {
     },
 }
 
-# 允许"同仓读路径混向"的白名单——**必须给出理由**。当前三项都是同一个原因：
-# 批次 6/7（#25）按调用方逐个决定，没有统一到仓储粒度，剩下的一半等报告决策项 #8。
-_ASYMMETRIC_JUSTIFIED: dict[str, str] = {
-    "MessageRepository": (
-        "批次 6/7 按**调用方**逐个修：已经历过『空历史被当成真实历史』事故的路径"
-        "（分页 query_page / 增量 query_after / 计数 / 角色完整性自检）改为 fail-closed；"
-        "其余（query_by_session / query / get_by_id / query_search / find_context / "
-        "query_offset / count / get_by_mongo_id）仍返回空。整仓统一需产品定义"
-        "『用户看到空历史』与『看到 503』哪个更可接受（报告决策项 #8）。"
-    ),
-    "SessionRepository": (
-        "load 是会话恢复的唯一入口（读到空 = 会话被清空，事故级），list_all 是 debug/"
-        "列表用途（读到空只是列表为空）。整仓统一同样等决策项 #8。"
-    ),
-    "GenerationRepository": (
-        "find_by_user_message 是幂等『提交证据』判定（读不到就不能断言『没提交过』，"
-        "否则重复执行副作用），其余是展示/查询用途。整仓统一等决策项 #8。"
-    ),
-}
+# 允许"同仓读路径混向"的白名单——**必须给出理由**。
+#
+# **2026-09-16 起为空（决策 #8 定案）**：owner 裁定「整仓统一 fail-closed」——
+# 三个曾混向的仓储（MessageRepository 8 条 / SessionRepository.list_all /
+# GenerationRepository 3 条）已全部转为 READ_FAIL_CLOSED，故本表清空。
+# 保留空表 + 上面两条结构性用例（混向未写理由 → 红；理由陈旧 → 红）：下一次
+# 真的需要"同仓混向"时，必须在这里写理由，而不是让不对称藏在实现里。
+_ASYMMETRIC_JUSTIFIED: dict[str, str] = {}
 
 # 约定尚未定 / 已知与同仓其余路径不对称的写路径——逐条列出，不让它藏在实现里。
 # 键为 (仓储名, 方法名)，值为说明。定案后从本表移除并改分类。

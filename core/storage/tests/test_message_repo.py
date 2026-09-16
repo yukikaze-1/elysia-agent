@@ -83,15 +83,18 @@ class TestMessageRepository:
         with pytest.raises(ValueError):
             asyncio.run(repo.append(SessionId("sid"), msg))
 
-    def test_returns_empty_when_db_none(self):
-        repo = MessageRepository(db=None)
-        msgs, total = asyncio.run(repo.query_by_session(SessionId("sid")))
-        assert msgs == []
-        assert total == 0
+    def test_db_none_is_fail_closed(self):
+        """决策 #8（owner 2026-09-16）：整仓读 fail-closed——不得报成"空历史"。
 
-    def test_count_returns_zero_when_db_none(self):
+        反证：本组断言在"离线返回 ([], 0)"的旧实现下必须失败（红在 `pytest.raises`）。
+        """
+        from core.storage.base import StorageUnavailableError
+
         repo = MessageRepository(db=None)
-        assert asyncio.run(repo.count()) == 0
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.query_by_session(SessionId("sid")))
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.count())
 
     def test_clear_all_calls_delete_many(self):
         repo = MessageRepository(db=MagicMock())
@@ -132,11 +135,13 @@ class TestMessageRepository:
         call_args = repo._db.find.call_args  # type: ignore[reportOptionalMemberAccess]
         assert call_args[0][1]["_id"] == {"$lt": now}
 
-    def test_query_returns_empty_when_db_none(self):
+    def test_query_is_fail_closed_when_db_none(self):
+        """决策 #8：游标分页读同样 fail-closed（不得报成"没有更多消息"）。"""
+        from core.storage.base import StorageUnavailableError
+
         repo = MessageRepository(db=None)
-        messages, has_more = asyncio.run(repo.query(limit=20))
-        assert messages == []
-        assert has_more is False
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.query(limit=20))
 
     def test_append_logs_warning_when_db_none(self, caplog):
         """归档在 _db is None 时不能静默——必须留下可见日志（S1）。"""
@@ -488,12 +493,13 @@ class TestMessageRepositoryBatch3:
         assert [m.message_id for m in page2] == ["msg-a"]
         assert has_more2 is False
 
-    def test_query_search_returns_empty_when_db_none(self):
+    def test_query_search_is_fail_closed_when_db_none(self):
+        """决策 #8：搜索结果读 fail-closed（"搜不到"与"搜不了"必须分开）。"""
+        from core.storage.base import StorageUnavailableError
+
         repo = MessageRepository(db=None)
-        messages, has_more, next_cursor = asyncio.run(repo.query_search())
-        assert messages == []
-        assert has_more is False
-        assert next_cursor is None
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.query_search())
 
 
 @pytest.mark.unit

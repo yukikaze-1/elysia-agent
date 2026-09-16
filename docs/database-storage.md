@@ -362,8 +362,8 @@
 
 | 约定 | 含义 | 现有路径 |
 |---|---|---|
-| `READ_FAIL_CLOSED` | 后端不可用 → **必须**抛 `StorageUnavailableError`（→ 503） | 全部 `AttachmentRepository` 读；全部 `CharacterInstanceRepository` / `CharacterRepository` / `CharacterRevisionRepository` 读；`UserIdentityRepository.get`；`IdempotencyRepository.get`；`SessionRepository.load`、`count_incomplete_character_binding`；`MessageRepository` 的 `query_page` / `query_after` / `count_by_session` / `count_assistant_without_character`；`GenerationRepository.find_by_user_message` |
-| `READ_EMPTY_OK` | 后端不可用 → **允许**返回空（`[]`/`None`/`0`/空元组） | 全部 `CharacterVersionRepository` 读；全部 `TokenRepository` 读；全部 `MemoryRepository`（Milvus）读；全部 `DesktopCallRepository` 读（**进程内缓存是唯一读权威**，刻意如此）；`SessionRepository.list_all`；`MessageRepository` 的 `query_by_session` / `query` / `query_offset` / `count` / `get_by_id` / `get_by_mongo_id` / `query_search` / `find_context`；`GenerationRepository` 的 `find_one` / `find_by_message` / `find_by_session` |
+| `READ_FAIL_CLOSED` | 后端不可用 → **必须**抛 `StorageUnavailableError`（→ 503） | 全部 `AttachmentRepository` 读；全部 `CharacterInstanceRepository` / `CharacterRepository` / `CharacterRevisionRepository` 读；全部 `CharacterVersionRepository` 读（决策 #8）；`UserIdentityRepository.get`；`IdempotencyRepository.get`；`SessionRepository.load`、`list_all`、`count_incomplete_character_binding`；**全部 `MessageRepository` 读**（含 `query_by_session` / `query` / `query_offset` / `count` / `get_by_id` / `get_by_mongo_id` / `query_search` / `find_context`，决策 #8）；**全部 `GenerationRepository` 读**（决策 #8） |
+| `READ_EMPTY_OK` | 后端不可用 → **允许**返回空（`[]`/`None`/`0`/空元组） | 全部 `TokenRepository` 读；全部 `MemoryRepository`（Milvus）读——**决策 #8 的已定案例外**：记忆检索是 best-effort，Milvus 抖动不该把整轮对话打成 503；全部 `DesktopCallRepository` 读（**进程内缓存是唯一读权威**，刻意如此） |
 
 **表在代码里的单源**：`core/storage/tests/test_fail_closed_convention.py` 的
 `_CONVENTION`。同一文件的门禁遍历 `core/storage/` 下**全部** `Repository` 子类的
@@ -373,16 +373,23 @@
 2. 声明 `READ_FAIL_CLOSED` 的路径在 `_db=None` 下**真的**抛异常，声明
    `READ_EMPTY_OK` 的**真的**返回空（表与实现漂移 → 红）；
 3. **同仓读路径必须同向**；混向的仓储必须在 `_ASYMMETRIC_JUSTIFIED` 给出理由
-   （新出现的不对称 → 红）。当前混向的有三个：`MessageRepository`、
-   `SessionRepository`、`GenerationRepository`——它们都是批次 6/7（`#25`）按
-   **调用方**逐个修的，剩下的一半等下面这条决策。
+   （新出现的不对称 → 红）。**该表现在为空**——决策 #8 已定案。
 
-**待决策（报告决策项 #8）**：整仓统一到哪种约定，取决于产品定义——"用户看到空历史"
-与"用户看到 503"哪个更可接受。逐条待决路径列在测试的 `_PENDING_DECISION`
-（含三条读路径与五条**写**路径：`MemoryRepository.insert`/`delete`、
-`SessionRepository.rename`、`TokenRepository.flush`/`clear_all` 目前离线时静默返回
-空值，与同仓其余写路径的 raise 不一致）。定案后把这些条目移出 `_PENDING_DECISION`
-并改分类。
+**决策 #8 已定案（owner 2026-09-16）**：**整仓统一 fail-closed**。三个曾混向的仓储
+（`MessageRepository` 8 条读、`SessionRepository.list_all`、`GenerationRepository`
+3 条读）全部改为 `READ_FAIL_CLOSED`：Mongo 离线时"读不到"不再长得像"没有"。
+批量 6/7（`#25`）那种"按调用方逐个决定"的做法**不再沿用**——它留下的正是"同一仓储里
+同类读一半 503 一半返回空"这种调用方无从判断的状态。
+
+**降级点如果确有需要，写在调用方且必须可观测**（而不是让仓储安静返回空）：
+`SessionManager._merged_summaries` 捕获 `list_all` 异常后降级为进程内摘要 + warning；
+`DebugInfo._collect_session_and_memory` 捕获 `count()` 后留空面板。这两处是显式的
+产品取舍，逐点注释。
+
+**唯一保留的 `READ_EMPTY_OK`（Milvus `MemoryRepository`）**是决策 #8 的**已定案例外**：
+记忆检索 best-effort，且"这次没召回"与"库离线"在调用方语义上确实同解（都 = 这轮没有
+相关记忆）。写路径 `MemoryRepository.insert`/`delete` 的降级语义收在
+`LongTermMemory._repo_insert`/`_repo_delete` 两个收口点（#31 写路径收口）。
 
 ---
 

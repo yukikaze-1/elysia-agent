@@ -193,23 +193,26 @@ class TestGenerationRepository:
         assert doc["status"] == "interrupted"
         assert doc["finished_at"], "stale 清理标 interrupted 应写 finished_at"
 
-    def test_db_none_safe_defaults(self):
-        """未连接时的降级语义——**除提交证据探测外**都安全返回默认值。
+    def test_db_none_all_reads_are_fail_closed(self):
+        """决策 #8（owner 2026-09-16）：整仓读 fail-closed——三条读路径全部抛。
 
-        `find_by_user_message` 是唯一的例外（S2-B6）：它是幂等恢复的**提交证据**，
-        "查不了"与"真的不存在"必须分开——前者若被读成"没处理过"，调用方会 TAKEOVER
-        重新处理，导致同一 clientRequestId 产出两条 assistant 回复、归档两次、
-        token 翻倍。其余方法（搜索/分页/标记）失败返回默认值是正常降级。
+        历史：只有 `find_by_user_message` 是 fail-closed（S2-B6 提交证据探测），
+        其余两条按"搜索/查询用途"返回 None/空。统一后"查不了"与"没有这条"在
+        **整个仓储**上都不再同形。
+
+        反证：本用例在旧实现下必须失败（前两条 read 会返回 None/空元组）。
         """
         from core.storage.base import StorageUnavailableError
 
         repo = GenerationRepository(db=None)
-        assert asyncio.run(repo.find_one(GenerationId("g1"))) is None
-        assert asyncio.run(repo.find_by_message(MessageId("m1"))) is None
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.find_one(GenerationId("g1")))
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.find_by_message(MessageId("m1")))
         with pytest.raises(StorageUnavailableError):
             asyncio.run(repo.find_by_user_message(MessageId("m2")))
-        docs, has_more, cursor = asyncio.run(repo.find_by_session(SessionId("s1")))
-        assert (docs, has_more, cursor) == ([], False, None)
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.find_by_session(SessionId("s1")))
         assert asyncio.run(repo.mark_stale("running", "iso")) == 0
 
 

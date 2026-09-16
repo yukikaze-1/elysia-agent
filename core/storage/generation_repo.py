@@ -173,9 +173,18 @@ class GenerationRepository(Repository):
             COLLECTION, {"generation_id": generation_id}, {"$set": doc}, upsert=True)
 
     async def find_one(self, generation_id: GenerationId) -> dict | None:
-        """按 generation_id 取单条文档。不存在或数据库不可用返回 None。"""
+        """按 generation_id 取单条文档。
+
+        Returns:
+            对应文档；**不存在**返回 None。
+
+        Raises:
+            StorageUnavailableError: 数据库不可用（决策 #8：本仓储整仓读 fail-closed
+                ——「取不到」与「没有这条」不得同形）。
+        """
         if self._db is None:
-            return None
+            raise StorageUnavailableError(
+                "GenerationRepository 未连接（MongoDB 不可用），generation 无法判定")
         results = await self._db.find(COLLECTION, {"generation_id": generation_id}, limit=1)
         return results[0] if results else None
 
@@ -189,10 +198,14 @@ class GenerationRepository(Repository):
             message_id: assistant 父消息 ID。
 
         Returns:
-            最近的 generation 文档，不存在或数据库不可用返回 None。
+            最近的 generation 文档；**不存在**返回 None。
+
+        Raises:
+            StorageUnavailableError: 数据库不可用（决策 #8：本仓储整仓读 fail-closed）。
         """
         if self._db is None:
-            return None
+            raise StorageUnavailableError(
+                "GenerationRepository 未连接（MongoDB 不可用），generation 无法判定")
         results = await self._db.find(
             COLLECTION, {"message_id": message_id},
             sort=[("created_at", -1)], limit=1)
@@ -244,11 +257,14 @@ class GenerationRepository(Repository):
             limit: 每页条数，默认 20。
 
         Returns:
-            (docs, has_more, next_cursor) 元组。数据库不可用或游标非法返回
-            ([], False, None)。
+            (docs, has_more, next_cursor) 元组。游标非法返回 ([], False, None)。
+
+        Raises:
+            StorageUnavailableError: 数据库不可用（决策 #8：本仓储整仓读 fail-closed）。
         """
         if self._db is None:
-            return [], False, None
+            raise StorageUnavailableError(
+                "GenerationRepository 未连接（MongoDB 不可用），generation 列表无法判定")
         filter_expr: dict = {"session_id": session_id}
         if status is not None:
             filter_expr["status"] = status

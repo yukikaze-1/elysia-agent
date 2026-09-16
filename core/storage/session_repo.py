@@ -384,11 +384,20 @@ class SessionRepository(Repository):
         """列出最近会话摘要。
 
         Returns:
-            会话摘要列表，按更新时间降序，最多 200 条。若数据库不可用返回空列表。
+            会话摘要列表，按更新时间降序，最多 200 条。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed
+                ——离线时不得把「读不到」报成「没有会话」）。
+
+        调用方（`SessionManager._merged_summaries`）已捕获该异常并显式降级为
+        进程内摘要 + warning；这是**有意的降级点**，不是让本方法返回空的理由。
         """
         if self._db is None:
-            return []
-        docs = await self._db.find(COLLECTION, {}, sort=[("updated_at", -1)], limit=200)
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），会话列表无法判定")
+        db = self._db
+        docs = await db.find(COLLECTION, {}, sort=[("updated_at", -1)], limit=200)
         return [
             SessionSummary(
                 session_id=SessionId(d.get("session_id", "")),

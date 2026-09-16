@@ -52,11 +52,18 @@ class TestSessionRepository:
         with pytest.raises(StorageUnavailableError):
             asyncio.run(repo.save(SessionId("sid"), [], cs))
 
-    def test_returns_empty_list_when_db_none(self):
+    def test_list_all_is_fail_closed_when_db_none(self):
+        """决策 #8（owner 2026-09-16）：会话列表读 fail-closed。
+
+        调用方 `SessionManager._merged_summaries` 捕获后显式降级为进程内摘要 +
+        warning——降级点写在调用方（可观测），而不是让仓储安静地返回空。
+        """
         import asyncio
+        from core.storage.base import StorageUnavailableError
+
         repo = SessionRepository(db=None)
-        result = asyncio.run(repo.list_all())
-        assert result == []
+        with pytest.raises(StorageUnavailableError):
+            asyncio.run(repo.list_all())
 
     def test_load_wraps_connection_error_as_storage_unavailable(self):
         """review 复核 #2：find 抛连接异常（如 Motor ServerSelectionTimeoutError）

@@ -268,8 +268,13 @@ class MessageRepository(Repository):
         而同一系统的 `/ready` 探针是 **fail-closed**（503）。**同一系统对"存储不可用"
         给出两种相反信号**：用户看到"历史空了"且无错误、不重试，甚至可能据此误删会话。
 
-        故意只覆盖**面向用户的历史读取**（分页/游标/计数/搜索/上下文）——prompt 构建
-        等内部只读路径离线时降级为空是**有意的**（不阻塞对话），不在此列。
+        覆盖本仓储**全部**读路径（决策 #8，owner 2026-09-16「整仓统一 fail-closed」）：
+        离线时"读不到"不得长得像"没有"。此前按调用方逐个决定（批次 6/7 #25），留下的是
+        "同一仓储里同类读一半 503 一半返回空"——调用方无从判断自己拿到的是哪种。
+
+        需要降级的地方在**调用方**显式做，并留下可观测痕迹（例：
+        `DebugInfo._collect_session_and_memory` 捕获 `count()` 后留空面板），
+        而不是让仓储安静返回空。
 
         Raises:
             StorageUnavailableError: 数据库未连接。
@@ -325,16 +330,18 @@ class MessageRepository(Repository):
             skip: 跳过的记录数，默认 0。
 
         Returns:
-            (消息列表, 总条数) 元组。若数据库不可用返回 ([], 0)。
+            (消息列表, 总条数) 元组。
+        Raises:
+            StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed，
+                离线时不得把「读不到」报成「没有」）。
         """
-        if self._db is None:
-            return [], 0
+        db = self._require_db("query_by_session")
         filter_expr: dict = {"session_id": session_id}
         if before:
             filter_expr["_id"] = {"$lt": before}
         sort = [("_id", -1)]
-        docs = await self._db.find(COLLECTION, filter_expr, sort=sort, skip=skip, limit=limit)
-        total = await self._db.count(COLLECTION, {"session_id": session_id})
+        docs = await db.find(COLLECTION, filter_expr, sort=sort, skip=skip, limit=limit)
+        total = await db.count(COLLECTION, {"session_id": session_id})
         messages = [_doc_to_message(doc) for doc in docs]
         return messages, total
 
@@ -347,16 +354,18 @@ class MessageRepository(Repository):
             limit: 每页条数，默认 20。
 
         Returns:
-            (消息列表, has_more) 元组。若数据库不可用返回 ([], False)。
+            (消息列表, has_more) 元组。
+        Raises:
+            StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed，
+                离线时不得把「读不到」报成「没有」）。
         """
-        if self._db is None:
-            return [], False
+        db = self._require_db("query")
         filter_expr: dict = {}
         if before:
             oid = ObjectId(before) if isinstance(before, str) else before
             filter_expr["_id"] = {"$lt": oid}
         sort = [("_id", -1)]
-        docs = await self._db.find(COLLECTION, filter_expr, sort=sort, limit=limit + 1)
+        docs = await db.find(COLLECTION, filter_expr, sort=sort, limit=limit + 1)
         has_more = len(docs) > limit
         if has_more:
             docs = docs[:limit]
@@ -395,22 +404,24 @@ class MessageRepository(Repository):
 
     async def get_by_mongo_id(self, session_id: SessionId, doc_id: str) -> Message | None:
         """按 Mongo _id 取单条归档消息（资源索引分页续扫用——cursor 消息需从
-        消息内 offset 继续扫）。不存在/非法 _id/库不可用返回 None。
+        消息内 offset 继续扫）。不存在/非法 _id 返回 None。
 
         Args:
             session_id: 会话 ID。
             doc_id: Mongo ObjectId 字符串。
 
         Returns:
-            对应 Message；找不到返回 None。
+            对应 Message；找不到/非法 _id 返回 None。
+        Raises:
+            StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed，
+                离线时不得把「读不到」报成「没有」）。
         """
-        if self._db is None:
-            return None
+        db = self._require_db("get_by_mongo_id")
         try:
             oid = ObjectId(doc_id)
         except Exception:
             return None
-        docs = await self._db.find(
+        docs = await db.find(
             COLLECTION, {"session_id": session_id, "_id": oid}, limit=1)
         if not docs:
             return None
@@ -423,15 +434,17 @@ class MessageRepository(Repository):
             msg_id: Mongo ObjectId 字符串（archive 删除端点的 msg_id）。
 
         Returns:
-            对应 Message；不存在/非法 _id/库不可用返回 None。
+            对应 Message；不存在/非法 _id 返回 None。
+        Raises:
+            StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed，
+                离线时不得把「读不到」报成「没有」）。
         """
-        if self._db is None:
-            return None
+        db = self._require_db("get_by_id")
         try:
             oid = ObjectId(msg_id)
         except Exception:
             return None
-        docs = await self._db.find(COLLECTION, {"_id": oid}, limit=1)
+        docs = await db.find(COLLECTION, {"_id": oid}, limit=1)
         if not docs:
             return None
         return _doc_to_message(docs[0])
@@ -477,22 +490,24 @@ class MessageRepository(Repository):
 
         Returns:
             (目标消息 | None, 之前消息列表(正序), 之后消息列表(正序))。
-            锚点不存在返回 (None, [], [])；数据库不可用返回 (None, [], [])。
+            锚点不存在返回 (None, [], [])。
+        Raises:
+            StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed，
+                离线时不得把「读不到」报成「没有」）。
         """
-        if self._db is None:
-            return None, [], []
-        anchor = await self._db.find(
+        db = self._require_db("find_context")
+        anchor = await db.find(
             COLLECTION, {"session_id": session_id, "message_id": message_id}, limit=1)
         if not anchor:
             return None, [], []
         anchor_id = _oid(anchor[0]["_id"])
         target = _doc_to_message(anchor[0])
-        pre_docs = await self._db.find(
+        pre_docs = await db.find(
             COLLECTION, {"session_id": session_id, "_id": {"$lt": anchor_id}},
             sort=[("_id", -1)], limit=before)
         # 之前窗口取 _id 降序最近 before 条，反转为正序
         pre_msgs = [_doc_to_message(doc) for doc in reversed(pre_docs)]
-        post_docs = await self._db.find(
+        post_docs = await db.find(
             COLLECTION, {"session_id": session_id, "_id": {"$gt": anchor_id}},
             sort=[("_id", 1)], limit=after)
         post_msgs = [_doc_to_message(doc) for doc in post_docs]
@@ -522,11 +537,13 @@ class MessageRepository(Repository):
             limit: 每页条数，默认 20。
 
         Returns:
-            (消息列表, has_more, next_cursor) 元组。数据库不可用或非法时区返回
+            (消息列表, has_more, next_cursor) 元组。非法时区（或游标损坏）返回
             ([], False, None)。
+        Raises:
+            StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed，
+                离线时不得把「读不到」报成「没有」）。
         """
-        if self._db is None:
-            return [], False, None
+        db = self._require_db("query_search")
         filter_expr = _build_search_filter(
             session_id=session_id, query=query, date_from=date_from,
             date_to=date_to, timezone=timezone, category=category)
@@ -544,7 +561,7 @@ class MessageRepository(Repository):
                 {"timestamp": ts, "_id": {"$lt": _oid(raw_id)}},
             ]
 
-        docs = await self._db.find(
+        docs = await db.find(
             COLLECTION, filter_expr,
             sort=[("timestamp", -1), ("_id", -1)], limit=limit + 1)
         has_more = len(docs) > limit
@@ -575,11 +592,13 @@ class MessageRepository(Repository):
         """返回全部消息总数。
 
         Returns:
-            消息总数。若数据库不可用返回 0。
+            消息总数。
+        Raises:
+            StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed，
+                离线时不得把「读不到」报成「没有」）。
         """
-        if self._db is None:
-            return 0
-        return await self._db.count(COLLECTION, {})
+        db = self._require_db("count")
+        return await db.count(COLLECTION, {})
 
     async def count_assistant_without_character(self) -> int:
         """统计缺少角色身份快照的 assistant 归档消息数（多角色完整性自检）。
@@ -656,10 +675,12 @@ class MessageRepository(Repository):
             role: 角色过滤，为 None 时不过滤。
 
         Returns:
-            (消息列表, 总条数) 元组。若数据库不可用返回 ([], 0)。
+            (消息列表, 总条数) 元组。
+        Raises:
+            StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed，
+                离线时不得把「读不到」报成「没有」）。
         """
-        if self._db is None:
-            return [], 0
+        db = self._require_db("query_offset")
         filter_expr: dict = {}
         if search:
             # S2-B7c：用户输入不得当正则执行（转义 + 长度上限走收口助手）。
@@ -671,8 +692,8 @@ class MessageRepository(Repository):
         if role is not None:
             filter_expr["role"] = role.value
         sort = [("_id", -1)]
-        docs = await self._db.find(COLLECTION, filter_expr, sort=sort, skip=skip, limit=limit)
-        total = await self._db.count(COLLECTION, filter_expr)
+        docs = await db.find(COLLECTION, filter_expr, sort=sort, skip=skip, limit=limit)
+        total = await db.count(COLLECTION, filter_expr)
         messages = [_doc_to_message(doc) for doc in docs]
         return messages, total
 
