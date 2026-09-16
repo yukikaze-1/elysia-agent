@@ -80,6 +80,7 @@ def _host_agent(llm: Any) -> Any:
     host._cognitive = MagicMock()
     host._user_name = "测试用户"
     host._task_system = None
+    host._task_llm_backend = None      # `Agent.__init__` 的初值（agent.py）
     host._delegation_preparer = None
     return host
 
@@ -400,5 +401,80 @@ class TestTaskSystemLifecycleOwnsItsLlm:
 
             assert task_backend.close_calls == 1, (
                 f"task LLM 只能被关一次，实测 {task_backend.close_calls} 次")
+        finally:
+            await llm.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test F1-4b（Challenger H1）：`_stop_task_system` 的**每一个**出口都要关掉 task LLM
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestTaskLlmIsClosedOnEveryStopExit:
+    """关闭语句不能只挂在"引擎正常停下"这一条路径上。
+
+    缺陷形态（由 Challenger 实测发现，修复前）：关闭排在
+    `await wait_for(self._task_system.stop(), …)` **之后**，而 `except` 只覆盖
+    `asyncio.TimeoutError`。`Agent.stop()` 按 CR-02 逐步吞掉每个步骤的
+    `BaseException` 继续往下走 ⇒ 只要 `WorkflowEngine.stop()` 抛出别的东西
+    （`RuntimeError` / `CancelledError`——后者正是"用户再按一次 Ctrl+C"的形态），
+    关闭语句被整段跳过：backend 泄漏、`_task_llm_backend` 还留在身上，下一次
+    `start()` 直接覆盖引用 ⇒ **永久泄漏**。修复前工作流不拥有任何 LLM 资源，
+    所以这个洞是本批 F1 **新引入**的。
+
+    修法：先取走并置 None（所有权当场转移），关闭放 `finally`。
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc",
+        [RuntimeError("engine stop blew up"), ValueError("engine stop blew up"),
+         asyncio.CancelledError()],
+        ids=["RuntimeError", "ValueError", "CancelledError"],
+    )
+    async def test_close_runs_when_engine_stop_raises(self, monkeypatch, exc):
+        """引擎 stop() 抛非 TimeoutError → task LLM 仍被关闭，且槽位已清空。"""
+        _env(monkeypatch)
+        harness = _patch_llm_factory(monkeypatch)
+        from core.adapter.llm_adapter import LLMAdapter
+
+        llm = LLMAdapter("deepseek/deepseek-v4-flash")
+        host = _host_agent(llm)
+        try:
+            await host._start_task_system()          # noqa: SLF001
+            task_backend = harness.backend_for(host._task_system._infra.llm)  # noqa: SLF001
+
+            async def _boom() -> None:
+                raise exc
+
+            monkeypatch.setattr(host._task_system, "stop", _boom)  # noqa: SLF001
+            with pytest.raises(BaseException):
+                await host._stop_task_system()       # noqa: SLF001
+
+            assert task_backend.close_calls == 1, (
+                f"{type(exc).__name__} 出口下 task LLM 必须仍被关闭（恰好一次）")
+            assert host._task_llm_backend is None, (  # noqa: SLF001
+                "槽位必须先清空——否则下一次 start() 覆盖引用即永久泄漏")
+        finally:
+            await llm.close()
+
+    @pytest.mark.asyncio
+    async def test_close_runs_when_the_engine_never_started(self, monkeypatch):
+        """引擎对象缺席（未启动/已置空）时也不该漏关——所有权在本方法，不在引擎。"""
+        _env(monkeypatch)
+        harness = _patch_llm_factory(monkeypatch)
+        from core.adapter.llm_adapter import LLMAdapter
+
+        llm = LLMAdapter("deepseek/deepseek-v4-flash")
+        host = _host_agent(llm)
+        try:
+            await host._start_task_system()          # noqa: SLF001
+            task_backend = harness.backend_for(host._task_system._infra.llm)  # noqa: SLF001
+            host._task_system = None                 # noqa: SLF001
+
+            await host._stop_task_system()           # noqa: SLF001
+
+            assert task_backend.close_calls == 1
+            assert host._task_llm_backend is None    # noqa: SLF001
         finally:
             await llm.close()

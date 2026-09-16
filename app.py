@@ -96,12 +96,12 @@ CLI_OVERRIDES: tuple[tuple[str, str], ...] = (
 )
 
 
-def build_parser(config: Any) -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     """构建命令行解析器。
 
-    Args:
-        config: 已加载的 AppConfig——仅用于 `--help` 里展示的说明文案；
-            **不再**当作 argparse default（见 `CLI_OVERRIDES` 的注释）。
+    **不接收 config**：覆盖类 flag 的默认值一律是 `SUPPRESS`（见 `CLI_OVERRIDES`），
+    所以解析器不需要（也不该）知道任何配置值——那正是"argparse default 冒充显式覆盖"
+    的来源。
 
     Returns:
         配置好的 `ArgumentParser`。
@@ -143,7 +143,9 @@ def collect_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main():
-    # Parse --config first so we can load AppConfig for CLI defaults
+    # 先单独解析 --config：AppConfig 要先加载出来才能交给 `--check` 预检、
+    # `--cli` 交互模式与 `run_agent_service`（它是这三条路径的共同输入）。
+    # 注意：**不再**用它给覆盖类 flag 当默认值（见 `CLI_OVERRIDES`）。
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--config", "-c", type=str, default="config.yaml")
     pre_args, _ = pre_parser.parse_known_args()
@@ -157,7 +159,7 @@ def main():
         print(f"配置加载失败: {e}")
         sys.exit(1)
 
-    args = build_parser(config).parse_args()
+    args = build_parser().parse_args()
 
     setup_logging(args.verbose)
 

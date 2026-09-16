@@ -356,14 +356,13 @@ _PARSER_DRIVER = '''
 import json, sys
 sys.path.insert(0, {repo!r})
 import app
-from Module.config.loader import ConfigLoader
-from core.config import AppConfig
 
-cfg = ConfigLoader(AppConfig, yaml_path=sys.argv[1]).load()
-parser = app.build_parser(cfg)
+# `build_parser()` **不接收 config**（覆盖类 flag 的默认值一律 SUPPRESS）——
+# 所以这里只驱动解析器，不加载任何配置；覆盖表与配置值无关正是本批要钉的不变式。
+parser = app.build_parser()
 out = {{}}
 for label, argv in {variants!r}.items():
-    args = parser.parse_args(["--config", sys.argv[1], *argv])
+    args = parser.parse_args(["--config", "config.yaml", *argv])
     out[label] = app.collect_cli_overrides(args)
 print(json.dumps(out, sort_keys=True, default=str))
 '''
@@ -459,9 +458,8 @@ def _run_driver(tmp_path: Path, body: str, *argv: str) -> Any:
 def parser_overrides(tmp_path_factory) -> dict[str, dict[str, Any]]:
     """全新子进程里跑**真 `app.py` 解析器**的全部 argv 变体（一次进程）。"""
     tmp_path = tmp_path_factory.mktemp("f4-parser")
-    cfg = _write_yaml(tmp_path / "config.yaml", "server:\n  port: 8765\n")
     body = _PARSER_DRIVER.format(repo=str(_REPO_ROOT), variants=_PARSER_VARIANTS)
-    return _run_driver(tmp_path, body, str(cfg))
+    return _run_driver(tmp_path, body)
 
 
 @pytest.fixture(scope="module")

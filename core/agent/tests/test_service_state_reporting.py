@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import ast
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -139,6 +140,26 @@ def _install_llm(host: Agent, model_id: str) -> Any:
     return adapter
 
 
+def _chain_mentions_config(node: Any) -> bool:
+    """`…model` 属性读点的 value 链上有没有 `config` / `_config` 段。
+
+    必须走**整条链**并且也认链尾的**裸名**：真实写法有两种——
+    `self._config.llm.model`（链上是 `_config` 属性）与 `config.tts.model`
+    （链尾是 `Name("config")`）。只匹配"父属性就叫 config"会漏掉前者（Challenger
+    用注入实验证伪过第一版），只认属性会漏掉后者（本文件的自证用例抓到过）。
+    """
+    cursor: Any = node
+    while True:
+        if isinstance(cursor, ast.Attribute):
+            if cursor.attr in ("config", "_config"):
+                return True
+            cursor = cursor.value
+        elif isinstance(cursor, ast.Name):
+            return cursor.id in ("config", "_config")
+        else:
+            return False
+
+
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-only")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-only")
@@ -194,8 +215,18 @@ class TestRuntimeSnapshotReadsLiveSlots:
         assert host.service_runtime_state().tts_enabled is False
 
     def test_snapshot_never_reads_config_models(self, monkeypatch):
-        """结构性：本方法**不得**引用 `config.*.model`——那正是 F2 的形态。"""
-        import ast
+        """结构性（belt）：本方法**不得**引用 `config.*.model`——那正是 F2 的形态。
+
+        主要守卫是上面那条**行为**用例（三处权威同时不同 → 只报运行期那个）。
+        本条的判据是 AST：对每个 `…model` 属性读点，沿 `value` 链向上找有没有
+        `config` / `_config` 段。
+
+        ⚠️ **判据必须走整条链**：真实写法是 `self._config.llm.model`（父属性是 `llm`，
+        不是 `config`）——第一版只匹配"父属性就叫 config"，被 Challenger 用注入实验
+        证伪（注入缺陷 → 命中 0 处，**假绿**）。本用例的判据自己也做过注入反证：
+        `self._config.llm.model` / `self._config.stt.model` / `config.tts.model`
+        三种写法都能命中。
+        """
         import pathlib
 
         src = pathlib.Path("core/agent/_lifecycle_services.py").read_text(encoding="utf-8")
@@ -208,9 +239,31 @@ class TestRuntimeSnapshotReadsLiveSlots:
             f"line {n.lineno}: {ast.dump(n)}"
             for n in ast.walk(fn)
             if isinstance(n, ast.Attribute) and n.attr == "model"
-            and isinstance(n.value, ast.Attribute) and n.value.attr == "config"
+            and _chain_mentions_config(n.value)
         ]
         assert not offenders, f"运行期快照不得读 config 的模型字段：{offenders}"
+
+    def test_the_ast_guard_actually_sees_the_defect_shape(self, monkeypatch):
+        """反证：把**真实缺陷写法**喂给上面那条判据 → 必须命中。
+
+        断言"某个缺陷存在"的用例必须把期望值现算（`CLAUDE.md` 的门禁三假绿之一）：
+        这里直接把 `self._config.llm.model` / `config.tts.model` 这两种写法编译成
+        AST 再跑同一个判据，证明它不是空网。
+        """
+        def _hits(source: str) -> int:
+            tree = ast.parse(source)
+            return sum(
+                1 for n in ast.walk(tree)
+                if isinstance(n, ast.Attribute) and n.attr == "model"
+                and _chain_mentions_config(n.value)
+            )
+
+        assert _hits("x = self._config.llm.model") == 1
+        assert _hits("x = self._config.stt.model") == 1
+        assert _hits("x = config.tts.model") == 1
+        # 反向：运行期槽位写法不该被误判
+        assert _hits("x = self._llm.model") == 0
+        assert _hits("x = self._stt.model if self._stt is not None else None") == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

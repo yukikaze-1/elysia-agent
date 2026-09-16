@@ -347,7 +347,9 @@ class _LifecycleTaskSystem:
             params["http_client_factory"] = http_client_factory
         backend = LLMFactory.create(task_model_id, **params)
         logger.info(
-            "工作流 task LLM: %s（provider 跟随主 LLM %s；生命周期归 WorkflowEngine）",
+            "工作流 task LLM: %s（provider 取自**此刻**的主模型 %s——热切换不影响已建好的"
+            "这一个，重启后按当时的主模型重建）；分配/释放归工作流启停"
+            "（_start_task_system / _stop_task_system）",
             task_model_id, main_model_id)
         return backend
 
@@ -625,34 +627,50 @@ class _LifecycleTaskSystem:
     _TASK_LLM_CLOSE_BUDGET = 3.0
 
     async def _stop_task_system(self) -> None:
-        """停止 WorkflowEngine，再关工作流**自己拥有**的 task LLM。"""
-        if self._task_system:
-            try:
-                await asyncio.wait_for(
-                    self._task_system.stop(),
-                    timeout=self._TASK_SYSTEM_STOP_BUDGET)
-            except asyncio.TimeoutError:
-                # 超时说明 stop() 自身卡住（内部预算已用尽仍未返回）——留可见痕迹，
-                # 但不改流程：_SHUTDOWN_STEPS 会继续走后面的清理。
-                logger.error(
-                    "WorkflowEngine stop 超时（>%.0fs，超过其内部最坏路径）——"
-                    "后台任务未收尾，semaphore 可能未释放",
-                    self._TASK_SYSTEM_STOP_BUDGET)
-        # F1（Batch 1.6）：关闭**工作流自己拥有**的 task LLM。
-        # 顺序是刻意的——`WorkflowEngine.stop()` 先等在途任务落定（内部最坏 ≈17s），
-        # 再关它唯一的 LLM 资源，才不会掐掉正在跑的请求。
-        # 取到局部变量并**立刻**置 None：本方法可能被调两次（关停步骤是幂等的），
-        # 而"恰好关一次"是所有权的一部分（Test F1-4 钉住 close 调用计数 == 1）。
+        """停止 WorkflowEngine，再关工作流**自己拥有**的 task LLM。
+
+        ## 为什么关闭放在 `finally`（Challenger H1 的修复点）
+
+        「顺序」与「一定发生」是两件事。顺序上必须**先** `WorkflowEngine.stop()`
+        （它先等在途任务落定，内部最坏 ≈17s）**再**关 task LLM，否则会掐掉正在跑的
+        请求。但"先"不等于"到达"：`Agent.stop()` 按 CR-02 逐步吞掉每个步骤的
+        `BaseException` 继续往下走，所以只要 `WorkflowEngine.stop()` 抛出
+        **TimeoutError 以外**的东西（`RuntimeError` / `CancelledError`——后者正是
+        用户再按一次 Ctrl+C 的形态），控制流就跳过了关闭语句：backend 泄漏，
+        `_task_llm_backend` 还留在身上，下一次 `start()` 直接把引用覆盖掉 ⇒
+        **永久泄漏**（修复前工作流不拥有任何 LLM 资源，故这个洞不存在）。
+
+        因此：**先取走并置 None**（所有权当场转移给本方法），关闭放 `finally`——
+        正常 / 超时 / 抛错 / 被取消四种出口都关得到，且异常语义原样向上传（不吞
+        `CancelledError`，那是 `Agent.stop()` 的职责）。
+        """
         task_llm, self._task_llm_backend = self._task_llm_backend, None
-        if task_llm is not None:
-            try:
-                await asyncio.wait_for(
-                    task_llm.close(), timeout=self._TASK_LLM_CLOSE_BUDGET)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "工作流 task LLM 关闭超时（>%.0fs）", self._TASK_LLM_CLOSE_BUDGET)
-            except Exception:
-                logger.warning("工作流 task LLM 关闭失败", exc_info=True)
+        try:
+            if self._task_system:
+                try:
+                    await asyncio.wait_for(
+                        self._task_system.stop(),
+                        timeout=self._TASK_SYSTEM_STOP_BUDGET)
+                except asyncio.TimeoutError:
+                    # 超时说明 stop() 自身卡住（内部预算已用尽仍未返回）——留可见痕迹，
+                    # 但不改流程：_SHUTDOWN_STEPS 会继续走后面的清理。
+                    logger.error(
+                        "WorkflowEngine stop 超时（>%.0fs，超过其内部最坏路径）——"
+                        "后台任务未收尾，semaphore 可能未释放",
+                        self._TASK_SYSTEM_STOP_BUDGET)
+        finally:
+            # F1（Batch 1.6）：关闭**工作流自己拥有**的 task LLM。
+            # 取到局部变量并立刻置 None ⇒ 本方法可能被调两次（关停步骤是幂等的），
+            # 而"恰好关一次"是所有权的一部分（Test F1-4 钉住 close 计数 == 1）。
+            if task_llm is not None:
+                try:
+                    await asyncio.wait_for(
+                        task_llm.close(), timeout=self._TASK_LLM_CLOSE_BUDGET)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "工作流 task LLM 关闭超时（>%.0fs）", self._TASK_LLM_CLOSE_BUDGET)
+                except Exception:
+                    logger.warning("工作流 task LLM 关闭失败", exc_info=True)
         # 注：**不**在这里关闭主 LLM 的 client——它是 `LLMAdapter` 的资源，由
         # `stop_llm_tts` 步骤统一关闭（本步在它之前）。在这里关会掐掉停机序列后续
         # 步骤（scheduler / tool_adapter 收尾）仍在用的连接池。

@@ -61,10 +61,12 @@ class AgentInfra:
 
     字段：
         llm:            LLM 客户端（AsyncOpenAI）。**所有权是 core 侧的注入者**——
-                        F1（Batch 1.6）之后由工作流自己的 task LLM backend 持有，
-                        其生命周期与 WorkflowEngine 同起同落（见
-                        `core/agent/_lifecycle_task_system.py`），而不是主 LLM
-                        适配器借出的共享 client。
+                        F1（Batch 1.6）之后它是一个**工作流自持**的 task LLM backend
+                        的 raw client：由 `_start_task_system` 建、`_stop_task_system`
+                        关（见 `core/agent/_lifecycle_task_system.py`），
+                        而不是主 LLM 适配器借出的共享 client。
+                        注意"自持"指的是**分配与释放**归工作流启停，
+                        `WorkflowEngine` 自己不碰它（它只读 `infra.llm`）。
         milvus:         Milvus 向量数据库客户端（None 表示向量搜索不可用）
         http:           httpx 异步 HTTP 客户端
         tool_registry:  ToolRegistry，全量工具注册表（类型为 object 避免循环导入）
