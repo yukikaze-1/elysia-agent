@@ -223,3 +223,42 @@ class TestFailureIsLoud:
         with caplog.at_level(logging.WARNING):
             assert await p.embed("测试") == []
         assert any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_loads_go_through_a_single_worker_executor(monkeypatch):
+    """S2-R2-3 残余：加载必须走**自持的单 worker 执行器**，重试不得叠加线程。
+
+    机理：`wait_for` 超时**杀不掉**正在跑的加载线程（本模块顶部注释已记"线程仍在跑但
+    结果被丢弃"），而 `run_in_executor(None, …)` 用的是**共享默认池**——冷却结束后的
+    重试会**再开一个**加载线程。真加载 1.3GB 模型时，叠加 = 内存成倍增长。
+
+    单 worker 把"最多一个加载线程"变成**构造级**事实：第二次提交只会排队。
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from core.memory.embedding_provider import EmbeddingProvider
+
+    p = EmbeddingProvider(embed_timeout=0.01, load_timeout=0.05, retry_cooldown=0.0)
+
+    def _stuck() -> None:
+        import time as _t
+        _t.sleep(1.0)          # 模拟"超时后线程仍在跑"
+        return None
+    monkeypatch.setattr(p, "_try_load_sync", _stuck)
+
+    await p.ensure()                        # 第一次：等待超时，线程仍在跑
+    await asyncio.sleep(0.05)
+    await p.ensure()                        # 冷却为 0 → 会再提交一次
+    await asyncio.sleep(0.05)
+
+    ex = p._executor()                      # noqa: SLF001
+    assert isinstance(ex, ThreadPoolExecutor), f"加载走的不是自持执行器：{ex!r}"
+    assert ex._max_workers == 1, "不是单 worker → 重试会叠加加载线程"  # noqa: SLF001
+    assert p._executor() is ex, "每次 ensure 都新建了执行器（等于没约束）"  # noqa: SLF001
+
+    # 只看**本 provider 的执行器**开了几个线程——用 `threading.enumerate()` 会把别的
+    # 用例遗留的加载线程一起数进来（第一版就因此变成顺序相关：单跑绿、整文件红）。
+    assert len(ex._threads) == 1, f"该执行器开了不止一个线程：{ex._threads}"
+
+    p.cancel()

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -51,6 +52,12 @@ class EmbeddingProvider:
         """
         self._backend: EmbeddingBackend | None = None
         self._task: asyncio.Task | None = None
+        # S2-R2-3 残余：**自己持有的单 worker 执行器**（惰性创建、close 后自动重建）。
+        # 为什么必须是单 worker：`wait_for` 超时**杀不掉**正在跑的加载线程（模块顶部注释
+        # 已记"线程仍在跑但结果被丢弃"），而 `run_in_executor(None, …)` 用的是**共享默认池**
+        # ——冷却结束后的重试会再开一个线程 ⇒ 每次 ≈ 一个模型的内存（1.3GB 级）叠加。
+        # 单 worker 让"最多一个加载线程"成为**构造级**事实：第二次提交只会排队。
+        self._loader: ThreadPoolExecutor | None = None
         self._failed_at: float | None = None
         self._timeout = embed_timeout
         self._load_timeout = load_timeout
@@ -108,7 +115,7 @@ class EmbeddingProvider:
         async def _load():
             try:
                 embedding = await asyncio.wait_for(
-                    loop.run_in_executor(None, self._try_load_sync),
+                    loop.run_in_executor(self._executor(), self._try_load_sync),
                     timeout=self._load_timeout,
                 )
                 if embedding is not None:
@@ -212,6 +219,13 @@ class EmbeddingProvider:
         except Exception as e:
             logger.warning("HuggingFace embedding unavailable: %s", e)
             return None
+
+    def _executor(self) -> ThreadPoolExecutor:
+        """取加载专用执行器（惰性创建；`close()` 之后自动重建，热重启仍可用）。"""
+        if self._loader is None:
+            self._loader = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="embedding-load")
+        return self._loader
 
     def cancel(self) -> None:
         """取消后台嵌入模型加载任务（如正在进行）。"""
