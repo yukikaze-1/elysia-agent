@@ -3,8 +3,13 @@
 CognitiveLoop 调用 submit_task 后、WorkflowEngine.submit() 之前，
 用一次 LLM 调用准备干净的委派上下文。
 
-v1: 使用 DeepSeek v4，内部创建 AsyncOpenAI（DelegationPreparer 在 WorkflowEngine 创建前运行，
-    无法使用 AgentInfra，因此自建客户端。Planner 已改用 infra.llm）。
+LLM 能力**由调用方注入**（`AgentInfra.llm` + `AgentInfra.llm_model`——应用唯一持有的
+那一个 OpenAI 兼容 client，engine 的 Planner/Executor/Evaluator 用的正是同一对字段：
+`Module/workflow_engine/core/planner/parser.py`、`core/executor.py`）。
+**本模块不读任何 provider 环境变量、不自建 client**："哪个 provider 可用"是配置的
+运行时的所有权，不是后台工作流助手的假设——否则缺某一个 provider 的 key 会顺着
+`_start_task_system`（`AgentLifecycle._STARTUP_STEPS` 的一步）升级成整个 Agent 起不来
+（Issue C）。
 Prompt 全文见 Module/workflow_engine/docs/architecture.md Section 9。
 """
 
@@ -12,10 +17,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
-
-from openai import AsyncOpenAI
+from typing import TYPE_CHECKING, Any
 
 from core.schema.message import Message
 from core.schema.part import TextPart
@@ -33,6 +36,9 @@ from Module.workflow_contract import (
 )
 from Module.tool.tool_descriptor import Tool
 from core.cognitive.user_profile import UserProfile
+
+if TYPE_CHECKING:
+    from Module.workflow_contract.infra import AgentInfra
 
 logger = logging.getLogger(__name__)
 
@@ -111,21 +117,27 @@ class DelegationPreparer:
     3. 上下文摘要（从对话历史中提取相关信息，≤500 字）
     4. 任务级约束（估算 max_dag_nodes / max_mutations 等 WorkflowConstraints 字段）
 
-    v1: 内部创建 AsyncOpenAI（读 DEEPSEEK_API_KEY）。Planner 已改用 infra.llm。
-        后续独立为 delegation 服务时改为 LLM client 注入。
+    LLM 能力**注入**（Issue C）：构造时传入 `AgentInfra`，用它已有的 `llm` +
+    `llm_model`——不再读 `DEEPSEEK_API_KEY`、不再自建 `AsyncOpenAI`。
+    本类**不拥有**该 client 的生命周期（归还给它的所有者 LLMAdapter 关闭），
+    因此没有 `aclose()`。
     """
 
-    def __init__(self) -> None:
-        """用 DeepSeek LLM client 初始化委托准备器。"""
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "DEEPSEEK_API_KEY 环境变量未设置，DelegationPreparer 无法创建 DeepSeek client"
-            )
-        self._client = AsyncOpenAI(
-            api_key=api_key,
-            base_url="https://api.deepseek.com",
-        )
+    def __init__(self, infra: "AgentInfra | None" = None) -> None:
+        """用注入的 LLM 能力初始化委托准备器（**不抛**——缺 provider 不是启动前置）。
+
+        Args:
+            infra: 跨边运行时注入容器（`Module.workflow_contract.infra.AgentInfra`）。
+                只取两个字段：
+                - `llm`：OpenAI 兼容原始 client（`LLMAdapter.get_raw_client()` 的返回值）。
+                  None 表示配置的运行时交不出可复用 client → 本实例不可用；
+                - `llm_model`：Planner/Executor 共用的模型名（env `TASK_SYSTEM_MODEL`）。
+                None（未注入）等价于"不可用"。
+        """
+        self._client: Any | None = infra.llm if infra is not None else None
+        # 模型名与 engine 同一来源（AgentInfra.llm_model），不再各自读 TASK_SYSTEM_MODEL。
+        # 未注入时留空——`prepare()` 会先因 `_client is None` 显式报不可用。
+        self._model: str = infra.llm_model if infra is not None else ""
 
     async def prepare(
         self,
@@ -152,7 +164,20 @@ class DelegationPreparer:
 
         Returns:
             DelegationResult——ok / no_matching_tools / too_vague
+
+        Raises:
+            DelegationUnavailableError: 没有可用的 LLM client（未注入
+                `AgentInfra.llm`，或配置的运行时交不出原始 client）。
+                **显式**报不可用——不静默降级成某种默认 provider，也不让
+                `None.chat` 的 AttributeError 冒上去。
+            _PrepareParseError: LLM 返回空响应 / 非法 JSON。
         """
+        if self._client is None:
+            raise DelegationUnavailableError(
+                "DelegationPreparer 没有可用的 LLM client（未注入 AgentInfra.llm）——"
+                "后台委派不可用；LLM 可用性由配置的运行时决定，本类不自行创建 client"
+            )
+
         # ── 构建 prompt ──
         # 用 replace 而非 format()——system prompt 含 JSON 示例的 { }，
         # format() 会把它们也当占位符导致 KeyError
@@ -226,8 +251,11 @@ class DelegationPreparer:
         Raises:
             _PrepareParseError: LLM 返回空响应。
         """
-        response = await self._client.chat.completions.create(
-            model=os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro"),
+        client = self._client
+        if client is None:  # 防御：prepare() 已挡（私有方法也可能被直接调用）
+            raise DelegationUnavailableError("DelegationPreparer 没有可用的 LLM client")
+        response = await client.chat.completions.create(
+            model=self._model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -475,20 +503,24 @@ class DelegationPreparer:
             return "（无用户画像）"
         return json.dumps(dumped, ensure_ascii=False, indent=2)
 
-    async def aclose(self) -> None:
-        """关闭内部 AsyncOpenAI 客户端，释放 httpx 连接池。
-
-        每次 Agent 生命周期启动时创建新 client，/restart 进程内重启会泄漏连接池，
-        需在 shutdown 时显式关闭（httpx 在 GC 时仅能警告 "Unclosed client session"）。
-        """
-        if self._client is not None:
-            try:
-                await self._client.close()
-            except Exception:
-                pass  # close 失败不阻塞 shutdown
+    # 没有 `aclose()`（Issue C）：client 是**借来的**（注入的 `AgentInfra.llm`，
+    # 与 engine 的 Planner/Executor 同一个对象），生命周期归它的所有者
+    # `LLMAdapter`——由 `_stop_llm_and_tts` 步骤关闭。若在本类里关掉它，会掐掉
+    # 停机序列后续步骤仍在使用的连接池；`/restart` 也不因此泄漏，因为
+    # `Agent.start()` 首行 `_llm.reconnect()` 会重建 client。
 
 
-# ── 内部异常 ────────────────────────────────────────────────────────────────────
+# ── 异常 ────────────────────────────────────────────────────────────────────────
+
+class DelegationUnavailableError(RuntimeError):
+    """委托准备器没有可用的 LLM client（未注入 / 运行时交不出原始 client）。
+
+    是**显式**的"不可用"信号：调用方据此把后台委派标记为不可用，而不是让
+    `None.chat` 的 AttributeError 或某个默认 provider 的静默降级掩盖它。
+    启动路径（`_start_task_system`）不看本异常——它在构造前就判 `raw_client is None`
+    并直接把 `_delegation_preparer` 置 None（既有的"不可用"表示）。
+    """
+
 
 class _PrepareParseError(Exception):
     """LLM 输出的 JSON 无法解析为 DelegationResult。"""

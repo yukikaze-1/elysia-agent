@@ -276,16 +276,42 @@ class CognitiveTools:
         ]
 
         from Module.workflow_contract import SessionId as _SessionId
+        # 懒导入（与上面 _SessionId 同款）：只在 submit_task 真被调用时付这份导入。
+        from core.cognitive.delegation import DelegationUnavailableError
 
-        prep_result = await self._delegation_preparer.prepare(
-            intent=intent,
-            hints=hints,
-            session_messages=self._session.recent_messages(),
-            user_profile=self._user_profile or _default_user_profile(),
-            tools=tool_list,
-            global_constraints=task_system.constraints,
-            session_id=_SessionId(self._session.session_id),
-        )
+        # Issue C：prepare() 的失败**必须**在本方法内收口成 ToolResult。
+        # 本方法是工具处理器，契约是"返回结果、不向回合抛异常"，而调用链上没有任何
+        # try/except——`_run_submit_tasks`（core/cognitive/tool_phase.py）直接
+        # `await self._handle_submit_task(tc)`，异常会冒进已 spawn 的认知回合，
+        # 表现为"这一轮生成莫名死掉"，真实原因只剩任务异常日志。
+        # 两个来源都要挡：
+        # ① 委派能力不可用（无注入 client）；
+        # ② provider/解析失败——非 DeepSeek 部署上 client 是**可用**的，于是
+        #    prepare() 会真的发起请求，而请求体仍带 DeepSeek 专属参数
+        #    （`reasoning_effort` / `extra_body.thinking`）与 `deepseek-v4-pro`
+        #    默认模型名，provider 直接报错（**这是已知的后续项，见 Issue C 报告**）。
+        try:
+            prep_result = await self._delegation_preparer.prepare(
+                intent=intent,
+                hints=hints,
+                session_messages=self._session.recent_messages(),
+                user_profile=self._user_profile or _default_user_profile(),
+                tools=tool_list,
+                global_constraints=task_system.constraints,
+                session_id=_SessionId(self._session.session_id),
+            )
+        except DelegationUnavailableError:
+            logger.warning("submit_task: 委派准备器不可用（无 LLM client）", exc_info=True)
+            return ToolResult.fail(name="submit_task",
+                error="DelegationPreparer 不可用，请告知用户后台任务系统暂不可用。")
+        except Exception as exc:
+            # 措辞与上面两处 guard 一致（调用方按"后台任务系统暂不可用"告知用户），
+            # 但日志保留真实异常类型/消息——可诊断性在这里，不在给 LLM 的文案里。
+            logger.warning(
+                "submit_task: 委派准备失败（%s）——告知用户后台任务系统暂不可用",
+                type(exc).__name__, exc_info=True)
+            return ToolResult.fail(name="submit_task",
+                error="后台任务准备失败，请告知用户后台任务系统暂不可用，不要重复尝试。")
 
         if prep_result.status.value == "no_matching_tools":
             # Pydantic 字段恒存在，直接访问；`or []` 兜底 LLM 返回 null 的边界

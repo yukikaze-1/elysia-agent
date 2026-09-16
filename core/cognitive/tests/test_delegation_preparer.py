@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -69,11 +69,24 @@ def sample_session_messages() -> list[Message]:
 
 @pytest.fixture
 def preparer():
-    """创建 DelegationPreparer 实例（需要 DEEPSEEK_API_KEY 环境变量）。"""
-    import os
-    if not os.environ.get("DEEPSEEK_API_KEY"):
-        os.environ["DEEPSEEK_API_KEY"] = "test-key"
-    return DelegationPreparer()
+    """创建 DelegationPreparer 实例（LLM 能力**注入**，不再依赖 DEEPSEEK_API_KEY）。
+
+    Issue C 后构造签名是 `DelegationPreparer(infra)`：能力来自 `AgentInfra.llm` /
+    `llm_model`。本文件的用例都 patch 掉 `_call_llm_with_usage`，所以 client 只需
+    是一个非 None 的替身——但这正是关键：`prepare()` 会先判 `_client is None` 才继续。
+    """
+    from Module.workflow_contract import ConstraintConfig
+    from Module.workflow_contract.infra import AgentInfra
+
+    infra = AgentInfra(
+        llm=MagicMock(),
+        milvus=None,
+        http=None,
+        tool_registry=object(),
+        constraints=ConstraintConfig(),
+        llm_model="test-model",
+    )
+    return DelegationPreparer(infra)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -29,6 +29,7 @@ from Module.workflow_contract import (
     DelegationStatus,
     SessionId,
 )
+from Module.workflow_contract.infra import AgentInfra
 from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.workflow_engine import WorkflowEngine
 from core.cognitive.user_profile import UserProfile
@@ -161,6 +162,31 @@ def _detect_component(messages: list[dict]) -> str:
             return "Evaluator"
     # Executor: function-calling 调用，message 中有 tools 参数
     return "Executor"
+
+
+def _build_delegation_preparer() -> DelegationPreparer:
+    """构造 DelegationPreparer（Issue C 后 LLM 能力必须经 `AgentInfra` 注入）。
+
+    本文件是 `external` 真实 LLM 集成测试，**不**跑 Agent 装配（没有
+    `_start_task_system` 那条路径），所以这里按旧行为的等价物自建一个 DeepSeek
+    `AsyncOpenAI`，只是改成经 `AgentInfra` 显式注入——差别仅在"谁持有"：生产路径
+    注入的是 `LLMAdapter` 那一个 client，这里注入测试自己的一个。注入后
+    `dp._client` 仍可被 `_wrap_llm_client` 包装（本文件的观察点）。
+
+    用例在调用本函数前已 `pytest.skip`（无 `DEEPSEEK_API_KEY`），故不会拿空 key 建连。
+    """
+    infra = AgentInfra(
+        llm=AsyncOpenAI(
+            api_key=os.environ.get("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com",
+        ),
+        milvus=None,
+        http=None,
+        tool_registry=object(),
+        constraints=ConstraintConfig(),
+        llm_model=os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro"),
+    )
+    return DelegationPreparer(infra)
 
 
 def _wrap_llm_client(llm: AsyncOpenAI, label: str = "LLM") -> AsyncOpenAI:
@@ -341,8 +367,8 @@ async def _run_task(
 
     # ── Step 1: DelegationPreparer ──
     step_start = _log_step(1, TOTAL_STEPS, "DelegationPreparer 准备委派上下文")
-    dp = DelegationPreparer()
-    # DelegationPreparer 也自建 AsyncOpenAI，需单独包装
+    dp = _build_delegation_preparer()
+    # Issue C：client 由 AgentInfra 注入（不再由构造器自建），包装点不变
     _wrap_llm_client(dp._client, label="DelegationPreparer")
 
     result = await dp.prepare(
@@ -629,7 +655,7 @@ async def test_e2e_replan_recovery():
     # ── 单步骤搜索任务——简单但依赖 web_search ──
     # 如果 web_search 网络不稳 → RETRY ×3 → REPLAN → 修复 → 继续
     step_start = _log_step(1, 6, "DelegationPreparer 准备委派上下文")
-    dp = DelegationPreparer()
+    dp = _build_delegation_preparer()
     _wrap_llm_client(dp._client, label="DelegationPreparer")
 
     result = await dp.prepare(
@@ -825,7 +851,7 @@ async def test_e2e_cancel():
     _record_timeline("0.初始化", _elapsed() - step_start)
 
     step_start = _log_step(1, 6, "DelegationPreparer → submit → 等首个事件")
-    dp = DelegationPreparer()
+    dp = _build_delegation_preparer()
     _wrap_llm_client(dp._client, label="DelegationPreparer")
 
     result = await dp.prepare(
@@ -941,7 +967,7 @@ async def test_e2e_pause_resume():
     _record_timeline("0.初始化", _elapsed() - step_start)
 
     step_start = _log_step(1, 6, "DelegationPreparer → submit → 等首个事件")
-    dp = DelegationPreparer()
+    dp = _build_delegation_preparer()
     _wrap_llm_client(dp._client, label="DelegationPreparer")
 
     result = await dp.prepare(

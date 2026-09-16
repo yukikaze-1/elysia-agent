@@ -220,8 +220,12 @@ class _LifecycleTaskSystem:
         from Module.workflow_contract.infra import AgentInfra
         from Module.workflow_contract import ConstraintConfig
 
+        # Issue C：raw client 先取到局部变量——它既是 infra 的 llm 字段，也是下面
+        # "委派是否可用"的判据（`get_raw_client()` 的契约含 None：后端不实现
+        # `raw_client` 时返回 None，见 `LLMAdapter.get_raw_client`）。
+        raw_llm = self._llm.get_raw_client()
         _ts_infra = AgentInfra(
-            llm=self._llm.get_raw_client(),  # type: ignore[arg-type]
+            llm=raw_llm,  # type: ignore[arg-type]
             milvus=None,
             http=None,
             tool_registry=self._tool_adapter,
@@ -240,7 +244,23 @@ class _LifecycleTaskSystem:
         logger.info("WorkflowEngine started")
         # 注入 WorkflowEngine 到 ToolContext，供 get_runtime_config 查询活跃任务
         self._tool_adapter.tool_context.services["_task_system"] = self._task_system
-        self._delegation_preparer = DelegationPreparer()
+        # Issue C：委派准备器的 LLM 能力**复用 infra 里那一个 client**（engine 的
+        # Planner/Executor 用的是同一个），不读 provider 环境变量、不自建 client——
+        # 否则"某个 provider 的 key 必须存在"会顺着本启动步骤升级成整个 Agent 起不来
+        # （DEEPSEEK_API_KEY 缺席时 OpenAI/Ollama/MiMo/custom 部署全部启动失败）。
+        # 运行时交不出可复用 client → 用**既有**的"不可用"表示（`None`）：
+        # `CognitiveLoop` 据此不把 submit_task 注册给 LLM（`core/cognitive/loop.py`
+        # 的 `_delegation_preparer is not None` 判据），调用点返回显式文案
+        # （`core/cognitive/tools.py` 的 submit_task guard）。引擎自身照常启动，
+        # 可选/必需关系不变。
+        if raw_llm is None:
+            self._delegation_preparer = None
+            logger.warning(
+                "DelegationPreparer 未创建：配置的 LLM 运行时未提供可复用原始 client"
+                "（raw_client=None）——后台任务委派不可用（submit_task 不注册）；"
+                "Agent 其余功能不受影响")
+        else:
+            self._delegation_preparer = DelegationPreparer(_ts_infra)
 
         # 注入到 CognitiveLoop
         from core.cognitive.user_profile import UserProfile
@@ -532,9 +552,9 @@ class _LifecycleTaskSystem:
                     "WorkflowEngine stop 超时（>%.0fs，超过其内部最坏路径）——"
                     "后台任务未收尾，semaphore 可能未释放",
                     self._TASK_SYSTEM_STOP_BUDGET)
-        # 关闭 DelegationPreparer 内部 AsyncOpenAI 客户端，避免 /restart 泄漏 httpx 连接池
-        if self._delegation_preparer:
-            try:
-                await self._delegation_preparer.aclose()
-            except Exception:
-                logger.warning("DelegationPreparer close failed", exc_info=True)
+        # Issue C：**不再**在这里关闭 LLM client。DelegationPreparer 用的是注入的
+        # `AgentInfra.llm`——与 engine 的 Planner/Executor 同一个对象，所有权归
+        # `LLMAdapter`（由 `stop_llm_tts` 步骤统一关闭）。在这里关会掐掉停机序列
+        # 后续步骤（scheduler / tool_adapter 收尾）仍在用的连接池。
+        # `/restart` 也不因此泄漏：`Agent.start()` 首行 `_llm.reconnect()` 重建 client，
+        # 而重启会重新走 `_start_task_system` → preparer 重新绑定新 client。
