@@ -1,3 +1,23 @@
+"""配置加载器：默认值 < YAML < 环境变量。
+
+## 环境从哪里来（批 1.5 / 2026-09-17 起）
+
+本模块是**库**，只**读** `os.environ`，绝不写：`load()` / `load_from_dict()` 不再调用
+`load_dotenv()`（也不再有任何新键落进进程环境）。理由（实测，见根 `conftest.py` 的
+「环境引导」一节与 `Module/config/tests/test_dotenv_side_effect.py`）：
+
+- **隐藏副作用**：任意一次 `ConfigLoader(...).load()` 都会把仓库 `.env` 整个注进
+  `os.environ`，调用方看不见、也关不掉——库 API 不该改进程全局状态；
+- **顺序依赖**：`EnvManager.ensure_dotenv` 的 `_loaded` 是**一次性类级开关**，于是
+  「删掉键 K 再 `load()`，K 会不会从 `.env` 被读回来」取决于**本进程此前有没有人
+  load 过**。同一段测试代码在进程内第一条与第 N 条下结果不同（假绿/假红），
+  且 `pytest -n N` 下每个 worker 的历史各不相同。
+
+`load_dotenv()` 由**入口**负责，且只做一次：`app.py`（进程入口）、
+`Module/_common/env.py::ensure_dotenv()`（`__main__` / 脚本入口）、根 `conftest.py`
+（pytest 入口）。目标结构：入口加载环境 → `ConfigLoader` 只读 `os.environ` → 其余系统。
+"""
+
 from __future__ import annotations
 
 import dataclasses
@@ -18,13 +38,22 @@ T = TypeVar("T")
 
 
 class EnvManager:
-    """集中式 .env 加载 —— 确保 ``load_dotenv()`` 最多执行一次。"""
+    """环境变量解析助手 + **入口点**专用的 .env 引导。
+
+    - `resolve_env_name` / `coerce` 是纯函数，`ConfigLoader` 的 env 覆盖用它们；
+    - `ensure_dotenv` 是**给真正的进程入口**（`__main__` / 脚本）用的：它会把 `.env`
+      注进 `os.environ`。`_loaded` 因此是**入口点状态，不是库状态**——`ConfigLoader`
+      批 1.5 起不再调用它（库只读环境，见模块 docstring）。现存调用点：
+      `scripts/dev/stage_h_pinned_smoke.py:301`。
+    """
 
     _loaded: bool = False
 
     @classmethod
     def ensure_dotenv(cls, dotenv_path: str | None = None) -> None:
         """加载 .env 文件，确保全局只执行一次。
+
+        ⚠️ **入口点 API**：会改进程环境。库代码不要调用（`ConfigLoader` 已不调用）。
 
         Args:
             dotenv_path: .env 文件的显式路径，为 None 时自动查找。
@@ -133,7 +162,10 @@ class ConfigLoader(Generic[T]):
 
         Args:
             config_class: 目标 dataclass 类型。
-            env_path: .env 文件的显式路径，为 None 时自动查找。
+            env_path: **已废弃（保留仅为兼容既有调用方）**。批 1.5 起 `load()` 不再加载
+                .env（库只读 `os.environ`），故本参数**不再产生任何效果**；仓库内生产
+                代码无调用方，仅部分测试传入。要加载 .env 请走入口
+                （`Module/_common/env.py::ensure_dotenv()` 或根 `conftest.py`）。
             yaml_path: YAML 配置文件的路径，为 None 时跳过 YAML 加载。
             yaml_key: YAML 中的顶级键（如 "Server"），支持点号分隔的子键。
         """
@@ -147,11 +179,11 @@ class ConfigLoader(Generic[T]):
     def load(self) -> T:
         """完整管线：默认值 → YAML → 环境变量 → 校验。
 
+        **只读 `os.environ`**，不加载 .env、不改进程环境（批 1.5 起）。
+
         Returns:
             T: 加载并校验完成的配置实例。
         """
-        EnvManager.ensure_dotenv(self.env_path)
-
         instance = self._instantiate_defaults()
         yaml_data = self._load_yaml(self.yaml_path, self.yaml_key)
         self._merge_yaml(instance, yaml_data)
@@ -162,14 +194,14 @@ class ConfigLoader(Generic[T]):
     def load_from_dict(self, data: dict[str, Any]) -> T:
         """从程序化字典加载（同样的 merge/env/validate 管线，无需 YAML 文件）。
 
+        **只读 `os.environ`**，不加载 .env、不改进程环境（批 1.5 起）。
+
         Args:
             data: 配置字典，key 对应字段名。
 
         Returns:
             T: 加载并校验完成的配置实例。
         """
-        EnvManager.ensure_dotenv(self.env_path)
-
         instance = self._instantiate_defaults()
         self._merge_yaml(instance, data)
         self._override_from_env(instance)

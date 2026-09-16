@@ -1,6 +1,34 @@
-"""根 conftest —— 真实数据库访问防线（2026-09-11）。
+"""根 conftest —— ① pytest 入口的环境引导（批 1.5）+ ② 真实数据库访问防线（2026-09-11）。
 
-## 问题
+## ① 环境引导：`.env` 由**入口**加载一次（批 1.5 / 2026-09-17）
+
+pytest 是测试的**进程入口**，所以"环境从哪里来"由本文件负责——这是刻意的引导，
+不是副作用：
+
+    app.py / __main__ / 脚本 / pytest(本文件)
+              ↓  load_dotenv() 一次
+         ConfigLoader （只读 os.environ）
+              ↓
+           其余系统
+
+批 1.5 之前 `ConfigLoader.load()` 自己在库路径上调 `load_dotenv()`，于是：
+
+- 库 API 隐式改进程全局环境（调用方看不见、关不掉）；
+- `EnvManager._loaded` 是**一次性类级开关** → "删掉键 K 再 load()，K 会不会从 .env
+  被读回来"取决于**本进程此前有没有人 load 过**。实测（`tmp/batch1_5_probe/probe.py`
+  Probe C）：同一次 `ConfigLoader(AppConfig).load()`，`_loaded=False` 时把
+  `DEEPSEEK_API_KEY` 读回来、`_loaded=True` 时不读——同一段测试代码在进程内第一条与
+  第 N 条下结果不同，`pytest -n N` 下每个 worker 的历史还各不相同（假绿/假红）。
+
+现在：库只读环境（`Module/config/loader.py` 的模块 docstring），本文件在**收集任何测试
+之前**（conftest 先于测试模块被 import）显式加载一次，记录在 `_DOTENV_BOOTSTRAP` 里，
+测试可用 `dotenv_bootstrap` fixture 断言"入口确实喂过环境"——否则"库没复活被删的键"
+会退化成"本来就没人读过 .env"，是**假绿**。回归网见
+`Module/config/tests/test_dotenv_side_effect.py`。
+
+## ② 真实数据库访问防线（2026-09-11）
+
+### 问题
 
 `pytest.ini` 把 `unit` / `service` 定义为「不连真实 DB」，但默认配置恰好指向开发者
 本机生产库（`AppConfig().database.mongodb_uri = "mongodb://localhost:27017"`、
@@ -12,7 +40,7 @@ unit/service 测试，只要本机 Mongo 在跑就会连上并写入——且 `a
 `character_versions.session_id="test_default_type"`；2026-09-10 复盘曾清过一次，
 **测试跑完后再次出现**。
 
-## 防线
+### 防线
 
 **autouse `_guard_real_database`**：凡未标 integration/slow/external 的测试，把**指向生产库**
 的 Mongo 连接导流到内存 `FakeDocumentDBBackend`、把 Milvus 客户端拦截为抛错桩。
@@ -29,6 +57,7 @@ unit/service 测试，只要本机 Mongo 在跑就会连上并写入——且 `a
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -45,8 +74,34 @@ from core.tests._real_db_guard import (  # noqa: E402
     is_exempt,
 )
 
+
+def _bootstrap_dotenv() -> dict[str, object]:
+    """测试入口的 .env 引导：**每个 pytest 进程恰好一次**（模块级调用，见文件 docstring ①）。
+
+    返回可断言的记录——`load_dotenv(override=False)` 对已存在的键不留痕迹，
+    所以"注入了哪些键"必须在这里现算，否则测试无法区分"入口喂过"与"根本没读"。
+
+    Returns:
+        dict: ``{"attempted", "loaded", "path", "keys_added"}``。
+    """
+    from Module._common.env import ensure_dotenv
+
+    before = set(os.environ)
+    path = ensure_dotenv()
+    return {
+        "attempted": True,
+        "loaded": path is not None,
+        "path": str(path) if path is not None else None,
+        "keys_added": sorted(set(os.environ) - before),
+    }
+
+
+_DOTENV_BOOTSTRAP: dict[str, object] = _bootstrap_dotenv()
+"""pytest 入口的 .env 引导结果（供 `dotenv_bootstrap` fixture 与诊断）。"""
+
 _REDIRECTED_TESTS: set[str] = set()
 """被防线导流过的测试 nodeid（供 session 结束汇总）。"""
+
 
 _FAST_LAYER = frozenset({"unit", "service"})
 """快门禁层——`make test-quick` / PR 门禁的范围。"""
@@ -126,6 +181,24 @@ def pytest_collection_modifyitems(config, items):
         # 串行下是 4。**退出码不是契约，可读的失败原因是。**
         print(message, file=sys.stderr, flush=True)
         raise pytest.UsageError(message)
+
+
+@pytest.fixture(scope="session")
+def dotenv_bootstrap() -> dict[str, object]:
+    """pytest 入口的 .env 引导记录（批 1.5，见文件 docstring ①）。
+
+    结构与用途（`Module/config/tests/test_dotenv_side_effect.py` 消费）：
+
+    - ``attempted`` —— 入口**确实**执行过引导（模块级，恒 True；为 False 只可能是
+      conftest 引导被删掉，那正是要红的情形）；
+    - ``loaded`` / ``path`` —— `.env` 是否找到、在哪；
+    - ``keys_added`` —— 引导**实际注入**的键（现算：`override=False` 对已存在的键
+      不留痕迹，事后无法反推）。
+
+    存在的意义：让"库没把被删的键读回来"这类断言可证伪——没有 ``keys_added``，
+    "没读到"与"没人在读"无法区分（假绿）。
+    """
+    return _DOTENV_BOOTSTRAP
 
 
 @pytest.fixture
