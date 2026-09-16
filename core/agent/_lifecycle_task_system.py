@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter
     from core.schema.types import IsoTimestamp
     from core.agent._types import _BackgroundTaskEntry
+    from Module.llm.protocol import LLMBackend
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ class _LifecycleTaskSystem:
         _tool_adapter: ToolAdapter
         _bus: EventBus
         _task_system: WorkflowEngine | None
+        _task_llm_backend: LLMBackend | None
         _delegation_preparer: DelegationPreparer | None
         _cognitive: CognitiveLoop
         _user_name: str
@@ -217,19 +219,44 @@ class _LifecycleTaskSystem:
         """创建 WorkflowEngine + DelegationPreparer + HITLNotifier，注入 CognitiveLoop。"""
         from Module.workflow_engine.workflow_engine import WorkflowEngine
         from core.cognitive.delegation import DelegationPreparer
-        from Module.workflow_contract.infra import AgentInfra
+        from Module.workflow_contract.infra import AgentInfra, resolve_task_system_model
         from Module.workflow_contract import ConstraintConfig
 
-        # Issue C：raw client 先取到局部变量——它既是 infra 的 llm 字段，也是下面
-        # "委派是否可用"的判据（`get_raw_client()` 的契约含 None：后端不实现
-        # `raw_client` 时返回 None，见 `LLMAdapter.get_raw_client`）。
-        raw_llm = self._llm.get_raw_client()
+        # F1（Batch 1.6）：工作流的 LLM 资源**归工作流自己所有**。
+        # 修复前这里取的是 `self._llm.get_raw_client()`——主 LLM 适配器当前后端的
+        # raw client。而 `LLMAdapter.switch_model()` 会在热切换时把**换下来的旧
+        # backend 后台 close 掉**（`core/adapter/llm_adapter.py` 的
+        # `_closing_backends.try_spawn(close_meth())`），于是切换之后工作流手里的
+        # 就是一个已关闭的对象：任何后台任务 LLM 调用抛
+        # `APIConnectionError ← RuntimeError: Cannot send a request, as the client
+        # has been closed.`（Batch 1.5 探针实测 `is_closed()` False → True）。
+        # 那是**资源生命周期所有权错误**（A 创建/关闭、B 长期持有），不是接缝问题。
+        # 建不起来（provider 配置缺欠 / custom 条目解析不出 / runtime != backend）
+        # 一律降级为 None——**绝不抛**：本方法是 `_STARTUP_STEPS` 的一步，抛出去会经
+        # `AgentLifecycle.start()` 回滚整只 Agent，把"某个 provider 配置缺欠"升级成
+        # "整个应用起不来"（正是 Issue C 修过的形态）。
+        # 模型名只解析一次：建 backend 用的名字与引擎请求里 `model=` 用的名字
+        # 必须**是同一个值**（不是"两次调用同一个函数"）。
+        task_model_name = resolve_task_system_model()
+        task_llm = None
+        try:
+            task_llm = self._build_task_llm_backend(task_model_name)
+        except Exception:
+            logger.warning(
+                "工作流 task LLM 构建失败——后台任务委派不可用（submit_task 不注册）；"
+                "Agent 其余功能不受影响", exc_info=True)
+        self._task_llm_backend = task_llm
+        raw_llm = task_llm.raw_client if task_llm is not None else None
+
         _ts_infra = AgentInfra(
             llm=raw_llm,  # type: ignore[arg-type]
             milvus=None,
             http=None,
             tool_registry=self._tool_adapter,
             constraints=ConstraintConfig(),
+            # 模型名与上面那个 backend 用的**同一个**值（`resolve_task_system_model`
+            # 是 env `TASK_SYSTEM_MODEL` 的唯一读取点，不在本文件再读一次 env）。
+            llm_model=task_model_name,
             # #6：终态结果持久化面（engine 侧可读、Agent 侧读写；停机落库 + 启动补投）
             background_task_results=self._bg_result_repo(),
             # #6 硬杀窗口：终态**同步**落盘 sink（engine 挂在每个 mailbox 上）
@@ -244,11 +271,10 @@ class _LifecycleTaskSystem:
         logger.info("WorkflowEngine started")
         # 注入 WorkflowEngine 到 ToolContext，供 get_runtime_config 查询活跃任务
         self._tool_adapter.tool_context.services["_task_system"] = self._task_system
-        # Issue C：委派准备器的 LLM 能力**复用 infra 里那一个 client**（engine 的
-        # Planner/Executor 用的是同一个），不读 provider 环境变量、不自建 client——
-        # 否则"某个 provider 的 key 必须存在"会顺着本启动步骤升级成整个 Agent 起不来
-        # （DEEPSEEK_API_KEY 缺席时 OpenAI/Ollama/MiMo/custom 部署全部启动失败）。
-        # 运行时交不出可复用 client → 用**既有**的"不可用"表示（`None`）：
+        # Issue C：委派准备器复用 engine 那**同一个** client（不读 provider 环境变量、
+        # 不自建第二份连接），于是"委派可用性"与"引擎可用性"不可能分歧。
+        # F1 之后这个 client 是工作流自持的 task LLM，而不是主 LLM 的借出品。
+        # 运行时交不出可用 client → 用**既有**的"不可用"表示（`None`）：
         # `CognitiveLoop` 据此不把 submit_task 注册给 LLM（`core/cognitive/loop.py`
         # 的 `_delegation_preparer is not None` 判据），调用点返回显式文案
         # （`core/cognitive/tools.py` 的 submit_task guard）。引擎自身照常启动，
@@ -256,9 +282,10 @@ class _LifecycleTaskSystem:
         if raw_llm is None:
             self._delegation_preparer = None
             logger.warning(
-                "DelegationPreparer 未创建：配置的 LLM 运行时未提供可复用原始 client"
-                "（raw_client=None）——后台任务委派不可用（submit_task 不注册）；"
-                "Agent 其余功能不受影响")
+                "DelegationPreparer 未创建：工作流的 task LLM 不可用"
+                "（模型=%s，构建失败或主 provider 的 runtime != backend）——"
+                "后台任务委派不可用（submit_task 不注册）；"
+                "Agent 其余功能不受影响", task_model_name)
         else:
             self._delegation_preparer = DelegationPreparer(_ts_infra)
 
@@ -270,6 +297,59 @@ class _LifecycleTaskSystem:
             user_profile=UserProfile(display_name=self._user_name),
             on_background_task=self._register_background_task,
         )
+
+    def _build_task_llm_backend(self, task_model_name: str) -> "LLMBackend | None":
+        """建一个**工作流自己拥有**的 task LLM backend（F1）。
+
+        Args:
+            task_model_name: 裸模型名（`resolve_task_system_model()` 的结果，由调用方
+                解析一次后传入——建 backend 的名字与引擎请求里的 `model=` 必须是同一个值）。
+
+        连接参数（base_url / api_key / 出站守卫）按**主 LLM 的模型标识**解析，模型名
+        用 `TASK_SYSTEM_MODEL`（裸名）——两边拼成 `"<主 provider>/<task 模型名>"`。
+        这么拼的理由：
+
+        - `TASK_SYSTEM_MODEL` 的契约是**裸模型名**（它被原样塞进 API 的 `model=`，
+          见 `AgentInfra.llm_model` 与 Batch 1.5 的不变式测试），编不出自己的
+          `provider/` 前缀；provider 只能从主模型取。
+        - `custom/<name>` 的 base_url/api_key 挂在**条目**上，裸模型名对不上任何条目，
+          所以参数必须按主模型标识解析（`_resolve_switch_params` 顺带完成 SSRF 校验
+          与出站守卫工厂注入——**复用**既有的那一处实现，不抄第四份）。
+        - 复用 `LLMFactory.create` 也意味着 `supports_thinking` / `supports_prefix`
+          与主 provider 同源（`Module/config/providers.yaml`）。
+
+        **返回 None 表示"工作流没有可用的 LLM"**（与 `raw_client=None` 同一个语义），
+        调用方据此走既有降级路径——本方法自己**不吞**异常，由调用方统一收口
+        （便于测试从构造函数注入失败）。
+
+        Returns:
+            可用的 `LLMBackend`；主 provider 的 runtime 不是 backend 时返回 None。
+
+        Raises:
+            Exception: provider 配置缺欠（缺 base_url / 未知 provider / custom 条目
+                解析失败）——由 `_start_task_system` 统一降级。
+        """
+        from Module.llm import LLMFactory
+        from core.agent.server import _resolve_switch_params
+
+        main_model_id = self._llm.model
+        provider = main_model_id.split("/", 1)[0] if "/" in main_model_id else main_model_id
+        task_model_id = f"{provider}/{task_model_name}"
+
+        params, runtime, http_client_factory = _resolve_switch_params("llm", main_model_id)
+        if runtime != "backend":
+            # desktop/local Profile 由 Electron 执行，后端不代理（与 switch_llm 同判据）
+            logger.warning(
+                "主 LLM Profile %s 的 runtime=%s，后台不由后端执行——"
+                "工作流 task LLM 不创建", main_model_id, runtime)
+            return None
+        if http_client_factory is not None:
+            params["http_client_factory"] = http_client_factory
+        backend = LLMFactory.create(task_model_id, **params)
+        logger.info(
+            "工作流 task LLM: %s（provider 跟随主 LLM %s；生命周期归 WorkflowEngine）",
+            task_model_id, main_model_id)
+        return backend
 
     def _start_mailbox_polling(self) -> None:
         """启动后台任务 mailbox 轮询（独立 asyncio.Task）。"""
@@ -538,8 +618,14 @@ class _LifecycleTaskSystem:
     # 取 20s 留余量。**改内层任何一段都要同步改这里**——两条预算是一组不变量。
     _TASK_SYSTEM_STOP_BUDGET = 20.0
 
+    #: F1（Batch 1.6）：工作流自持的 task LLM backend 的一次关闭预算。它是**叶子**——
+    #: 目标是 `OpenAICompatBackend.close()`（→ `AsyncOpenAI.close()`），仓库内没有更
+    #: 内层的预算；与 `_stop_llm_and_tts` 关主 LLM 用的是同一个 3s 量级。超时只记
+    #: warning：关不掉的连接池由进程退出回收，不能把停机拖在这里。
+    _TASK_LLM_CLOSE_BUDGET = 3.0
+
     async def _stop_task_system(self) -> None:
-        """停止 WorkflowEngine（外层预算 ≥ 其内部预算，S2-A3）。"""
+        """停止 WorkflowEngine，再关工作流**自己拥有**的 task LLM。"""
         if self._task_system:
             try:
                 await asyncio.wait_for(
@@ -552,9 +638,23 @@ class _LifecycleTaskSystem:
                     "WorkflowEngine stop 超时（>%.0fs，超过其内部最坏路径）——"
                     "后台任务未收尾，semaphore 可能未释放",
                     self._TASK_SYSTEM_STOP_BUDGET)
-        # Issue C：**不再**在这里关闭 LLM client。DelegationPreparer 用的是注入的
-        # `AgentInfra.llm`——与 engine 的 Planner/Executor 同一个对象，所有权归
-        # `LLMAdapter`（由 `stop_llm_tts` 步骤统一关闭）。在这里关会掐掉停机序列
-        # 后续步骤（scheduler / tool_adapter 收尾）仍在用的连接池。
-        # `/restart` 也不因此泄漏：`Agent.start()` 首行 `_llm.reconnect()` 重建 client，
-        # 而重启会重新走 `_start_task_system` → preparer 重新绑定新 client。
+        # F1（Batch 1.6）：关闭**工作流自己拥有**的 task LLM。
+        # 顺序是刻意的——`WorkflowEngine.stop()` 先等在途任务落定（内部最坏 ≈17s），
+        # 再关它唯一的 LLM 资源，才不会掐掉正在跑的请求。
+        # 取到局部变量并**立刻**置 None：本方法可能被调两次（关停步骤是幂等的），
+        # 而"恰好关一次"是所有权的一部分（Test F1-4 钉住 close 调用计数 == 1）。
+        task_llm, self._task_llm_backend = self._task_llm_backend, None
+        if task_llm is not None:
+            try:
+                await asyncio.wait_for(
+                    task_llm.close(), timeout=self._TASK_LLM_CLOSE_BUDGET)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "工作流 task LLM 关闭超时（>%.0fs）", self._TASK_LLM_CLOSE_BUDGET)
+            except Exception:
+                logger.warning("工作流 task LLM 关闭失败", exc_info=True)
+        # 注：**不**在这里关闭主 LLM 的 client——它是 `LLMAdapter` 的资源，由
+        # `stop_llm_tts` 步骤统一关闭（本步在它之前）。在这里关会掐掉停机序列后续
+        # 步骤（scheduler / tool_adapter 收尾）仍在用的连接池。
+        # `/restart` 也不因此泄漏：`Agent.start()` 首行 `_llm.reconnect()` 重建**主**
+        # client，而重启会重新走 `_start_task_system` → 建一个全新的 task LLM。

@@ -38,6 +38,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -322,9 +323,12 @@ class TestStartupStepWiring:
         """单一来源：`WorkflowEngine.infra.llm_model` == `DelegationPreparer._model`，
         且两者持有**同一个** raw client 对象。
 
-        实测（Case 1/2）：`_start_task_system` 构造 `AgentInfra` 时**不传**
-        `llm_model=`，于是 `default_factory` 生效。本条只钉"两边一致"这一不变式；
-        具体取值由上面 `TestLlmModelField` 覆盖。
+        实测（Case 1/2）：`_start_task_system` 显式传 `llm_model=`（值来自
+        `resolve_task_system_model()`，与 `default_factory` 同源）。本条只钉"两边一致"
+        这一不变式；具体取值由上面 `TestLlmModelField` 覆盖。
+
+        F1（Batch 1.6）：那个 client 现在是**工作流自己拥有**的 task LLM 的 raw client，
+        不再是主 LLM 适配器的借出品——所以额外钉住"它 ≠ 主适配器的 client"。
         """
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-only")
         monkeypatch.delenv(_ENV_KEY, raising=False)
@@ -337,7 +341,9 @@ class TestStartupStepWiring:
             infra = host._task_system._infra  # noqa: SLF001
             assert host._delegation_preparer._model == infra.llm_model  # noqa: SLF001
             assert host._delegation_preparer._client is infra.llm  # noqa: SLF001
-            assert infra.llm is llm.get_raw_client()
+            assert infra.llm is not None
+            assert infra.llm is not llm.get_raw_client(), (
+                "工作流用的是自己的 task LLM（F1），不是主适配器的 client")
         finally:
             await host._stop_task_system()  # noqa: SLF001
             await llm.close()
@@ -352,7 +358,7 @@ class TestStartupStepWiring:
 
         **当前契约快照**：主 agent 若决定让工作流跟随主模型，本条应改为断言
         `infra.llm_model == llm.model.split("/", 1)[1]`（或新配置源），
-        并同步报告 §建议。
+        并同步报告 §建议。Batch 1.6 / F1 **没有**动这条语义（那是行为变更，不在本批）。
         """
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-only")
         monkeypatch.delenv(_ENV_KEY, raising=False)
@@ -371,24 +377,22 @@ class TestStartupStepWiring:
             await llm.close()
 
     @pytest.mark.asyncio
-    async def test_hot_switch_does_not_rewire_task_system(self, monkeypatch):
-        """**实测现状**：主 LLM 热切换**不**重新接线任务系统。
+    async def test_hot_switch_does_not_invalidate_task_system(self, monkeypatch):
+        """F1（Batch 1.6）**修复后的不变式**：热切换主模型后工作流的 client 仍有效。
 
-        `LLMAdapter.switch_model()` 只换 `self._backend`；`AgentInfra` 是在
-        `Agent.start()` 的 `task_system` 步骤里一次性构造的（`_STARTUP_STEPS` 的一步），
-        热切换不重启 Agent，所以：
+        修复前的实测（Batch 1.5，原文保留在下）：`_start_task_system` 借的是主适配器
+        当时的 raw client，`LLMAdapter.switch_model()` 会在后台把它 close 掉，于是：
 
         - `engine.infra.llm` 仍是**旧** client（对象同一性不变）；
-        - `infra.llm_model` 不变；
-        - 且旧 client 已被 `switch_model` 的异步 `close()` 关掉
-          （`LLMAdapter._closing_backends`）——实测 `old_client.is_closed() is True`，
-          此后任务系统的任何调用都会以
-          `APIConnectionError`（`__cause__` = `RuntimeError: Cannot send a request,
-          as the client has been closed.`）失败。
-          这是 Batch 1.5/D 报告里的发现，**不是**本用例要固化的期望行为。
+        - 且旧 client 已被关闭——实测 `old_client.is_closed() is True`，
+          此后任务系统的任何调用都会以 `APIConnectionError`
+          （`__cause__` = `RuntimeError: Cannot send a request, as the client has been
+          closed.`）失败。
 
-        **当前契约快照**：主 agent 若决定"热切换后任务系统跟随"，本条应改为断言
-        `infra.llm is llm.get_raw_client()` 且 `infra.llm_model` 同步。
+        修复后（方案 A）：工作流**拥有**自己的 task LLM——
+        `_start_task_system` 建、`_stop_task_system` 关。主 LLM 的热切换关的是它自己
+        换下来的那个 backend，碰不到工作流的资源；`infra.llm` 与 `infra.llm_model` 都
+        不随热切换变化（模型名独立是**有意**的，见上一条）。
         """
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-only")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-only")
@@ -401,14 +405,24 @@ class TestStartupStepWiring:
             await host._start_task_system()  # noqa: SLF001
             infra = host._task_system._infra  # noqa: SLF001
             before_client, before_model = infra.llm, infra.llm_model
+            old_main = llm.get_raw_client()
+            assert before_client is not old_main, "前提：工作流用的是自己的 task LLM"
 
             llm.switch_model("openai/gpt-4o")
-            after_client = llm.get_raw_client()
+            # 等"后台关旧后端"落定（它是 fire-and-forget；切换后主 client 必被关）
+            for _ in range(300):
+                if old_main.is_closed():
+                    break
+                await asyncio.sleep(0.01)
+            assert old_main.is_closed(), "前提：主 LLM 换下来的 client 确实被关了"
 
-            assert after_client is not before_client, "前提：热切换确实换了 client"
-            assert infra.llm is before_client, "任务系统仍持有旧 client"
+            assert llm.get_raw_client() is not old_main, "前提：热切换确实换了 client"
+            assert infra.llm is before_client, "工作流的 client 对象不随热切换变化"
             assert infra.llm_model == before_model, "任务系统的模型名不随热切换变化"
+            assert before_client.is_closed() is False, (  # type: ignore[attr-defined]
+                "**核心**：主模型热切换不得关闭工作流的 LLM 资源（F1 的原缺陷）")
             assert host._delegation_preparer._client is before_client  # noqa: SLF001
+            assert not before_client.is_closed()  # type: ignore[attr-defined]
         finally:
             await host._stop_task_system()  # noqa: SLF001
             await llm.close()

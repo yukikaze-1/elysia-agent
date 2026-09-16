@@ -29,6 +29,25 @@ if TYPE_CHECKING:
     from pymilvus import MilvusClient
 
 
+#: `TASK_SYSTEM_MODEL` 未设时的回退值——**裸模型名**（不含 `provider/` 前缀：
+#: 它被原样塞进 OpenAI 兼容 API 的 `model=`，见 `AgentInfra.llm_model`）。
+DEFAULT_TASK_SYSTEM_MODEL = "deepseek-v4-pro"
+
+
+def resolve_task_system_model() -> str:
+    """后台任务系统（Planner/Executor/Evaluator/DelegationPreparer）的模型名。
+
+    **本函数是 env `TASK_SYSTEM_MODEL` 在契约层的唯一读取点**（字段 `default_factory`
+    与需要"先知道模型名再建后端"的 core 侧构造路径共用它）。两处各写一次 `os.getenv`
+    会让"模型名到底从哪来"重新变成不可判定——Batch 1.5 把它钉成不变式
+    （`Module/workflow_contract/tests/test_task_system_model.py`）。
+
+    Returns:
+        裸模型名（如 ``"deepseek-v4-pro"``）——**不含** ``provider/`` 前缀。
+    """
+    return os.getenv("TASK_SYSTEM_MODEL", DEFAULT_TASK_SYSTEM_MODEL)
+
+
 @dataclass
 class AgentInfra:
     """跨任务共享的底层资源容器。
@@ -41,7 +60,11 @@ class AgentInfra:
     AgentInfra 但不使用该字段（engine 内部运行时用途，非契约语义）。
 
     字段：
-        llm:            LLM 客户端（AsyncOpenAI），跨所有 Agent 共享
+        llm:            LLM 客户端（AsyncOpenAI）。**所有权是 core 侧的注入者**——
+                        F1（Batch 1.6）之后由工作流自己的 task LLM backend 持有，
+                        其生命周期与 WorkflowEngine 同起同落（见
+                        `core/agent/_lifecycle_task_system.py`），而不是主 LLM
+                        适配器借出的共享 client。
         milvus:         Milvus 向量数据库客户端（None 表示向量搜索不可用）
         http:           httpx 异步 HTTP 客户端
         tool_registry:  ToolRegistry，全量工具注册表（类型为 object 避免循环导入）
@@ -62,7 +85,7 @@ class AgentInfra:
     constraints: ConstraintConfig
     orphan_tools: set["asyncio.Task"] = field(default_factory=set)  # engine 内部运行时（executor 登记、stop 采集）
     llm_model: str = field(
-        default_factory=lambda: os.getenv("TASK_SYSTEM_MODEL", "deepseek-v4-pro")
+        default_factory=resolve_task_system_model
     )  # LLM 模型名，Planner/Executor/Evaluator 共用（env: TASK_SYSTEM_MODEL）
     background_task_results: object | None = None
     """后台任务终态结果仓储（`BackgroundTaskResultRepository`，core 侧构造注入）。

@@ -31,11 +31,24 @@ Planner/Executor/Evaluator 正是用
 ## 这些用例钉住的不变式
 
 1. 启动步骤不读 provider 环境变量、不因缺 key 抛异常（C1）；
-2. 拿不到可复用 client 时**显式降级**为"工作流委派不可用"（既有表示：
+2. **工作流的 task LLM 建不起来**时**显式降级**为"工作流委派不可用"（既有表示：
    `_delegation_preparer is None` → `submit_task` 不注册 / 显式失败文案），
    启动不崩（C2）；
 3. DeepSeek 配置下路径不变（C3）；
-4. stop→start 后重新绑定到重建的 client，不复活已关闭的旧 client（C4）。
+4. stop→start 后拿到**重建的** task LLM，不复活已关闭的旧 client（C4）；
+5. 工作流关停只关**自己拥有的** task LLM，不碰主 LLM 的 client（C5）。
+
+## Batch 1.6 / F1 对 C2 的改写（如实说明）
+
+修复前 C2 的判据是"**主 LLM 运行时交不出可复用 raw client**（`get_raw_client()`
+返回 None）→ 委派不可用"。F1 之后工作流**不再借**主运行时的 client——它自己建一个
+task LLM（`_build_task_llm_backend`），所以那个判据在结构上不再存在：可用性问题变成
+"**工作流自己的 task LLM 能不能建起来**"。本文件因此：
+
+- `test_main_backend_without_raw_client_no_longer_gates_the_workflow`（新增）——
+  钉住"主后端的形状不再是工作流可用性的前提"这一语义变化；
+- `test_task_llm_construction_failure_degrades_instead_of_crashing`（改写自原 C2）——
+  用**真实的**降级触发点（构造函数抛错）验证降级路径本身仍然完整。
 """
 
 from __future__ import annotations
@@ -217,6 +230,10 @@ class TestStartupStepIsProviderAgnostic:
 
         修复前：`DelegationPreparer()` 抛
         `ValueError: DEEPSEEK_API_KEY 环境变量未设置…` → `Agent.start()` 回滚到 STOPPED。
+
+        F1（Batch 1.6）：工作流用的不再是主适配器的 client，而是**它自己**按主 provider
+        建出来的 task LLM——所以断言从"`_client is` 主 client"改成"**独立对象** + 仍走
+        OpenAI 端点"。要钉的语义（缺 DeepSeek key 不是前置、不静默路由到别家）不变。
         """
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
@@ -228,34 +245,75 @@ class TestStartupStepIsProviderAgnostic:
             assert host._delegation_preparer is not None, (  # noqa: SLF001
                 "配了可用 provider 就该有 preparer——缺 DeepSeek key 不是前置条件"
             )
-            raw = llm.get_raw_client()
-            assert host._delegation_preparer._client is raw       # noqa: SLF001
-            assert "openai" in str(raw.base_url)                  # noqa: SLF001
-            assert "deepseek" not in str(raw.base_url)            # noqa: SLF001
-            assert host._task_system is not None                  # noqa: SLF001
-            host._cognitive.configure.assert_called_once()        # noqa: SLF001
+            raw = host._delegation_preparer._client  # noqa: SLF001
+            assert raw is not None
+            assert raw is not llm.get_raw_client(), (
+                "工作流用的是自己拥有的 task LLM，不是主适配器的 client（F1）")
+            assert "openai" in str(raw.base_url)            # type: ignore[attr-defined]
+            assert "deepseek" not in str(raw.base_url)      # type: ignore[attr-defined]
+            assert host._task_system is not None            # noqa: SLF001
+            host._cognitive.configure.assert_called_once()  # noqa: SLF001
         finally:
             await _teardown(host)
 
     @pytest.mark.asyncio
-    async def test_missing_raw_client_degrades_instead_of_crashing(self, monkeypatch, caplog):
-        """C2：配置的运行时交不出可复用 client → 显式降级，启动不崩。
+    async def test_main_backend_without_raw_client_no_longer_gates_the_workflow(self, monkeypatch):
+        """F1 语义变化：**主后端的形状**不再是工作流可用性的前提。
 
-        降级用的是**既有**表示：`_delegation_preparer is None`（`loop.py:793` 据此
-        不把 submit_task 注册给 LLM；`tools.py:258` 据此返回显式失败文案）。
+        修复前工作流借主适配器的 raw client，于是"主后端不实现 `raw_client`"
+        （`get_raw_client()` → None）会让委派不可用。修复后工作流用**自己**按主 provider
+        建出来的 task LLM（`_build_task_llm_backend`），不再读那个属性——所以同一场景下
+        委派**照常可用**。这不是放宽：可用性判据换成了更准确的那个（"工作流的 task LLM
+        能不能建起来"，见下一条用例）。
+        """
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+        monkeypatch.delenv("TASK_SYSTEM_MODEL", raising=False)
+        llm = LLMAdapter(_test_backend=_NoRawClientBackend())
+        host = _host_agent(llm)
+        try:
+            assert llm.get_raw_client() is None, "前提：主后端交不出 raw client"
+            await host._start_task_system()  # noqa: SLF001
+
+            assert host._delegation_preparer is not None, (  # noqa: SLF001
+                "工作流自持 task LLM 之后，主后端的形状不再是它的前提")
+            client = host._delegation_preparer._client  # noqa: SLF001
+            assert client is not None and client.is_closed() is False
+        finally:
+            await _teardown(host)
+
+    @pytest.mark.asyncio
+    async def test_task_llm_construction_failure_degrades_instead_of_crashing(
+            self, monkeypatch, caplog):
+        """C2（F1 改写版）：**task LLM 建不起来** → 显式降级，启动不崩。
+
+        降级用的是**既有**表示：`_delegation_preparer is None`（`loop.py` 据此
+        不把 submit_task 注册给 LLM；`tools.py` 据此返回显式失败文案）。
         引擎仍照常启动——WorkflowEngine 的启停语义**没有**被改动。
+
+        触发点是真实的：`_build_task_llm_backend` 会在 provider 配置缺欠
+        （缺 base_url / 未知 provider / custom 条目解析不出 / runtime != backend）时抛错，
+        而 `_start_task_system` 是 `_STARTUP_STEPS` 的一步——**抛出去会回滚整只 Agent**
+        （`lifecycle.py` 的 start 异常分支）。本用例把那个抛错注入进来，钉住"它被吞掉
+        并降级，而不是升级成启动失败"。
         """
         import logging
 
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        llm = LLMAdapter(_test_backend=_NoRawClientBackend())
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+        monkeypatch.delenv("TASK_SYSTEM_MODEL", raising=False)
+        llm = LLMAdapter("deepseek/deepseek-v4-flash")
         host = _host_agent(llm)
+
+        def _boom(task_model_name: str) -> object:
+            raise ValueError(f"provider 配置缺欠（模拟；task 模型={task_model_name}）")
+
+        monkeypatch.setattr(type(host), "_build_task_llm_backend", _boom, raising=False)
         try:
             with caplog.at_level(logging.WARNING, logger="core.agent._lifecycle_task_system"):
                 await host._start_task_system()  # noqa: SLF001
 
             assert host._delegation_preparer is None              # noqa: SLF001
             assert host._task_system is not None, "引擎本身仍启动（必需关系不变）"  # noqa: SLF001
+            assert host._task_llm_backend is None                 # noqa: SLF001
             warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
             assert warnings, "降级必须留可见痕迹，不能静默"
 
@@ -277,10 +335,10 @@ class TestStartupStepIsProviderAgnostic:
 
     @pytest.mark.asyncio
     async def test_deepseek_deployment_still_works(self, monkeypatch):
-        """C3：DeepSeek 配置的 happy path 不回退——注入的 client 真的能跑完一次 prepare。
+        """C3：DeepSeek 配置的 happy path 不回退——工作流的 client 真的能跑完一次 prepare。
 
         走**真实的** `_call_llm_with_usage`（只把最外层 SDK 调用换成 AsyncMock），
-        所以钉住的是"注入 client + infra.llm_model 被真正用于请求"。
+        所以钉住的是"工作流自持的 client + `infra.llm_model` 被真正用于请求"。
         """
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
         monkeypatch.delenv("TASK_SYSTEM_MODEL", raising=False)
@@ -290,8 +348,9 @@ class TestStartupStepIsProviderAgnostic:
             await host._start_task_system()  # noqa: SLF001
             dp = host._delegation_preparer  # noqa: SLF001
             assert dp is not None
-            raw = llm.get_raw_client()
-            assert "deepseek" in str(raw.base_url)  # noqa: SLF001
+            raw = dp._client  # noqa: SLF001
+            assert raw is not None
+            assert "deepseek" in str(raw.base_url)
 
             raw.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
                 return_value=_fake_completion(_OK_PAYLOAD))
@@ -329,32 +388,41 @@ class TestStartupStepIsProviderAgnostic:
             await _teardown(host)
 
     @pytest.mark.asyncio
-    async def test_stop_does_not_close_borrowed_client(self, monkeypatch):
-        """所有权：client 归 LLM 适配器，工作流关停**不得**关掉共享 client。
+    async def test_stop_closes_only_the_workflow_owned_client(self, monkeypatch):
+        """C5（F1 改写版）：工作流关停**只关自己拥有的** task LLM，不碰主 LLM 的 client。
 
-        修复前 `_stop_task_system` 调 `_delegation_preparer.aclose()` 关闭"自己建的"
-        client；改为借用注入 client 后若照旧关闭，会掐掉 engine/主循环共用的连接池。
+        修复前本用例钉的是"不得关掉借来的共享 client"（当时 `_stop_task_system` 确实
+        什么也不关）。F1 之后所有权反转：工作流自己建 task LLM，于是**两半**都要成立——
+        ① 自己的那个**必须**被关（否则每次 restart 泄一个连接池）；
+        ② 主适配器的 client **必须**留给它的所有者（`stop_llm_tts` 步骤）关——
+           在这里关会掐掉停机序列后续步骤仍在用的连接池。
         """
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
         llm = LLMAdapter("deepseek/deepseek-v4-flash")
         host = _host_agent(llm)
         try:
             await host._start_task_system()  # noqa: SLF001
-            raw = llm.get_raw_client()
+            main_client = llm.get_raw_client()
+            task_client = host._delegation_preparer._client  # noqa: SLF001
+            assert task_client is not main_client, "前提：两者是不同对象（F1）"
+
             await host._stop_task_system()   # noqa: SLF001
-            assert raw.is_closed() is False, "共享 client 必须留给它的所有者关闭"  # noqa: SLF001
+
+            assert task_client.is_closed() is True, "工作流必须关掉自己拥有的 task LLM"  # noqa: SLF001
+            assert main_client.is_closed() is False, (  # noqa: SLF001
+                "主 LLM 的 client 必须留给它的所有者（stop_llm_tts）关闭")
         finally:
             await host._llm.close()
 
     @pytest.mark.asyncio
-    async def test_restart_rebinds_to_reconnected_client(self, monkeypatch):
-        """C4：stop → start 后重新绑定到**重建**的 client，不复活已关闭的旧 client。
+    async def test_restart_rebuilds_the_task_llm(self, monkeypatch):
+        """C4（F1 改写版）：stop → start 后拿到**重建的** task LLM，不复用已关闭的旧 client。
 
         完整 `Agent.start()` 在单测里不可行（要 Mongo/Milvus/角色/WS 全套），这里覆盖
         最贴近的可达缝：`lifecycle.start()` 的实际顺序是
-        `_llm.reconnect()`（`lifecycle.py:217`）→ 走 `_STARTUP_STEPS` 含
-        `_start_task_system`（`:123`）；`stop()` 末段 `_stop_llm_and_tts` 关闭 client。
-        本用例按该顺序驱动，钉住"重启后不把已关闭 client 交给引擎"。
+        `_llm.reconnect()`（重建**主** client）→ 走 `_STARTUP_STEPS` 含
+        `_start_task_system`；`stop()` 里的 `_stop_task_system` 关掉 task LLM。
+        本用例按该顺序驱动，钉住"重启后不把已关闭的 task client 交给引擎"。
         """
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
         llm = LLMAdapter("deepseek/deepseek-v4-flash")
@@ -363,17 +431,18 @@ class TestStartupStepIsProviderAgnostic:
             await host._start_task_system()  # noqa: SLF001
             first, first_client = host._delegation_preparer, host._delegation_preparer._client  # noqa: SLF001
             await host._stop_task_system()   # noqa: SLF001
+            assert first_client.is_closed() is True, "前提：停机确实关掉了第一个 task LLM"  # noqa: SLF001
 
-            # 模拟 stop() 末段关 LLM + start() 开头 reconnect（lifecycle.py:217）
+            # 模拟 stop() 末段关主 LLM + start() 开头 reconnect（lifecycle.py:217）
             await host._llm.close()
             await host._llm.reconnect()
             await host._start_task_system()  # noqa: SLF001
 
             second = host._delegation_preparer  # noqa: SLF001
             assert second is not None and second is not first
-            assert second._client is host._llm.get_raw_client()   # noqa: SLF001
             assert second._client is not first_client, "不得复用已关闭的旧 client"  # noqa: SLF001
             assert second._client.is_closed() is False            # noqa: SLF001
+            assert second._client is not host._llm.get_raw_client()  # noqa: SLF001
         finally:
             await _teardown(host)
 

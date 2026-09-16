@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 from Module.output import OutputManager, ConsoleChannel
 from Module.workflow_contract.schema import WorkflowId
 from Module._common.task_scope import AsyncTaskScope
+from Module.llm.protocol import LLMBackend
 
 from core.agent._types import RunState, _PendingMessage, _BackgroundTaskEntry
 from core.agent.lifecycle import AgentLifecycle
@@ -538,6 +539,11 @@ class Agent(AgentLifecycle, AgentServer):
 
         # ---- WorkflowEngine ----
         self._task_system = None   # WorkflowEngine | None
+        # F1（Batch 1.6）：工作流**自己拥有**的 task LLM backend
+        # （`Module.llm.protocol.LLMBackend | None`）——`_start_task_system` 建、
+        # `_stop_task_system` 关。它不随主 LLM 的热切换变化（修复前工作流借的是
+        # 主适配器的 raw client，`switch_model` 会把那个 client 关掉）。
+        self._task_llm_backend: LLMBackend | None = None
         self._delegation_preparer = None  # DelegationPreparer | None
         self._background_tasks: dict[WorkflowId, _BackgroundTaskEntry] = {}
         self._mailbox_task: asyncio.Task | None = None

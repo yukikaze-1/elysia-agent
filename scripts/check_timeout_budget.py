@@ -104,6 +104,11 @@ _LEAF_BUDGETS: dict[str, str] = {
                                   "路径的**活性**上界——驱动默认 serverSelectionTimeout 30s，"
                                   "网络黑洞下一条落库能把停机拖住 30s（超时即降级为不落库）",
     "_CHANNEL_SEND_TIMEOUT": "输出通道单帧写预算，目标是 WS 客户端/终端（外部 I/O）；\n                              它同时是**活性**上界：客户端不读数据时背压会让 send_json 永久挂起，\n                              而 _broadcast 是所有帧的必经之路（S2-H1）",
+    "_TASK_LLM_CLOSE_BUDGET": "F1（Batch 1.6）：关掉工作流**自持**的 task LLM backend 的一次预算，"
+                              "目标是 `OpenAICompatBackend.close()`（→ AsyncOpenAI.close()，外部 I/O），"
+                              "仓库内没有更内层的预算。它与同文件的 `_TASK_SYSTEM_STOP_BUDGET` 是**顺序**"
+                              "关系而非嵌套（先 stop 引擎等在途任务落定，再关它唯一的 LLM 资源；"
+                              "关在 stop 之前会掐掉正在跑的请求），故不进 `_INVARIANTS`",
 }
 
 # `--list` 报告用：这些是"运行期才知道"的预算，静态解析不到，不算违规。
