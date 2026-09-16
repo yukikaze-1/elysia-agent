@@ -59,17 +59,19 @@ class TestBasicText:
         assert proc.flush() == []
 
     def test_plain_text_with_period(self):
-        """迁移：feed 输入含空格的文本 → TEXT_DELTA 即时（SPEECH token），
-        句边界完成才出 SENTENCE（此处 "hello world。" 尾段在 flush 落地）。"""
+        """feed 含句末标点 → TEXT_DELTA **与** SENTENCE 都在标点处即时产出。
+
+        （2026-09-16 S3-G7：句末标点改为即时落盘——此前整段滞留到 `flush()` 才产出，
+        粒度守卫见 `TestSentenceBoundaryLatency`。）
+        """
         proc = StreamProcessor()
         events = proc.feed("hello world。")
         # TTFT 在首个可见 SPEECH 到达时触发
         assert StreamEventType.TTFT in [e.type for e in events]
-        flush_events = proc.flush()
-        types = [e.type for e in flush_events]
+        types = [e.type for e in events]
         assert StreamEventType.TEXT_DELTA in types
         assert StreamEventType.SENTENCE in types
-        sentence_events = [e for e in flush_events if e.type == StreamEventType.SENTENCE]
+        sentence_events = [e for e in events if e.type == StreamEventType.SENTENCE]
         assert any("hello world。" in e.text for e in sentence_events)
 
     def test_plain_text_no_delimiter_flush(self):
@@ -105,10 +107,12 @@ class TestTextDeltaGranularity:
         assert any("好的" in s and "世界" in s for s in sents)
 
     def test_pause_stripped_from_delta_kept_in_sentence(self):
-        """TEXT_DELTA 剥离 PAUSE；SENTENCE 保留完整标签（送 TTS）。"""
+        """TEXT_DELTA 剥离 PAUSE；SENTENCE 保留完整标签（送 TTS）。
+
+        事件在 feed 阶段就产出（句末标点即时落盘，S3-G7），故合并 feed + flush 一起看。
+        """
         proc = StreamProcessor()
-        proc.feed("<#0.5#>你好。")
-        events = proc.flush()
+        events = proc.feed("<#0.5#>你好。") + proc.flush()
         deltas = [e.text for e in events if e.type == StreamEventType.TEXT_DELTA]
         sentences = [e.text for e in events if e.type == StreamEventType.SENTENCE]
         assert all("<#0.5#>" not in d for d in deltas)
@@ -402,8 +406,9 @@ class TestReset:
         events = proc.feed("fresh start。")
         assert StreamEventType.TTFT in [e.type for e in events]
         assert not any(e.type == StreamEventType.MOOD for e in events)
-        flush_events = proc.flush()
-        assert any(e.type == StreamEventType.SENTENCE for e in flush_events)
+        # 句末标点即时落盘（S3-G7）→ SENTENCE 在 feed 阶段产出，不必等 flush
+        assert any(e.type == StreamEventType.SENTENCE for e in events)
+        assert not any(e.type == StreamEventType.SENTENCE for e in proc.flush())
 
     def test_reset_clears_blocks(self):
         proc = StreamProcessor()
@@ -419,8 +424,9 @@ class TestReset:
 
 class TestPauseTags:
     def _collect(self, proc, text):
-        proc.feed(text)
-        events = proc.flush()
+        # feed + flush 合并看：句末标点即时落盘（S3-G7）后事件在 feed 阶段就产出，
+        # 只取 flush 会漏掉整轮（这些用例判的是**内容**——标签是否保留/剥离）。
+        events = proc.feed(text) + proc.flush()
         sentences = [e.text for e in events if e.type == StreamEventType.SENTENCE]
         deltas = [e.text for e in events if e.type == StreamEventType.TEXT_DELTA]
         return sentences, deltas
@@ -460,8 +466,7 @@ class TestPauseTags:
     def test_halfwidth_stage_cn_kept_in_sentence(self):
         """半角 (眨眼) → SENTENCE 完整保留（行为表 #6，TTS 剥离由 tts_adapter 保证）。"""
         proc = StreamProcessor(min_chunk_length=3)
-        proc.feed("(眨眼)好的。")
-        events = proc.flush()
+        events = proc.feed("(眨眼)好的。") + proc.flush()
         sentences = [e.text for e in events if e.type == StreamEventType.SENTENCE]
         assert any("(眨眼)" in s for s in sentences)
 
@@ -498,8 +503,8 @@ class TestStageEn:
         assert "(sighs)" in proc.rebuild_public_text()
 
     def _collect(self, proc, text):
-        proc.feed(text)
-        events = proc.flush()
+        # feed + flush 合并看（句末标点即时落盘，S3-G7）——这些用例判的是**内容**。
+        events = proc.feed(text) + proc.flush()
         sentences = [e.text for e in events if e.type == StreamEventType.SENTENCE]
         deltas = [e.text for e in events if e.type == StreamEventType.TEXT_DELTA]
         return sentences, deltas
@@ -740,3 +745,89 @@ class TestMultipleCodeBlocks:
         assert [(b[0], b[2]) for b in blocks] == [("code", "python"), ("markdown", "")]
         # 第二个块 after_idx 跨块计数（markdown 块落在两个完成句之后）
         assert blocks[0][3] == 1 and blocks[1][3] == 2
+
+
+# ============================================================================
+# Group 12: 句边界到达时刻（S3-G7 粒度守卫）
+# ============================================================================
+
+class TestSentenceBoundaryLatency:
+    """粒度/到达时刻守卫：句末标点必须**当场**落盘，不得整轮滞留到 `flush()`。
+
+    为什么需要这一类（S3-G7 的成因）：既有 491 条用例只断言事件**序列**相等，
+    而"整轮事件堆在 EOF"与"逐句即时产出"的序列完全相同——重构把 SPEECH 粒度钉在
+    空白/结构边界后，文本模式失去打字效果、句级 TTS 退化为"生成完再起播"、TTFT
+    指标等于整轮生成耗时，**全部用例照绿**。序列相等不蕴含到达时刻正确，故这里
+    显式断言到达位置。
+
+    反证：把 `tokenizer._feed_normal` 的句末标点分支去掉（退回"只在空白/结构字符
+    处落盘"）→ 本类必须红。
+    """
+
+    @staticmethod
+    def _at(text: str) -> list[tuple[object, StreamEventType, str]]:
+        """逐字符喂入，返回 (chunk 下标或 'EOF', 事件类型, 文本)。"""
+        proc = StreamProcessor()
+        out: list[tuple[object, StreamEventType, str]] = []
+        for index, char in enumerate(text):
+            for event in proc.feed(char):
+                out.append((index, event.type, event.text))
+        for event in proc.flush():
+            out.append(("EOF", event.type, event.text))
+        return out
+
+    def test_first_sentence_arrives_at_its_punctuation(self):
+        """无空格无换行的中文回复：首个 SENTENCE 必须在句号那个 chunk 产出。"""
+        text = "你好呀，我是Elysia，很高兴见到你。今天天气不错，我们出去走走吧。"
+        events = self._at(text)
+        first_boundary = text.index("。")
+        sentences = [(at, t) for at, kind, t in events
+                     if kind is StreamEventType.SENTENCE]
+        assert sentences, f"应产出 SENTENCE，实际事件 {events!r}"
+        at, first = sentences[0]
+        assert at == first_boundary, (
+            f"首个 SENTENCE 应在句号处（chunk {first_boundary}）产出，实际在 {at}：{first!r}"
+        )
+        assert first == text[: first_boundary + 1]
+
+    def test_all_events_are_not_deferred_to_eof(self):
+        """反空转：不得出现"整轮事件全在 EOF"（旧缺陷的精确形状）。
+
+        句子取 ≥ `min_chunk_length`(5) 的长度：**短句暂留一拍**是 `SpeechSplitter`
+        的既有设计（`_front_held`，让短句有机会与后文合并后送 TTS），与 S3-G7 的
+        "整轮滞留到 EOF"不是一回事——后者与句长无关。
+        """
+        text = "第一句话说完整。第二句话也完整。第三句话同样完整。"
+        events = self._at(text)
+        at_eof = [e for e in events if e[0] == "EOF"]
+        assert len(at_eof) < len(events), (
+            f"至少要有事件在流中途产出，实际全部在 EOF：{events!r}"
+        )
+        # 三个句子各在各自的句号处产出
+        boundaries = [i for i, ch in enumerate(text) if ch == "。"]
+        sentence_positions = [at for at, kind, _ in events
+                              if kind is StreamEventType.SENTENCE]
+        assert sentence_positions == boundaries, (
+            f"每句应在其句号处产出：{sentence_positions!r} vs {boundaries!r}"
+        )
+
+    def test_ttft_not_deferred_to_eof(self):
+        """TTFT 指标不得等于整轮生成耗时：首个可见文本落盘即发。
+
+        TTFT 与首句边界可能落在同一 chunk——普通文本 run 本来就只在边界处落盘，
+        这不是缺陷；缺陷是"整轮只在 EOF 落盘"（那时 TTFT == 整轮生成耗时）。
+        """
+        text = "你好呀，我是Elysia，很高兴见到你。"
+        events = self._at(text)
+        ttft_at = [at for at, kind, _ in events if kind is StreamEventType.TTFT]
+        assert ttft_at, f"应产出 TTFT，实际 {events!r}"
+        assert ttft_at[0] != "EOF", "TTFT 不得等到流结束才发"
+        assert ttft_at[0] <= text.index("。"), (
+            f"TTFT 不应晚于句边界，实际 chunk {ttft_at[0]}"
+        )
+
+    def test_no_boundary_text_still_flushes_at_eof(self):
+        """边界语义的另一半：**没有**句末标点时仍然只在 flush 产出（不是"全都即时"）。"""
+        events = self._at("没有标点的一句话")
+        kinds_mid = [k for at, k, _ in events if at != "EOF"]
+        assert kinds_mid == [], f"无边界文本不该在中途产出事件：{events!r}"

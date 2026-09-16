@@ -246,22 +246,17 @@ class StreamProcessor:
             events.append(StreamEvent(type=StreamEventType.SENTENCE, text=sentence))
 
     def _flush_splitter_tail(self, events: list[StreamEvent]) -> None:
-        """splitter 尾句：emoji-only 合并到最后一个 SENTENCE（避免独占一行）。"""
+        """splitter 尾句 → SENTENCE 事件。
+
+        历史（2026-09-16，S3-G7）：这里曾把 emoji-only 尾句**并入上一条 SENTENCE**
+        （注释写"避免独占一行"）。那个合并只在"句子与 emoji 尾停在同一个待落盘缓冲里"
+        时才可能发生——正是无空格/无换行回复整轮滞留到 `flush()` 的旧行为。句末标点
+        改为即时落盘后，句子的 SENTENCE 在标点到达时就已经发出去了，**没有可并入的
+        对象**（调用方已把它派发给 TTS/段帧，无法回改），该分支成为死代码。
+        留着它只会让读者以为这个特性还在，故删除，并把新语义钉进用例：
+        emoji-only 尾句是**独立句子**。附带影响为零——TTS 侧本来就有 emoji-only
+        门控（见 `core/text/tests/test_emoji_consumers.py::TestTTSEmojiGate`），
+        不会为它合成音频；显示侧由 TEXT_DELTA 承载，与本事件无关。
+        """
         for tail in self._splitter.flush():
-            # PAUSE 不是可见文本，emoji 判定先剥（尾句仍保留 PAUSE 原样）
-            if is_emoji_only(PAUSE_RE.sub("", tail)):
-                for i in range(len(events) - 1, -1, -1):
-                    if events[i].type is StreamEventType.SENTENCE:
-                        events[i] = StreamEvent(
-                            type=StreamEventType.SENTENCE,
-                            text=events[i].text + tail,
-                        )
-                        break
-                else:
-                    events.append(
-                        StreamEvent(type=StreamEventType.SENTENCE, text=tail)
-                    )
-            else:
-                events.append(
-                    StreamEvent(type=StreamEventType.SENTENCE, text=tail)
-                )
+            events.append(StreamEvent(type=StreamEventType.SENTENCE, text=tail))

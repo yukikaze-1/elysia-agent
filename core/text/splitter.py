@@ -23,12 +23,15 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from core.text.tags import SENTENCE_END_CHARS
 from core.text.tokenizer import Token, TokenKind
 
 
 # 句边界字符集。刻意不含 `\r`：换行归一在 `StreamProcessor.feed`（管道唯一摄入点）
 # 收口，到这里只可能是 `\n`——在此补 `\r` 只会掩盖上游未归一的输入。
-_HARD_DELIMITERS = frozenset("。！？!?\n♪♡")
+# 字符集本身在 `tags.SENTENCE_END_CHARS`（**唯一定义点**）——tokenizer 的落盘
+# 边界必须与这里同源，否则句号滞留在 `_pending` 里、分句器永远看不到它（S3-G7）。
+_HARD_DELIMITERS = SENTENCE_END_CHARS | {"\n"}
 _DEFAULT_DELIMITERS = _HARD_DELIMITERS | {"."}
 
 # 常见英文缩写。可根据业务继续扩展。

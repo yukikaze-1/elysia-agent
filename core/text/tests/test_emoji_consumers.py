@@ -105,12 +105,23 @@ class TestTTSEmojiGate:
 
 
 class TestStreamProcessorEmojiTail:
-    def test_emoji_only_tail_merges_into_previous_sentence(self):
-        """纯 emoji 尾句并入上一条 SENTENCE（不独占一行）—— ZWJ 序列同样成立。
+    """emoji-only 尾句的**新**语义（2026-09-16，S3-G7 句末标点即时落盘）。
 
-        构造对齐既有 ``TestEmojiMerge``：句子与 emoji 尾全部压在 tokenizer pending
-        中，flush 时同批落盘（``好。♪`` → 一条 ``好。♪``）。
-        """
+    旧语义（本类原用例名 ``test_emoji_only_tail_merges_into_previous_sentence``）：
+    emoji 尾并入上一条 SENTENCE。但那个合并的实现前提是"句子与 emoji 尾停在同一个
+    待落盘缓冲里、在 `flush()` 里同批产出"——恰恰就是"无空格无换行的回复整轮滞留到
+    EOF"这个缺陷本身。句末标点改为即时落盘后，句子在标点到达时就已经派发给 TTS/段帧，
+    **没有可并入的对象**，该合并成为不可实现的死代码（已随之删除）。
+
+    代价如实记录：emoji 尾现在自成一条 SENTENCE ⇒ v2 客户端多一个段帧（内容就是
+    emoji）。TTS 不受影响（emoji-only 句在 `TTSStreamManager.stream_sentence` 被门控
+    跳过，见 `TestTTSEmojiGate`）；显示不受影响（文本由 TEXT_DELTA 承载）。
+    若要恢复合并语义，唯一办法是**延迟句子发出**直到看见下一个 token——那会重新引入
+    本次要修的延迟（模型在句间停顿多久，用户就等多久），故不做。
+    """
+
+    def test_emoji_only_tail_is_own_sentence(self):
+        """纯 emoji 尾句 → 独立 SENTENCE（不再与上句合并），ZWJ 序列同样成立。"""
         proc = StreamProcessor(min_chunk_length=3)
         proc.feed("我先走了")
         proc.feed("。")
@@ -119,17 +130,28 @@ class TestStreamProcessorEmojiTail:
         sentences = [
             e.text for e in events if e.type is StreamEventType.SENTENCE
         ]
-        assert sentences == ["我先走了。" + _ZWJ_FAMILY], (
-            f"ZWJ 序列不得自成一句：{sentences!r}"
+        assert sentences == [_ZWJ_FAMILY], f"emoji 尾应为独立一句：{sentences!r}"
+
+    def test_sentence_is_emitted_at_the_boundary_not_at_flush(self):
+        """反证的另一半：上一句**已经**在句号处发出（这正是合并无法进行的原因）。"""
+        proc = StreamProcessor(min_chunk_length=3)
+        proc.feed("我先走了")
+        at_boundary = proc.feed("。")
+        sentences = [
+            e.text for e in at_boundary if e.type is StreamEventType.SENTENCE
+        ]
+        assert sentences == ["我先走了。"], (
+            f"句号到达即应产出 SENTENCE（不得等到 flush）：{sentences!r}"
         )
 
     def test_non_emoji_tail_stays_own_sentence(self):
-        """反证（防空转）：同样的尾句位置放普通文本 → 确实是独立一句。"""
+        """反证（防空转）：同样的位置放普通文本 → 两句都在标点处即时产出。"""
         proc = StreamProcessor(min_chunk_length=3)
         proc.feed("我先走了")
-        proc.feed("。路上小心。")
-        events = proc.flush()
+        events = proc.feed("。路上小心。") + proc.flush()
         sentences = [
             e.text for e in events if e.type is StreamEventType.SENTENCE
         ]
-        assert sentences == ["我先走了。", "路上小心。"]
+        assert sentences == ["我先走了。", "路上小心。"], (
+            f"两句都应即时产出：{sentences!r}"
+        )

@@ -50,6 +50,7 @@ from core.text.tags import (
     META_TAGS,
     PAUSE_RE,
     PAUSE_TAIL_RE,
+    SENTENCE_END_CHARS,
     STAGE_CN_CLOSE,
     STAGE_CN_OPEN,
     STAGE_K,
@@ -285,6 +286,18 @@ class StreamTokenizer:
                 self._indent += 1
                 if self._indent > FENCE_MAX_INDENT:
                     self._at_line_start = False
+            return
+        if c in SENTENCE_END_CHARS:
+            # 句末标点必须**立刻落盘**（S3-G7）：分句器只在 SPEECH 文本上扫标点，
+            # 标点若留在 `_pending` 里，整句（乃至整轮）都等不到句边界——无空格的
+            # 中文回复会退化成"生成完再一次性出现 + TTS 到 EOF 才起播"。
+            # 标点**并入**累积文本再落盘（不单独成 token）：token 边界仍落在
+            # 内容决定的位置上（标点处），故跨 chunk 不变式不受影响——同一文本
+            # 无论怎么切分，token 流都相同（fuzz 的等价性判据正是"边界必须内容决定"）。
+            self._pending += c
+            self._flush_pending(out)
+            if self._at_line_start:
+                self._at_line_start = False
             return
         if self._at_line_start and c == "`":
             self._held = "`"

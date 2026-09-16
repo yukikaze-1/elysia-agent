@@ -27,6 +27,8 @@ LLM delta → StreamProcessor（mood/inner_voice 状态机）
 - 统一全部标签定义（识别 / 路由 / 错误处理收拢到 `core/text/tags.py`）
 - 提供标签注册表机制，未来加标签 = 加一行注册，核心零改动
 - **事件面与显示路径完全兼容**（MOOD/INNER_VOICE/SENTENCE/TEXT_DELTA/TTFT 不变，无新增事件类型）
+  ——⚠️ **"完全兼容"在事件粒度上曾不成立**（句末标点未落盘 ⇒ 无空格中文回复整轮堆到 EOF、
+  TTFT 失真），见文末「修订记录」2026-09-16 条；真实规则与守卫以该条为准
 - 修复现状解析缺陷（见行为对照表，每项都附测试固化）
 - 代码块正确分拣：不进 TTS、不参与分句；显示仍走 finalize 的 `block` 命令（现状）
 
@@ -294,3 +296,35 @@ LLM delta → StreamProcessor.feed(delta)
 - **关键流式路径改动**：影响每轮对话的实时管线。缓解：核心不变式 property test + 全量回归 + 事件面/显示路径完全兼容
 - **性能**：tokenizer 单次扫描 O(n)，正则仅用于行内短模式匹配
 - **行为回归**：以行为对照表为唯一基准——"现状"项逐条对齐、"修复"项必须按设计实现并测试固化，防止实现者把修复还原成现状行为
+
+## 修订记录
+
+### 2026-09-16：句边界落盘判据的缺口（S3-G7，code review 三方确认后修复）
+
+**本文档"事件面与显示路径完全兼容（…TEXT_DELTA/TTFT 不变）"这一条在粒度上曾不成立**，
+现记录真实规则与守卫，避免读者继续按"完全兼容"理解。
+
+- **缺口**：`StreamTokenizer._feed_normal` 的落盘边界只含 `\n`、空格、`` ` ``、`（`、`<`，
+  句末标点（`。！？!?♪♡`）不在其中 ⇒ 无空格无换行的中文回复整段滞留在 `_pending`，
+  分句器拿不到句号。实测（2026-09-16，真实 `StreamProcessor`）：
+  `"你好呀，我是Elysia，很高兴见到你。今天天气不错，我们出去走走吧。"` 逐字符喂入
+  ⇒ **0 个中途事件**，TTFT / TEXT_DELTA / 两条 SENTENCE 全在 `flush()`（= 整轮生成耗时）。
+  后果：文本模式失去打字效果、句级 TTS 退化为"生成完再起播"、TTFT 指标失真
+  （该 span 进 `TimingClock` 与 Debug Latency 面板）。
+- **为什么既有用例全绿**：491 条用例只断言事件**序列**相等，而"整轮堆在 EOF"与
+  "逐句即时产出"的序列完全相同——**序列相等不蕴含到达时刻正确**。
+- **修复后的真实规则（唯一基准）**：SPEECH 的落盘边界 = **内容决定的边界**：
+  ① `\n` / 空格；② 结构字符（`` ` ``、`（`/`(`、`<`）；③ **句末标点**
+  （`core/text/tags.py::SENTENCE_END_CHARS`，与 `SpeechSplitter._HARD_DELIMITERS` **同源**）。
+  句末标点**并入**累积文本后立即落盘（不单独成 token），故跨 chunk 不变式不受影响。
+- **有意保留的延迟**：① 普通文本 run 在边界前不落盘（不变式要求"边界内容决定"，
+  逐 chunk 落盘会破坏它）；② `SpeechSplitter` 的 `min_chunk_length` 短句暂留一拍
+  （TTS 偏好）。两者都与"整轮滞留到 EOF"无关。
+- **有意放弃的行为**：`StreamProcessor._flush_splitter_tail` 曾把 emoji-only 尾句
+  并入上一条 SENTENCE。该合并的实现前提是"句子与 emoji 尾停在同一个待落盘缓冲里"，
+  即本缺口本身；句边界即时落盘后句子已经派发，无并入对象，故该分支删除，
+  emoji 尾成为独立 SENTENCE（TTS 侧本就有 emoji-only 门控，不合成；文本显示走
+  TEXT_DELTA，不受影响）。
+- **守卫**（防止再次退化）：`core/text/tests/test_stream_processor.py::TestSentenceBoundaryLatency`
+  ——断言首个 SENTENCE 在句号那个 chunk 产出、TTFT 不晚于句边界、无标点文本仍在 EOF
+  落盘（反空转）。反证：删掉落盘边界分支 → 该类 3 条红。
