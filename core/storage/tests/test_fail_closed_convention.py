@@ -131,6 +131,8 @@ _CONVENTION: dict[str, dict[str, str]] = {
         "list_versions": READ_FAIL_CLOSED,
         "get_version": READ_FAIL_CLOSED,
         "count_versions": READ_FAIL_CLOSED,
+        # #21b：会话删除级联（离线抛，不得静默返回 0 被 caller 当成功）
+        "delete_by_session": WRITE,
     },
     # **刻意**让读走进程内缓存：docstring 明确"缓存为唯一读权威"，Mongo 离线时
     # get/query_pending 仍可从 cache 回答（幂等去重/状态查询不失效）。这不是遗漏，

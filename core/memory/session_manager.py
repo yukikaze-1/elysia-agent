@@ -21,9 +21,10 @@ import logging
 import os
 import uuid
 from collections import OrderedDict
+from collections.abc import Sequence
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from paths import ProjectPath
 
@@ -86,7 +87,8 @@ class SessionManager:
 
     def __init__(self, repo: SessionRepository, msg_repo: MessageRepository,
                  max_sessions: int = 20, max_messages: int = 20,
-                 pending_cleanup_file: str | Path | None = None):
+                 pending_cleanup_file: str | Path | None = None,
+                 cascade_repos: "Sequence[tuple[str, Any]] | None" = None):
         """初始化 SessionManager。
 
         Args:
@@ -96,9 +98,20 @@ class SessionManager:
             max_messages: 每个 SessionMemory 的消息窗口上限。
             pending_cleanup_file: 待清理 journal 路径（测试注入），默认
                 ProjectPath.SESSION_PENDING_CLEANUP。
+            cascade_repos: **会话域集合的级联删除清单**（#21b）——`(label, repo)`
+                序列，每个 repo 必须有 `delete_by_session(session_id)`。删除会话
+                提交后逐个调用（失败进 pending journal 重试）。
+                **为什么要一份显式清单**：`token_usage` / `generations` /
+                `character_versions` 都按 session_id 分区，漏掉任何一个都会留下
+                永久不可达的孤儿行。清单由 `agent.py` 构造时从真实 repo 组装，
+                并由 `core/memory/tests/test_session_cascade.py` 的覆盖守卫断言
+                "所有带 delete_by_session 的仓储都在清单里"——**新增会话域集合
+                忘了接线就红**，而不是等下次数据审计才发现。
         """
         self._repo = repo
         self._msg_repo = msg_repo
+        # #21b：会话域集合的级联删除清单（label 只用于日志/诊断）
+        self._cascade_repos: list[tuple[str, Any]] = list(cascade_repos or [])
         self._max_sessions = max_sessions
         self._max_messages = max_messages
         # B6/P2-01：共享 MemoryReflector（agent 注入）——挂到所有会话使 reflector
@@ -585,6 +598,7 @@ class SessionManager:
                 await self._attachment_cleanup(sid)
             if self._msg_repo is not None:
                 deleted_messages = await self._msg_repo.delete_by_session(sid)
+            await self._cascade_delete_session_scoped(sid)
         except Exception as e:
             self._pending_cleanup.add(sid)
             self._save_pending_cleanup()
@@ -668,6 +682,23 @@ class SessionManager:
         except Exception:
             logger.warning("写入 session pending-cleanup journal 失败", exc_info=True)
 
+    async def _cascade_delete_session_scoped(self, sid: SessionId) -> None:
+        """删除该会话在**其余会话域集合**里的行（#21b）。
+
+        幂等：各仓储的 `delete_by_session` 对已删数据返回 0，故 journal 重试安全。
+        失败**不吞**——抛给调用方（提交后清理块登记 pending journal 重试；
+        retry 路径按会话记录 debug 并保留下轮重试）。
+        """
+        for label, repo in self._cascade_repos:
+            try:
+                removed = await repo.delete_by_session(sid)
+            except Exception:
+                logger.warning(
+                    "会话 %s 级联删除失败（%s）——登记待重试", sid, label, exc_info=True)
+                raise
+            if removed:
+                logger.info("会话 %s 级联删除：%s 删除 %d 行", sid, label, removed)
+
     async def retry_pending_cleanup(self) -> None:
         """重试待清理会话（健康循环 session 恢复时调用）。
 
@@ -687,6 +718,7 @@ class SessionManager:
                     await self._attachment_cleanup(sid)
                 if self._msg_repo is not None:
                     await self._msg_repo.delete_by_session(sid)
+                await self._cascade_delete_session_scoped(sid)
                 self._pending_cleanup.discard(sid)
             except Exception:
                 logger.debug("待清理会话重试失败 sid=%s", sid, exc_info=True)

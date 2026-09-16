@@ -196,6 +196,14 @@ class Agent(AgentLifecycle, AgentServer):
         self._version_repo = CharacterVersionRepository(
             base_url=db_cfg.mongodb_uri,
         )
+        # #21b：generation 仓储改为**在 SessionManager 之前显式构造**——会话删除的
+        # 级联清单要引用它，而原先它藏在 `GenerationRegistry()` 内部（构造点在本函数
+        # 更后面），清单拿不到实例。仓储实例仍只此一个，注册表经构造注入复用。
+        from core.storage.generation_repo import GenerationRepository
+        self._generation_repo = GenerationRepository(
+            database_name=db_cfg.db_name,
+            base_url=db_cfg.mongodb_uri,
+        )
         # 批次 4 Desktop 调用注册表（desktop_calls 集合；Mongo 离线降级为进程内缓存）
         self._desktop_call_repo = DesktopCallRepository(
             database_name=db_cfg.db_name,
@@ -215,6 +223,15 @@ class Agent(AgentLifecycle, AgentServer):
             repo=self._session_repo,
             msg_repo=self._message_repo,
             max_messages=config.memory.session_max_messages,
+            # #21b：会话域集合的级联删除清单——**唯一接线点**。这些集合都按
+            # session_id 分区，删会话时漏掉任何一个都会留下永久不可达的孤儿行。
+            # 覆盖守卫：core/memory/tests/test_session_cascade.py 断言"所有带
+            # delete_by_session 的仓储都在这里"，新增集合忘接线即红。
+            cascade_repos=[
+                ("token_usage", self._token_repo),
+                ("generations", self._generation_repo),
+                ("character_versions", self._version_repo),
+            ],
         )
         # review 复核 #5 D2：会话删除提交后释放该会话归档消息的附件 refs（失败由
         # manager journal 重试）。lazy 闭包——delete/retry 时才解引用 self 的 repo。
@@ -428,7 +445,8 @@ class Agent(AgentLifecycle, AgentServer):
         # 经构造注入 loop（loop 不再自建）——agent 与 loop 是同一实例；生命周期启动时
         # 对 registry 建连（connect），此后 register/mark 真正落库（不再全量 no-op）。
         from core.cognitive.generation_registry import GenerationRegistry
-        self._generation_registry = GenerationRegistry()
+        # 复用上面那个实例（唯一仓储实例；级联清单与本注册表指向同一个对象）
+        self._generation_registry = GenerationRegistry(repo=self._generation_repo)
 
         from core.cognitive import CognitiveLoop  # 函数级导入：打破循环导入
         self._cognitive = CognitiveLoop(

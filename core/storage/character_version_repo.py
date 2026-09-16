@@ -289,6 +289,29 @@ class CharacterVersionRepository(Repository):
                 f"不得静默成功")
         return self._db
 
+    async def delete_by_session(self, session_id: SessionId) -> int:
+        """按会话删除版本历史（会话删除级联，#21b）。
+
+        为什么需要：`character_versions` 按 `session_id` 分区（见索引
+        `session_id_1_content_type_1_version_-1`），删除会话后这些行**不可达**——
+        没有任何读路径能再取到它们（`list_versions`/`get_version` 都要 session_id），
+        但它们会永久留在库里。同集合的 `Message`/`Token`/`Generation` 三个仓储
+        早就有 `delete_by_session`，只有本仓储连方法都没有（#21b）。
+
+        Returns:
+            删除的记录数（0 = 无记录，幂等——重试路径会重复调用）。
+
+        Raises:
+            StorageUnavailableError: 数据库未连接（离线删除不得静默返回 0
+                被 caller 当成功）。
+        """
+        db = self._require_connected("delete_by_session")
+        removed = await db.delete_many(COLLECTION, {"session_id": session_id})
+        logger.info(
+            "CharacterVersionRepository delete_by_session: session_id=%s, deleted=%d",
+            session_id, removed)
+        return removed
+
     async def list_versions(
         self, session_id: SessionId, *,
         limit: int = 20, before_version: int | None = None,
