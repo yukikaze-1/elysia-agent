@@ -124,7 +124,24 @@ prompt = await mgr.render()
 versions = mgr.get_versions()    # {"ConflictRules": "1.0.0", ...}
 mgr.reload_all()                 # 热重载所有模板
 failed = mgr.validate_all()      # 校验失败的 section 名列表
+
+# 按预算渲染（S2-H9）：超预算先减 C4 记忆条数（5→3→2→1→0），
+# 仍超则按 _DROPPABLE_SECTIONS 顺序整节丢；_PROTECTED_SECTIONS 永不丢
+prompt = await mgr.render(budget_tokens=4096)
 ```
+
+### 预算与截断（S2-H9）
+
+预算的唯一执行点是 [`budget.py`](budget.py)（估算 + 换算 + 常量），两个截断点各管一侧：
+
+| 侧 | 位置 | 策略 |
+|---|---|---|
+| system prompt | `SystemPromptManager.render(budget_tokens=…)` | C4 记忆逐条降（`set_context(memory_limit=n)`）→ 按 `_DROPPABLE_SECTIONS`（OwnLife → SelfPerception → Sensory → Emotion → Memory）整节丢；`_PROTECTED_SECTIONS`（F1/F2/F3/C1/C2/C6/C7）永不丢 |
+| 历史 | `MessageBuilder.build_messages(prompt_budget_tokens=…)` | 由旧到新**逐条**丢到装得下为止；system 与当前用户消息永不丢 |
+
+预算 = `providers.yaml::llm.<provider>.context_window` × 0.75（余量给输出/工具/估算误差）；
+未声明 → 保守默认 32K。**估算用字符启发式**（CJK 1 字≈1 token，其余 4 字符≈1 token），
+是预算不是账本——真实用量以 provider usage 为准（`TokenTracker`）。
 
 ## PromptManager API
 
