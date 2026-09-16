@@ -2030,6 +2030,27 @@ ollama / gpt-sovits 的本地 `base_url`），由 DNS 层与出站客户端逐�
 **已知风险（无决策可做，只能观察）**：间歇性 xdist worker 死亡（8 轮 soak 复现 1 次、
 那轮被并发改动污染，可复现性未建立）——**不宣称修好**；下一步只能是干净环境下的定向 soak。
 
+### §0.4.31 owner 决策落档（2026-09-16）：C1/C2/C3 十项裁定与执行清单
+
+§0.4.30(c) 的十项由 owner 逐项裁定（`ask_user_question` 逐卡决策，非默认接受）。
+本节是**裁定与执行清单的单一落档点**——执行时按此表推进，不重新解释。
+
+| # | 决策点 | owner 裁定 | 执行落点 | 状态 |
+|---|---|---|---|---|
+| 1 | 决策 #8 适用范围 | **整仓统一 fail-closed，清空豁免表** | `MessageRepository` 8 个读 + `SessionRepository.list_all` + `GenerationRepository` 3 个读改 fail-closed；`_ASYMMETRIC_JUSTIFIED` 清空；约定测试的期望表同步。**Milvus `MemoryRepository` 读保持返回空**，但注释从「待决策 #8」改写为**已定案豁免**（记忆检索 best-effort：Milvus 抖动不该打断整轮对话） | 待执行 |
+| 2 | `S2-H6` | **加 `raise_on_error`：定向投递 True、广播 False** | `WebSocketChannel.send_json(..., raise_on_error=False)`；`_deliver_tool_request` 捕获后立刻收敛 `DESKTOP_UNAVAILABLE`；广播路径保持吞异常 | 待执行 |
+| 3 | `S2-H3` | **`providers.yaml` 加 `supports_thinking`，未声明者丢弃该键** | 工厂注入后端能力位；未声明 provider 丢弃 `thinking` 并 warning。语义从「显式关闭」变为「不表态」——只把有证据的 provider 标 true | 待执行 |
+| 4 | `S2-H9` | **定预算 + 截历史（保 system + 近轮）** | 新增 `context_window` 能力位（未声明用保守默认，留 25% 余量）；截断优先级 F1/F2 永不截 → C4 记忆逐条截 → 历史由旧到新裁（**成对处理 assistant tool_calls 与 tool 结果**）；发送前记录 prompt 长度/token 估算 | 待执行 |
+| 5 | `S2-H8` | **当前轮 + 历史侧都注入占位文本** | 零可发射块走与图片同级的提示分支（列 kind/文件名/MIME/`attachment_id`；`StickerPart` 显式处理）；历史侧镜像 | 待执行 |
+| 6 | `#21b` | **补齐全部会话域集合的级联 + 清单守卫** | 接 `token_repo.delete_by_session` / `generation_repo.delete_by_session`；`character_version_repo` 新增按 session 删除；守卫按「会话域集合清单」断言删后零残留（将来新增集合忘接线即红） | 待执行 |
+| 7 | `S3-G7` | **修回归：句末标点加入落盘边界** | `tokenizer._feed_normal` 把 `。！？；…!?` 纳入落盘边界（内容决定 ⇒ 跨 chunk 不变式不破）；先做可行性探针，若破坏不变式则回报并退回「保持现状 + spec 补披露」 | 待执行 |
+| 8 | 预留枚举值域 | **全部保留 + 给未实现能力补「解除条件」** | `_RESERVED_ENUM_MEMBERS` 的 11 条「产品能力未实现」类（限制码 4 + DBT 4 + Experience 3）补写「何时该删值域」 | 待执行 |
+| 9 | `CR-01` | **暂不处理** | S0 **保持开启**：真实 DeepSeek key 仍在公开 remote 历史中有效；`make check-secrets-history` 继续预期为红（`_GATES_NOT_IN_CI` 的登记理由继续成立）。owner 已知悉「只轮换不清历史」是十分钟级别的低成本止血选项 | **已裁定不做** |
+| 10 | `audit` 接线 | **升级 pip + 重生成锁 + 接进 CI** | env pip 26.1.2 → 26.2；`make lock-env`；接进 CI backend job；删除 `_GATES_NOT_IN_CI["audit"]` 登记；**不得用 `--ignore-vuln`** | 待执行 |
+
+**执行纪律（沿用本轮全程）**：每项 = 修复 + **可证伪的注入反证**（注入必须红在断言行，不能红在无关噪声）
++ 独立提交 + 同步文档/门禁登记。注入无法区分新旧实现时，宁可删掉用例并写明理由，也不留证明不了任何东西的绿。
+
 ---
 
 # Executive Summary
