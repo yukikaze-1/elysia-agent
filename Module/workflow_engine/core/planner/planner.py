@@ -98,10 +98,12 @@ class Planner:
         logger.debug("Planner user prompt:\n%s", user)
         raw = await call_llm(self._infra, self._token_ledger, system, user)
         logger.debug("Planner LLM 响应:\n%s", raw)
-        plan = self._parse_response(raw)
+        plan = self._parse_response(
+            raw, max_node_duration_s=tc.max_task_duration_s)
         return plan
 
-    def _parse_response(self, raw: str) -> Plan:
+    def _parse_response(self, raw: str, *,
+                        max_node_duration_s: float | None = None) -> Plan:
         """解析 LLM 返回的 JSON → Plan。
 
         Args:
@@ -123,4 +125,5 @@ class Planner:
         if not isinstance(data, dict):
             raise PlanParseError(f"期望 JSON object，收到 {type(data).__name__}")
 
-        return parse_plan_from_dict(data)
+        return parse_plan_from_dict(
+            data, max_node_duration_s=max_node_duration_s)

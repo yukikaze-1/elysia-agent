@@ -11,7 +11,8 @@ OUTPUT_SCHEMA_DESCRIPTION = """{
       "required": true,
       "execution_mode": "tool_call 或 llm_direct（按上述规则）",
       "input_bindings": ["output:search_weather"],
-      "output_as": "output:send_email"
+      "output_as": "output:send_email",
+      "max_duration_s": 30
     }
   ],
   "edges": [["from_node_id", "to_node_id"]]
@@ -29,7 +30,10 @@ SYSTEM_PROMPT = """你是任务规划器。根据用户意图、可用工具和�
 7. **多节点任务必须有边**——存在 >1 个节点时，edges 不能为空。
    每个节点要么依赖上游节点，要么被下游节点依赖。
    所有独立并行节点必须汇聚到一个最终汇总/报告/输出节点。
-8. **始终包含一个最终输出节点**（如 compile_report、compose_answer）——
+8. **可选** max_duration_s：单个节点最长执行秒数（正数，**不得超过任务总预算**）。
+   只在"这一步明显比其它步骤慢/风险更高"时给出更紧的上限；不填＝不额外限制。
+   超限的节点会被判 TOOL_TIMEOUT（工具本身仍按自己的超时与幂等声明执行）。
+9. **始终包含一个最终输出节点**（如 compile_report、compose_answer）——
    它汇总上游所有节点的结果，生成用户可读的最终产物。
 
 ## execution_mode 字段

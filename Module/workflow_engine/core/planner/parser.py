@@ -83,7 +83,41 @@ async def call_llm(
     return content
 
 
-def parse_plan_from_dict(data: dict) -> Plan:
+def _parse_node_duration(
+    raw_node: dict, where: str, max_node_duration_s: float | None,
+) -> float | None:
+    """解析 `max_duration_s`（可选，正数，且不得超过任务总预算）。
+
+    `DAGNode.max_duration_s` 此前**没有生产者**（parser 不解析该键、规划器 prompt 不产出），
+    而 `execution.py` 已经在读它 ⇒ 那个"节点级超时执行点"永远不触发（"声明了但到不了"）。
+    这里补上生产端：prompt 已把该键写进 schema，解析端做**fail-closed 校验**——
+    非正数直接拒整个 plan/patch（不静默忽略模型的要求，也不静默接受一个不可执行的值）。
+
+    Args:
+        raw_node: LLM 返回的节点字典。
+        where: 报错定位前缀（如 `nodes[2]` / `DAGPatch: add_nodes[0]`）。
+        max_node_duration_s: 允许的上限（= 生效的任务总预算）；None 表示不设上限。
+
+    Returns:
+        校验通过的秒数；键缺失/为 None 时返回 None（= 不额外限制）。
+    """
+    raw = raw_node.get("max_duration_s")
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise PlanParseError(
+            f"{where}.max_duration_s 必须是数字（秒）：{raw!r}")
+    value = float(raw)
+    if value <= 0:
+        raise PlanParseError(f"{where}.max_duration_s 必须为正数：{value}")
+    if max_node_duration_s is not None and value > max_node_duration_s:
+        raise PlanParseError(
+            f"{where}.max_duration_s={value} 超过任务总预算 {max_node_duration_s}")
+    return value
+
+
+def parse_plan_from_dict(data: dict, *,
+                         max_node_duration_s: float | None = None) -> Plan:
     """从 dict 解析 Plan（nodes + edges）。
 
     Args:
@@ -120,6 +154,8 @@ def parse_plan_from_dict(data: dict) -> Plan:
             execution_mode=parse_execution_mode(rn.get("execution_mode")),
             input_bindings=[ArtifactId(b) for b in rn.get("input_bindings", []) or []],
             output_as=ArtifactId(str(raw_as)) if (raw_as := (rn.get("output_as") or "").strip()) else None,
+            max_duration_s=_parse_node_duration(
+                rn, f"nodes[{i}]", max_node_duration_s),
         ))
 
     raw_edges = data.get("edges", [])
@@ -141,7 +177,8 @@ def parse_plan_from_dict(data: dict) -> Plan:
     )
 
 
-def parse_patch_from_dict(data: dict) -> DAGPatch:
+def parse_patch_from_dict(data: dict, *,
+                          max_node_duration_s: float | None = None) -> DAGPatch:
     """从 dict 解析 DAGPatch（局部修复）。
 
     Args:
@@ -204,6 +241,8 @@ def parse_patch_from_dict(data: dict) -> DAGPatch:
             output_as=ArtifactId(str(raw_as))
             if (raw_as := (new_node_dict.get("output_as") or "").strip())
             else None,
+            max_duration_s=_parse_node_duration(
+                new_node_dict, f"DAGPatch: replace_nodes[{i}][1]", max_node_duration_s),
         )
         replace_nodes.append((old_id, new_node))
 
@@ -232,6 +271,8 @@ def parse_patch_from_dict(data: dict) -> DAGPatch:
             output_as=ArtifactId(str(raw_as))
             if (raw_as := (rn.get("output_as") or "").strip())
             else None,
+            max_duration_s=_parse_node_duration(
+                rn, f"DAGPatch: add_nodes[{i}]", max_node_duration_s),
         ))
 
     # 解析 remove_nodes

@@ -9,10 +9,12 @@ pyright 会告诉你 `X.error` 类型正确，`check-types` 会告诉你生成�
 
 实测（本脚本当前基线）在 `workflow_contract` + `workflow_engine/schema` 上：
 
-- **6 个模型字段有读无写**：`ConstraintConfig.max_context_tokens`、
+- **4 个模型字段有读无写**：`ConstraintConfig.max_context_tokens`、
   `ConstraintConfig.max_retries_per_node`、`HITLData.rbac_level`、
-  `WorkflowState.token_entries`、`DAGNode.max_duration_s`、`DBTNode.max_duration_s`
+  `WorkflowState.token_entries`
   ——读方按"它总是有值"写代码，而**没有任何生产者**，于是运行期恒为默认值。
+  （`DAGNode.max_duration_s` 已于 2026-09-16 补上生产端：规划器 prompt 声明该键、
+  parser 解析并按任务总预算 fail-closed 校验。）
 - **23 个枚举成员无生产者**：`WorkflowErrorCode.MUTATION_LIMIT_REACHED`、
   `ResumeErrorCode.*`、`DBTNodeType.SELECTOR`…——值域声明了，引擎永远发不出来；
   前端/消费者按契约实现分支，永远进不去。
@@ -104,8 +106,10 @@ _PENDING_WRITERS: dict[str, str] = {
         "这是设计，不是缺失的生产者。执行点在 workflow_engine/core/execution.py"),
     "HITLData.rbac_level": "RBAC 分级尚未落地：字段在契约里，生产者不填",
     "WorkflowState.token_entries": "token 分项账本尚无写入点（与 TokenComponentType 预留同源）",
-    "DAGNode.max_duration_s": "节点级超时未接线：字段被 execution.py 读取做 wait_for，但规划器不填",
-    "DBTNode.max_duration_s": "节点级超时未接线（同上，DBT 变体）",
+    # 2026-09-16：`DAGNode.max_duration_s` 的**生产端已接**（规划器 prompt 声明该键 +
+    # parser 解析并按任务总预算 fail-closed 校验），故两条登记一并删除（门禁按**字段名**
+    # 匹配，同名不同模型会互相抵消——`DBTNode` 变体本身仍无生产者，但它在 DBT 节点类型
+    # 全为"值域预留"的现状下没有独立意义；这是本门禁已知的名字级局限）。
 }
 
 

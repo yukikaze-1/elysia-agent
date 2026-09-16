@@ -657,3 +657,57 @@ class TestNodeLevelDeadlineIsEnforced:
         results = await execute_nodes(executor, exec_state, [node], "t1", [], "s1",
                                       MagicMock())
         assert results[0].error is None
+
+
+class TestNodeDurationProducer:
+    """`DAGNode.max_duration_s` 的**生产端**（2026-09-16 补）。
+
+    此前该字段只有读取方（`execution.py` 拿它做 `wait_for`），parser 不解析该键、
+    规划器 prompt 也不产出 ⇒ 那个"节点级超时执行点"**永远不触发**（"声明了但到不了"，
+    登记在 `scripts/check_contract_reachability.py::_PENDING_WRITERS`）。
+    """
+
+    def test_plan_parser_accepts_and_validates_the_field(self):
+        from Module.workflow_engine.core.planner.parser import parse_plan_from_dict
+
+        plan = parse_plan_from_dict(
+            {"nodes": [{"node_id": "n1", "max_duration_s": 12.5}], "edges": []},
+            max_node_duration_s=60.0,
+        )
+        assert plan.dag.nodes[0].max_duration_s == 12.5
+
+    def test_absent_field_stays_none(self):
+        """回归网：不写该键 = 不额外限制（不是"0 秒"）。"""
+        from Module.workflow_engine.core.planner.parser import parse_plan_from_dict
+
+        plan = parse_plan_from_dict({"nodes": [{"node_id": "n1"}], "edges": []})
+        assert plan.dag.nodes[0].max_duration_s is None
+
+    @pytest.mark.parametrize("bad", ["30", True, 0, -1, 61.0])
+    def test_invalid_values_reject_the_whole_plan(self, bad):
+        """非数字 / 非正数 / 超任务预算 → **拒整个 plan**（fail-closed）。
+
+        不静默忽略（那会丢掉模型明确提出的限制），也不静默接受（那会得到一个不可执行的
+        值域）——两者都属于本仓的"静默降级"缺陷族。
+        """
+        from Module.workflow_engine.core.planner.parser import (
+            PlanParseError,
+            parse_plan_from_dict,
+        )
+
+        with pytest.raises(PlanParseError):
+            parse_plan_from_dict(
+                {"nodes": [{"node_id": "n1", "max_duration_s": bad}], "edges": []},
+                max_node_duration_s=60.0,
+            )
+
+    def test_patch_path_parses_it_too(self):
+        """**两条路径对称**：增量补丁（add_nodes / replace_nodes）同样解析该字段。"""
+        from Module.workflow_engine.core.planner.parser import parse_patch_from_dict
+
+        patch = parse_patch_from_dict(
+            {"add_nodes": [{"node_id": "n2", "max_duration_s": 5}],
+             "add_edges": [], "remove_nodes": []},
+            max_node_duration_s=60.0,
+        )
+        assert patch.add_nodes[0].max_duration_s == 5

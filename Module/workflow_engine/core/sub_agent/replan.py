@@ -264,6 +264,8 @@ async def handle_replan(
             tools=context.tools,
             max_nodes=tc.max_dag_nodes or constraints.max_dag_nodes,
             max_mutations=tc.max_mutations or constraints.max_mutations,
+            # 单节点时长上限（可选字段）不得超过任务总预算
+            max_node_duration_s=tc.max_task_duration_s,
         )
     except Exception as e:
         logger.warning(

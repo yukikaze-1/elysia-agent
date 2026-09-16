@@ -62,6 +62,7 @@ class Replanner:
         tools: list[Tool] | None = None,
         max_nodes: int = 20,
         max_mutations: int = 10,
+        max_node_duration_s: float | None = None,
     ) -> DAGPatch | Plan:
         """Replan——失败诊断 → 增量 DAGPatch 或全量重建 Plan。
 
@@ -127,7 +128,8 @@ class Replanner:
         logger.debug("Replanner user prompt:\n%s", user)
         raw = await call_llm(self._infra, self._token_ledger, system, user)
         logger.debug("Replanner LLM 响应:\n%s", raw)
-        return self._parse_replan_response(raw)
+        return self._parse_replan_response(
+            raw, max_node_duration_s=max_node_duration_s)
 
     # ── 内部：节点状态格式化 ───────────────────────────────────────────────
 
@@ -174,7 +176,9 @@ class Replanner:
 
     # ── 内部：replan 响应解析 ─────────────────────────────────────────────
 
-    def _parse_replan_response(self, raw: str) -> DAGPatch | Plan:
+    def _parse_replan_response(
+        self, raw: str, *, max_node_duration_s: float | None = None,
+    ) -> DAGPatch | Plan:
         """解析 replan LLM 响应 → DAGPatch 或 Plan。
 
         Args:
@@ -213,6 +217,8 @@ class Replanner:
                 )
 
         if full_replan:
-            return parse_plan_from_dict(data)
+            return parse_plan_from_dict(
+                data, max_node_duration_s=max_node_duration_s)
 
-        return parse_patch_from_dict(data)
+        return parse_patch_from_dict(
+            data, max_node_duration_s=max_node_duration_s)
