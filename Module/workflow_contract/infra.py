@@ -13,12 +13,19 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
-import httpx
-from openai import AsyncOpenAI
-
 from Module.workflow_contract.schema import ConstraintConfig
 
 if TYPE_CHECKING:
+    # 仅类型层导入（与下方 MilvusClient 同款）：本模块**只持有**外部客户端实例，
+    # 从不构造它们——`from __future__ import annotations` 下字段注解是字符串，
+    # 运行期不需要类对象。
+    #
+    # 为什么必须收进 TYPE_CHECKING（Issue D）：core/schema/types.py 与 event.py 要
+    # 契约层的 SessionId/WorkflowId，而 `from Module.workflow_contract.schema import …`
+    # 会先执行父包 __init__.py（唯一装配点，re-export AgentInfra → 本模块）。
+    # 于是 `import core.schema` 连带付 ~1s 的 openai+httpx 导入税——而它只是数据模型层。
+    import httpx
+    from openai import AsyncOpenAI
     from pymilvus import MilvusClient
 
 
