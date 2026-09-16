@@ -165,16 +165,16 @@ core/
 │   ├── tool_call_parser.py #  merge/normalize streaming tool_call deltas
 │   └── tool_adapter.py    #   ToolAdapter: tool subsystem lifecycle + ToolExecutor delegation
 ├── prompt/                # System prompt 组装层（CORE-MOD-P1-02 从 adapter 迁入）
-│   ├── message_builder.py #   MessageBuilder: system prompt + history → LLM API messages[]
-│   └── prompt_assembler.py #  PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder
+│   ├── message_builder.py #   MessageBuilder: system prompt + history → LLM API messages[]（含 prompt 预算截断：超预算由旧到新逐条丢历史，system 与当前消息永不丢）
+│   └── prompt_assembler.py #  PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder（透传 prompt_budget_tokens）
 ├── monitoring/             # Monitoring (package): event bus + idle monitor + token tracking
 │   ├── event_bus.py       #   EventBus: pub/sub for agent internal events
 │   ├── idle_monitor.py    #   IdleMonitor: wake-word detection + proactive triggers
 │   ├── token_tracker.py   #   TokenTracker: usage counting + cost estimation
 │   └── tests/
 ├── text/                  # Text stream processing (package): 标签注册表 + tokenizer + splitter + parts + 协调器
-│   ├── tags.py            #   标签注册表：PAUSE/STAGE_CN/META/CODE/MARKDOWN 全部定义 + emoji 收口（未来加标签 = 加一行注册）
-│   ├── tokenizer.py       #   StreamTokenizer: 结构感知切分，只吐完整 token（跨 chunk 不变式 + 持有上界）
+│   ├── tags.py            #   标签注册表：PAUSE/STAGE_CN/META/CODE/MARKDOWN 全部定义 + emoji 收口 + **句边界字符集 `SENTENCE_END_CHARS`**（tokenizer 落盘边界与 splitter 判据的唯一来源）
+│   ├── tokenizer.py       #   StreamTokenizer: 结构感知切分，只吐完整 token（跨 chunk 不变式 + 持有上界 + **句末标点即时落盘**，见 S3-G7）
 │   ├── splitter.py        #   SpeechSplitter: 结构感知分句，边界扫描跳过受保护 span，输出 SENTENCE + TEXT_DELTA
 │   ├── parts.py           #   build_parts/rebuild_public_text: 句子 + 块交错 → TextPart + content_type
 │   ├── stream_processor.py #   StreamProcessor: 协调器（tokenizer + splitter + 事件发射 + get_blocks + public_text 重建；META 路由注册表化，未知 emit 降级 warning）
@@ -295,6 +295,10 @@ C5 Sensory          → Current environment context
 ```
 
 Templates at `Module/system_prompt/templates/` — format convention: XML wrapper + Markdown body. See `Module/system_prompt/templates/README.md` for full format docs.
+
+`budget.py` — **prompt 预算的唯一执行点**（估算 + 换算 + 常量）：`render(budget_tokens=…)`
+按预算裁剪 section（先降 C4 记忆条数，再按 `_DROPPABLE_SECTIONS` 整节丢，`_PROTECTED_SECTIONS`
+永不丢）。预算来源与两侧策略见下方「prompt 预算」约定条目。
 
 ## Module index
 
@@ -517,7 +521,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 
 | Store | Backend | Purpose |
 |-------|---------|---------|
-| `sessions` | MongoDB `default.sessions` | LLM context window（**无 Mongo TTL**，删除走显式级联删除） |
+| `sessions` | MongoDB `default.sessions` | LLM context window（**无 Mongo TTL**，删除走显式级联删除：`SessionManager.cascade_repos` 清单 = `token_usage`/`generations`/`character_versions`，覆盖由 `test_session_cascade.py` 的 AST 守卫断言） |
 | `message_archive` | MongoDB `default.message_archive` | Permanent append-only message log |
 | `token_usage` | MongoDB `default.token_usage` | LLM token statistics |
 | `long_term_memory` | Milvus `long_term_memory` | ExtractedMemory (Pydantic) → CompareAction (insert/update/merge/skip) → vector with reranking |

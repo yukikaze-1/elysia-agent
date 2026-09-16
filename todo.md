@@ -23,19 +23,34 @@
 > checkpoint 反序列化兼容旧键 `parent_id`。`QueuedToolCallKind.BACKGROUND` 保留，
 > 不做枚举消除。见 `core/tool_runtime/README.md`。
 
+## Code Review 报告（2026-09-12）—— 收口后的剩余项（2026-09-16 更新）
+
+报告见 [`CODE_REVIEW_REPORT.md`](CODE_REVIEW_REPORT.md)。46 条「从未排期」条目已在 §0.4.18
+机械重核（裁定分布：**已修 17 / 部分修 3 / 仍存在 25 / 已撤回 1**），档 1–3 全部处置，
+`#44`/`#45`/`#46` 收口；owner 的十项裁定与执行见 §0.4.31 / §0.4.32。
+**当前仍开着的只有下面这些**（其余"未做项"都已有裁定或已完成）：
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| **CR-01 凭据泄露（S0）** | **未关**（owner 裁定暂不处理） | 真实 DeepSeek key 仍在公开 remote 的历史里**有效**；`make check-secrets-history` 继续预期为红（按设计不在 CI，是判据而非门禁）。最低成本止血：只轮换凭据、不清历史 ≈10 分钟 |
+| bandit **Low 19 项** | 已知基线 | B603/B607（subprocess 固定参数）17 + B112（try/except/continue）2。`make audit` 的判据是 **Medium 及以上 0 项**（与项目一贯声明的"0 Medium / 0 High"一致）；要收紧到零容忍需逐处 `# nosec` + 理由或改绝对路径 |
+| 间歇性 xdist worker 死亡 | 未复现 / **不宣称修好** | 8 轮 soak 里 1 次，那轮被并发改动污染；下一步只能是干净环境下的定向 soak |
+| `context_window` 数值 | **估算值待校准** | 六家 provider 已写进 `Module/config/providers.yaml` 并逐条注明来源（deepseek 131072 / openai 128000 / gemini 1048576 / ollama 8192 / mimo·custom 32768）；只影响 prompt 截断时机，不影响正确性 |
+| `S2-H9` 的**写侧**长度上限 | 未做（未纳入裁定） | owner 选的是"定预算 + 截历史"（运行期截断）；记忆/工具参数的写入侧 `max_length` 属另一个选项 |
+
 ## 已知 Bug
 
 | 优先级 | 问题 | 说明 |
 |--------|------|------|
 | 低 | **`live2d.directive` 无生产发射点** | 契约模型（`frontend_contract/ws_message.py::Live2DDirectiveMessage`）、发送链路（`Module/output/manager.py::live2d_directive` → `websocket.py::on_live2d_directive`）与 v2-only 门禁均已就绪且有单测，但 `core/` 内零调用者——该帧实际永不发送，Live2D 表现指令目前只能靠 `expression` 帧。协议文档 §14.5 已明确标注（「客户端需能容忍其缺席」），非回归；是否接线属产品决策（Live2D 表现层需求），未排期。 |
 | 中 | **LLM 有时不输出 <mood> 标签** | deepseek-v4-flash 遵循结构化输出不稳定，部分轮次 `<mood>` 缺失，回退到关键词 fallback。需强化 prompt 或在 F2 加更强制性的约束 |
-| 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec |
+| 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec。**后端那半已消失（`4bb8aff7`，S3-G7）**：`StreamProcessor` 里"emoji 尾并入上一条 SENTENCE"的分支已删除（其实现前提是句末标点不落盘那个缺陷），emoji 尾现在自成一条 SENTENCE；剩下的竞态在外部前端仓 |
 | 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
 | 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
 | ~~低~~ ✅ | **~~`test_integration_global_constraints_respected`/`test_integration_global_constraints_default_ok` 偶发失败~~** | **2026-09-10 随文件删除而消解**：`Module/workflow_engine/tests/integration/test_delegation_preparer.py` 整文件已删（该文件的 11 个用例带 `external` 标记，所有门禁里 100% skip，从不执行；其确定性单测早已迁至 `core/cognitive/tests/test_delegation_preparer.py`，51 个 unit 测试）。原记录：真实 LLM 集成测试偶发 FAIL，根因是 LLM 判定不稳定（intent 缺收件人邮箱 → 时而 `too_vague` 时而不） |
 | ~~低~~ ✅ | **~~`test_multi_step_task` 偶发失败~~** | **2026-09-10 随文件删除而消解**：`Module/workflow_engine/tests/integration/test_planner.py` 整文件已删（4 个用例同样 `external`-gated 从不执行；其中 `test_simple_task`/`test_multi_step_task` 本身零断言、只 print；plan/replan 解析由 `tests/unit/test_planner.py` 41 个确定性测试覆盖）。原记录：DeepSeek 偶发返回截断 JSON 致 `PlanParseError` |
 | 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
-| 低 | **`flush_after_response` 超时层不匹配** | 内层 `loop.py:897` 每 task 5s，外层 `lifecycle.py:191` 整体 10s。3+ task 同时超时可能被外层截断。实际 pending 典型 0-2 个、亚秒级完成，impact 极低。修法：外层 timeout 改为 `max(10.0, len(pending) * 5.0 + 1.0)` |
+| ~~低~~ ✅ | **~~`flush_after_response` 超时层不匹配~~** | **已修（`b3e513df`，#20b）**：外层 `wait_for` **删除**，预算单源到 `AsyncTaskScope.drain` 的**总预算**语义（`core/cognitive/loop.py::_AFTER_RESPONSE_DRAIN_TIMEOUT`）——原"逐任务 5s + 外层 10s"两层各自计时会让靠后的任务被外层直接砍掉，连取消都来不及。守卫：`core/cognitive/tests/test_flush.py` + `core/agent/tests/test_lifecycle_flush.py` |
 | 低 | **`ConfirmModal` @keydown 在不可聚焦 `<div>`** | `frontend/src/debug/components/shared/ConfirmModal.vue:35` — overlay div 无 `tabindex`，依赖按钮聚焦后事件冒泡。弹窗内只有文字+两个按钮，点击文字不会失焦，现有行为已可靠。加固：加 `tabindex="0"` |
 | ~~中~~ ✅ | **STT 运行时切换不生效** | 2026-08-03 已修（服务运行时状态特性）：`switch_stt` 真正建后端（先建后关 + 1s 连通性测试 + 写 ServiceState）；`stt_transcribe` 收进 agent 运行时动态读 `agent.stt` 槽位，热切换对既有 WS 连接生效（不再依赖启动期闭包） |
 | 低 | **`core/tests/test_phase2.py`/`test_phase3.py` 裸 `setdefault("DEEPSEEK_API_KEY","test")`** | 与 `test_task_scheduler._ensure_api_key` 同模式（后者已改 monkeypatch，2026-08-02）。当前 test-quick collection 顺序下未触发，但属进程 env 污染隐患——collection 顺序变化或并行跑时可能污染真实 LLM 集成测试。建议统一改 monkeypatch |
@@ -179,7 +194,7 @@
 | ~~低~~ ✅ | [core/input/session_routes.py:190-193](core/input/session_routes.py#L190) | `getattr(agent,"cognitive")` + `cognitive._generation_registry` 绕开公开 property。**已修（2026-08-14）**：改走 `agent.generation_registry` 公开 property（与 `cognitive._generation_registry` 同一对象，agent.py:897） |
 | ~~低~~ ✅ | [core/input/ws_handler.py:224,452](core/input/ws_handler.py#L224) | 输入层直调组合根私有 `agent._sync_desktop_available()`。**已修（2026-08-14）**：公开化为 `agent.sync_desktop_available()`，ws_handler 走公开接口 + noqa 清除 |
 | ~~低~~ ✅ | [core/input/tts_profile.py:51,54](core/input/tts_profile.py#L51) | `backend._resolve_voice`/`backend._voice_id` 穿透 TTSBackend 私有。**已修（2026-08-14）**：`TTSBackend.default_voice()` 公开方法（默认返回 character），MiniMax override 复用 `_resolve_voice`，tts_profile 走公开接口 |
-| 低 | [core/desktop/bridge.py:54](core/desktop/bridge.py#L54) | 顶层 `from core.storage.desktop_call_repo import _ACTIVE_STATES` 私有符号，建议改名公开 `ACTIVE_STATES` |
+| ~~低~~ ✅ | [core/storage/desktop_call_repo.py](core/storage/desktop_call_repo.py#L94) | `_ACTIVE_STATES` 跨包私有导入。**已修（`5f841510`，批次 A 公共 API 收口）**：改为公开谓词 `is_active_desktop_call_state(status)`，bridge 等消费方走谓词、集合本身保持私有（比"改名公开集合"更好：判定逻辑单点） |
 | ~~低~~ ✅ | input 层内聚拆分 | 原问题：`ws_handler` 1825 行 + `api_routes` 1182 行 = input 层 35%；`server↔api_routes`/`server↔debug_routes` 懒导入绕环。**2026-08-14 批次 ABCD 全部完成**：A（errors.py 下沉解绕环）、B（ws_handler 拆分：深业务下移 ws_v2.py + `_WS_HANDLERS` 注册表分发，1825→1166 行）、C（api_routes 拆 5 域 provider/tts/upload/tools/chat，退役删除）、D（server.py 纯装配：middleware.py/health.py 下沉，759→493 行）。懒导入绕环全部消除 |
 | 低 | [core/prompt/prompt_assembler.py:30-31](core/prompt/prompt_assembler.py#L30) + [core/memory/consolidator.py:25](core/memory/consolidator.py#L25) | 包级伪环（文件级 DAG），两条边均为类型注解 + 构造注入；非近期引入。可选打磨：惰性化注解（TYPE_CHECKING）清除包级告警（`prompt_assembler` 已由 `core/adapter/` 迁至 `core/prompt/`，CORE-MOD-P1-02） |
 

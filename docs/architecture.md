@@ -282,6 +282,12 @@ class OutputManager:
         # 单通道失败不影响其他通道 (return_exceptions=True)
 ```
 
+**`WebSocketChannel.send_json(data, *, raise_on_error=False) -> bool`（S2-H6）**：两种失败语义
+必须分开——**广播**（默认）失败只记 warning 并返回 `False`（单连接故障不拖累其余接收方）；
+**定向投递**（发给某一条指定连接，如桌面 `tool.request`）传 `raise_on_error=True`，失败**原样
+抛出**让调用方立刻收敛（否则只能等上层超时，把"桌面客户端不可用"报成"桌面超时"——bridge 里
+那条快速回退分支会因此成为死代码）。
+
 ### 3.5 项目路径管理 (paths.py)
 
 顶层模块 `paths.py`（项目根目录），集中管理所有项目级文件系统路径。`Module/` 和 `core/` 均可 import。
@@ -484,6 +490,16 @@ MOOD_KEYWORDS = {
 - **`parts.py`** — 句子 + 块按 `after_sentence_idx` 交错 → TextPart + content_type（session 存储）
 - **`stream_processor.py`（协调器）** — tokenizer + splitter + 事件发射 + `get_blocks()` + public_text 重建
 
+**SPEECH 落盘边界（S3-G7，唯一判据在 `tags.SENTENCE_END_CHARS`）= 内容决定的边界**：
+① `\n` / 空格；② 结构字符（`` ` ``、`（`/`(`、`<`）；③ **句末标点**（`。！？!?♪♡`，与
+`SpeechSplitter._HARD_DELIMITERS` 同源）。句末标点**并入**累积文本后立即落盘 ⇒ 整句在句号
+那一刻就产出 SENTENCE/TEXT_DELTA（此前标点滞留在 `_pending`，无空格中文回复整轮只在
+`flush()` 产出事件——文本模式没有打字效果、句级 TTS 退化为"生成完再起播"、TTFT 指标等于
+整轮生成耗时）。到达时刻由 `core/text/tests/test_stream_processor.py::TestSentenceBoundaryLatency`
+守卫（序列相等**不蕴含**到达时刻正确，这正是该缺陷长期不被发现的原因）。
+普通文本 run 在边界前不落盘、`SpeechSplitter` 的 `min_chunk_length` 短句暂留一拍——两者都是
+有意保留的延迟，与上面的缺陷无关。
+
 数据流：`LLM delta → StreamProcessor.feed(delta)` → token 流 → splitter → SENTENCE（含内嵌标签）+ TEXT_DELTA（剥离 PAUSE）事件 → `_dispatch_stream_event()` 分发。
 
 详细组件职责见 [core/text/README.md](../core/text/README.md)；设计基准（行为对照表 + 持有上界 + 围栏细则）见 `docs/superpowers/specs/archive/2026-08/2026-08-01-stream-parser-refactor-design.md`。
@@ -509,6 +525,21 @@ build_messages(user_message, stt_emotion, stt_events)
   ├── SessionMemory.recent_messages(8)  # 最近对话
   └── {"role": "user", "content": user_message}
 ```
+
+**预算与截断（S2-H9）**：预算 = `providers.yaml::llm.<provider>.context_window` × 0.75
+（余量给输出 token / 工具定义 / 估算误差），未声明 → 保守默认 32K。唯一执行点是
+`Module/system_prompt/budget.py`（估算 + 换算 + 常量），两个截断点各管一侧：
+
+| 侧 | 入口 | 策略 |
+|---|---|---|
+| system prompt | `SystemPromptManager.render(budget_tokens=…)` | 先按 5→3→2→1→0 逐级下调 C4 记忆条数（`set_context(memory_limit=n)`），仍超则按 `_DROPPABLE_SECTIONS` 顺序整节丢；`_PROTECTED_SECTIONS`（F1/F2/F3/C1/C2/C6/C7）**永不丢** |
+| 历史 | `MessageBuilder.build_messages(prompt_budget_tokens=…)` | 由旧到新**逐条**丢到装得下为止；system 与当前用户消息永不丢 |
+
+**理由**：超 context 不是被截断而是 provider **400**，而 400 不在可重试集合里 ⇒ 该会话对该
+角色**永久失败**，且日志只显示 `GENERATION_PROVIDER_UNAVAILABLE`。估算用字符启发式
+（CJK 1 字≈1 token、其余 4 字符≈1 token），是**预算**不是账本（真实用量以 provider usage
+为准）。该模块必须留在 `Module/` 侧——放 `core/` 会让 `Module/system_prompt` 反向依赖 core，
+`make check-arch` R1 会红（实测）。
 
 **Section 提供者架构** (`Module/system_prompt/` protocol + sections + templates): 2026-07-04 重构，将 `Brain.j2` 单体拆分为 12 个独立的 `PromptSection` 模块（ConflictRules, OutputFormat, TTSMarkup, Sensory, Emotion, Memory, Personality, Relationship, SpeakingStyle, Proactive, OwnLife, SelfPerception）。每个 section 自管数据源、自管 `.j2` 模板、可独立 reload/validate。`SystemPromptManager` 按固定顺序 async render 并拼接。详见 `docs/superpowers/specs/archive/2026-07/2026-07-04-prompt-section-provider-design.md`。
 
@@ -630,6 +661,14 @@ core/profile/
 > **批次 3（多会话）**：单实例之外新增 `SessionManager`（`core/memory/session_manager.py`）——
 > 会话缓存池 + 活动指针 + `resolve(conversation_id, protocol_version)` + `switch`/`create`/`delete`。
 > `agent.session` 仍指活动会话；v1 恒 default、v2 显式 conversationId → 该会话、v2 缺省 → active。
+>
+> **删除的级联范围（#21b）**：`delete(sid)` 先删 session doc（提交点），提交后释放附件 refs +
+> 删 `message_archive`，再按 `SessionManager.cascade_repos` 清单逐个删**其余会话域集合**
+> （`token_usage` / `generations` / `character_versions`）——这些都按 `session_id` 分区，漏掉
+> 任何一个都会留下**永久不可达的孤儿行**（所有读路径都要 session_id）。失败进 pending-cleanup
+> journal，`retry_pending_cleanup` 走同一条级联。清单的**唯一接线点**是 `core/agent/agent.py`，
+> 覆盖由 `core/memory/tests/test_session_cascade.py` 用 AST 扫 `core/storage/*_repo.py` 断言
+> （新增会话域集合忘接线即红）。
 
 ```python
 class SessionMemory:
