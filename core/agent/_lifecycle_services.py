@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from core.config import AppConfig
+from core.schema.service_state import ServiceRuntimeState
 from Module.output import OutputManager
 
 if TYPE_CHECKING:
@@ -44,6 +45,9 @@ class _LifecycleServices:
         # #43：有效开关是**派生 property**（权威 = 会话 service_state + config 回退），
         # 定义在 `Agent` 上。mixin 里必须声明为 read-only property 而不是可变属性——
         # 声明成属性会让 pyright 认为子类用可变量覆盖了 property。
+        @property
+        def stt_enabled(self) -> bool: ...
+
         @property
         def tts_enabled(self) -> bool: ...
 
@@ -88,6 +92,35 @@ class _LifecycleServices:
         else:
             explicit, default = ss.tts_enabled, self._config.tts.enabled
         return explicit if explicit is not None else default
+
+    def service_runtime_state(self) -> ServiceRuntimeState:
+        """服务**运行期**状态快照（F2，Batch 1.6）——"自述"类消费者的唯一来源。
+
+        为什么是**方法**而不是启动期写进 `ToolContext.services` 的一份值：工具的 ctx
+        是启动第 2 步（`tool_context`）建的，而真正决定这些值的步骤排在它后面
+        （`service_state` 第 5、`tts` 第 6），且运行期还会被
+        `switch_llm`/`switch_stt`/`switch_tts`/`set_service` 改写。任何"启动期快照"
+        都必然过期——注入 bound method、每次现取才跨得过那几个步骤。
+
+        为什么**不**读 `session.service_state` 的模型字段：那是**持久化权威**，与运行期
+        槽位有意的不同步（激活一个从未切过模型的会话时 `ss.llm_model` 为空，而适配器
+        仍在跑上一个模型；会话切换不重放模型热切换是 K4 的有意取舍）。自述必须报
+        **此刻真的在用**的那个。
+
+        开关两字段**复用派生属性** `self.stt_enabled` / `self.tts_enabled`（唯一推导点
+        `_effective_service_enabled`）——在这里再写一次三态回退就是第 5 个漂移点，
+        也会撞上 `core/agent/tests/test_state_single_authority.py` 的结构性守卫。
+
+        Returns:
+            `ServiceRuntimeState`（模型 None ⇔ 该服务后端未连接，与 capabilities 同判据）。
+        """
+        return ServiceRuntimeState(
+            llm_model=self._llm.model,
+            stt_model=self._stt.model if self._stt is not None else None,
+            stt_enabled=self.stt_enabled,
+            tts_model=self._tts.model if self._tts is not None else None,
+            tts_enabled=self.tts_enabled,
+        )
 
     async def _sync_tts_gate(self) -> None:
         """把 TTS 门控同步到 `TTSStreamManager` 的**唯一写点**（#43）。

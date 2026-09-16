@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from core.monitoring.idle_monitor import IdleMonitor
     from core.cognitive import CognitiveLoop
     from core.desktop.bridge import DesktopToolBridge
+    from core.schema.service_state import ServiceRuntimeState
     from Module.output import OutputManager
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,9 @@ class _LifecycleTools:
         _desktop_bridge: DesktopToolBridge
         _output: OutputManager
 
+        # 跨 mixin 方法（实现在 `_LifecycleServices`；`Agent` 组合后即存在）
+        def service_runtime_state(self) -> ServiceRuntimeState: ...
+
     async def _start_tool_context(self) -> None:
         """启动 ToolAdapter，注入运行时服务 + 绑定 desktop bridge deliver 回调。
 
@@ -72,6 +76,12 @@ class _LifecycleTools:
             # _prepare_turn（loop.py）注入 svc["memory"] = runtime.memory_view（scoped）。
             "scheduler": self._scheduler,
             "config": self._config,
+            # F2（Batch 1.6）：**运行期**服务状态（模型 + 派生开关）的活口。注入的是
+            # bound method 而不是快照——本步骤（启动第 2 步）排在 service_state(5) 与
+            # tts(6) **之前**，且运行期还会被 switch_*/set_service 改写，写死的值必然过期。
+            # 消费者：`core/tools/runtime_config/plugin.py` 的模型/TTS/STT 三行
+            # （此前它读 `config`，把 bootstrap/YAML 当成运行期真相报给用户）。
+            "_service_runtime": self.service_runtime_state,
             "session": self.session,
             "_bus": self._bus,
             "_started_at": self._started_at,

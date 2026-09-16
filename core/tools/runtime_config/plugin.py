@@ -3,13 +3,14 @@
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 from Module._common.error_type import ErrorType
 from Module.tool.protocol import ToolPlugin, ToolContext, ToolEmitter, tool_failure, ToolResult
 from Module.tool.capability import Capability
 from Module.tool.safety import SafetyProfile
+from core.schema.service_state import ServiceRuntimeState
 
 try:
     import psutil
@@ -28,6 +29,17 @@ class RuntimeConfigParams(BaseModel):
             "'all'=全部信息。留空返回摘要。"
         ),
     )
+
+
+def _service_line(name: str, model: str | None, enabled: bool) -> str:
+    """TTS / STT 状态行——`model is None` ⇔ 后端未连接（与 capabilities 同判据）。
+
+    未连接时明说"未连接"而不是拿 YAML 的模型名顶上：开关说"启用"而后端根本没起来
+    是一个**真实且用户可见**的状态（缺 API key 时自动降级为纯文本），自述必须报它。
+    """
+    if model is None:
+        return f"{name}: {'启用' if enabled else '禁用'} (未连接)"
+    return f"{name}: {'启用' if enabled else '禁用'} ({model})"
 
 
 class RuntimeConfigPlugin(ToolPlugin):
@@ -71,38 +83,46 @@ class RuntimeConfigPlugin(ToolPlugin):
     # ── Section 构建函数 ─────────────────────────────────────────────
 
     def _section_model(self, ctx: ToolContext) -> str:
-        """模型 / TTS / STT / 服务地址。"""
-        config = ctx.get("config")
-        if config is None:
-            return ""
-        lines = []
-        # config 恒为 AppConfig（上句已排除 None），字段恒存在——直接访问暴露改名 bug
-        llm_cfg = config.llm
-        tts_cfg = config.tts
-        stt_cfg = config.stt
-        server_cfg = config.server
+        """模型 / TTS / STT（**运行期**权威）+ 服务地址（绑定目标）。
 
-        if llm_cfg:
-            lines.append(f"模型: {llm_cfg.model}")
-        if tts_cfg or stt_cfg:
-            parts = []
-            if tts_cfg:
-                tts_model = tts_cfg.model
-                parts.append(
-                    f"TTS: {'启用' if tts_cfg.enabled else '禁用'}"
-                    + (f" ({tts_model})" if tts_model else "")
-                )
-            if stt_cfg:
-                stt_model = stt_cfg.model
-                parts.append(
-                    f"STT: {'启用' if stt_cfg.enabled else '禁用'}"
-                    + (f" ({stt_model})" if stt_model else "")
-                )
-            lines.append("  |  ".join(parts))
-        if server_cfg:
-            lines.append(
-                f"服务地址: {server_cfg.host}:{server_cfg.port}"
-            )
+        F2（Batch 1.6）：这三行此前读的是 `ctx.get("config")`——bootstrap/YAML。于是
+        热切换 LLM/STT/TTS 或 `set_service` 之后，本工具的输出**逐字节不变**，而同一
+        时刻 banner / capabilities / debug 都报运行期值：**agent 主动向用户报告错误
+        的自身状态**。冷启动时两者相等，所以这个谎只在切换之后才看得见。
+
+        现在读 `ctx["_service_runtime"]`（`core/agent/_lifecycle_tools.py` 注入的 bound
+        method `Agent.service_runtime_state`，每次现取 ⇒ 天然跨过启动步骤与热切换）。
+        **没有该句柄就不输出这三行**——绝不用 config 顶上：名字叫 runtime 的接口返回
+        bootstrap 值正是本缺陷的形态，宁可什么都不说。
+
+        服务地址仍读 `config.server`：它就是**实际绑定的目标**
+        （`core/agent/server.py::run_server` 从 `self._config.server` 取 host/port 去
+        `web.TCPSite`，F4 之后显式 CLI 覆盖已并入这个 config）；运行期没有独立的
+        host/port 槽位，故不存在"另一个真相"。
+        """
+        lines: list[str] = []
+        config = ctx.get("config")
+
+        provider: Any = ctx.get("_service_runtime")
+        # cast：`ToolContext.get` 的静态类型是 Any，`callable()` 会把结果收窄成 object；
+        # 运行期形状由注入方（`Agent.service_runtime_state`）保证。
+        state = cast(
+            "ServiceRuntimeState | None",
+            provider() if callable(provider) else None,
+        )
+        if state is not None:
+            lines.append(f"模型: {state.llm_model}")
+            lines.append("  |  ".join([
+                _service_line("TTS", state.tts_model, state.tts_enabled),
+                _service_line("STT", state.stt_model, state.stt_enabled),
+            ]))
+
+        if config is not None:
+            # getattr 保形：部分上下文（单测/替身）可能没有 server 段——
+            # 与原实现的 `if server_cfg:` 同语义，缺了就只输出模型行。
+            server_cfg = getattr(config, "server", None)
+            if server_cfg is not None:
+                lines.append(f"服务地址: {server_cfg.host}:{server_cfg.port}")
         return "\n".join(lines)
 
     def _section_filesystem(self, ctx: ToolContext) -> str:
