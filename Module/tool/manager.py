@@ -8,7 +8,7 @@ import inspect
 import logging
 import types
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
@@ -186,10 +186,28 @@ class ToolManager:
             return
         try:
             raw = yaml.safe_load(config_file.read_text("utf-8"))
-            if isinstance(raw, dict):
-                for key, value in raw.items():
-                    if hasattr(instance.safety, key):
-                        setattr(instance.safety, key, value)
+            if isinstance(raw, dict) and instance.safety is not None:
+                # ⚠️ 必须**按实例复制**，不能就地 `setattr(instance.safety, …)`：
+                # `safety` 是**类属性**（`Module/tool/protocol.py` 声明 `safety: Any = None`，
+                # 各插件类在类体里覆盖成自己的 `SafetyProfile`），而 `SafetyProfile` 是可变
+                # dataclass ⇒ `instance.safety` 与 `cls.safety` 是**同一个对象**，就地写等于
+                # 把**进程级共享**的类默认值永久改成这份 YAML 的值，之后**新建的实例**
+                # （含别的会话/别的测试）都继承它。
+                #
+                # 实测（批 1.5 全局状态审计）：
+                #   `WebFetchPlugin.safety.max_concurrency` 0 → 3，且 `object.__new__(cls)`
+                #   建出的新实例读到的就是 3；
+                #   一次 `-m "unit or service"` 跑完，6/8 个 xdist worker 的类默认值被改写。
+                # 严重性不在 `max_concurrency` 这种旋钮，而在 `read_dirs`——它是**会话模板**
+                # 读白名单（`Module/tool/safety.py::_read_dir_paths` + `_expand_session_template`），
+                # 类默认值被某一份 YAML 放宽即等于**跨会话放宽读范围**，正是上面那条
+                # warning 想要防住的情形。
+                overrides = {
+                    key: value for key, value in raw.items()
+                    if hasattr(instance.safety, key)
+                }
+                if overrides:
+                    instance.safety = replace(instance.safety, **overrides)
         except (yaml.YAMLError, OSError) as e:
             logger.warning(
                 "工具 '%s' config.yaml 加载失败: %s", cls.__name__, e,

@@ -1378,6 +1378,47 @@ class TestLoadSafetyConfig:
         instance = mod.SimplePlugin()
         tm._load_safety_config(instance, mod.SimplePlugin)
         assert instance.safety.max_concurrency == 7
+        # 注：本用例的合成插件**自己持有** SafetyProfile 实例（`instance.safety is not
+        # cls.safety`），故它**不能**区分"就地 setattr"与"rebind"——实测把实现改回
+        # `setattr` 本用例仍全绿。真正钉住该不变式的是下面
+        # `TestLoadSafetyConfigDoesNotMutateClassDefault`（用真实共享类属性的插件）。
+
+
+@pytest.mark.service
+class TestLoadSafetyConfigDoesNotMutateClassDefault:
+    """核心不变式：YAML 覆盖必须 **rebind 实例副本**，不得改写**类级**默认 SafetyProfile。
+
+    `safety` 是**类属性**（`Module/tool/protocol.py`：`safety: Any = None`，各插件类在
+    类体里覆盖成自己的 `SafetyProfile`），而 `SafetyProfile` 是可变 dataclass。部分真实
+    插件（下面的 `WebFetchPlugin`）**不**在 `__init__` 里建副本 ⇒
+    `WebFetchPlugin().safety is WebFetchPlugin.safety` 为 True。此时就地
+    `setattr(instance.safety, k, v)` 改的是**进程级共享**的类默认值：某一份插件 YAML 的
+    值会被永久写进类默认，之后**新建的实例**（含别的会话、别的测试）都继承它。
+
+    严重性不在 `max_concurrency` 这类旋钮，而在 `read_dirs`——它是**会话模板读白名单**
+    （`Module/tool/safety.py::_read_dir_paths` + `_expand_session_template`），类默认被
+    某份 YAML 放宽即等于**跨会话放宽读范围**，正是 `_load_safety_config` 里那条
+    "读白名单的类默认值必须是会话模板" 的 warning 想防住的情形。
+
+    实测（批 1.5）：一次 `-m "unit or service"` 跑完，6/8 个 xdist worker 的类默认值被改写。
+    """
+
+    def test_yaml_overrides_instance_not_class_default(self):
+        from core.tools.web.plugin import WebFetchPlugin
+
+        assert WebFetchPlugin.safety.max_concurrency == 0, \
+            "前提：类默认是 0（core/tools/web/config.yaml 里是 3）"
+        inst = WebFetchPlugin()
+        assert inst.safety is WebFetchPlugin.safety, \
+            "前提：该插件实例直接引用类属性（这正是缺陷的成因）"
+
+        ToolManager()._load_safety_config(inst, WebFetchPlugin)
+
+        assert inst.safety.max_concurrency == 3, "YAML 必须生效到**本实例**"
+        assert WebFetchPlugin.safety.max_concurrency == 0, \
+            "YAML 不得改写**类级**默认（否则跨实例/跨会话泄漏）"
+        assert inst.safety is not WebFetchPlugin.safety, \
+            "实例必须 rebind 出自己的副本，而不是共享类对象"
 
 
 @pytest.mark.service
