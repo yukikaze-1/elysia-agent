@@ -4321,15 +4321,19 @@ content_to_openai(parts_from_dicts([{'type':'image'}]))
 
 ### 组 H 的其余已确认项（S3，供批量处理）
 
-| 位置 | 问题 |
-|---|---|
-| `core/text/stream_processor.py:184-203` | emoji 尾句合并**只在本次 flush 批次**里找 SENTENCE：若上一句已在更早 `feed()` 里发出（中间隔空格/换行）就找不到 → emoji 独占一句。实测 `'今天天气不错哦。 😀'` → `['今天天气不错哦。', ' 😀']`。现有用例 `test_stream_processor.py:553-560` 断言 `any("♪" in s)`（两种行为都通过），**未覆盖失败路径** |
-| `core/cognitive/finalize.py:315` + `:250-254` | **块-only 回复同内容发两遍**：`_emit_final_public_text` 把 `public_text`（`rebuild_public_text` 已内联代码块内容）当段内容发出 + `command("block", …)` 再发一次；spec 明写"显示路径唯一，不双渲染" |
-| `Module/output/manager.py:471-478,713-719` | `notify_state()` / `close()` **穿越 await 迭代活列表**：`remove_channel` 在 await 期间被另一任务调用会静默跳过通道（探针复现 `other.states=[]`），与 `channels` 属性文档化的不变式自相矛盾。一行修：`for ch in self.channels:` |
-| `Module/output/manager.py:590-607` + `core/cognitive/generation.py:81-111` | `inner_voice()` **抢占已开的 public_reply 段**（`open_segment` 无条件覆盖）→ 该段只有 `segment.started` 没有 `completed`（探针：started=2 / completed=1），而 golden trace 每对都配平；触发条件=句中 `<inner_voice>`（tag 注册表明确允许多个） |
-| `core/memory/consolidator.py:283-289,356-368` | **`str.replace()` 二次替换**：`{user_name}` 先替换，`{conversation}` 后替换，而 user_name 是用户可改的称呼（`core/character/runtime.py:171-186`，**无字符集校验**）→ 把称呼设成字面量 `{conversation}` 就能把 2000 字符对话灌进名字位置。同类：`{new_items}`（LLM 产出）先于 `{existing_items}` 注入 |
-| `core/prompts/ExtractMemory.j2` | **残留 `.format()` 时代的双花括号**：实测 `{{`/`}}` 各 9 个 → **发给模型的 JSON 示例是非法 JSON**；同族模板（`ConsolidationCompare.j2`/`MemoryReflector.j2`）已是单花括号。`_extract_json_array` 无归一化，解析失败会把整批 `self._buffer = batch + self._buffer` **无上限重排** |
-| `Module/system_prompt/*` | 空 section 会渲染出空 wrapper（如 tts 后端为 None 时 `<tts_markup>\n</tts_markup>`，约 8 token 浪费）；C8 OwnLife **无生产写入点**（永远为空）；`Jinja2Section._render_template` 用默认 `Undefined`（模板变量写错**静默渲染为空**而非报错） |
+> **本表是 09-12 快照**，2026-09-16 逐行复核了一次（下表「复核」列）：✅ 已修 / ⚠️ 仍存在（附
+> 实测证据）/ ❓ **未复核**（本轮没有触及该路径，不假装它已消失）。**未复核不等于已修**——
+> 要把它们排期，先按本列各自验一遍。
+
+| 复核（09-16） | 位置 | 问题 |
+|---|---|---|
+| ✅ **已闭环**（`4bb8aff7`，S3-G7） | `core/text/stream_processor.py`（原 184-203） | emoji 尾句合并**只在本次 flush 批次**里找 SENTENCE：若上一句已在更早 `feed()` 里发出（中间隔空格/换行）就找不到 → emoji 独占一句。**处置**：该合并的实现前提正是"句末标点不落盘"（本轮修的缺陷本身），S3-G7 后它不可达 ⇒ **删除**，emoji 尾现在**一致地**自成一句（TTS 侧有 emoji-only 门控，不合成音频）。原用例已改写为钉住新语义（`TestStreamProcessorEmojiTail`） |
+| ❓ 未复核 | `core/cognitive/finalize.py`（原 :315 + :250-254） | 块-only 回复同内容发两遍 |
+| ⚠️ **仍存在**（09-16 实测） | `Module/output/manager.py:544` | `notify_state()` 仍 `for ch in self._channels` **穿越 await 迭代活列表**；同文件 `channels` 属性（:86-92）文档已明确"返回副本…跨模块枚举通道一律走本属性，勿再直取 `_channels`"——即本行与自家文档相矛盾。修法仍是一行：`for ch in self.channels:` |
+| ⚠️ **仍存在**（09-16 实测） | `core/cognitive/generation.py:91` | `open_segment()` 仍**无条件覆盖** `current_segment_id` ⇒ 句中 `<inner_voice>` 抢占已开的 public_reply 段，该段只有 `segment.started` 没有 `completed` |
+| ⚠️ **仍存在**（09-16 实测） | `core/memory/consolidator.py:349-353`、`:504-513` | `str.replace()` 链式**二次替换**未收口：`{user_name}` 先于 `{conversation}`、`{new_items}` 先于 `{existing_items}`；称呼是用户可改写的自由文本（`set_user_name`），把称呼设成字面量 `{conversation}` 即可把 2000 字符对话灌进名字位置 |
+| ⚠️ **仍存在**（09-16 实测） | `core/prompts/ExtractMemory.j2` | `.format()` 时代的双花括号**仍在**（实测 `{{`/`}}` 各 9 处）→ 发给模型的 JSON 示例不是合法 JSON |
+| ❓ 未复核 | `Module/system_prompt/*` | 空 section 渲染空 wrapper；C8 OwnLife 无生产写入点；`_render_template` 用默认 `Undefined`（模板变量写错静默渲染为空） |
 | `core/agent/_lifecycle_services.py:142-148` + `core/agent/server.py:444-448` | 启动连通性检查丢弃的后端**从不 close**（与 S3-04 同源，此处补充"custom provider 还含 SSRF 守卫 client"）|
 
 ---
