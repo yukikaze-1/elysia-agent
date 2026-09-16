@@ -95,21 +95,43 @@ class WebSocketChannel(OutputChannel):
         """底层 WebSocket 连接（只读）——调用方按连接身份定位通道时用。"""
         return self._ws
 
-    async def send_json(self, data: dict) -> None:
+    async def send_json(self, data: dict, *, raise_on_error: bool = False) -> bool:
         """发送一个已序列化的 wire 帧（契约模型经 `wire_dict()` 后传入）。
 
-        发送失败仅记录 warning，不向上抛——单连接故障不应中断广播。
+        发送失败**默认**仅记录 warning 不向上抛——广播场景下单连接故障不应中断
+        其余接收方。但**定向投递**（发给某一条指定连接，如桌面 `tool.request`）
+        必须让调用方立刻知道投递失败：否则它只能等上层超时，把"桌面客户端不可用"
+        报成"桌面超时"（S2-H6 实测：0.60s 探针下的生产路径要白等满 120s），
+        而 `bridge` 里那条"投递失败→立刻 DESKTOP_UNAVAILABLE"的回退分支永不执行
+        （`_deliver_tool_request` 的文档契约要求抛错，而它唯一能用的发送调用不抛）。
+        该分支由 `raise_on_error=True` 打通：**调用方声明自己需要 fail-fast**，
+        而不是让所有调用点被迫吞掉失败。
+
         原为私有 `_send_json`；2026-09-12 公开：`core/input`、`core/services`、
         `core/agent` 三处跨包调用此前都要写 `# noqa: SLF001`，而 `capabilities.py`
         的 docstring 直接写着「WebSocketChannel 无公开 send」——是已知缺口而非设计。
 
         Args:
             data: 要发送的 JSON 可序列化字典。
+            raise_on_error: True = 发送失败时原样抛出（定向投递用）；
+                False（默认）= 记 warning 并返回 False（广播用）。
+
+        Returns:
+            是否发送成功。广播路径可据此统计失败连接，不必只靠日志。
+
+        Raises:
+            Exception: 仅当 `raise_on_error=True`——底层发送异常原样抛出。
         """
         try:
             await self._ws.send_json(data)
         except Exception:
-            self._logger.warning("WebSocket send failed", exc_info=True)
+            self._logger.warning(
+                "WebSocket send failed (connection_id=%s)", self.connection_id,
+                exc_info=True)
+            if raise_on_error:
+                raise
+            return False
+        return True
 
     async def on_typing(self, typing: bool) -> None:
         """发送输入状态。

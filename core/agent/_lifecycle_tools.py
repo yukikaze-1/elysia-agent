@@ -118,8 +118,12 @@ class _LifecycleTools:
             raise RuntimeError(
                 f"DesktopToolBridge 目标连接不可用: {target_connection_id}")
         # send_json 仅 WebSocketChannel 定义（OutputChannel ABC 无此方法），
-        # 已按 electron + connection_id 精确过滤，运行时必为 WebSocketChannel
-        await cast(WebSocketChannel, target).send_json(frame)
+        # 已按 electron + connection_id 精确过滤，运行时必为 WebSocketChannel。
+        # `raise_on_error=True`（S2-H6）：send_json 的默认语义是**广播**用的
+        # "吞异常 + warning"，而本路径是**定向投递**——投递失败必须立刻抛，
+        # 否则 bridge 只能等满 timeout，把"桌面不可用"记成"桌面超时"，
+        # 它自己的快速回退分支（DESKTOP_UNAVAILABLE）成为死代码。
+        await cast(WebSocketChannel, target).send_json(frame, raise_on_error=True)
 
     async def _start_worker_pool(self) -> None:
         """启动 Worker Pool + embedding 预加载后台任务。"""

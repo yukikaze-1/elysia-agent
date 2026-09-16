@@ -857,3 +857,57 @@ class TestReuserDoesNotOwnTheFirstPartyRegistration:
         await bridge.handle_status(_status(first_id, "result", output="ok"))
         result = await asyncio.wait_for(first, timeout=2.0)
         assert result.success and result.content == "ok"
+
+
+# ============================================================================
+# S2-H6：投递失败必须 fail-fast（不得白等满超时）
+# ============================================================================
+
+class TestDeliveryFailureIsFast:
+    """定向投递失败 → 立刻 UNAVAILABLE/FAILED，而不是等满 timeout 报 TIMEOUT/EXPIRED。
+
+    缺陷形状（S2-H6）：`_deliver_tool_request` 的文档契约要求"投递失败要抛，让 bridge
+    立即收敛为 DESKTOP_UNAVAILABLE"，但它唯一能用的发送调用 `WebSocketChannel.send_json`
+    按**广播**语义吞掉异常只打 warning ⇒ 契约无法被满足，bridge 的超时分支先触发。
+    实测对照（报告）：目标行为 0.00s success=False UNAVAILABLE；生产路径 0.60s（真实
+    120s）TIMEOUT + repo 记 EXPIRED。
+
+    这里用**真实**的 `_deliver_tool_request` + 真实 `WebSocketChannel`（底层 ws 抛错），
+    把两条路径接起来测——只测 bridge 或只测 send_json 都看不出这个缺口。
+    """
+
+    @pytest.mark.asyncio
+    async def test_send_failure_yields_unavailable_not_timeout(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from Module.output.websocket import WebSocketChannel
+        from core.agent._lifecycle_tools import _LifecycleTools
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=ConnectionResetError("link down"))
+        channel = WebSocketChannel(ws, protocol_version=2, client_platform="electron")
+        channel.connection_id = "conn_target"
+        agent = MagicMock()
+        agent._output.channels = [channel]
+
+        repo = FakeDesktopRepo()
+        bridge = DesktopToolBridge(repo, timeout=5.0)
+        bridge.bind_deliver(
+            lambda target, frame: _LifecycleTools._deliver_tool_request(agent, target, frame))
+        await bridge.on_client_connect("conn_target")
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        result = await bridge.request_and_wait(call=_call())
+        elapsed = loop.time() - started
+
+        assert not result.success
+        assert result.error_type is ErrorType.UNAVAILABLE, (
+            f"投递失败应报 UNAVAILABLE，实际 {result.error_type}"
+        )
+        assert elapsed < 1.0, (
+            f"应立刻收敛（<1s），实际 {elapsed:.2f}s——说明退回了'等满超时'"
+        )
+        assert repo.calls[list(repo.calls)[0]]["status"] == "failed", (
+            "终态应为 failed（投递失败），不是 expired（超时）"
+        )

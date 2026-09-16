@@ -478,6 +478,51 @@ class TestWebSocketChannelErrorHandling:
 
         assert "WebSocket send failed" in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_send_json_default_reports_false_on_failure(self):
+        """广播语义：失败**不抛**且返回 False（调用方可统计失败连接，不必只靠日志）。"""
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=ConnectionError("closed"))
+        ch = WebSocketChannel(ws)
+
+        assert await ch.send_json({"type": "x"}) is False
+
+    @pytest.mark.asyncio
+    async def test_send_json_returns_true_on_success(self):
+        """反证的另一半：成功路径必须返回 True，否则 False 不携带信息。"""
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        ch = WebSocketChannel(ws)
+
+        assert await ch.send_json({"type": "x"}) is True
+
+    @pytest.mark.asyncio
+    async def test_send_json_raise_on_error_reraises(self):
+        """定向语义（S2-H6）：`raise_on_error=True` 时原样抛出，供调用方 fail-fast。"""
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=ConnectionResetError("boom"))
+        ch = WebSocketChannel(ws)
+
+        with pytest.raises(ConnectionResetError, match="boom"):
+            await ch.send_json({"type": "x"}, raise_on_error=True)
+
+    @pytest.mark.asyncio
+    async def test_warning_carries_connection_id(self, caplog):
+        """warning 带 connection_id：多连接并存时日志能定位是哪一条断了。"""
+        import logging
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=ConnectionError("closed"))
+        ch = WebSocketChannel(ws, protocol_version=2)
+        ch.connection_id = "conn_abc"
+        ch._logger = logging.getLogger("test_ws_conn")
+        ch._logger.setLevel(logging.WARNING)
+
+        with caplog.at_level(logging.WARNING, logger="test_ws_conn"):
+            await ch.send_json({"type": "x"})
+
+        assert "conn_abc" in caplog.text
+
 
 # ============================================================
 # AUDIO 能力 + 命令 + 流生命周期

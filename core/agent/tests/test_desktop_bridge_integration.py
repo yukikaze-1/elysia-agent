@@ -172,7 +172,7 @@ class TestDeliverCallback:
                  "sourceCallId": "tc_desktop_1", "requestId": None}
         await _LifecycleTools._deliver_tool_request(agent, "conn_target", frame)
 
-        target.send_json.assert_awaited_once_with(frame)
+        target.send_json.assert_awaited_once_with(frame, raise_on_error=True)
         other.send_json.assert_not_called()
         assert target.send_json.await_args.args[0]["sourceCallId"] == "tc_desktop_1"
         assert target.send_json.await_args.args[0]["requestId"] is None
@@ -195,7 +195,7 @@ class TestDeliverCallback:
         await _LifecycleTools._deliver_tool_request(agent, "conn_new", frame)
 
         old.send_json.assert_not_awaited()
-        new.send_json.assert_awaited_once_with(frame)
+        new.send_json.assert_awaited_once_with(frame, raise_on_error=True)
 
     @pytest.mark.asyncio
     async def test_getattr_compatible_before_task7(self):
@@ -220,6 +220,48 @@ class TestDeliverCallback:
         with pytest.raises(RuntimeError, match="目标连接不可用"):
             await _LifecycleTools._deliver_tool_request(
                 agent, "conn_missing", {"type": "tool.request"})
+
+    @pytest.mark.asyncio
+    async def test_send_failure_surfaces_instead_of_being_swallowed(self):
+        """S2-H6：投递失败必须**真的抛出来**——这是 bridge 快速回退的前提。
+
+        用**真实** `WebSocketChannel`（不是 MagicMock）——因为缺陷恰恰在于
+        `send_json` 生产实现的吞异常语义：契约要求 `_deliver_tool_request` 在
+        投递失败时抛，而它唯一能用的发送调用不抛，于是 bridge 只能等满 timeout
+        （把"桌面不可用"记成"桌面超时"，其快速回退分支成为死代码）。
+
+        反证：把 `_deliver_tool_request` 改回 `send_json(frame)`（不带
+        `raise_on_error=True`）→ 本用例必须失败（不抛，异常被吞成 warning）。
+        """
+        from Module.output.websocket import WebSocketChannel
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=ConnectionResetError("link down"))
+        ch = WebSocketChannel(ws, protocol_version=2, client_platform="electron")
+        ch.connection_id = "conn_target"
+        agent = MagicMock()
+        agent._output.channels = [ch]
+
+        with pytest.raises(ConnectionResetError, match="link down"):
+            await _LifecycleTools._deliver_tool_request(
+                agent, "conn_target", {"type": "tool.request"})
+
+    @pytest.mark.asyncio
+    async def test_successful_delivery_does_not_raise(self):
+        """反空转：通道正常时必须照常投出去（不能为了 fail-fast 把成功路径也搞坏）。"""
+        from Module.output.websocket import WebSocketChannel
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        ch = WebSocketChannel(ws, protocol_version=2, client_platform="electron")
+        ch.connection_id = "conn_target"
+        agent = MagicMock()
+        agent._output.channels = [ch]
+
+        frame = {"type": "tool.request", "callId": "call_x"}
+        await _LifecycleTools._deliver_tool_request(agent, "conn_target", frame)
+
+        ws.send_json.assert_awaited_once_with(frame)
 
 
 class TestStartPersistenceHook:
