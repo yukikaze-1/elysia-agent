@@ -2,7 +2,14 @@
 import pytest
 from core.prompt.message_builder import MessageBuilder
 from core.schema.message import UserMessage, AssistantMessage, ToolResultMessage, MessageId
-from core.schema.part import TextPart, ImagePart
+from core.schema.part import (
+    AudioPart,
+    FilePart,
+    ImagePart,
+    StickerPart,
+    TextPart,
+    VideoPart,
+)
 from core.schema.tool import ToolCall, ToolCallFunction
 
 pytestmark = pytest.mark.unit   # 纯 Pydantic 模型 + MessageBuilder 组装，无 DB/网络、无 mock
@@ -176,3 +183,117 @@ class TestBuildMessages:
         user_msgs = [m for m in messages if m["role"] == "user"]
         two_image_msg = [m for m in user_msgs if "2张" in m.get("content", "")]
         assert len(two_image_msg) > 0
+
+
+# ============================================================================
+# S2-H8：贴图/附件-only 消息的占位文本（当前轮 + 历史侧）
+# ============================================================================
+
+class TestMediaOnlyPlaceholder:
+    """转换器只发射 Text/Image；sticker/file/audio/video 必须留占位（不得静默消失）。
+
+    缺陷形状：契约允许"仅贴图/仅附件"消息（content 为空），而它们此前变成
+    `{"role":"user","content":[]}` ——模型像"用户什么都没说"一样作答；历史侧
+    `_history_message_content` 还返回 None 把它们**整条删掉**（实测 8 条存量消息
+    只发出 5 条）。
+    """
+
+    def test_sticker_only_current_turn_has_placeholder(self):
+        """贴图-only 当前消息（走生产同形的 model_dump）→ 有占位、不是空 content。"""
+        builder = MessageBuilder()
+        content = [StickerPart(sticker_id="elysia_happy",
+                               src="/static/stickers/elysia_happy.png").model_dump()]
+        messages = builder.build_messages("system", [], content, supports_multimodal=False)
+
+        user_msg = messages[-1]
+        assert user_msg["role"] == "user"
+        assert "elysia_happy" in str(user_msg["content"]), (
+            f"贴图必须留下可识别的占位：{user_msg['content']!r}")
+        assert user_msg["content"] != []
+
+    def test_file_only_current_turn_has_placeholder_multimodal(self):
+        """多模态 provider 上 file-only 同样不得变成空 content（带文件名与体积）。"""
+        builder = MessageBuilder()
+        content = [FilePart(src="/api/attachments/att_1", filename="report.pdf",
+                            mime="application/pdf", size_bytes=2048,
+                            attachment_id="att_1").model_dump()]
+        messages = builder.build_messages("system", [], content, supports_multimodal=True)
+
+        user_msg = messages[-1]
+        assert isinstance(user_msg["content"], list)
+        joined = " ".join(b.get("text", "") for b in user_msg["content"])
+        assert "report.pdf" in joined
+        assert "2.0KB" in joined
+        assert user_msg["content"] != []
+
+    def test_audio_and_video_placeholders(self):
+        builder = MessageBuilder()
+        content = [
+            AudioPart(src="/api/attachments/att_a", mime="audio/wav",
+                      duration_ms=2500).model_dump(),
+            VideoPart(src="/api/attachments/att_v", mime="video/mp4",
+                      duration_ms=1000).model_dump(),
+        ]
+        messages = builder.build_messages("system", [], content, supports_multimodal=True)
+        joined = " ".join(b.get("text", "") for b in messages[-1]["content"])
+        assert "音频" in joined and "2.5s" in joined
+        assert "视频" in joined and "1.0s" in joined
+
+    def test_file_without_filename_falls_back_to_attachment_id(self):
+        """没有任何可读标识时用 attachment_id 兜底（否则模型只知道"有个东西"）。"""
+        builder = MessageBuilder()
+        content = [FilePart(src="/api/attachments/att_9",
+                            mime="application/octet-stream",
+                            attachment_id="att_9").model_dump()]
+        messages = builder.build_messages("system", [], content, supports_multimodal=True)
+        joined = " ".join(b.get("text", "") for b in messages[-1]["content"])
+        assert "att_9" in joined
+
+    def test_media_plus_text_keeps_both(self):
+        """有文本时占位与文本都要在（不能二选一）。"""
+        builder = MessageBuilder()
+        content = [TextPart(content="看看这个").model_dump(),
+                   StickerPart(sticker_id="s1",
+                               src="/static/stickers/s1.png").model_dump()]
+        messages = builder.build_messages("system", [], content, supports_multimodal=False)
+        joined = str(messages[-1]["content"])
+        assert "看看这个" in joined and "s1" in joined
+
+    def test_history_media_only_message_not_dropped(self):
+        """历史侧：media-only 的 user 消息不得被整条丢弃。"""
+        builder = MessageBuilder()
+        history = [
+            _make_user_msg_multimodal([StickerPart(sticker_id="s1", src="/static/stickers/s1.png")]),
+            _make_assistant_msg("哈哈"),
+        ]
+        messages = builder.build_messages("system", history, "嗯", supports_multimodal=False)
+
+        user_entries = [m for m in messages if m["role"] == "user"]
+        assert len(user_entries) == 2, f"media-only 历史不得消失：{messages!r}"
+        assert "s1" in str(user_entries[0]["content"])
+
+    def test_history_file_placeholder_multimodal(self):
+        """历史侧多模态：图片走 image_url，file 走占位（两者都要在）。"""
+        builder = MessageBuilder()
+        history = [
+            _make_user_msg_multimodal([
+                ImagePart(src="http://a.com/1.png"),
+                FilePart(src="/api/attachments/att_z", filename="a.zip",
+                         mime="application/zip", size_bytes=10),
+            ]),
+        ]
+        messages = builder.build_messages("system", history, None, supports_multimodal=True)
+
+        blocks = messages[1]["content"]
+        assert any(b.get("type") == "image_url" for b in blocks)
+        joined = " ".join(b.get("text", "") for b in blocks)
+        assert "a.zip" in joined
+
+    def test_plain_text_message_gets_no_placeholder(self):
+        """反空转：纯文本消息不得被塞进任何占位文案（否则每轮都在污染 prompt）。"""
+        builder = MessageBuilder()
+        messages = builder.build_messages(
+            "system", [_make_user_msg("普通文本")], "也普通", supports_multimodal=False)
+
+        assert messages[-1]["content"] == "也普通"
+        assert "[" not in str(messages[1]["content"])
