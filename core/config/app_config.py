@@ -1,6 +1,8 @@
 """应用级配置 dataclass — 经 Module.config.ConfigLoader 加载。"""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from Module.config import ConfigField, Range
 
@@ -146,3 +148,41 @@ class AppConfig:
     live2d: Live2DConfig = ConfigField(default_factory=Live2DConfig)
     vision: VisionConfig = ConfigField(default_factory=VisionConfig)
     database: DatabaseConfig = ConfigField(default_factory=DatabaseConfig)
+
+
+def apply_config_overrides(config: AppConfig, overrides: Mapping[str, Any]) -> None:
+    """把**显式**覆盖写进一个**已加载**的 config 对象（点路径 → 属性）。
+
+    F4（Batch 1.6）：这是 CLI 显式覆盖的**唯一施加点**的实现。缺陷背景：
+    `app.py` 把 `--host/--port/--tts/--stt/--character` 写进 config 后交给
+    `run_agent_service`，而后者**每一轮开头**都
+    `ConfigLoader(AppConfig, yaml_path=…).load()` 整个换掉 config ⇒ 5 个 flag 在
+    server 模式**全部静默失效**（实测 `--port 9999` 仍绑 8765），而 `--cli`/`--check`
+    两条不经 `run_agent_service` 的路径反而生效。修法是"每轮重载之后重新施加覆盖"，
+    而不是"首轮不重载"——后者会破坏"/restart 重读 YAML"这条既有契约
+    （`core/agent/tests/test_restart_rebuild.py` 钉着它）。
+
+    **优先级（本批裁定并测试）**：`显式 CLI 覆盖 > env > YAML > dataclass 默认`。
+    前两层之间的顺序沿用的是**现状语义**：`app.py` 一直是在 `ConfigLoader.load()`
+    （内部按 defaults → YAML → env 覆盖）**之后**写这几个字段的，`--cli` / `--check`
+    模式下实测也是 CLI 赢 env。本函数把同一顺序搬到了重载之后，顺序没有改变。
+
+    Args:
+        config: 已加载的 config（`AppConfig` 或同构对象——测试里的 `SimpleNamespace`
+            同样可用，本函数只做属性寻址与赋值）。
+        overrides: `{点路径: 值}`，如 `{"server.port": 9999}`。
+
+    Raises:
+        AttributeError: 路径上的段不存在（拼错的字段名不该静默失效——那正是本缺陷的
+            形态：覆盖"应用了"却没人读）。
+    """
+    for path, value in overrides.items():
+        target: Any = config
+        *parents, leaf = path.split(".")
+        for name in parents:
+            if not hasattr(target, name):
+                raise AttributeError(f"配置覆盖路径 {path!r} 不存在：缺少 {name!r}")
+            target = getattr(target, name)
+        if not hasattr(target, leaf):
+            raise AttributeError(f"配置覆盖路径 {path!r} 不存在：缺少 {leaf!r}")
+        setattr(target, leaf, value)

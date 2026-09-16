@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from aiohttp import web
@@ -195,6 +195,7 @@ async def run_agent_service(
     config_path: str | None,
     app_factory: Callable[..., web.Application],
     agent_factory: Callable[..., Any],
+    config_overrides: Mapping[str, Any] | None = None,
 ) -> None:
     """进程级服务循环：**/restart = 重建 Agent 实例**（S2-A5）。
 
@@ -212,31 +213,36 @@ async def run_agent_service(
         app_factory: aiohttp Application 工厂（`core.input.server.create_app`）。
         agent_factory: Agent 构造器（`core.agent.Agent`）——**由装配入口注入**，
             避免 `core.agent` 包内循环导入（server.py 是 `Agent` 的 mixin 之一）。
+        config_overrides: **显式**覆盖层（`{点路径: 值}`，由 `app.py` 从命令行收集）。
+            F4（Batch 1.6）：每轮重载之后重新施加——修复前 `--host/--port/--tts/--stt/
+            --character` 会在首轮就被重载整个丢掉（实测 `--port 9999` 仍绑 8765）。
+            "每轮重载"这条既有契约（`/restart` 重读 YAML）保持不变，覆盖只是叠在其上。
     """
     from Module.config.loader import ConfigLoader
 
-    from core.config import AppConfig
+    from core.config import AppConfig, apply_config_overrides
 
     previous: Any = None
-    # 批 1.5（审计发现，**未修**——留给 Batch 2）：`app.py:121-125` 把 5 个 CLI 覆盖
-    # （--host/--port/--tts/--stt/--character）写进传入的 `config`，而下面首轮就
-    # `ConfigLoader(...).load()` 重载、把它整个丢掉 ⇒ 实测 `--port 9999` 仍绑 8765，
-    # 5 个 flag 全部静默失效。**为什么不在这里修**：`test_restart_rebuild.py::
-    # test_restart_constructs_a_new_agent_with_reloaded_config` 正断言"首轮即从磁盘重载"，
-    # 即现有测试把该行为当契约钉住了——改它要先裁定"CLI 覆盖 vs 每轮重载"谁优先，
-    # 属设计决策，不是本批（"很小的审计+最小修复"）该顺手改的。证据见
-    # `docs/review/2026-09-16-Batch1.5-*` 的 F4。
     while True:
         if config_path is not None:
             config = ConfigLoader(AppConfig, yaml_path=config_path).load()
+        # F4：显式 CLI 覆盖是**进程生命周期**的输入，重载不该把它冲掉。
+        # 顺序（保留现状语义）：覆盖 > env > YAML > 默认——`ConfigLoader.load()`
+        # 内部已经把 env 叠在 YAML 上，这里再叠一次显式覆盖。
+        if config_overrides:
+            apply_config_overrides(config, config_overrides)
         # S2-A5 第二半：文件里的 llm.model 变了 → **文件优先**。否则
         # `_apply_service_state` 会拿持久化的 `service_state.llm_model` 把运行期旧选择
         # 再切回去，用户的 YAML 修改永远不生效。
+        # （5 个覆盖字段都不含 llm.model，故本判据不受覆盖层影响。）
         model_changed_in_file = (previous is not None
                                  and config.llm.model != previous.llm.model)
         agent = agent_factory(
             config=config, config_path=config_path,
             prefer_config_model=model_changed_in_file,
+            # 覆盖层一并交给 Agent：它的原地重启路径（`rebuild_on_restart=False`）
+            # 自己会重读 YAML，那处也必须重新施加（Pattern D 的第二个丢弃点）。
+            config_overrides=config_overrides,
         )
         restart = await agent.run_server(app_factory=app_factory)
         if not restart:
@@ -274,6 +280,8 @@ class AgentServer:
         async def _sync_tts_gate(self) -> None: ...
         _config_path: str | None
         _config: AppConfig
+        # F4：显式 CLI 覆盖层（`Agent.__init__` 写入；原地重启重读 YAML 后重新施加）
+        _config_overrides: Mapping[str, Any]
         _tts: TTSBackend | None
         _stt: STTBackend | None
         _stt_ok: bool
@@ -734,17 +742,7 @@ class AgentServer:
                     "重启请求：rebuild_on_restart=False —— 原地重启，"
                     "database.* / agent.character / agent.user_name / memory.* / llm.model "
                     "等构造期配置**不会**生效")
-                if self._config_path is not None:
-                    from Module.config.loader import ConfigLoader
-                    from core.config import AppConfig
-                    self._config = ConfigLoader(AppConfig, yaml_path=self._config_path).load()
-                    print("配置已重新加载，正在重启服务...")
-                else:
-                    # 无 config_path 时无法重新加载，复用当前配置
-                    logger.warning(
-                        "重启请求但缺少 config_path（Agent 可能以 config= 直接构造），"
-                        "复用当前配置"
-                    )
+                self._reload_config_from_disk()
                 await self.start()
                 continue
             else:
@@ -752,6 +750,29 @@ class AgentServer:
 
         print("再见！")
         return False
+
+    def _reload_config_from_disk(self) -> None:
+        """重读 YAML 到 `self._config`，并**重新施加**显式 CLI 覆盖（F4）。
+
+        这是**原地重启**路径（`rebuild_on_restart=False`）私有的一步——生产没有调用方
+        （`run_server` 的唯一生产调用点用默认 `rebuild_on_restart=True`），但它是
+        `run_agent_service` 之外**第二处**重读 YAML 的地方：只重读不重施覆盖，就会在
+        那里再丢一次 CLI 覆盖（F4 的 Pattern D）。抽成方法是为了让这条不变量可直测
+        ——`core/agent/tests/test_cli_overrides.py` 钉住"重读之后覆盖仍在"。
+        """
+        if self._config_path is None:
+            # 无 config_path 时无法重新加载，复用当前配置（覆盖本来就在里面）
+            logger.warning(
+                "重启请求但缺少 config_path（Agent 可能以 config= 直接构造），"
+                "复用当前配置")
+            return
+        from Module.config.loader import ConfigLoader
+
+        from core.config import AppConfig, apply_config_overrides
+
+        self._config = ConfigLoader(AppConfig, yaml_path=self._config_path).load()
+        apply_config_overrides(self._config, self._config_overrides)
+        print("配置已重新加载，正在重启服务...")
 
     async def run_repl(self) -> None:
         """运行交互式 REPL 循环（stdin）。阻塞直至 /quit 或 Ctrl+D。"""

@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import time
 import os
+from collections.abc import Mapping
 from dataclasses import asdict
 import logging
 from typing import Any, TYPE_CHECKING, Awaitable, Callable
@@ -128,7 +129,8 @@ class Agent(AgentLifecycle, AgentServer):
     """由 L0/L1/L2 各组件装配而成的完整 Agent。"""
 
     def __init__(self, *, config: AppConfig, config_path: str | None = None,
-                 prefer_config_model: bool = False):
+                 prefer_config_model: bool = False,
+                 config_overrides: Mapping[str, Any] | None = None):
         """初始化 Agent 并创建所有 L0/L1/L2 组件。
 
         Args:
@@ -138,10 +140,15 @@ class Agent(AgentLifecycle, AgentServer):
                 运行期模型选择，并把它写回）。由 `run_agent_service` 在"重启且
                 YAML 里的模型变了"时置位——否则 `_apply_service_state` 会用旧选择把
                 用户刚改的模型切回去（S2-A5 第二半）。
+            config_overrides: **显式** CLI 覆盖层（`{点路径: 值}`，如
+                `{"server.port": 9999}`）。F4（Batch 1.6）：它是**进程生命周期**的输入
+                ——`run_server` 的原地重启路径会重读 YAML，那里必须重新施加，否则覆盖
+                会在第二处重载点被丢掉（`_reload_config_from_disk`）。
         """
         self._config = config
         self._config_path = config_path
         self._prefer_config_model = prefer_config_model
+        self._config_overrides: Mapping[str, Any] = dict(config_overrides or {})
         self._user_name = config.agent.user_name
         # Task 7（B1）：用户身份存储——启动用 config.agent.user_name 建 bootstrap profile，
         # 供 _prepare_turn 读 pronouns（全局唯一「她」）。
