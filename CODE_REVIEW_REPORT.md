@@ -1936,6 +1936,42 @@ ollama / gpt-sovits 的本地 `base_url`），由 DNS 层与出站客户端逐�
   `S2-H10` 残余（legacy `source` 键）
 - **需 owner 定语义**：`S2-H3`/`H6`/`H8`/`H9`、`#21b`、`S3-G7`、决策 #8 范围、`audit` 接线
 
+### §0.4.29 重核挖出的活缺陷收口：`DAGNode.max_duration_s` 补上生产端（2026-09-16，1 个提交）
+
+这是 §0.4.18(d) 里我**亲核**的两条之一——本轮把它从"记录在案"推到"修好并有守卫"。
+
+#### (a) 缺陷：执行点接了，生产端从来没接 → `55415f81`
+
+`execution.py:84-105` 把 `DAGNode.max_duration_s` 当 `wait_for` 预算读（S2-D4④ 的成果），
+但 `parser.py` 构造 `DAGNode` 时**逐键列出、不含该键**，规划器 prompt 也不产出，
+全仓 `.py/.yaml/.j2/.md` 里 `max_duration_s=` / `"max_duration_s"` **0 命中**
+⇒ 字段恒为 `None`，**那个"节点级超时执行点"永不触发**。
+它被门禁登记为"已知缺口"，读起来像无害的预留——实际是 S2-D4④ 那个修复**从未生效**。
+
+#### (b) 修法（三处缺一不可）
+
+| 层 | 改动 |
+|---|---|
+| 生产者 | `prompts.OUTPUT_SCHEMA_DESCRIPTION` 加 `"max_duration_s": 30` + 一条规则（可选/正数/不得超任务总预算/只在"这步明显更慢或更险"时给更紧上限） |
+| 解析 + 校验 | `parser._parse_node_duration()`：非数字、非正数、超预算 → **拒整个 plan 或 patch**（fail-closed；上限取自**生效的任务预算** `tc.max_task_duration_s`，不新造策略数字） |
+| 两条路径对称 | `parse_plan_from_dict` 与 `parse_patch_from_dict` 都解析；planner 与 replanner（含 `sub_agent/replan.py` 调用点）都把上限透传 |
+
+#### (c) 门禁自己的反应（值得记录）
+
+补上写入方后 `make check-contract` **立刻**报："陈旧登记：`DAGNode.max_duration_s` /
+`DBTNode.max_duration_s` 已补上写入方——请从 `_PENDING_WRITERS` 删除"。
+删掉两条、并把脚本 docstring 的"6 个字段有读无写"同步成"4 个"，
+同时**写明该门禁的名字级局限**：它按字段名匹配，`DBTNode` 变体其实仍无生产者
+（DBT 节点类型整体还是值域预留）——这是"登记 ≠ 处置"的另一面，值得读者知道。
+
+#### (d) 反证与验收
+
+- 反证：parser 退回不解析该键 → **6 failed**（整组生产端用例）；
+  去掉跨预算校验 → **恰好 1 failed**（`61.0` 那条 ⇒ 校验承重且用例彼此独立）
+- 新增用例 5 条（接受/缺省/4 种非法值/patch 路径对称）
+- workflow_engine 384 passed；全量 5668 passed / 17 skipped / 1 xfailed / 0 failed；
+  `check-contract` / `check-arch` / `check-timeouts` / `check-types` 全绿
+
 ---
 
 # Executive Summary

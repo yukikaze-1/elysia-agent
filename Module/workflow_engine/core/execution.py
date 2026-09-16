@@ -85,6 +85,9 @@ async def execute_nodes(
             # S2-D4④：`DAGNode.max_duration_s` 此前**只声明、无人读**（parser 不解析、
             # 引擎不读取）——与 `ConstraintConfig` 的"硬约束"同一类"声明与实现相反"。
             # 现在它是真的：单节点超过自身上限即判 TOOL_TIMEOUT。
+            # **生产者**（2026-09-16 补，此前字段恒 None ⇒ 本执行点永不触发）：
+            # 规划器 prompt 的 `OUTPUT_SCHEMA_DESCRIPTION` 声明该键 → `parser._parse_node_duration`
+            # 解析并按**生效任务预算** fail-closed 校验（plan 与 patch 两条路径都走它）。
             # 工具调用在 Executor 内被 asyncio.shield 保护（"副作用不打断"），
             # 故这里取消的只是**等待**，已开始的工具会作为孤儿被 stop() 采集收尾。
             try:
