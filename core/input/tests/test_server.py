@@ -51,10 +51,21 @@ class _FakeSTTBackend(STTBackend):
         pass
 
 
+@pytest.fixture(autouse=True)
+def _fake_deepseek_key(monkeypatch):
+    """Agent 构造要求 `DEEPSEEK_API_KEY` 非空——本模块用例内提供假 key。
+
+    原实现在 `_make_agent()` 里裸写 `os.environ.setdefault(..., "test")`：永不还原
+    （污染同进程后续全部测试），且取值依赖进程历史（冷进程 → `"test"`，热进程 →
+    开发者真实 key）。改 autouse + monkeypatch，且**无条件**覆盖（见下）——Batch 1.5 全局状态审计。
+    """
+    import os
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
+
+
 def _make_agent():
     """为服务器测试创建最小 mock agent。"""
-    import os as _os
-    _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
     from core.config import AppConfig
     from core.agent import Agent
 

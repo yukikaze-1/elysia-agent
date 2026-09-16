@@ -141,6 +141,33 @@ class TestMongoCleaner:
                 await cleaner.clean()
 
 
+def _milvus_reachable_patches():
+    """让 `MilvusCleaner.clean()` 里那段「连通性预检」不再依赖真实环境。
+
+    `clean()` 的第一段是：
+
+        try:
+            vector_db = VectorDBFactory.create("milvus/memory")   # 缺 MILVUS_URI 即抛
+            await vector_db.close()
+        except Exception as e:
+            return (MEM_COLLECTION, False, f"Milvus unreachable: {e}")   # ← 提前 return
+
+    只 patch `LongTermMemory` 时，这段预检会先炸、函数**在到达被测代码前就返回**——
+    于是本类两条用例变成「断言 MILVUS_URI 有没有被设」，而不是断言清理器逻辑。
+    实测（无 .env 的 worktree）：
+
+        pytest core/tests/test_clean_db.py                                  -> 2 failed, 39 passed
+        pytest Module/database/vectordb/tests core/tests/test_clean_db.py   -> 95 passed
+
+    ——「绿」的来源是 `Module/database/vectordb/tests/conftest.py` 那条 session 级
+    `os.environ.setdefault("MILVUS_URI", …)` 泄漏到同进程的后续测试。本测试的**主题
+    是清理器逻辑，不是环境解析**，故把工厂一并 patch 掉，使其与 ambient env 无关。
+    """
+    vector_db = AsyncMock()
+    vector_db.close = AsyncMock()
+    return patch("clean_db.VectorDBFactory.create", return_value=vector_db)
+
+
 class TestMilvusCleaner:
     @pytest.mark.asyncio
     async def test_milvus_cleaner_calls_clear_all(self):
@@ -149,7 +176,7 @@ class TestMilvusCleaner:
 
         with patch(
             "clean_db.LongTermMemory", spec=LongTermMemory
-        ) as MockLTM:
+        ) as MockLTM, _milvus_reachable_patches() as mock_vector_factory:
             mock_ltm = MockLTM.return_value
             mock_ltm.clear_all = AsyncMock(return_value=42)
             mock_ltm.close = AsyncMock()
@@ -160,6 +187,7 @@ class TestMilvusCleaner:
         MockLTM.assert_called_once()
         mock_ltm.clear_all.assert_awaited_once()
         mock_ltm.close.assert_awaited_once()
+        mock_vector_factory.assert_called_once_with("milvus/memory")
         # 验证返回的 collection 名来自 MEM_COLLECTION 常量
         assert result == (MEM_COLLECTION, True, 42)
         assert result[0] == MEM_COLLECTION
@@ -171,7 +199,7 @@ class TestMilvusCleaner:
 
         with patch(
             "clean_db.LongTermMemory", spec=LongTermMemory
-        ) as MockLTM:
+        ) as MockLTM, _milvus_reachable_patches():
             mock_ltm = MockLTM.return_value
             mock_ltm.clear_all = AsyncMock(side_effect=RuntimeError("connection refused"))
             mock_ltm.close = AsyncMock()

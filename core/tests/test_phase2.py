@@ -5,17 +5,50 @@ Run:
 """
 
 import asyncio
+import os
 
 import pytest
 
 from Module.embedding import EmbeddingFactory
 from core.memory.scope import MemoryScope
 
+
 @pytest.fixture(scope="session", autouse=True)
 def _cleanup_embedding():
     """所有测试完成后清理共享的 embedding 缓存。"""
     yield
     EmbeddingFactory._instances.clear()
+
+
+@pytest.fixture(autouse=True)
+def _fake_deepseek_key(monkeypatch):
+    """Agent 构造要求 `DEEPSEEK_API_KEY` 非空——本模块用例内提供假 key。
+
+    原实现在 `test_session_isolation_between_agents` 里裸写
+    `os.environ.setdefault("DEEPSEEK_API_KEY", "test")`：永不还原，且取值依赖进程
+    历史（冷进程 → `"test"`，热进程 → 开发者真实 key）。改 autouse + monkeypatch
+    （缺失才设，用例结束还原）——Batch 1.5 全局状态审计。
+    """
+    import os
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
+
+
+@pytest.fixture
+def real_env(monkeypatch):
+    """把项目根 `.env` **按需**载入本用例的 os.environ，用例结束自动还原。
+
+    代替测试体内的裸 `load_dotenv()`（Batch 1.5 实测：它把 .env 的 13 个键
+    **永久**写进进程 env，同进程后续所有测试都受影响）。语义与 dotenv 默认一致
+    （`override=False`：只补缺失的键），但作用域收在本用例内。
+    """
+    from dotenv import dotenv_values
+
+    from paths import get_project_root
+
+    for key, value in dotenv_values(get_project_root() / ".env").items():
+        if value is not None and key not in os.environ:
+            monkeypatch.setenv(key, value)
 
 
 # ============================================================================
@@ -276,10 +309,8 @@ class TestLongTermMemory:
 @pytest.mark.slow
 class TestMemoryIntegration:
     @pytest.mark.asyncio
-    async def test_search_memory_tool(self):
+    async def test_search_memory_tool(self, real_env):
         """search_memory 工具应能找到相关条目。"""
-        from dotenv import load_dotenv
-        load_dotenv()
         from core.agent import Agent
 
         from core.config import AppConfig
@@ -306,10 +337,8 @@ class TestMemoryIntegration:
         await agent.stop()
 
     @pytest.mark.asyncio
-    async def test_save_memory_tool(self):
+    async def test_save_memory_tool(self, real_env):
         """save_memory 工具应持久化条目（测试中 HITL 自动审批）。"""
-        from dotenv import load_dotenv
-        load_dotenv()
         from core.agent import Agent
 
         from core.config import AppConfig
@@ -894,8 +923,6 @@ class TestMemoryStress:
         用 FakeLLMBackend——无需真实 LLM，也不该碰真实 Mongo（`fake_storage` 把
         Agent 的存储导流到内存 fake；否则 stop() 的 save_all 会把测试会话写进生产库）。
         """
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         import uuid
         from core.tests.fake_llm import FakeLLMBackend
         from core.agent import Agent

@@ -7,11 +7,33 @@ or:
 """
 
 import asyncio
+import os
 
 import pytest
 
 from core.schema import RequestId
 from core.schema.event import InterruptData, StateChangeData, UserInputData
+
+
+@pytest.fixture
+def real_env(monkeypatch):
+    """把项目根 `.env` **按需**载入本用例的 os.environ，用例结束自动还原。
+
+    代替测试体内的裸 `load_dotenv()`（Batch 1.5 实测：它把 .env 的 13 个键
+    **永久**写进进程 env——`pytest core/tests/test_phase1.py -m integration` 一条
+    用例即可让后续同进程测试全部看到真实凭据）。语义与 dotenv 默认一致
+    （`override=False`：只补缺失的键），但作用域收在本用例内。
+
+    这些 integration/slow 用例**确实需要**真实凭据才跑得起来（真实 LLM 调用），
+    故保留"载入 .env"这一行为本身，只把进程级写入改为用例级。
+    """
+    from dotenv import dotenv_values
+
+    from paths import get_project_root
+
+    for key, value in dotenv_values(get_project_root() / ".env").items():
+        if value is not None and key not in os.environ:
+            monkeypatch.setenv(key, value)
 
 # ============================================================================
 # 0. 测试基建：门控 fake LLM + 有界轮询
@@ -339,10 +361,8 @@ class TestStreamingIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_real_stream_think_structured(self):
+    async def test_real_stream_think_structured(self, real_env):
         """真实 LLM 结构化流式输出 content 字典。"""
-        from dotenv import load_dotenv
-        load_dotenv()
         _skip_if_no_real_llm_key()
         from core.adapter.llm_adapter import LLMAdapter
 
@@ -366,10 +386,8 @@ class TestStreamingIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_streaming_delivers_tokens_immediately(self):
+    async def test_streaming_delivers_tokens_immediately(self, real_env):
         """第一个块应快速到达，而不是在整个响应完成后。"""
-        from dotenv import load_dotenv
-        load_dotenv()
         _skip_if_no_real_llm_key()
         import time
         from core.adapter.llm_adapter import LLMAdapter
@@ -555,13 +573,12 @@ class TestConversationContext:
 
 @pytest.mark.slow
 class TestCharacterPromptInjection:
-    # 保留 slow：本用例 load_dotenv + 真实 LongTermMemory（构造即读 journal）+
-    # 读模板文件，属真 I/O；仅由手工触发的 `make test-full` 覆盖。
+    # 保留 slow：本用例载入 .env（real_env fixture，用例结束还原）+ 真实
+    # LongTermMemory（构造即读 journal）+ 读模板文件，属真 I/O；
+    # 仅由手工触发的 `make test-full` 覆盖。
     @pytest.mark.asyncio
-    async def test_character_personality_injected(self):
+    async def test_character_personality_injected(self, real_env):
         """验证角色配置（base_personality）出现在 LLM 请求中。"""
-        from dotenv import load_dotenv
-        load_dotenv()
         from core.prompt.prompt_assembler import PromptAssembler
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory

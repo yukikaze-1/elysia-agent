@@ -5,6 +5,7 @@ Run: python -m pytest core/test_phase3.py -v --asyncio-mode=auto
 
 import asyncio
 import functools
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -26,6 +27,27 @@ from core.schema.event import StateChangeData
 from core.adapter.llm_adapter import LLMAdapter
 from core.tests.fake_llm import FakeLLMBackend
 from core.config import AppConfig
+
+
+@pytest.fixture(autouse=True)
+def _fake_deepseek_key(monkeypatch):
+    """Agent 构造要求 `DEEPSEEK_API_KEY` 非空——**本模块用例内**提供假 key。
+
+    原实现是 21 处测试体内的裸 `os.environ.setdefault("DEEPSEEK_API_KEY", "test")`
+    （Batch 1.5 全局状态审计）。它有两条缺陷：
+
+    1. **永不还原**：写完就留在进程 env 里，同进程后续任何测试都看得见；
+    2. **取值依赖进程历史**：`setdefault` 只在缺失时写入，所以
+       「冷进程 → `"test"`（本意）」与「热进程（更早的 `ConfigLoader.load()` 已把
+       真实 `.env` 灌进 os.environ）→ 开发者**真实 API key**」是两种结果。
+       测试因此不再控制自己的输入，而 `core/tests/test_phase1.py::_skip_if_no_real_llm_key`
+       正是为绕开第 2 条而存在的补丁（它把 `"test"` 当污染哨兵）。
+
+    改为 module 级 autouse + `monkeypatch`：**语义不变**（仍只在缺失时设 `"test"`），
+    但用例结束自动还原（原先缺失 → 还原为不存在）。`core/tool_runtime/tests/test_task_scheduler.py::_ensure_api_key`
+    已是同一修法，本处与之对齐。
+    """
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
 
 
 async def _fixed_session_resolver(session, conversation_id, protocol_version):
@@ -712,8 +734,6 @@ class TestPromptAssemblerUnit:
     @pytest.mark.asyncio
     async def test_build_system_prompt(self):
         """Section provider 路径正常渲染 system prompt。"""
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.prompt.prompt_assembler import PromptAssembler
         from core.config import CharacterConfig
         from core.memory.session import SessionMemory
@@ -738,8 +758,6 @@ class TestPromptAssemblerUnit:
 class TestAgentProcessMessage:
     @pytest.mark.asyncio
     async def test_empty_message_returns(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -750,8 +768,6 @@ class TestAgentProcessMessage:
 
     @pytest.mark.asyncio
     async def test_whitespace_only(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -762,8 +778,6 @@ class TestAgentProcessMessage:
 
     @pytest.mark.asyncio
     async def test_idle_touch_called(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -785,8 +799,6 @@ class TestAgentProcessMessage:
 
     @pytest.mark.asyncio
     async def test_interrupt_when_not_idle(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1081,8 +1093,6 @@ class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_register_tools(self):
         """工具经 ToolManager.load_all 加载，名称正确。"""
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1097,8 +1107,6 @@ class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_tool_execute_search_memory(self):
         """search_memory 工具查询长期记忆。"""
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from Module.tool import ToolContext
         from core.agent import Agent
 
@@ -1119,8 +1127,6 @@ class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_stop_cancels_cognitive_task(self):
         """stop() 在 _current_task 仍在运行时取消它。"""
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1140,8 +1146,6 @@ class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_stop_closes_output_channels(self):
         """stop() 关闭所有输出通道。"""
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1158,8 +1162,6 @@ class TestAgentLifecycle:
     @pytest.mark.asyncio
     async def test_process_message_poll_waits_for_idle(self):
         """process_message 在 INTERRUPT 后等待 FSM 回到 IDLE。"""
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.agent import Agent
 
         agent = Agent(config=AppConfig())
@@ -1256,11 +1258,13 @@ class TestAppConfig:
         """SERVER_HOST env 覆盖 config.yaml——开发期远程测试无需改 config.yaml /
         传 --host，.env 写一行即可（scripts/start.sh 直接远程启动）。"""
         from Module.config.loader import ConfigLoader, EnvManager
-        import os as _os
-        # 阻止 load_dotenv() 污染全局环境变量（同 test_load_from_yaml）
+        # 阻止**本次** ConfigLoader.load() 触发 load_dotenv() 污染全局环境变量。
+        # ⚠️ 它挡得住什么、挡不住什么（Batch 1.5 实测）：`_loaded = True` 只让
+        # `EnvManager.ensure_dotenv()` 提前返回；若 .env 的键**早已**在 os.environ 里
+        # （别的测试 import 期读 .env、或更早的 load() 已灌过），`_override_from_env`
+        # 照样读得到。即本 hack **不能**让用例"与 ambient env 无关"。
         _orig_loaded = EnvManager._loaded
         EnvManager._loaded = True
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         try:
             monkeypatch.setenv("SERVER_HOST", "0.0.0.0")
             cfg = ConfigLoader(AppConfig, yaml_path="config.yaml").load()
@@ -1270,12 +1274,12 @@ class TestAppConfig:
 
     def test_load_from_yaml(self):
         from Module.config.loader import ConfigLoader, EnvManager
-        import os as _os
-        # 阻止 load_dotenv() 污染全局环境变量（尤其是 MILVUS_URI，
-        # 会导致后续测试连上真实数据库而非 in-memory 模式）
+        # 阻止**本次** load() 触发 load_dotenv()（尤其是 MILVUS_URI，会导致后续测试
+        # 连上真实数据库而非 in-memory 模式）。挡不住的部分同上：已在 os.environ 里的
+        # .env 键仍会经 `_override_from_env` 生效——本用例断言的 tts/stt.enabled 不在
+        # 那批键里，故当前成立。
         _orig_loaded = EnvManager._loaded
         EnvManager._loaded = True  # 假装已加载，跳过 load_dotenv()
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         try:
             cfg = ConfigLoader(AppConfig, yaml_path="config.yaml").load()
             assert cfg.tts.enabled is True
@@ -1465,8 +1469,6 @@ class TestIdleMonitor:
 class TestDebugInfo:
     @pytest.mark.asyncio
     async def test_collect_returns_debug_info(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.debug.info import collect, DebugInfo
         from core.agent import Agent
 
@@ -1481,8 +1483,6 @@ class TestDebugInfo:
 
     @pytest.mark.asyncio
     async def test_collect_fsm_state(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.debug.info import collect
         from core.agent import Agent
 
@@ -1496,8 +1496,6 @@ class TestDebugInfo:
 
     @pytest.mark.asyncio
     async def test_collect_tool_list(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.debug.info import collect
         from core.agent import Agent
 
@@ -1518,8 +1516,6 @@ class TestDebugInfo:
 
     @pytest.mark.asyncio
     async def test_collect_memory_counts(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.debug.info import collect
         from core.agent import Agent
 
@@ -1540,8 +1536,6 @@ class TestDebugInfo:
 class TestDebugDbApi:
     @pytest.mark.asyncio
     async def test_db_status_endpoint(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.input.server import create_app
         from core.agent import Agent
 
@@ -1563,8 +1557,6 @@ class TestDebugDbApi:
 
     @pytest.mark.asyncio
     async def test_ltm_list_and_insert(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.input.server import create_app
         from core.agent import Agent
 
@@ -1601,8 +1593,6 @@ class TestDebugDbApi:
 
     @pytest.mark.asyncio
     async def test_ltm_clear_all(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.input.server import create_app
         from core.agent import Agent
 
@@ -1640,8 +1630,6 @@ class TestDebugDbApi:
 
     @pytest.mark.asyncio
     async def test_session_list_endpoint(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.input.server import create_app
         from core.agent import Agent
 
@@ -1661,8 +1649,6 @@ class TestDebugDbApi:
 
     @pytest.mark.asyncio
     async def test_session_detail_endpoint(self):
-        import os as _os
-        _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
         from core.input.server import create_app
         from core.agent import Agent
 

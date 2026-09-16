@@ -36,6 +36,23 @@ def _clean():
     reset_store()
 
 
+@pytest.fixture(autouse=True)
+def _fake_deepseek_key(monkeypatch):
+    """Agent 构造要求 `DEEPSEEK_API_KEY` 非空——本模块用例内提供假 key。
+
+    原实现在 `test_agent_stop_drains_scope` 里裸写
+    `os.environ.setdefault("DEEPSEEK_API_KEY", "test-key-not-real")`：永不还原，
+    且取值依赖进程历史。改 autouse + monkeypatch——Batch 1.5 全局状态审计。
+    值保持 `test-key-not-real` 不变（本模块只用它构造 Agent，不发起真实调用）。
+
+    **必须无条件覆盖**（复核时修正）：根 `conftest.py` 的入口引导保证 `.env` 恒被加载，
+    故"缺失才设"的条件**恒假**——那会让本模块用到**开发者 `.env` 里的真实 key**
+    （实测：工作树下 `len=35 prefix='sk-d6c…'`，摘掉引导才是 `len=4 prefix='test'`），
+    既非本意也不密闭。无条件设成假 key 后取值确定、且真实凭据不进测试进程。
+    """
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+
+
 class TestIdempotencyStoreSingleton:
     def test_reset_fully_clears(self):
         """`reset_store()` 必须**彻底**回到未配置态（跨测试隔离的全部依据）。"""
@@ -99,9 +116,6 @@ class TestPersonalityScope:
         这条把"关机要 drain"从**约定**变成**断言**——新增一个 fire-and-forget 站点时，
         若它挂到了别处（不受 stop 的 flush 步骤覆盖），这里会红。
         """
-        import os
-
-        os.environ.setdefault("DEEPSEEK_API_KEY", "test-key-not-real")
         from core.agent import Agent
         from core.config import AppConfig
 

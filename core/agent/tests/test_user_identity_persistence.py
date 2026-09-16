@@ -21,12 +21,23 @@ import pytest
 
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
 
-os.environ.setdefault("DEEPSEEK_API_KEY", "test")
-
-from core.agent.agent import Agent          # noqa: E402
-from core.config import AppConfig           # noqa: E402
+from core.agent.agent import Agent
+from core.config import AppConfig
 
 pytestmark = pytest.mark.service
+
+
+@pytest.fixture(autouse=True)
+def _fake_deepseek_key(monkeypatch):
+    """Agent 构造要求 `DEEPSEEK_API_KEY` 非空——本模块用例内提供假 key。
+
+    原实现在**模块级**裸写 `os.environ.setdefault("DEEPSEEK_API_KEY", "test")`
+    （且为它把 import 压到后面并挂 `# noqa: E402`）：它在**收集期 import** 就执行，
+    污染整轮 session 的环境且永不还原；取值还依赖进程历史（冷进程 → `"test"`，
+    热进程 → 开发者真实 key）。改 autouse + monkeypatch（缺失才设，用例结束还原），
+    import 顺序也随之恢复正常——Batch 1.5 全局状态审计。
+    """
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
 
 
 class _DurableFakeDB(FakeDocumentDBBackend):

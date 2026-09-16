@@ -1,5 +1,7 @@
 """ReadFilePlugin 和 ListDirPlugin 单元测试。"""
 
+from dataclasses import replace
+
 import pytest
 
 from Module.tool.protocol import ToolContext, ToolResult, ErrorType
@@ -65,12 +67,19 @@ class TestReadFilePlugin:
         `/home/yomu/data/sandbox`；此前插件不做自己的检查（只信 `_safe_path`），
         所以"沙盒配置"与"实际路径"不一致也照样跑过——**前提不真实**。
         现在必须让两者一致（生产里 `_safe_path` 也只可能来自该沙盒内部）。
+
+        ⚠️ **必须 rebind 而不是就地改**（Batch 1.5 全局状态审计）：`plugin.safety`
+        直接落回**类属性** `ReadFilePlugin.safety`（`ToolPlugin.safety` 是类级
+        `SafetyProfile`，实例不各自持有副本），所以 `plugin.safety.read_dirs = [...]`
+        改的是**全进程共享的那一份类默认值**，且用例结束不还原。实测后果：
+        `pytest core/tools/tests/test_filesystem.py Module/tool/tests/test_safety_read_isolation.py`
+        → 后者 1 failed（断言"类默认必须是会话模板"时拿到的是 `tmp_path`）；
+        反序则全绿——同一份代码，只差顺序。`--dist loadfile -n 8` 下两文件是否同
+        worker 不定，故那是**偶发**红。改 `dataclasses.replace` 生成实例专属副本。
         """
         plugin = ReadFilePlugin()
-        plugin.safety.read_dirs = [str(tmp_path)]
-        plugin.safety.write_dir = str(tmp_path)
-        for k, v in over.items():
-            setattr(plugin.safety, k, v)
+        plugin.safety = replace(
+            plugin.safety, read_dirs=[str(tmp_path)], write_dir=str(tmp_path), **over)
         return plugin
 
     # ── 基本功能 ──
@@ -212,12 +221,15 @@ class TestReadFilePlugin:
 # ============================================================================
 
 def _list_plugin(tmp_path, **over):
-    """列目录沙盒指向 tmp_path —— S2-6 起插件自己做 containment，前提必须一致。"""
+    """列目录沙盒指向 tmp_path —— S2-6 起插件自己做 containment，前提必须一致。
+
+    与 `TestReadFilePlugin._plugin` 同理：**rebind 而非就地改**——`plugin.safety`
+    就是类属性 `ListDirPlugin.safety`，就地改会污染进程级类默认值且不还原
+    （见那里 docstring 的实测记录，Batch 1.5 全局状态审计）。
+    """
     plugin = ListDirPlugin()
-    plugin.safety.read_dirs = [str(tmp_path)]
-    plugin.safety.write_dir = str(tmp_path)
-    for k, v in over.items():
-        setattr(plugin.safety, k, v)
+    plugin.safety = replace(
+        plugin.safety, read_dirs=[str(tmp_path)], write_dir=str(tmp_path), **over)
     return plugin
 
 

@@ -1,5 +1,6 @@
 """WriteFilePlugin 单元测试。"""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -345,7 +346,9 @@ class TestSandboxContainmentResolvesFirst:
         sandbox = tmp_path / "sandbox"
         sandbox.mkdir()
         plugin = WriteFilePlugin()
-        plugin.safety.write_dir = str(sandbox)
+        # rebind 而非就地改：`plugin.safety` 是**类属性**，就地改会污染进程级
+        # 类默认值且不还原（Batch 1.5 全局状态审计，见 test_filesystem.py）。
+        plugin.safety = replace(plugin.safety, write_dir=str(sandbox))
         return plugin, sandbox
 
     class _Ctx:
@@ -438,15 +441,15 @@ class TestSandboxContainmentResolvesFirst:
         sandbox.mkdir()
 
         reader = ReadFilePlugin()
-        reader.safety.read_dirs = [str(sandbox)]
-        reader.safety.write_dir = str(sandbox)
+        reader.safety = replace(  # rebind：类属性就地改会污染类默认值
+            reader.safety, read_dirs=[str(sandbox)], write_dir=str(sandbox))
         res = await reader.execute(
             ctx=self._Ctx(), params=reader.param_model(path=str(secret)))
         assert getattr(res, "success", True) is False, f"沙盒外文件被读到了：{res}"
 
         lister = ListDirPlugin()
-        lister.safety.read_dirs = [str(sandbox)]
-        lister.safety.write_dir = str(sandbox)
+        lister.safety = replace(  # rebind：同上
+            lister.safety, read_dirs=[str(sandbox)], write_dir=str(sandbox))
         res2 = await lister.execute(
             ctx=self._Ctx(), params=lister.param_model(path=str(secret_dir)))
         assert getattr(res2, "success", True) is False, f"沙盒外目录被列到了：{res2}"
