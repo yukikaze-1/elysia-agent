@@ -363,6 +363,37 @@ class TestContractRules:
         assert not bad, f"有写入即不该报，实际 {bad}"
 
 
+@pytest.mark.unit
+class TestReservedRegistrationHygiene:
+    """预留登记必须写清**解除条件**（owner 2026-09-16 裁定）。
+
+    只写"为什么暂不产"的登记表会退化成永久豁免单——读者分不清它是"有计划的
+    预留"还是"忘了删的残留"。这条把"必须写解除条件"变成判据。
+    """
+
+    def test_registration_without_removal_condition_is_red(self, reach, monkeypatch):
+        monkeypatch.setattr(
+            reach, "_RESERVED_ENUM_MEMBERS",
+            {"schema.py::Color::ORPHAN": "值域预留：暂时没有生产者"})
+        bad = reach._check_registration_hygiene()
+        assert bad and "解除条件" in bad[0], f"缺解除条件必须报，实际 {bad}"
+
+    def test_placeholder_removal_condition_is_red(self, reach, monkeypatch):
+        """写了标记但判据为空/占位（如『解除条件：』后面什么都没有）也要红。"""
+        monkeypatch.setattr(
+            reach, "_RESERVED_ENUM_MEMBERS",
+            {"schema.py::Color::ORPHAN": "值域预留。解除条件：待定"})
+        bad = reach._check_registration_hygiene()
+        assert bad and "占位符" in bad[0], f"占位式解除条件必须报，实际 {bad}"
+
+    def test_registration_with_removal_condition_passes(self, reach, monkeypatch):
+        """反证的另一半：写清了就不该报（否则判据是『永远红』的假门禁）。"""
+        monkeypatch.setattr(
+            reach, "_RESERVED_ENUM_MEMBERS",
+            {"schema.py::Color::ORPHAN": "值域预留：暂无生产者。解除条件：若确认不做彩色输出，删该值"})
+        assert reach._check_registration_hygiene() == []
+
+
 # ══════════════════════════════════════════════════════════════════
 # 真实仓库：两条门禁必须绿（红说明有人引入了不可达字段/预算倒挂）
 # ══════════════════════════════════════════════════════════════════

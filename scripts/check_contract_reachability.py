@@ -26,7 +26,7 @@ pyright 会告诉你 `X.error` 类型正确，`check-types` 会告诉你生成�
 
 | 规则 | 判据 | 未达标时 |
 |---|---|---|
-| E1 枚举可达性 | 成员被引用为 `EnumClass.MEMBER`，**或**其字符串值作为字面量出现在生产代码里（StrEnum 常常经 `f"..."` 拼进 wire，只查属性引用会大量误报） | 必须登记进 `_RESERVED_ENUM_MEMBERS` 并写明理由 |
+| E1 枚举可达性 | 成员被引用为 `EnumClass.MEMBER`，**或**其字符串值作为字面量出现在生产代码里（StrEnum 常常经 `f"..."` 拼进 wire，只查属性引用会大量误报） | 必须登记进 `_RESERVED_ENUM_MEMBERS` 并写明理由 + **解除条件**（何时该删该值域） |
 | F1 字段有读必须有写 | 字段名在生产代码里被**读取**（`.field`）却从未被**写入**（`field=` 或 `"field":`） | 必须登记进 `_PENDING_WRITERS` 并写明理由 |
 
 ## 判据的边界（诚实声明）
@@ -68,33 +68,111 @@ _CONTRACT_MODULES = (
 
 _SCAN_DIRS = ("core", "Module")
 
-# ── E1：无生产者的枚举成员（登记 = 承认"值域预留"，并在注释里写清用途）────────
-# 键 = "模块文件名::枚举类::成员"。值 = 为什么后端暂时不生产它。
+# ── E1：无生产者的枚举成员（登记 = 承认"值域预留"）──────────────────────────
+# 键 = "模块文件名::枚举类::成员"。值 = ①为什么后端暂时不生产它 ②**解除条件**：
+# 什么情况下该把这个值域删掉。两者缺一不可（见 _check_registration_hygiene）——
+# owner 2026-09-16 裁定「值域全部保留，但每条都要写清解除条件」：只写"为什么暂不产"
+# 的登记表会退化成永久豁免单，读者无法判断它是"有计划的预留"还是"忘了删的残留"。
 _RESERVED_ENUM_MEMBERS: dict[str, str] = {
-    "schema.py::SubmitRejectionCode::PLAN_TOO_LARGE": "拒绝码值域预留：计划规模上限尚未在引擎侧实现",
-    "schema.py::SubmitRejectionCode::CONTEXT_WINDOW_EXCEEDED": "拒绝码值域预留：上下文窗口预检尚未实现",
-    "schema.py::SubmitRejectionCode::TOKEN_BUDGET_EXCEEDED": "拒绝码值域预留：token 预算预检尚未实现",
-    "schema.py::ReturnMode::STRUCTURED": "返回模式预留：结构化返回尚未接入（当前只用 summary/raw）",
-    "types.py::WorkflowErrorCode::MUTATION_LIMIT_REACHED": "错误码值域预留：max_mutations 硬约束未实现（#45）",
-    "types.py::WorkflowErrorCode::CANCELLED_BY_USER": "错误码值域预留：用户取消当前走 WorkflowStatus.CANCELLED 通道，不走 error_code",
-    "types.py::ResumeErrorCode::CHECKPOINT_CORRUPTED": "恢复错误码预留：checkpoint 损坏目前记 warning 后丢弃，不产出该码",
-    "types.py::ResumeErrorCode::CHECKPOINT_VERSION_MISMATCH": "恢复错误码预留：版本不匹配同上（隔离不恢复）",
-    "types.py::ResumeErrorCode::PENDING_APPROVALS_FAILED": "恢复错误码预留：待审批恢复失败尚未细分到该码",
-    "types.py::ResumeErrorCode::NODE_RECOVERY_FAILED": "恢复错误码预留：节点恢复失败尚未细分到该码",
-    "internal.py::ValidationIssueType::INVALID_INPUT": "校验问题类型预留：input_bindings 校验目前只报 UNKNOWN_TOOL/MISSING_CONFIRMATION",
-    "internal.py::ValidationIssueType::MISSING_CONFIRMATION": "校验问题类型预留：确认缺失校验尚未产出该类型",
-    "internal.py::DBTNodeType::SEQUENCE": "DBT 节点类型预留：当前规划器只产 ACTION 类节点",
-    "internal.py::DBTNodeType::SELECTOR": "DBT 节点类型预留（同上）",
-    "internal.py::DBTNodeType::PARALLEL": "DBT 节点类型预留（同上）",
-    "internal.py::DBTNodeType::CONDITION": "DBT 节点类型预留（同上）",
-    "internal.py::ExperienceStatus::UNVERIFIED": "经验状态预留：经验库尚未实现验证流水线",
-    "internal.py::ExperienceStatus::VERIFIED": "经验状态预留（同上）",
-    "internal.py::ExperienceStatus::DEPRECATED": "经验状态预留（同上）",
-    "output.py::AgentType::WORKER": "子智能体类型预留：当前只产 orchestrator/planner/executor 之外的默认类型",
-    "output.py::TokenComponentType::SYNTHESIZER": "token 分项预留：分项统计尚未细分到该组件",
-    "output.py::TokenComponentType::REPLANNER": "token 分项预留（同上）",
-    "output.py::TokenComponentType::REDUCER": "token 分项预留（同上）",
+    "schema.py::SubmitRejectionCode::PLAN_TOO_LARGE": (
+        "拒绝码值域预留：计划规模上限尚未在引擎侧实现。"
+        "解除条件：若确认不做提交侧规模预检（规模约束只落在 planner prompt 而不在提交校验），删该码"
+    ),
+    "schema.py::SubmitRejectionCode::CONTEXT_WINDOW_EXCEEDED": (
+        "拒绝码值域预留：上下文窗口预检尚未实现。"
+        "解除条件：S2-H9（owner 2026-09-16 裁定「定预算 + 截历史」）落地后重判——"
+        "若预算只落在 LLM 发送前而不在任务提交侧，删该码"
+    ),
+    "schema.py::SubmitRejectionCode::TOKEN_BUDGET_EXCEEDED": (
+        "拒绝码值域预留：token 预算预检尚未实现。"
+        "解除条件：同 CONTEXT_WINDOW_EXCEEDED，S2-H9 落地后重判——"
+        "若最终只有上下文窗口而没有独立的 token 预算维度，删该码"
+    ),
+    "schema.py::ReturnMode::STRUCTURED": (
+        "返回模式预留：结构化返回尚未接入（当前只用 summary/raw）。"
+        "解除条件：若确认结构化返回不做（前端也无消费方），删该值"
+    ),
+    "types.py::WorkflowErrorCode::MUTATION_LIMIT_REACHED": (
+        "错误码值域预留：max_mutations 硬约束未实现（#45 已把 ConstraintConfig.max_context_tokens "
+        "的声明改为「预留：当前无执行点」文案）。"
+        "解除条件：若 max_mutations 确认不做硬约束（只作文档化建议），删该码"
+    ),
+    "types.py::WorkflowErrorCode::CANCELLED_BY_USER": (
+        "错误码值域预留：用户取消当前走 WorkflowStatus.CANCELLED 通道，不走 error_code。"
+        "解除条件：若取消语义统一到 error_code（两条通道合一），产出该码；若确认永久走 status 通道，删该码"
+    ),
+    "types.py::ResumeErrorCode::CHECKPOINT_CORRUPTED": (
+        "恢复错误码预留：checkpoint 损坏目前记 warning 后丢弃，不产出该码。"
+        "解除条件：若 checkpoint 恢复改成「损坏即显式报告」（而非静默丢弃），产出该码；若确认永久丢弃，删该码"
+    ),
+    "types.py::ResumeErrorCode::CHECKPOINT_VERSION_MISMATCH": (
+        "恢复错误码预留：版本不匹配同上（隔离不恢复）。"
+        "解除条件：若版本不匹配需要显式告知用户（隔离 + 上报而非静默），产出该码；若确认永久静默隔离，删该码"
+    ),
+    "types.py::ResumeErrorCode::PENDING_APPROVALS_FAILED": (
+        "恢复错误码预留：待审批恢复失败尚未细分到该码。"
+        "解除条件：若恢复路径把「待审批恢复失败」独立上报，产出该码；若确认不细分（并入通用恢复失败），删该码"
+    ),
+    "types.py::ResumeErrorCode::NODE_RECOVERY_FAILED": (
+        "恢复错误码预留：节点恢复失败尚未细分到该码。"
+        "解除条件：若节点级恢复失败需要与整体恢复失败区分（用户可据此重试单节点），产出该码；若确认不细分，删该码"
+    ),
+    "internal.py::ValidationIssueType::INVALID_INPUT": (
+        "校验问题类型预留：input_bindings 校验目前只报 UNKNOWN_TOOL/MISSING_CONFIRMATION。"
+        "解除条件：若 input_bindings 校验扩展到输入类型/取值检查，产出该类型；若确认只做那两项，删该值"
+    ),
+    "internal.py::ValidationIssueType::MISSING_CONFIRMATION": (
+        "校验问题类型预留：确认缺失校验尚未产出该类型（当前由 SafetyPipeline 的 HITL 承担）。"
+        "解除条件：若计划期校验也要报确认缺失（提交前而非执行时才发现），产出该类型；若确认由 SafetyPipeline 独占，删该值"
+    ),
+    "internal.py::DBTNodeType::SEQUENCE": (
+        "DBT 节点类型预留：当前规划器只产 ACTION 类节点。"
+        "解除条件：DBT（行为树）执行器若确认不做，整组四值一并删除；若做，由 planner 产出对应节点类型"
+    ),
+    "internal.py::DBTNodeType::SELECTOR": (
+        "DBT 节点类型预留：当前规划器只产 ACTION 类节点。"
+        "解除条件：DBT（行为树）执行器若确认不做，整组四值一并删除；若做，由 planner 产出对应节点类型"
+    ),
+    "internal.py::DBTNodeType::PARALLEL": (
+        "DBT 节点类型预留：当前规划器只产 ACTION 类节点。"
+        "解除条件：DBT（行为树）执行器若确认不做，整组四值一并删除；若做，由 planner 产出对应节点类型"
+    ),
+    "internal.py::DBTNodeType::CONDITION": (
+        "DBT 节点类型预留：当前规划器只产 ACTION 类节点。"
+        "解除条件：DBT（行为树）执行器若确认不做，整组四值一并删除；若做，由 planner 产出对应节点类型"
+    ),
+    "internal.py::ExperienceStatus::UNVERIFIED": (
+        "经验状态预留：经验库尚未实现验证流水线。"
+        "解除条件：经验库若确认不上线，整组三值一并删除；若上线，由验证流水线产出这些状态"
+    ),
+    "internal.py::ExperienceStatus::VERIFIED": (
+        "经验状态预留：经验库尚未实现验证流水线。"
+        "解除条件：经验库若确认不上线，整组三值一并删除；若上线，由验证流水线产出这些状态"
+    ),
+    "internal.py::ExperienceStatus::DEPRECATED": (
+        "经验状态预留：经验库尚未实现验证流水线。"
+        "解除条件：经验库若确认不上线，整组三值一并删除；若上线，由验证流水线产出这些状态"
+    ),
+    "output.py::AgentType::WORKER": (
+        "子智能体类型预留：当前只产 orchestrator/planner/executor 之外的默认类型。"
+        "解除条件：若子智能体扩到并行 worker（与 DAG 并行节点同源），产出该类型；若确认不做，删该值"
+    ),
+    "output.py::TokenComponentType::SYNTHESIZER": (
+        "token 分项预留：分项统计尚未细分到该组件（与 WorkflowState.token_entries 无写入同源）。"
+        "解除条件：token 账本接线时一并产出；若账本确认不做，删该值"
+    ),
+    "output.py::TokenComponentType::REPLANNER": (
+        "token 分项预留：分项统计尚未细分到该组件（与 WorkflowState.token_entries 无写入同源）。"
+        "解除条件：token 账本接线时一并产出；若账本确认不做，删该值"
+    ),
+    "output.py::TokenComponentType::REDUCER": (
+        "token 分项预留：分项统计尚未细分到该组件（与 WorkflowState.token_entries 无写入同源）。"
+        "解除条件：token 账本接线时一并产出；若账本确认不做，删该值"
+    ),
 }
+
+# 登记值里必须出现这个标记（后接非空判据）——见 _check_registration_hygiene。
+_RESERVED_REMOVAL_MARKER = "解除条件："
 
 # ── F1：有读无写的字段（登记 = 已知缺口，写清"该谁补"或"为什么允许"）─────────
 _PENDING_WRITERS: dict[str, str] = {
@@ -241,7 +319,7 @@ def _check_enums(sources: list[tuple[Path, str]],
                     f"{fname}::{ref} 无生产者——后端没有任何地方产出它"
                     f"（值 {value!r} 也未作为字面量出现）。\n"
                     f"     要么接上生产者，要么登记进 _RESERVED_ENUM_MEMBERS 写明"
-                    f"『这是值域预留、为什么暂时不产』")
+                    f"『这是值域预留、为什么暂时不产、解除条件是什么』")
     return bad, ok
 
 
@@ -269,6 +347,32 @@ def _check_fields(sources: list[tuple[Path, str]],
     return bad, ok
 
 
+def _check_registration_hygiene() -> list[str]:
+    """每条预留登记都必须写明**解除条件**（何时该删这个值域）。
+
+    理由（owner 2026-09-16 裁定「值域全部保留，但每条都要补解除条件」）：只写
+    「为什么暂不产」的登记表会退化成永久豁免单——读者分不清它是"有计划的预留"
+    还是"忘了删的残留"，而两者对后续决策的含义完全相反。把"必须写解除条件"
+    变成门禁判据（而不是靠作者记得写）才有意义：**记性不是机制**。
+    """
+    bad: list[str] = []
+    for key, reason in sorted(_RESERVED_ENUM_MEMBERS.items()):
+        if _RESERVED_REMOVAL_MARKER not in reason:
+            bad.append(
+                f"登记不完整：_RESERVED_ENUM_MEMBERS[{key!r}] 未写『解除条件：』——"
+                f"登记既要说明为什么暂不产，也要说明**什么情况下该删这个值域**，"
+                f"否则它只是永久豁免单"
+            )
+            continue
+        tail = reason.split(_RESERVED_REMOVAL_MARKER, 1)[1].strip()
+        if len(tail) < 8:
+            bad.append(
+                f"登记不完整：{key} 的『解除条件』为空或只是占位符（{tail!r}）——"
+                f"写清可判定的判据（谁去做/做完后怎么处置该值域）"
+            )
+    return bad
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI 入口：违规 → 退出码 1。"""
     parser = argparse.ArgumentParser(description="契约可达性门禁（#47 ②）")
@@ -281,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     enums, models = _parse_models(root)
     enum_bad, enum_ok = _check_enums(sources, enums)
     field_bad, field_ok = _check_fields(sources, models)
-    bad = enum_bad + field_bad
+    bad = enum_bad + field_bad + _check_registration_hygiene()
 
     # 陈旧登记：登记项对应的"缺口"已经不存在了（有人补上了生产者）→ 该删掉登记，
     # 否则登记表会越长越像"已接受的技术债清单"，而它本该是"当前真实的缺口清单"。
