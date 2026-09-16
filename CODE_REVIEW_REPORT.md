@@ -1068,13 +1068,13 @@ mailbox 里"的那一刻。
 | 4 | 单 token 配置的管理端点鉴权 | ✅ 已覆盖（`TestAdminAuthStrictSeparation` 8 例，三种配置对照） |
 | 5 | `AgentFSM` 完整迁移矩阵 | 🔧 **本次补**（36 格全矩阵 + 非法格不得改动 state/previous） |
 | 6 | 依赖恢复路径（down→up） | ✅ **已收口**（§0.4.19）：`generation` / `desktop` 两条 probe 分支的 down→up 已补守卫，顺带修掉一处恢复边界丢写入 |
-| 7 | `wire_dict()` 对非 JSON 原生值 | ✅ 已覆盖（正是该行要的 `datetime in metadata`）；边角（`Enum`/`Path`/任意对象）**未定契约** |
+| 7 | `wire_dict()` 对非 JSON 原生值 | ✅ **已收口**（`372b953a`）：`Enum`/`Path` 归一化 + **任意对象抛 `ContractSerializationError`**（不做 `str()` 兜底，有意契约），错误消息点出出错字段 |
 | 8 | 跨集合写序列的中间失败 | 🔧 **本次补**（18 条）——并暴露 4 处真实缺陷 |
 | 9 | 幂等三态 | ✅ 已覆盖（可用/不可用/不存在三态齐备） |
 | 10 | 重试的幂等性（工具副作用） | 🔧 **本次补**（24 条）——此前**零覆盖且既有用例锁定相反不变量** |
 | 11 | `\r`（CRLF）文本管线 | 🔧 **本次补 + 修**（真实静默丢数据，见 (d)） |
 | 12 | 边界值（空/超长/代理对/ZWJ emoji） | 🔧 **本次补 + 修**（emoji 序列漏判） |
-| 13 | `list[str]`/`dict[str,int]` 的 env 覆盖 | ✅ 已覆盖（正是该行要的 env 覆盖）；边角（非法 JSON env）**未补** |
+| 13 | `list[str]`/`dict[str,int]` 的 env 覆盖 | ✅ **已收口**（`d17cc288`）：非法 JSON env → `ConfigEnvFormatError`（带变量名）fail-closed，4 条参数化用例 + 两次注入反证 |
 | 14 | `get_caller_logger` 的 hop-count | 🔧 **本次补**——原守卫是**假绿**，见 (d) |
 
 **顺带更正一处编号笔误**：本报告 `#46` 条目原写"4 条 P0 级已上移至 P0 `#6b`"，
