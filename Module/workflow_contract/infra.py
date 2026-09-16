@@ -60,8 +60,9 @@ class AgentInfra:
     background_task_results: object | None = None
     """后台任务终态结果仓储（`BackgroundTaskResultRepository`，core 侧构造注入）。
 
-    #6（决策 #6）：终态跨重启不丢——Agent 的 mailbox 排空在**投递之前**落库
-    （`delivered=False`），活跃事件循环消费后置 True，启动时补投未投递的记录。
+    #6（决策 #6）+ Issue B：终态跨重启不丢——Agent 的 mailbox 排空在**投递之前**落库
+    （写库时恒 `delivered=False`，`_state` 不参与判据），消费方真正接手（spawn 出宣告
+    回合）后置 True，启动时补投未投递的记录（只投递，不标记）。
     类型为 `object`：契约层不依赖 core.storage（与 `tool_registry` 同一处理），
     消费方按鸭子类型调用。
     """

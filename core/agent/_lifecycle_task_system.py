@@ -56,6 +56,42 @@ def terminal_payload(kind: str, data: dict) -> tuple[str, bool]:
     return "", False
 
 
+# ══════════════════════════════════════════════════════════════════
+# 终态结果的投递状态机 —— Issue B 的不可丢失不变量（唯一定义点）
+# ══════════════════════════════════════════════════════════════════
+#
+# 一条 `TaskResultData` 的生命周期只有这几个状态：
+#
+#   persisted    已落库（`background_task_results`，写库时 `delivered=False`）
+#   queued       已 `bus.post` 进 EventBus，**无人**持有它的所有权
+#   accepted     消费方（`_handle_task_result`）已 spawn 出承载它的宣告回合——
+#                所有权转移完成。**只有到这一步才允许写 `delivered=True`**
+#   consumed     宣告回合已真正读过 `task_result_context`（进程内，不可观测）
+#   delivered    库中 `delivered=True`（= accepted 已持久化，跨重启不再补投）
+#   WAL removed  本地 WAL 副本已清（落库成功后立即发生，见 `_persist_task_result`）
+#
+# 允许的迁移：
+#   persisted → queued → accepted → consumed → delivered
+#   persisted → WAL removed                 落库成功后清 WAL 副本（库为权威）
+#   queued    → queued                      中断 drain 后**原位重投**（搬移，不是复制）
+#
+# **禁止的迁移**（Issue B 的原缺陷正是它）：
+#
+#   WAL removed ∧ delivered=True ∧ ¬accepted
+#
+#   ——"库说已投递、WAL 副本已清，而消费方从未取得所有权"。此时这条结果
+#      WAL / EventBus / 消费方**三处皆无**，用户永久且静默地失去它。
+#   派生的禁止项：在 `persisted` 那一步就写 `delivered=True`（把 durable ack 挂在
+#   **入队**上）。入队只证明"进了队列"，不证明"有人接手"——`_state == RUNNING`
+#   是"消费者协程活着"这个**假设**，不是"这条结果已被认领"这个不变量。
+#
+# 不变量（每一刻都必须成立）：一条 `TaskResultData` 至少在**一处**——
+# WAL / 仓储、EventBus 队列、消费方——是活的。
+#
+# 因此 durable ack 的唯一授予点是 `_handle_task_result` 中 spawn 成功之后；
+# `drain_mailboxes_once` 与 `_redeliver_pending_task_results` **只投递、不确认**。
+
+
 class _LifecycleTaskSystem:
     """WorkflowEngine + mailbox 生命周期 mixin。"""
 
@@ -124,7 +160,12 @@ class _LifecycleTaskSystem:
         Args:
             data: 终态事件数据（消费侧看到的同一条）。
             status: completed / failed / cancelled / interrupted。
-            delivered: 是否已投递给活跃 Agent（关停路径恒 False → 下次启动补投）。
+            delivered: 写库时的投递标记。**Issue B 之后生产调用方一律传 False**
+                （`drain_mailboxes_once` / `_replay_task_result_wal` / `_stop_mailbox`
+                的 interrupted 落库）：durable ack 的唯一授予点是消费侧的
+                `_handle_task_result`（spawn 成功后 `mark_delivered`）。
+                参数保留是因为仓储（`upsert_pending`）仍支持写入期置位，
+                删它与本次修复无关（见报告的 follow-up）。
 
         Returns:
             True 表示已落库。
@@ -232,16 +273,21 @@ class _LifecycleTaskSystem:
         mailbox 本身是**有界保留**队列（终态事件优先保留，只淘汰最旧的 progress），
         所以"晚一点统一读"不会丢事件，只要求读的时候注册表还在。
 
-        #6（决策 #6）：`self._state == RUNNING` 时事件消费者（`_process_events`）活着，
-        投进总线就会被消费 → 落库标记 `delivered=True`（审计痕迹）；关停路径
-        `_state` 已是 STOPPED，`_process_events` 早在第一步就被取消，**投进去是死队列**
-        → 落库保持 `delivered=False`，由启动补投真正送达。落库一律先于投递，
-        这样"投了但没人消费"这一点在磁盘上是可判定的。
+        #6 + Issue B：本方法**只做两件事**——① 落库（`delivered=False`，**无条件**）、
+        ② 投递进总线。它**不**授予 durable ack：那条 ack 的唯一授予点是消费侧的
+        `_handle_task_result`（spawn 成功 = 所有权转移完成），见文件顶部的投递状态机。
+
+        为什么 `delivered` 不再耦合 `_state == RUNNING`（Issue B / B-1）：那条判据
+        把"消费者协程活着"当成"这条结果已被认领"。二者不是一回事——`bus.post` 返回
+        时队列里可能马上就被 INTERRUPT 插队并 drain 掉（INTERRUPT=0 越过 NORMAL=2），
+        而 `_persist_task_result` 落库成功即清 WAL 副本。于是"库里 delivered=True +
+        WAL 已清 + 无人消费"三处皆无是可达的，用户永久静默地失去终态结果。
+        关停路径现在也**自动**正确：它的 post 进的是死总线，没人消费 → 记录保持
+        `delivered=False` → 下次启动补投（不再依赖任何一条路径上读 `_state`）。
 
         是 async 方法：落库要 await。落库失败不阻断投递（见 `_persist_task_result`）。
         """
         delivered = 0
-        consumer_alive = self._state == RunState.RUNNING
         for task_id, info in list(self._background_tasks.items()):
             mailbox = info.mailbox
             if mailbox is None:
@@ -283,14 +329,11 @@ class _LifecycleTaskSystem:
                             "后台任务已取消: %s — %s",
                             info.intent, data.get('reason', '用户取消'),
                         )
-                    # #6：先落库（delivered 反映"总线那头有没有人"），再投递。
+                    # #6：先落库再投递（"投了但没人消费"因此在磁盘上可判定）。
+                    # delivered 恒 False：本方法只负责入队，投递确认在消费侧授予。
                     await self._persist_task_result(
-                        payload, status=status, delivered=consumer_alive)
+                        payload, status=status, delivered=False)
                     self._bus.post(payload)
-                    if consumer_alive:
-                        # 消费者活着 → 这条马上会被 `_handle_task_result` 取走，
-                        # 记成已投递（否则下次启动会重复告知用户）。
-                        await self._mark_task_result_delivered(task_id)
                     delivered += 1
                     self._background_tasks.pop(task_id, None)
                     break  # task 已终态，处理下一个 task
@@ -313,8 +356,11 @@ class _LifecycleTaskSystem:
         - 注册表**必须**留到本步才清——在 `stop()` 入口清会让上面这次排空无条目可查
           （这正是 S2-A4 的原缺陷）。
 
-        #6（决策 #6）：本步的投递落进的是**死总线**（`_process_events` 是关停第一步就
+        #6 / Issue B：本步的投递落进的是**死总线**（`_process_events` 是关停第一步就
         被取消的），所以那些事件只落库不送达——由下次启动的补投真正送给用户。
+        这个结论现在**不依赖任何 `_state` 判据**：`drain_mailboxes_once` 一律写
+        `delivered=False`，而死总线里没人消费 → 记录自然留在待补投集合里（Issue B
+        之前这里靠 `consumer_alive` 手工判定，与"入队 ≠ 被认领"是两回事）。
         仍未终态的任务（引擎已停，终态事件不会再有了）也**落库为 interrupted**：
         否则"用户等一个永远不会来的结果"只留在日志里，重启后连日志都没有。
         """
@@ -354,6 +400,13 @@ class _LifecycleTaskSystem:
         而那些事件是用户唯一能得到的"任务结果"。补投后由 `_handle_task_result` 唤醒
         认知循环，用户下次看会话就能看到结果（回复同样落归档）。
 
+        Issue B（B-1）：本方法**只 post，不 mark**。在入队那一刻写 `delivered=True`
+        与在 `drain_mailboxes_once` 里那样写是同一个谎——入队只证明"进了队列"。
+        投递确认由消费侧的 `_handle_task_result`（spawn 成功之后）授予：
+        - 消费成功 → 记录转 `delivered=True`，不再待补投（不会每次启动重复告知）；
+        - 消费前进程又挂了 → 记录仍是 `delivered=False`，下次启动再补投一次
+          （at-least-once：宁可重复，不可丢失）。
+
         读失败（Mongo 离线）→ 记 warning 后返回，记录仍在库里，下轮启动再补投。
         """
         repo = self._bg_result_repo()
@@ -377,8 +430,8 @@ class _LifecycleTaskSystem:
                 is_error=bool(doc.get("is_error", False)),
             )
             self._bus.post(payload)
-            # 标记在补投之后：投递本身是同步入队，入队即由活跃事件循环取走。
-            await self._mark_task_result_delivered(payload.task_id)
+            # Issue B（B-1）：**不**在这里 mark_delivered——投递确认属于消费侧。
+            # 若在这里标记，"已入队"又会冒充"已认领"（原缺陷的同一根因）。
         logger.info("启动补投 %d 条后台任务终态（上次进程未送达）", len(pending))
 
     async def _replay_task_result_wal(self) -> None:

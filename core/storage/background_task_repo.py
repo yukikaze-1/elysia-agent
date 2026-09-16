@@ -14,9 +14,13 @@
 
 于是"派了任务 → 服务重启 → 用户永远不知道结果"是必然，不是概率。
 
-**本仓储的角色**：终态事件在**投递之前**落库（`delivered=False`），被活跃事件循环
-真正消费后置 `delivered=True`；启动时把未投递的记录重新投进总线。判据是
-`_state == RunState.RUNNING`——轮询路径为真（总线有人读），关停路径为假（总线已死）。
+**本仓储的角色**：终态事件在**投递之前**落库（写库时恒 `delivered=False`），被活跃
+事件循环真正消费（`_handle_task_result` 成功 spawn 宣告回合 = 所有权转移完成）后置
+`delivered=True`；启动时把未投递的记录重新投进总线（只投递，不标记）。
+判据**不是** `_state == RunState.RUNNING`——"消费者协程活着"只是假设，队列里的元素
+可能立刻被 INTERRUPT 插队并 drain 掉；按它标记会造出
+"WAL 已清 ∧ delivered=True ∧ 消费方从未取得所有权"这个禁止态（Issue B）。
+状态机与禁止迁移的唯一定义点在 `core/agent/_lifecycle_task_system.py` 顶部。
 
 文档 schema：
     {
@@ -149,7 +153,9 @@ class BackgroundTaskResultRepository(Repository):
             dispatched_at: 派发时间（ISO）。
             status: completed / failed / cancelled / interrupted。
             is_error: 失败、取消、中断为 True。
-            delivered: 是否已投递给活跃的 Agent（关停路径恒 False）。
+            delivered: 是否已投递给活跃的 Agent。**生产调用方（Issue B 之后）一律传
+                False**——写库只表示"待补投"，投递确认由消费侧 `mark_delivered` 授予；
+                保留写入口是仓储能力（批量导入/迁移/测试），不是正常投递路径。
 
         Raises:
             StorageUnavailableError: MongoDB 未连接。

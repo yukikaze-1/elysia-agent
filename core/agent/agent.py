@@ -805,7 +805,7 @@ class Agent(AgentLifecycle, AgentServer):
         elif isinstance(data, SystemTickData):
             self._handle_system_tick(data)
         elif isinstance(data, TaskResultData):
-            self._handle_task_result(data)
+            await self._handle_task_result(data)
         elif isinstance(data, StateChangeData):
             await self._handle_state_change(data)
         else:
@@ -817,9 +817,25 @@ class Agent(AgentLifecycle, AgentServer):
                 type(data).__name__, self._unhandled_events)
 
     def _handle_interrupt(self, data: InterruptData) -> None:
-        """处理 INTERRUPT 事件：cancel cognitive task，清空队列。
+        """处理 INTERRUPT 事件：cancel cognitive task，并按类型处置排队事件。
 
-        保留 STATE_CHANGE 事件（前端 UI 需要），丢弃其余排队事件。
+        中断**必须**插队（INTERRUPT=0 越过 STATE_CHANGE=1 / NORMAL=2，见
+        `core/monitoring/event_bus.py`）——但插队不等于有资格销毁别人的事件。
+        逐类策略（Issue B / B-2，原实现只写"丢弃其余排队事件"）：
+
+        | 排队事件          | 处置                                          |
+        |-------------------|-----------------------------------------------|
+        | `StateChangeData` | 保留（原位重投）——前端 UI 需要它              |
+        | `UserInputData`   | 释放会话 work 后丢弃（用户已取消这条输入）    |
+        | `TaskResultData`  | **原位重投**——持久化过的用户可见终态，不可丢  |
+        | 其他              | 丢弃（未登记类型，保持既有行为）              |
+
+        为什么 `TaskResultData` 必须重投而不是丢：在 Issue B 的 B-1 之后，"落库成功
+        即清 WAL 副本"仍然成立，于是队列里这一条可能就是这条终态在**进程内的全部
+        形态**；丢掉它 = 用户永久且静默地等不到后台任务结果（详见
+        `_lifecycle_task_system.py` 顶部的投递状态机）。重投**同步**发生在 drain
+        循环内（循环里没有 `await`）⇒ 不存在"取出后还没放回就被抢占"的窗口；
+        重投是**搬移**不是复制（`drain()` 已把原件取出），所以不会重复消费。
 
         Args:
             data: 中断事件数据，包含中断来源等信息。
@@ -837,6 +853,11 @@ class Agent(AgentLifecycle, AgentServer):
                     drained.data.conversation_id,
                     drained.data.session_work_reserved,
                 )
+            elif isinstance(drained.data, TaskResultData):
+                # Issue B（B-2）：后台任务终态是**持久化过**的结果，用户正等着它。
+                # priority / type 原样保留（NORMAL / task_result），下一个循环就能消费。
+                self._bus.post(drained.data, priority=drained.priority,
+                               type=drained.type)
         for pending in self._pending_messages:
             self._release_pending_session_work(pending)
         self._pending_messages.clear()
@@ -968,8 +989,26 @@ class Agent(AgentLifecycle, AgentServer):
         else:
             logger.warning("SYSTEM_TICK 未知 proactive reason=%s（暂未消费）", data.reason)
 
-    def _handle_task_result(self, data: TaskResultData) -> None:
+    async def _handle_task_result(self, data: TaskResultData) -> None:
         """处理 TASK_RESULT 事件——后台任务完成，唤醒 CognitiveLoop。
+
+        Issue B（B-1）：**durable ack 在这里，不在入队处**。`self._turns.spawn(...)`
+        成功 = 承载这条结果的宣告回合已被接受（认知循环取得所有权）——只有到这一步
+        才把 `delivered=True` 写进库。此前在 `drain_mailboxes_once` 里按
+        `_state == RUNNING` 标记，把"消费者协程活着"当成了"这条结果已被认领"，
+        而队列里的元素可能在 `bus.post` 返回后立刻被 INTERRUPT 插队并 drain 掉
+        （`_handle_interrupt`），于是"库里已投递 + WAL 已清 + 无人消费"三处皆无。
+
+        **spawn 抛异常时刻意不标记**：异常按原样冒泡到 `_process_events` 的
+        per-event 异常边界（消费者不死），库里那条保持 `delivered=False`，
+        下次启动由 `_redeliver_pending_task_results` 补投。
+
+        由此得到的语义是 **at-least-once**：在"spawn 成功"与"mark 落库"之间崩溃
+        （或 Mongo 写失败），下次启动会**重复宣告一次**同一个终态结果。
+        这是有意选的取舍——at-most-once（投递确认早于消费）的失败模式是**静默丢失**
+        （用户永远等不到结果，且日志干净），而 at-least-once 的失败模式只是**重复
+        告知**一次；后者可被用户直接看穿并忽略，前者不可观测。仓库既有的容忍度
+        表述见 `_mark_task_result_delivered` 的 docstring（"最坏是下次启动重复投递"）。
 
         Args:
             data: 任务结果事件数据，包含 task_id、结果文本和原始意图。
@@ -986,6 +1025,9 @@ class Agent(AgentLifecycle, AgentServer):
             name=f"task-result-{data.task_id}",
         )
         self._cognitive.current_task = task
+        # 所有权已转移（宣告回合被接受）→ 现在才允许写投递确认。
+        # 这一行**必须**留在 spawn 之后：放到它前面（或放回入队处）就是 Issue B 原缺陷。
+        await self._mark_task_result_delivered(data.task_id)
 
     async def _handle_state_change(self, data: StateChangeData) -> None:
         """处理 STATE_CHANGE 事件——FSM 状态变更。

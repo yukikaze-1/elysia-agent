@@ -11,11 +11,15 @@
 
 **修复后的不变量**：
 
-- 终态事件**先落库再投递**；`_state == RUNNING`（消费者活着）标 `delivered=True`，
-  关停路径（消费者已死）保持 `False` → 下次启动补投；
+- 终态事件**先落库再投递**，且落库一律 `delivered=False`（不管 `_state` 是什么）——
+  入队只证明"进了队列"，不证明"有人接手"；durable ack 的唯一授予点是消费侧的
+  `_handle_task_result`（spawn 成功 = 所有权转移完成）。Issue B 之前这里按
+  `_state == RUNNING` 标 `delivered=True`，那条判据把"消费者协程活着"当成了
+  "这条结果已被认领"——见 `test_task_result_interrupt_delivery.py` 的两半缺陷；
 - 落库失败**不得**阻断投递（Mongo 离线时"当下告诉用户"优先于"跨重启保障"）；
 - 未见终态的任务落库为 `interrupted`（有终态可投，不再只是日志）；
-- 启动步骤把 `delivered=False` 的记录重新投进总线并标记已投递。
+- 启动步骤把 `delivered=False` 的记录重新投进总线（**只投递**，不标记；标记仍由
+  消费侧完成——否则每次启动都会重复告知同一个结果）。
 """
 
 from __future__ import annotations
@@ -141,7 +145,8 @@ class TestShutdownPersistsBeforePosting:
         assert repo.written[0]["dispatched_at"] == "2026-09-15T00:00:00Z"
         assert trace == ["persist", "post"], \
             f"落库必须先于投递（否则崩溃窗口内记录缺失）——实得 {trace}"
-        assert repo.delivered == [], "消费者已死，不得标记已投递"
+        assert repo.delivered == [], \
+            "排空路径不授予 durable ack（Issue B / B-1）——关停路径更是如此"
 
     @pytest.mark.asyncio
     async def test_failed_and_cancelled_map_to_status(self):
@@ -204,12 +209,20 @@ class TestShutdownPersistsBeforePosting:
 
 
 # ══════════════════════════════════════════════════════════════════
-# 2. 轮询路径：消费者活着 → 落库即标已投递（不留重复补投）
+# 2. 轮询路径：只入队、不授予投递确认（Issue B / B-1 后的语义）
 # ══════════════════════════════════════════════════════════════════
 
-class TestPollPathMarksDelivered:
+class TestPollPathQueuesWithoutAck:
+    """轮询路径（`_state == RUNNING`，消费者协程活着）与关停路径**同语义**。
+
+    Issue B 之前这条路径按 `_state == RUNNING` 直接标 `delivered=True`——把"消费者
+    协程活着"当成了"这条结果已被认领"。消费者可能在任何一处 await，而队列里的元素
+    会被后到的 INTERRUPT 插队 drain 掉（`_handle_interrupt`），于是"库里已投递 +
+    WAL 已清 + 无人消费"三处皆无。现在 `_state` 不再参与任何持久化判据。
+    """
+
     @pytest.mark.asyncio
-    async def test_running_state_marks_delivered(self):
+    async def test_running_state_leaves_record_pending_until_consumed(self):
         trace: list[str] = []
         repo = _StubRepo(trace=trace)
         mailbox = WorkflowMailbox("wf-1")  # type: ignore[arg-type]
@@ -222,10 +235,13 @@ class TestPollPathMarksDelivered:
         delivered = await Agent.drain_mailboxes_once(agent)
 
         assert delivered == 1
-        assert trace == ["persist", "post", "mark"], \
-            f"顺序必须是 落库 → 投递 → 标已投递，实得 {trace}"
-        assert repo.written[0]["delivered"] is True
-        assert repo.delivered == ["wf-1"], "消费者活着 → 不得留在待补投集合里"
+        assert trace == ["persist", "post"], (
+            f"顺序必须是 落库 → 投递；投递确认属于消费侧，不在这里，实得 {trace}")
+        assert repo.written[0]["delivered"] is False, \
+            "入队 ≠ 认领：写库必须是待补投，等消费方真正接手后再标记"
+        assert repo.delivered == [], (
+            "`_state == RUNNING` 不得授予 durable ack——"
+            "消费者活着只是假设，元素可能马上被 INTERRUPT 排空掉")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -240,7 +256,7 @@ class TestStartupRedelivery:
             "补投必须在事件消费者启动之后（否则又投进没人读的队列）"
 
     @pytest.mark.asyncio
-    async def test_pending_results_are_reposted_and_marked(self):
+    async def test_pending_results_are_reposted_without_ack(self):
         from core.agent.agent import Agent
 
         repo = _StubRepo(pending=[{
@@ -262,7 +278,11 @@ class TestStartupRedelivery:
         assert posted.original_intent == "写报告"
         assert posted.dispatched_at == "2026-09-14T00:00:00Z"
         assert posted.is_error is False
-        assert repo.delivered == ["wf-1"], "补投后必须标记，否则每次启动都重复告知"
+        assert repo.delivered == [], (
+            "补投只入队——投递确认必须等消费方接手（Issue B / B-1）；"
+            "在入队处标记就是原缺陷的同一根因（入队冒充认领）")
+        # 消费侧授予 ack 的正向一半由
+        # `test_task_result_interrupt_delivery.py::TestInterruptThenRestart` 钉死。
 
     @pytest.mark.asyncio
     async def test_storage_offline_keeps_records_for_next_start(self, caplog):

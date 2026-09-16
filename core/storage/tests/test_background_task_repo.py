@@ -81,7 +81,7 @@ class TestUpsertAndQuery:
 
     @pytest.mark.asyncio
     async def test_delivered_flag_can_be_set_at_write(self):
-        """轮询路径直接写 delivered=True（消费者活着，无需补投）。"""
+        """写入期 `delivered=True` 仍是仓储能力（Issue B 后生产调用方一律传 False）。"""
         repo = _repo()
 
         await _write(repo, "wf-1", delivered=True)
