@@ -218,6 +218,14 @@ async def run_agent_service(
     from core.config import AppConfig
 
     previous: Any = None
+    # 批 1.5（审计发现，**未修**——留给 Batch 2）：`app.py:121-125` 把 5 个 CLI 覆盖
+    # （--host/--port/--tts/--stt/--character）写进传入的 `config`，而下面首轮就
+    # `ConfigLoader(...).load()` 重载、把它整个丢掉 ⇒ 实测 `--port 9999` 仍绑 8765，
+    # 5 个 flag 全部静默失效。**为什么不在这里修**：`test_restart_rebuild.py::
+    # test_restart_constructs_a_new_agent_with_reloaded_config` 正断言"首轮即从磁盘重载"，
+    # 即现有测试把该行为当契约钉住了——改它要先裁定"CLI 覆盖 vs 每轮重载"谁优先，
+    # 属设计决策，不是本批（"很小的审计+最小修复"）该顺手改的。证据见
+    # `docs/review/2026-09-16-Batch1.5-*` 的 F4。
     while True:
         if config_path is not None:
             config = ConfigLoader(AppConfig, yaml_path=config_path).load()
@@ -293,7 +301,6 @@ class AgentServer:
         if mongo_ok: db_parts.append("MongoDB")
         if milvus_ok: db_parts.append("Milvus")
         db_str = " + ".join(db_parts) if db_parts else "in-memory"
-        tts_model = self._config.tts.model
 
         lines = [
             f"\n{'='*50}",
@@ -316,6 +323,22 @@ class AgentServer:
         """
         if self._stt:
             return f"已连接 (model={self._stt.model})"
+        return "未连接"
+
+    def _tts_banner_status(self) -> str:
+        """TTS 启动横幅状态行（可测）——读 self._tts + model。
+
+        与 `_stt_banner_status` 对称，理由（批 1.5 §10 多头真相审计）：TTS 行此前读
+        `self._config.tts.model`（**YAML / bootstrap 权威**），而同一条横幅里
+        LLM 行读 `self._llm.model`、STT 行读 `self._stt.model`（**运行期权威**）。
+        于是 `switch_tts` 热切换后重启，横幅报的是配置文件里的模型、实际在用的是
+        另一个——同一段文本里三个服务读两个不同的权威。
+
+        TTS 的持久化模型走 `ServiceState.tts_model`（`_start_tts` 里
+        `ss.tts_model or config.tts.model`），运行期权威即 `self._tts.model`。
+        """
+        if self._tts:
+            return f"已连接 (model={self._tts.model})"
         return "未连接"
 
     @staticmethod
@@ -654,7 +677,6 @@ class AgentServer:
                 getattr(self, '_mongo_ok', False),
                 getattr(self, '_milvus_ok', False),
             )
-            tts_model = self._config.tts.model
             serve_chat = self._config.server.serve_chat   # banner 局部——与 create_app 传参同源
             if serve_chat:
                 frontend_line = f"前端: http://{host}:{port}/"   # 无前导空格——对齐由 `|  ` 提供
@@ -662,7 +684,7 @@ class AgentServer:
                     f"  ---",
                     f"  WebSocket: ws://{host}:{port}/ws  |  {frontend_line}",
                     f"  STT: {self._stt_banner_status()}",
-                    f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
+                    f"  TTS: {self._tts_banner_status()}",
                     f"  退出: Ctrl+C",
                     f"{'='*50}",
                 ])
@@ -675,7 +697,7 @@ class AgentServer:
                     f"  聊天 UI 已停用（serve_chat=False），SERVE_CHAT=1 可恢复",
                     f"  {self._debug_banner_line(app, host, port)}",
                     f"  STT: {self._stt_banner_status()}",
-                    f"  TTS: {'已连接' if self._tts else '未连接'}  (model={tts_model})",
+                    f"  TTS: {self._tts_banner_status()}",
                     f"  退出: Ctrl+C",   # 关闭服务按钮在 v1 聊天页（/ 404），不提示
                     f"{'='*50}",
                 ])

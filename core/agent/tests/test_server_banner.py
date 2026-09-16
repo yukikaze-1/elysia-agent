@@ -65,6 +65,31 @@ class TestSttBannerStatus:
         assert status == "未连接"
 
 
+class TestTtsBannerStatus:
+    """AgentServer._tts_banner_status 测试（批 1.5 §10 多头真相审计）。
+
+    与 `TestSttBannerStatus` 对称。**原缺陷**：TTS 行读 `self._config.tts.model`
+    （bootstrap/YAML 权威），而同一条横幅里 LLM 行读 `self._llm.model`、STT 行读
+    `self._stt.model`（运行期权威）。TTS 的持久化模型走 `ServiceState.tts_model`
+    （`_start_tts`: `ss.tts_model or config.tts.model`），所以热切换 TTS 后重启，
+    横幅报的是配置文件里的模型、实际在用的是另一个——同一段文本两个权威。
+    """
+
+    def test_connected_shows_runtime_model_not_config(self, fake_agent):
+        backend = MagicMock()
+        backend.model = "custom/persisted-tts"          # 运行期真实在用的
+        fake_agent._tts = backend
+        fake_agent._config.tts.model = "minimax/speech-2.8-hd"   # 故意与运行期不同
+        status = AgentServer._tts_banner_status(fake_agent)
+        assert status == "已连接 (model=custom/persisted-tts)"
+        assert "minimax" not in status, \
+            "横幅必须报运行期后端模型，不能报 config 里的（否则热切换+重启后报错模型）"
+
+    def test_disconnected(self, fake_agent):
+        fake_agent._tts = None
+        assert AgentServer._tts_banner_status(fake_agent) == "未连接"
+
+
 class TestRunServerAppFactory:
     """run_server 必须由装配入口注入 app_factory，AgentServer 不反向依赖 core.input。"""
 
