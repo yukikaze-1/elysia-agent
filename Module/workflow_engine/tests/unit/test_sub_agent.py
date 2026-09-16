@@ -827,7 +827,13 @@ def test_abort_error_code_max_depth():
 
 
 def test_abort_error_code_other():
-    """非结构问题（MISSING_CONTRACT）→ INTERNAL_ERROR。"""
+    """非结构问题（MISSING_CONTRACT）→ PLANNING_FAILED。
+
+    Batch 1.7（Challenger C3）：兜底值原为 `INTERNAL_ERROR`，语义错位——
+    `INTERNAL_ERROR` 的语义是"引擎自己出故障"，而"required 节点缺 output_contract"
+    是**规划器产出不合格**。报 internal_error 会让规划失败在用户/调试面上冒充成
+    执行期内部错误，违反 T4（归因必须匹配真实失败阶段）。
+    """
     agent = _make_sub_agent()
     issues = [
         ValidationIssue(
@@ -836,7 +842,7 @@ def test_abort_error_code_other():
             message="缺少 output_contract",
         ),
     ]
-    assert agent._abort_error_code(issues) == WorkflowErrorCode.INTERNAL_ERROR.value
+    assert agent._abort_error_code(issues) == WorkflowErrorCode.PLANNING_FAILED.value
 
 
 def test_abort_error_code_cycle():

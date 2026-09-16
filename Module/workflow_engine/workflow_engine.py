@@ -202,7 +202,21 @@ class WorkflowEngine:
                     else:
                         task = asyncio.create_task(self._run_resume(sub_agent, task_id))
                 except Exception:
-                    # create_task 罕见失败（如事件循环关闭）：释放槽位 + 清理注册表，防槽位泄漏
+                    # create_task 罕见失败（如事件循环关闭）：释放槽位 + 清理注册表，防槽位泄漏。
+                    # Batch 1.7（T1）：**必须先补终态**——任务已被 `submit()`/`resume()`
+                    # 接受（mailbox 早已返回给调用方），而承载它的包装协程**从未被创建**，
+                    # 所以 `_run_and_cleanup`/`_run_resume` 的 finally 安全网根本够不着。
+                    # 不补的话 mailbox 永远只剩 QUEUED：消费者永久阻塞，停机时该任务
+                    # 还会被当成"被重启打断"（`_stop_mailbox` 的 stranded 分支）。
+                    # `force=True`：本分支随后就 `_cleanup_task()` 销毁任务，不会再有任何
+                    # resume——PAUSED 的"保留待恢复"前提在这里不成立；不 force 的话
+                    # RESUME 派发失败会连终态带任务一起静默丢掉（Challenger C2）。
+                    self._finalize_unterminated(
+                        sub_agent, self._mailboxes.get(task_id), task_id,
+                        reason=("任务恢复派发失败（内部错误）"
+                                if item.kind is QueuedItemKind.RESUME
+                                else "任务派发失败（内部错误），未开始执行"),
+                        force=True)
                     self._active.discard(task_id)
                     self._semaphore.release()
                     held_permit = False
@@ -432,10 +446,17 @@ class WorkflowEngine:
             await sub_agent.run(context, mailbox)
         except asyncio.CancelledError:
             ts = sub_agent._task_state
-            if ts is not None:
+            # T2：取消**不得**覆写已经落定的终态。修复前这里无条件写 CANCELLED——
+            # 它能"看起来正确"只是因为 `finalize()` 从写 COMPLETED 到推事件之间恰好
+            # 没有 await（`CheckpointManager.save` 是纯内存）。那是**偶然**性质、不是
+            # 机制：一旦 checkpoint 有了真实 I/O，一个已经完成的任务就会被改判成
+            # CANCELLED（而 COMPLETED 事件还没推，唯一性守卫拦不住它）。
+            # 现在按 `is_terminal()` 短路；若 COMPLETED 已写入但事件未推，
+            # finally 的安全网会补上**与状态一致**的那个终态。
+            if ts is not None and not ts.is_terminal():
                 ts.status = WorkflowStatus.CANCELLED      # 幂等——cancel() 已同步置权威终态（§3.2）
                 ts.updated_at = now_iso()
-            if mailbox:
+            if mailbox and (ts is None or ts.status == WorkflowStatus.CANCELLED):
                 # 唯一终态事件（§3.5 守卫防多路径重复推）
                 push_mailbox_event(
                     mailbox, WorkflowEventType.CANCELLED, {
@@ -468,6 +489,8 @@ class WorkflowEngine:
                     self._semaphore.release()          # 释放执行槽，供 runner 派发下一个排队任务
                 self._active.discard(task_id)          # slot 持有集合同步
                 return                                 # checkpoint/mailbox/注册表保留
+            # T1/T2 安全网：run() 正常返回却漏推终态时，在清理**之前**补一个。
+            self._finalize_unterminated(sub_agent, mailbox, task_id)
             self._cleanup_task(task_id)
             if self._semaphore:
                 self._semaphore.release()              # 终态分支 release 先于 cleanup_storage（E3 §3.4）
@@ -625,10 +648,11 @@ class WorkflowEngine:
             await sub_agent.resume_from_pause()
         except asyncio.CancelledError:
             ts = sub_agent._task_state
-            if ts is not None:
+            # T2：同 `_run_and_cleanup`——已落定的终态不得被取消覆写。
+            if ts is not None and not ts.is_terminal():
                 ts.status = WorkflowStatus.CANCELLED      # 幂等——cancel() 已同步置权威终态（§3.2）
                 ts.updated_at = now_iso()
-            if mailbox:
+            if mailbox and (ts is None or ts.status == WorkflowStatus.CANCELLED):
                 # 唯一终态事件（§3.5 守卫防多路径重复推）
                 push_mailbox_event(
                     mailbox, WorkflowEventType.CANCELLED, {
@@ -658,6 +682,8 @@ class WorkflowEngine:
                     self._semaphore.release()          # 释放执行槽（resume 已 acquire，对称）
                 self._active.discard(task_id)
                 return                                 # checkpoint/mailbox/注册表保留
+            # T1/T2 安全网（与 _run_and_cleanup 对称）：resume 后同样不得漏推终态。
+            self._finalize_unterminated(sub_agent, mailbox, task_id)
             self._cleanup_task(task_id)
             if self._semaphore:
                 self._semaphore.release()
@@ -827,6 +853,103 @@ class WorkflowEngine:
         self._recent_terminal.append(entry)
         logger.debug("WorkflowEngine: 终态快照已保留 task_id=%s status=%s",
                      task_id, entry.get("status"))
+
+    #: T1 安全网：`run()` 正常返回却没推过终态事件时，兜底终态化的原因文案。
+    _UNTERMINATED_REASON = "任务执行结束但未产生终态结果（内部错误）"
+
+    def _finalize_unterminated(
+        self,
+        sub_agent: SubAgent,
+        mailbox: WorkflowMailbox | None,
+        task_id: WorkflowId,
+        *,
+        reason: str | None = None,
+        force: bool = False,
+    ) -> None:
+        """T1/T2 安全网——执行包装收尾时若仍无终态事件，就地补一个终态。
+
+        ## 为什么必须有这一层（而不是逐路径补 push）
+
+        `_run_and_cleanup` 的 `except Exception` 兜底只在**抛异常**时触发，而
+        `SubAgent.run()` 有多条**正常返回**的出口：「规划阶段判定失败」
+        （`graph is None → return`）与未知 `OrchestratorRunStatus` 的防御分支。
+        Batch 1.7 的原缺陷正是第一条出口：终态已写进 `task_state`、却从未进入
+        mailbox，任务在对外可观测面上只剩 QUEUED。这一层把「已被接受的任务必然
+        到达终态」变成**结构性保证**，而不是要求每条出口各自记得推事件。
+        同一层的另一个调用点是 `_drain_queue` 的派发失败分支——那条路径连包装
+        协程都没创建出来，`finally` 够不着，只能显式调本方法补终态。
+
+        ## 幂等性（不变量 T2）
+
+        mailbox 自带终态唯一性守卫（`push_mailbox_event` 的 `_terminal_pushed`）：
+        只要推过终态，本方法立即返回，绝不产生第二个 logical terminal outcome。
+
+        ## 为什么不处理 PAUSED / WAITING_APPROVAL
+
+        二者是**可恢复的挂起态**而非终态：`run()` 返回后调用方保留 mailbox 等待
+        resume，补一条终态会把「暂停」误判成「失败」。
+        **例外**是 `force=True` —— 调用方**正在销毁**该任务（派发失败分支随后就
+        `_cleanup_task()`），"保留待恢复"的前提不成立，此时必须终态化，否则任务
+        连终态带注册表一起静默消失（Challenger C2 的 RESUME 派发失败）。
+
+        Args:
+            sub_agent: 刚跑完的执行单元（只读其 `_task_state`；需要时推进终态）。
+            mailbox: 该任务的邮箱；None（已被清理）时无事可做。
+            task_id: 任务 ID（事件 data 与日志用）。
+            reason: 调用点已知的、比通用兜底文案更准确的失败原因（如"派发失败"）。
+                仅在任务**没有**自己的终态归因时生效——已记录的 `ts.error`
+                优先级更高，绝不被调用点覆盖。
+            force: 调用方正在销毁任务，挂起态也必须终态化（见上）。
+        """
+        if mailbox is None:
+            return
+        # 与 `push_mailbox_event` 同一判据：`is True` 身份比较——mock mailbox 的
+        # 属性访问会返回真值 MagicMock，真值判断会把首个终态误判成"已推送"。
+        if getattr(mailbox, "_terminal_pushed", None) is True:
+            return
+
+        ts = sub_agent._task_state
+        status = ts.status if ts is not None else None
+        if not force and status in (WorkflowStatus.PAUSED, WorkflowStatus.WAITING_APPROVAL):
+            return
+
+        if status == WorkflowStatus.COMPLETED:
+            push_mailbox_event(
+                mailbox, WorkflowEventType.COMPLETED,
+                {"task_id": str(task_id), "result": "任务完成。"},
+                caller="WorkflowEngine",
+            )
+            return
+        if status == WorkflowStatus.CANCELLED:
+            push_mailbox_event(
+                mailbox, WorkflowEventType.CANCELLED,
+                {
+                    "task_id": str(task_id),
+                    "reason": (ts.error if ts is not None and ts.error else "任务被取消"),
+                },
+                caller="WorkflowEngine",
+            )
+            return
+
+        # FAILED，或**根本没到终态**（PENDING/PLANNING/RUNNING…）。后者说明 run()
+        # 静默收场——如实记为内部错误，并把状态真正推进到终态（T1）。
+        if status == WorkflowStatus.FAILED and ts is not None and ts.error:
+            reason = ts.error
+            code = ts.error_code or WorkflowErrorCode.INTERNAL_ERROR
+        else:
+            reason = reason or self._UNTERMINATED_REASON
+            code = WorkflowErrorCode.INTERNAL_ERROR
+            if ts is not None:
+                ts.fail(reason, code)
+        logger.warning(
+            "WorkflowEngine: task_id=%s 收尾时无终态事件，兜底终态化: %s",
+            task_id, reason,
+        )
+        push_mailbox_event(
+            mailbox, WorkflowEventType.FAILED,
+            {"task_id": str(task_id), "error": reason, "error_type": code.value},
+            caller="WorkflowEngine",
+        )
 
     def _cleanup_task(self, task_id: WorkflowId) -> None:
         """任务终态后清理注册表。

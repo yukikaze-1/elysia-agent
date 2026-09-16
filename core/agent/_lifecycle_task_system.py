@@ -431,13 +431,23 @@ class _LifecycleTaskSystem:
                             "后台任务已取消: %s — %s",
                             info.intent, data.get('reason', '用户取消'),
                         )
+                    # Batch 1.7（Challenger C4）：**条目在这里就摘掉**，早于下面那个
+                    # `await _persist_task_result`。终态事件已经从 mailbox 取走、所有权
+                    # 归本方法，再把它留在 `_background_tasks` 里只会制造一个危险窗口：
+                    # 停机时轮询被 `cancel_and_drain` 掐断（恰好在 await 上）→ 条目仍在
+                    # → `_stop_mailbox` 的 stranded 分支把**真实终态覆写**成
+                    # `interrupted`（"任务因服务重启被中断，未产生结果"），接着启动
+                    # replay 又把 `interrupted` 当权威、`wal.forget()` 删掉真正的终态。
+                    # 摘除与"取走事件"之间**没有任何 await**，所以这个窗口结构上不存在。
+                    # 落库失败也不丢：`_persist_task_result` 只在 upsert 成功后清 WAL，
+                    # 所以那一刻终态仍在 WAL 里，下次启动 replay 会补回（库为权威）。
+                    self._background_tasks.pop(task_id, None)
                     # #6：先落库再投递（"投了但没人消费"因此在磁盘上可判定）。
                     # delivered 恒 False：本方法只负责入队，投递确认在消费侧授予。
                     await self._persist_task_result(
                         payload, status=status, delivered=False)
                     self._bus.post(payload)
                     delivered += 1
-                    self._background_tasks.pop(task_id, None)
                     break  # task 已终态，处理下一个 task
             except Exception:
                 # 处理单个事件时的意外错误（event.data 访问 / TaskResultData

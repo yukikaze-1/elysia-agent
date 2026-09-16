@@ -526,7 +526,13 @@ class SubAgent:
         """从校验问题列表中推导最合适的 WorkflowErrorCode。
 
         PLAN_TOO_LARGE：节点数/深度/结构问题（Planner 产出质量）
-        INTERNAL_ERROR：未知/预期外的错误类型
+        PLANNING_FAILED：其余**规划期**校验失败（如 required 节点缺 output_contract）
+
+        Batch 1.7（Challenger C3）：兜底值由 `INTERNAL_ERROR` 改为 `PLANNING_FAILED`。
+        `INTERNAL_ERROR` 的语义是"引擎自己出故障"，而这些全部是**规划器产出不合格**
+        ——报 internal_error 会让"规划失败"在用户/调试面上冒充"执行期内部错误"，
+        正是 T4 要消除的错误归因（实测：planner 漏写 output_contract → fix_plan 耗尽
+        后会推 `internal_error`）。
 
         Args:
             issues: 校验问题列表。
@@ -544,4 +550,4 @@ class SubAgent:
         fatal_types = {i.type for i in issues}
         if fatal_types & plan_quality_types:
             return WorkflowErrorCode.PLAN_TOO_LARGE.value
-        return WorkflowErrorCode.INTERNAL_ERROR.value
+        return WorkflowErrorCode.PLANNING_FAILED.value

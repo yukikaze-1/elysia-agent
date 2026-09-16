@@ -156,9 +156,15 @@ async def finalize(
         mailbox: 任务 mailbox，用于推送完成事件。
         checkpoint_mgr: checkpoint 管理器，用于保存最终快照。
     """
-    # E3 §3.5 终态一致性不变量：COMPLETED status 写在协程首个 await（save_checkpoint）之前——
-    # 一旦写过，本协程后续不可能再被 cancel 改写成 CANCELLED（cancel() 写 CANCELLED 前先查 is_terminal()）。
-    # 顺序不可颠倒：status 写必须领先首个 await。不依赖「两个协程同步块先到者胜」。
+    # E3 §3.5 终态一致性不变量：COMPLETED status 写在协程首个 await（save_checkpoint）之前。
+    # **顺序不可颠倒**：status 写必须领先首个 await，否则 `save_checkpoint` 期间到达的取消
+    # 会看到一个尚未置终态的 task_state。
+    # 但顺序**本身不足以**保护这个终态（Batch 1.7 / Challenger R2 更正了原先的注释）：
+    # 真正的保护是两条机制——① `cancel()` 写 CANCELLED 前先查 `is_terminal()`；
+    # ② `_run_and_cleanup`/`_run_resume` 的 `except CancelledError` 现在也按
+    # `is_terminal()` 短路（原先无条件覆写，只因 `CheckpointManager.save` 恰好是纯内存、
+    # 中间没有真实 await 才没暴露）。若将来 checkpoint 引入真实 I/O，第 ② 条才是
+    # 让"已完成的任务被改判成 CANCELLED"不发生的那个机制。
     task_state.status = WorkflowStatus.COMPLETED
     task_state.updated_at = now_iso()
     await save_checkpoint(checkpoint_mgr, task_state, exec_state)
