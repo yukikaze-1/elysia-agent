@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 
 from core.schema.message import Message
 from core.schema.part import (
@@ -57,7 +58,7 @@ def _duration_s(duration_ms: int) -> str:
     return f"，时长 {duration_ms / 1000:.1f}s" if duration_ms > 0 else ""
 
 
-def _media_placeholder(parts: list[Part], *, images_included: bool,
+def _media_placeholder(parts: Sequence[Part], *, images_included: bool,
                        historical: bool) -> str:
     """把"转换器发射不出去、但模型必须知道"的 Part 汇总成占位文本（S2-H8）。
 
@@ -201,6 +202,7 @@ class MessageBuilder:
         user_content: str | list[dict] | None = None,
         *,
         supports_multimodal: bool = False,
+        prompt_budget_tokens: int | None = None,
     ) -> list[dict]:
         """组装完整 messages[]。
 
@@ -209,6 +211,10 @@ class MessageBuilder:
             history: SessionMemory.recent_messages(8) 返回的 Message 列表
             user_content: 当前用户消息（str 或多模态 content list）
             supports_multimodal: LLM 是否支持多模态图片
+            prompt_budget_tokens: prompt 总预算（token，S2-H9）。None = 不做预算
+                （预览等拿不到模型上下文的调用点）。超预算时**由旧到新丢历史**，
+                按不可拆单元（见 `core.prompt.budget.history_units`）；当前用户
+                消息与 system 永不丢。
 
         Returns:
             [{"role": "system", "content": system_prompt},
@@ -225,6 +231,9 @@ class MessageBuilder:
             entry = _current_user_message(user_content, supports_multimodal=supports_multimodal)
             if entry is not None:
                 messages.append(entry)
+
+        if prompt_budget_tokens is not None:
+            _apply_prompt_budget(messages, prompt_budget_tokens)
         return messages
 
 
@@ -268,3 +277,45 @@ def _format_image_history_hint(count: int) -> str:
     if count == 1:
         return "[用户曾发送一张图片] "
     return f"[用户曾发送{count}张图片] "
+
+
+def _apply_prompt_budget(messages: list[dict], budget_tokens: int) -> None:
+    """超预算时由旧到新丢历史（**原地**修改 messages）。
+
+    位置在**组装完成之后**：只有拿到全部消息才算得准总量（inner_voice 注入、
+    工具摘要、媒体占位都会改变长度）。
+
+    不变式：
+    - system 恒为 `[0]`、当前用户消息恒为最后一条，两者都不参与丢弃；
+    - 由旧到新**逐条**丢（不是整段清空）：丢到装得下为止，尽量保住近轮；
+    - 不需要"assistant tool_calls 与 tool 结果成对"——转换器根本不发射工具流量
+      （`role="tool"` 返回 None、assistant 不带 `tool_calls` 键），该前提由
+      `core/prompt/tests/test_prompt_budget.py::TestToolTrafficPremise` 钉住；
+    - 逼近预算（≥80%）给 info 级观测（报告要求"上下文快满了"要有提示），
+      真截断给 warning 并记前后估算；截尽历史仍超预算**不静默**——如实报出剩余
+      超限量（system 侧的截断由 SystemPromptManager 负责）。
+    """
+    from Module.system_prompt.budget import estimate_messages_tokens
+
+    total = estimate_messages_tokens(messages)
+    if total <= budget_tokens:
+        if total >= budget_tokens * 0.8:
+            logger.info(
+                "prompt 接近预算：估算 %d / 预算 %d token（历史 %d 条）",
+                total, budget_tokens, max(0, len(messages) - 2))
+        return
+
+    dropped = 0
+    while len(messages) > 2 and estimate_messages_tokens(messages) > budget_tokens:
+        del messages[1]          # 恒删"最旧的历史"（[0]=system，[-1]=当前消息）
+        dropped += 1
+
+    after = estimate_messages_tokens(messages)
+    logger.warning(
+        "prompt 超预算：估算 %d > 预算 %d token → 由旧到新丢弃 %d 条历史"
+        "（消息 %d 条，截后估算 %d）",
+        total, budget_tokens, dropped, len(messages), after)
+    if after > budget_tokens:
+        logger.warning(
+            "截尽历史后仍超预算 %d token（system prompt 或当前消息自身过长）",
+            after - budget_tokens)

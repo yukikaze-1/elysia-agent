@@ -20,6 +20,10 @@ llm:
     # provider 上 100% 回合失败，而日志只显示 GENERATION_PROVIDER_UNAVAILABLE。
     # 未声明 = "不表态"（交给 provider 自己的默认），不是"显式关闭"。
     supports_thinking: true
+    # S2-H9：prompt 预算的来源（token）。预算 = 本值 × 0.75（留输出/工具/
+    # 估算误差的余量）。**估算值**（DeepSeek V4 系列文档口径 128K）——若与实际不符请直接改这里，
+    # 它只影响截断时机，不影响正确性。
+    context_window: 131072
     models: ["deepseek-v4-flash", "deepseek-v4-pro"]
   openai:
     base_url: "https://api.openai.com/v1"   # 与 Module/embedding/config.py 一致
@@ -28,6 +32,10 @@ llm:
     supports_prefix: false
     supports_multimodal: false
     supports_thinking: false
+    # S2-H9：prompt 预算的来源（token）。预算 = 本值 × 0.75（留输出/工具/
+    # 估算误差的余量）。**估算值**（gpt-4o 上下文 128K）——若与实际不符请直接改这里，
+    # 它只影响截断时机，不影响正确性。
+    context_window: 128000
     models: ["gpt-4", "gpt-4o", "gpt-5"]
   ollama:
     base_url: "http://localhost:11434/v1"   # ollama 的 OpenAI 兼容端点
@@ -37,6 +45,10 @@ llm:
     supports_prefix: false
     supports_multimodal: false
     supports_thinking: false
+    # S2-H9：prompt 预算的来源（token）。预算 = 本值 × 0.75（留输出/工具/
+    # 估算误差的余量）。**估算值**（本地模型常见默认（qwen2.5:3b 的 num_ctx 默认 8K））——若与实际不符请直接改这里，
+    # 它只影响截断时机，不影响正确性。
+    context_window: 8192
     models: ["qwen2.5:3b"]
   gemini:
     base_url: ""
@@ -45,6 +57,10 @@ llm:
     supports_prefix: false
     supports_multimodal: false
     supports_thinking: false
+    # S2-H9：prompt 预算的来源（token）。预算 = 本值 × 0.75（留输出/工具/
+    # 估算误差的余量）。**估算值**（Gemini 1.5/2.x 长上下文 1M）——若与实际不符请直接改这里，
+    # 它只影响截断时机，不影响正确性。
+    context_window: 1048576
     models: []
   mimo:
     base_url: ""
@@ -53,6 +69,10 @@ llm:
     supports_prefix: false
     supports_multimodal: true
     supports_thinking: false
+    # S2-H9：prompt 预算的来源（token）。预算 = 本值 × 0.75（留输出/工具/
+    # 估算误差的余量）。**估算值**（厂商未公开，取保守值）——若与实际不符请直接改这里，
+    # 它只影响截断时机，不影响正确性。
+    context_window: 32768
     models: ["mimo-v2.5", "mimo-v2.5-pro"]
   custom:
     base_url: ""
@@ -61,6 +81,10 @@ llm:
     supports_prefix: false
     supports_multimodal: false
     supports_thinking: false
+    # S2-H9：prompt 预算的来源（token）。预算 = 本值 × 0.75（留输出/工具/
+    # 估算误差的余量）。**估算值**（自定义端点未知，取保守值）——若与实际不符请直接改这里，
+    # 它只影响截断时机，不影响正确性。
+    context_window: 32768
     models: []
 
 tts:

@@ -111,6 +111,24 @@ class LLMFactory:
         return cls.create(model_id, **kwargs)
 
     @classmethod
+    def context_window(cls, model_id: str) -> int | None:
+        """检测 provider 的上下文窗口（token），未声明返回 None。
+
+        S2-H9 的预算来源：`core.prompt.budget.budget_from_context_window()` 用它
+        乘余量系数得到 prompt 预算。**未声明 ≠ 无上限**——调用方对 None 使用保守
+        默认（32K），否则"没配 = 不截断"会退化成这次的原始缺陷。
+
+        Args:
+            model_id: 格式为 "provider/model-name" 的标识字符串，或纯 provider 名。
+
+        Returns:
+            上下文窗口 token 数；providers.yaml 未声明时 None。
+        """
+        provider = model_id.split("/")[0] if "/" in model_id else model_id
+        window = _BACKENDS.get(provider, {}).get("context_window")
+        return int(window) if window else None
+
+    @classmethod
     def supports_multimodal(cls, model_id: str) -> bool:
         """检测 provider 是否支持多模态（图片输入）。
 

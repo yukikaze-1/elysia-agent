@@ -23,15 +23,24 @@ class MemorySection(Jinja2Section):
         self._long_term = long_term
         self._session = session
         self._user_message = ""
+        self._memory_limit: int | None = None  # None = 用 search 的默认 top_k
 
     def set_context(self, **kwargs: Any) -> None:
         self._user_message = kwargs.get("user_message", "")
+        # S2-H9：超预算时由 SystemPromptManager 逐级下调（5 → 3 → 2 → 1 → 0）。
+        # 0 = 本节渲染为空（"这轮先不想起什么"），不是"渲染失败"。
+        limit = kwargs.get("memory_limit")
+        if limit is not None:
+            self._memory_limit = max(0, int(limit))
 
     async def render(self) -> str:
         if self._long_term is None or not self._user_message:
             return ""
+        if self._memory_limit == 0:
+            return ""
         try:
-            results = await self._long_term.search(query_text=self._user_message, top_k=5)
+            top_k = 5 if self._memory_limit is None else self._memory_limit
+            results = await self._long_term.search(query_text=self._user_message, top_k=top_k)
         except Exception:
             logger.warning("C4 Memory: LTM 搜索失败，跳过记忆注入", exc_info=True)
             return ""

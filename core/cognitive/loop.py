@@ -38,6 +38,7 @@ from core.monitoring.event_bus import EventBus
 from core.memory.session_manager import SessionNotFoundError
 from core.utils import set_request_id, get_request_id, log_conversation
 from core.storage.desktop_call_repo import STATUS_OFFLINE
+from Module.system_prompt.budget import budget_from_context_window
 from core.prompt.prompt_assembler import PromptAssembler
 from core.memory.session import SessionMemory
 from core.adapter.llm_adapter import LLMAdapter
@@ -760,6 +761,11 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             raise RuntimeError("TimingClock 未初始化")
         with self._clock.span("prompt") as t:
             supports_mm = LLMFactory.supports_multimodal(self._llm.model)
+            # S2-H9：prompt 预算来自 provider 的上下文窗口（providers.yaml），留 25% 余量。
+            # 未声明 → 保守默认（budget.DEFAULT_CONTEXT_WINDOW）——"没配 = 不截断"
+            # 会退化成"超 context 变 provider 400、该会话永久失败"的原始缺陷。
+            prompt_budget = budget_from_context_window(
+                LLMFactory.context_window(self._llm.model))
             tts_provider = self._tts.provider_name if self._tts else ""
             messages = await self._prompt.build_messages(
                 user_message=user_message, user_name=user_name,
@@ -767,6 +773,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 content=content,
                 supports_multimodal=supports_mm,
                 tts_provider=tts_provider,
+                prompt_budget_tokens=prompt_budget,
             )
         user_content = content if content else [{"type": "text", "content": user_message}]
         # 系统唤醒消息不写入 session（Step 4: 唤醒模板不需要存放在 session 中）

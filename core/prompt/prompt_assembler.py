@@ -247,7 +247,8 @@ class PromptAssembler:
                                    stt_emotion: str = "", stt_events: list | None = None,
                                    tts_provider: str = "",
                                    user_pronoun_override: str | None = None,
-                                   user_timezone_override: str | None = None) -> str:
+                                   user_timezone_override: str | None = None,
+                                   prompt_budget_tokens: int | None = None) -> str:
         """构建渲染后的 system prompt 字符串。
 
         Args:
@@ -258,6 +259,8 @@ class PromptAssembler:
             tts_provider: TTS 提供商名称。
             user_pronoun_override: 显式用户代词（预览用；优先于 _turn_context）。
             user_timezone_override: 显式用户时区（预览用；优先于默认，弱于 _turn_context）。
+            prompt_budget_tokens: prompt 总预算；system prompt 只取其中一份
+                （`budget.system_prompt_budget`），其余留给历史与当前消息（S2-H9）。
 
         Returns:
             渲染后的完整 system prompt 字符串。
@@ -298,7 +301,12 @@ class PromptAssembler:
             speaking_style_c6=speaking_style_c6,
         )
         self._refresh_personality_data()
-        return await self._manager.render()
+        if prompt_budget_tokens is None:
+            return await self._manager.render()
+        from Module.system_prompt.budget import system_prompt_budget
+
+        return await self._manager.render(
+            budget_tokens=system_prompt_budget(prompt_budget_tokens))
 
     async def build_messages(self, user_message: str = "",
                               user_name: str = "",
@@ -308,7 +316,8 @@ class PromptAssembler:
                               supports_multimodal: bool = False,
                               tts_provider: str = "",
                               user_pronoun_override: str | None = None,
-                              user_timezone_override: str | None = None) -> list[dict]:
+                              user_timezone_override: str | None = None,
+                              prompt_budget_tokens: int | None = None) -> list[dict]:
         """构建发送给 LLM 的完整消息列表。
 
         Args:
@@ -321,6 +330,9 @@ class PromptAssembler:
             tts_provider: TTS 提供商名称。
             user_pronoun_override: 显式用户代词（预览用）。
             user_timezone_override: 显式用户时区（预览用）。
+            prompt_budget_tokens: prompt 总预算（S2-H9）。超预算时先裁 system
+                prompt 的弹性节（C4 记忆），再按成对单元由旧到新裁历史；
+                当前用户消息永不丢。None = 不设预算（预览/无模型上下文的调用点）。
 
         Returns:
             LLM API 的 messages 列表，包含 system prompt + 历史 + 用户消息。
@@ -332,6 +344,7 @@ class PromptAssembler:
             tts_provider=tts_provider,
             user_pronoun_override=user_pronoun_override,
             user_timezone_override=user_timezone_override,
+            prompt_budget_tokens=prompt_budget_tokens,
         )
         # BE-STAGEH-03：预览模式不读任何会话历史；无 session 时同样空历史
         history = (
@@ -343,4 +356,5 @@ class PromptAssembler:
         return self._builder.build_messages(
             system, history, user_content,
             supports_multimodal=supports_multimodal,
+            prompt_budget_tokens=prompt_budget_tokens,
         )
