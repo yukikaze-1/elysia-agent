@@ -18,6 +18,7 @@ LLM 流式输出 → TTS 输入之间的文本流处理管线：结构感知切�
 |----|------|
 | 内容 | LLM 流式输出增量文本片段。F2 协议格式：`<mood>...</mood>` + `<inner_voice>...</inner_voice>` + 公开回复 |
 | 切分 | **任意**——delta 可以是单字符、半截标签、任意 chunk 边界；核心不变式保证"切分解析"与"整体解析"结果一致 |
+| 落盘边界（S3-G7） | SPEECH 只在**内容决定的边界**落盘：`\n` / 空格 / 结构字符（`` ` ``、`（`/`(`、`<`）/ **句末标点**（`tags.SENTENCE_END_CHARS`，与 splitter 判据同源）。句末标点**并入**累积文本后立即落盘 ⇒ 整句在句号那一刻产出（此前标点滞留 `_pending`，无空格中文回复整轮只在 `flush()` 产出事件）。到达时刻由 `test_stream_processor.py::TestSentenceBoundaryLatency` 守卫 |
 | 标签 | `<#x#>` TTS 停顿 / `（中文指示）` 舞台指示（半角+全角）/ `(sighs)` 语气词（显示剥离、TTS 保留）/ `<pant>` 尖括号语气词（违规格式，全丢弃）/ ```` ```lang ```` 代码围栏（仅行首）/ `<\|code\|lang>` / `<\|markdown\|>` |
 | 生命周期 | 每轮对话创建新 `StreamProcessor` 实例；`reset()` 可复用（清空内部状态）|
 
@@ -37,7 +38,7 @@ LLM 流式输出 → TTS 输入之间的文本流处理管线：结构感知切�
 
 | API | 返回 | 用途 |
 |-----|------|------|
-| `flush()` | `list[StreamEvent]` | 尾句 + 残留处理（未闭合 inner_voice 广播 / 未闭合代码块丢弃 / emoji-only 尾句合并）|
+| `flush()` | `list[StreamEvent]` | 尾句 + 残留处理（未闭合 inner_voice 广播 / 未闭合代码块丢弃）。**注**：S3-G7 起不再有"emoji-only 尾句并入上句"——该合并的实现前提是句末标点不落盘那个缺陷，现已删除，emoji 尾自成一条 SENTENCE（TTS 侧本就有 emoji-only 门控，不合成音频）|
 | `get_blocks()` | `list[BlockRef]` = `(kind, content, lang, after_sentence_idx)` | finalize 的 `block` 命令推送（含 language，修复旧丢失）|
 | `rebuild_public_text()` | `str` | 去标记纯文本（保留 PAUSE/舞台指示/语气词，无 META + 尖括号语气词泄漏）→ analyze_assistant / log / after_response |
 
@@ -81,7 +82,7 @@ LLM delta → StreamProcessor.feed(delta)              (core/text/stream_process
         TTS 文本 = 语音 + PAUSE + (sighs)，剥离 STAGE_CN
 
 回复完成后:
-  → StreamProcessor.flush()     → 处理残留（未闭合 inner_voice 广播、尾句、emoji-only 合并）
+  → StreamProcessor.flush()     → 处理残留（未闭合 inner_voice 广播、尾句）
   → StreamProcessor.get_blocks() → list[BlockRef]（(kind, content, lang, after_sentence_idx)）
   → parts.build_parts(all_sentences, blocks) → TextPart + content_type（session 存储，剥 PAUSE/语气词）
   → parts.rebuild_public_text(token 流)     → 去标记纯文本（public_text 重建，无 META/尖括号语气词泄漏）
@@ -103,7 +104,7 @@ LLM delta → StreamProcessor.feed(delta)              (core/text/stream_process
 |------|------|
 | `tags.py` | 标签注册表：PAUSE/STAGE_CN/STAGE_EN/ANGLE_EN/META/CODE/MARKDOWN 全部定义 + emoji 收口（`is_emoji_only`）+ 显示剥离（`strip_display_hidden`）。纯数据模块，仅依赖 stdlib。**META_TAGS 三元组 `(open, close, emit)`——emit 与 `StreamEventType.value` 对齐，标签→事件路由注册表驱动**。未来加 `<` 前缀新标签 = 加一行注册（编译期生效，`_OPEN_PATTERNS` 重新派生；`[action]` 式需另扩 tokenizer 起始识别）。`tts_adapter` 从这里导入共享正则（删本地副本 + 死代码 `_TONE_TAG_RE`） |
 | `tokenizer.py` | `StreamTokenizer`：增量输入 → 只吐完整 token。标签起始前缀 / PAUSE 尾串 / STAGE_CN K-M 计数窗口（闭合时英文语气词 → STAGE_EN）/ ANGLE 尖括号候选（ANGLE_MAX 窗口）/ 行首反引号持有上界；行首双状态（`at_line_start` + 缩进计数）判定围栏 |
-| `splitter.py` | `SpeechSplitter`：消费 SPEECH/PAUSE/STAGE_CN/STAGE_EN token → SENTENCE + TEXT_DELTA。边界扫描只在 SPEECH 文本上进行，PAUSE/STAGE_CN/STAGE_EN 以零宽位置保护，内部标点不参与边界判定。`completed_count` 供 `after_sentence_idx` 块定位 |
+| `splitter.py` | `SpeechSplitter`：消费 SPEECH/PAUSE/STAGE_CN/STAGE_EN token → SENTENCE + TEXT_DELTA。**句边界字符集 = `tags.SENTENCE_END_CHARS`**（与 tokenizer 落盘边界同源）。边界扫描只在 SPEECH 文本上进行，PAUSE/STAGE_CN/STAGE_EN 以零宽位置保护，内部标点不参与边界判定。`completed_count` 供 `after_sentence_idx` 块定位 |
 | `parts.py` | `build_parts(all_sentences, blocks)`：按 `after_sentence_idx` 交错出 `TextPart` + content_type（不再二次扫描 acc_text）。`rebuild_public_text()`：从 token 流重建去标记纯文本。仅服务 session 存储/归档，不参与显示推送 |
 | `stream_processor.py` | `StreamProcessor` 协调器：tokenizer + splitter + 事件发射 + `get_blocks()` + public_text 重建。吸收旧状态机 + 旧块过滤逻辑 + TTFT/emoji 逻辑。**META 路由查注册表 `emit` 字段 + `_EMIT_BY_NAME` 枚举自动派生映射，未知 emit 降级 `logger.warning` + 丢弃**。每轮对话创建新实例。**换行归一在 `feed()`（管道唯一摄入点）**，见下 |
 

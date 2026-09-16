@@ -22,6 +22,15 @@ prompt/
 
 - 无状态，仅依赖 `core.schema`。
 - `build_messages()` — 多模态 content、图片 fallback 提示、tool-call 摘要注入。
+- **媒体占位（S2-H8）**：转换器只发射 Text/Image，故 `_media_placeholder()` 给
+  sticker/file/audio/video 补占位文本（当前轮 + 历史侧**都**补）——否则"仅贴图/仅附件"的
+  消息会变成 `{"role":"user","content":[]}`（模型像"用户什么都没说"一样作答），历史侧还会
+  被整条丢弃。占位文案是单一来源 `_PLACEHOLDER_WORDING`；文件名/体积/时长按真实字段渲染，
+  **默认不带 `attachment_id`**（它不是任何工具的参数，给出来只会诱发幻觉调用），仅在文件名为空时兜底。
+- **prompt 预算（S2-H9）**：`build_messages(..., prompt_budget_tokens=N)` 超预算时由旧到新
+  **逐条**丢历史（system 与当前用户消息永不丢）。估算与常量在
+  `Module/system_prompt/budget.py`（唯一执行点）；是否传预算由调用方决定
+  （`CognitiveLoop._build_turn_prompt` 从 `LLMFactory.context_window(model)` 换算）。
 
 ### PromptAssembler
 

@@ -16,7 +16,7 @@
 | `user_identity_repo.py` | UserIdentityRepository — MongoDB user_identity_profiles 集合（BE-STAGEH-02 用户身份权威：唯一 user_id 索引 + `$setOnInsert` bootstrap + revision CAS，fail-closed） |
 | `memory_repo.py` | MemoryRepository — Milvus long_term_memory 集合 |
 | `generation_repo.py` | GenerationRepository — MongoDB generations 集合（BE-024 生命周期） |
-| `character_version_repo.py` | CharacterVersionRepository — MongoDB character_versions 集合（L2/C6 版本历史） |
+| `character_version_repo.py` | CharacterVersionRepository — MongoDB character_versions 集合（L2/C6 版本历史）。读路径 fail-closed（决策 #8）；`delete_by_session` 供会话删除级联（#21b） |
 | `attachment_repo.py` | AttachmentRepository — MongoDB attachments 集合（BE-070 fail-closed：Mongo 离线 raise StorageUnavailableError → 503；refs/ref_count + 软删 status/deleted_at） |
 | `desktop_call_repo.py` | DesktopCallRepository — MongoDB desktop_calls 集合（批次 4 BE-041/043：桌面工具调用注册表，进程内缓存读权威） |
 | `idempotency.py` | v2 消息幂等运行时存储（内存权威 overlay + Mongo 写穿 + recover 四分支，CORE-MOD-P1-01 从 input 迁入） |

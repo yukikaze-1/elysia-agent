@@ -16,10 +16,24 @@ Module/config/
 ├── providers.py         # 加载 providers.yaml 默认值（load_provider_defaults，无 CRUD）
 ├── preflight.py         # 环境预检（app.py --check）
 ├── _utils.py            # 内部工具
-├── providers.yaml       # 内置 provider 注册表（LLM/STT/TTS 默认端点）
+├── providers.yaml       # 内置 provider 注册表（LLM/STT/TTS 默认端点 + 能力位）
 ├── __main__.py          # 集成烟雾测试
 └── tests/
 ```
+
+### `providers.yaml` 的能力位（**扩展点先看这里**）
+
+llm 段的四个键是"这个 provider 能接受什么"的**唯一声明处**，工厂按它们决定请求体形状：
+
+| 键 | 谁消费 | 语义 |
+|---|---|---|
+| `supports_prefix` | `LLMFactory.create` → 后端 | prefix continuation（DeepSeek beta 端点）；调用方带 `prefix` 消息而 provider 未声明 → 抛错 |
+| `supports_multimodal` | `LLMFactory.supports_multimodal` | 图片输入；决定历史/当前消息走 image_url 块还是降级成 describe_image 提示 |
+| `supports_thinking` | 后端 `_gate_extra_body` | DeepSeek 风格顶层 `thinking` 字段。**未声明（或 false）= 丢弃该键 + 一次 warning**——严格 OpenAI 风格 API 遇未知顶层参数直接 400，会让该 provider 上 100% 回合失败（S2-H3） |
+| `context_window` | `LLMFactory.context_window` → prompt 预算 | 模型上下文（token）；预算 = 本值 × 0.75，未声明则用保守默认 32K（S2-H9）。数值是**估算值**，只影响截断时机 |
+
+新增 provider 专属字段时，优先落在这里而不是调用点硬编码——调用点硬编码 provider 知识正是
+S2-H3 的成因（主链与另外 ~10 个调用点都写着 DeepSeek 专属的 `thinking`）。
 
 `core/providers/custom_providers.py` 管理 `custom_providers.yaml` 的运行时读写，支持添加/删除/测试自定义 LLM/STT/TTS 端点。`preflight.py` 实现 `app.py --check`（11 项：8 必须 + 3 WARN）和 `app.py --check --full`（16 项，加 5 项连通性探活）环境预检。
 

@@ -132,6 +132,18 @@ v2 方法均带 `conversation_id`/`conversation_usage` 关键字参数，v2 通�
 | ConsoleChannel | 是 | - | - | - | - | - |
 | WebSocketChannel | 是 | 是 | 是 | 是 | 是 | 预留 |
 
+### `WebSocketChannel.send_json` 的两种失败语义（S2-H6）
+
+```python
+await ch.send_json(frame)                        # 广播：失败记 warning 并返回 False
+await ch.send_json(frame, raise_on_error=True)   # 定向投递：失败**原样抛出**
+```
+
+返回 `bool`（是否送达）。**广播**（默认）不能让单连接故障拖累其余接收方；**定向投递**
+（发给某一条指定连接，如桌面 `tool.request`）必须让调用方立刻知道失败——否则它只能等上层
+超时，把"桌面客户端不可用"报成"桌面超时"，调用方的快速回退分支永不执行（实测：0.05s vs
+等待满 5s 的超时）。失败 warning 带 `connection_id`，多连接并存时可定位是哪条断了。
+
 ## 测试
 
 ```bash

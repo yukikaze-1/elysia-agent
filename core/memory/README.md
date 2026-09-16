@@ -80,6 +80,12 @@
 - 会话缓存池 + 活动指针（`active_id` / `active`）；懒加载（`ensure_loaded`，Mongo → JSONL fallback）
 - `resolve(conversation_id, protocol_version)`：v1 恒 `"default"`、v2 显式 conversationId → 该会话、v2 缺省 → 活动会话
 - `switch(sid)` 切活动（同步 reflector buffer + 换绑 CharacterEngine）；`create`/`rename`/`delete`（联动归档）
+- `delete(sid)` 的**级联范围（#21b）**：先删 session doc（提交点）→ 释放附件 refs → 删 `message_archive`
+  → 按 `cascade_repos` 清单逐个删其余**会话域集合**（`token_usage` / `generations` /
+  `character_versions`，均按 `session_id` 分区，漏一个就留下永久不可达的孤儿行）。失败进
+  pending-cleanup journal，`retry_pending_cleanup` 走同一条级联。清单的唯一接线点是
+  `core/agent/agent.py`，覆盖由 `core/memory/tests/test_session_cascade.py` 用 AST 扫
+  `core/storage/*_repo.py` 断言（新增会话域集合忘接线即红）
 - 启动 `load_active()` 恢复 default；`save_all()` 关机持久化所有已加载会话
 
 ### LongTermMemory
