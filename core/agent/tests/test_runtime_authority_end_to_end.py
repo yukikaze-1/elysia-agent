@@ -20,7 +20,6 @@ tts / stt / runtime config / banner 一致）。
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
