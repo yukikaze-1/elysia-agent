@@ -769,3 +769,93 @@ class TestHTTPClientInjection:
         finally:
             asyncio.run(backend.close())
             asyncio.run(guard.aclose())
+
+
+# ============================================================
+# provider 能力门控：thinking 键（S2-H3）
+# ============================================================
+
+class TestThinkingCapabilityGate:
+    """未声明 `supports_thinking` 的 provider 上丢弃 `thinking` 键。
+
+    缺陷形状：主链与另外 ~10 个调用点硬编码 `extra_body={"thinking": ...}`，后端原样
+    合并进请求体；严格 OpenAI 风格 API 对未知顶层参数 400 ⇒ 该 provider 上 100% 回合
+    失败，而日志只显示 GENERATION_PROVIDER_UNAVAILABLE（误诊成本最高的一条）。
+
+    两层都要测：**能力位读取**（registry 把 providers.yaml 的值传进后端）与
+    **门控行为**（后端真的丢/不丢），只测一层都看不出缺口。
+    """
+
+    def test_registry_passes_capability_flag(self):
+        """registry 从 providers.yaml 读到能力位并注入后端。"""
+        assert LLMFactory.create("deepseek/deepseek-v4-pro",
+                                 api_key="x")._supports_thinking is True
+        assert LLMFactory.create("ollama/qwen3")._supports_thinking is False
+        assert LLMFactory.create("openai/gpt-4o", api_key="x")._supports_thinking is False
+
+    @pytest.mark.asyncio
+    async def test_undeclared_provider_drops_thinking_nonstream(self):
+        """未声明 → 请求体里没有 thinking（`extra_body` 整体为空 → None）。"""
+        backend = LLMFactory.create("openai/gpt-4o", api_key="x")
+        mock_create = AsyncMock(return_value=_make_nonstream_response("hi"))
+        with patch.object(backend._client.chat.completions, "create", mock_create):
+            await backend.chat(
+                [{"role": "user", "content": "hi"}],
+                extra_body={"thinking": {"type": "disabled"}})
+
+        assert mock_create.call_args.kwargs["extra_body"] is None, (
+            "未声明支持的 provider 不得收到 thinking 键")
+
+    @pytest.mark.asyncio
+    async def test_undeclared_provider_drops_thinking_stream(self):
+        """流式路径（`_call_api`）同样丢——两条 extra_body 合并点必须一致。"""
+        backend = LLMFactory.create("ollama/qwen3")
+        mock_create = AsyncMock(return_value=_make_stream_chunks("x"))
+        with patch.object(backend._client.chat.completions, "create", mock_create):
+            async for _ in backend.chat_stream(
+                    [{"role": "user", "content": "hi"}],
+                    extra_body={"thinking": {"type": "disabled"}}):
+                pass
+
+        assert mock_create.call_args.kwargs["extra_body"] is None
+
+    @pytest.mark.asyncio
+    async def test_declared_provider_keeps_thinking(self, backend):
+        """反证（防空转）：声明支持的 provider（deepseek）照常收到该键。"""
+        mock_create = AsyncMock(return_value=_make_nonstream_response("hi"))
+        with patch.object(backend._client.chat.completions, "create", mock_create):
+            await backend.chat(
+                [{"role": "user", "content": "hi"}],
+                extra_body={"thinking": {"type": "disabled"}})
+
+        assert mock_create.call_args.kwargs["extra_body"] == {
+            "thinking": {"type": "disabled"}}
+
+    @pytest.mark.asyncio
+    async def test_gate_is_narrow_other_keys_pass_through(self):
+        """门禁只丢 `thinking` 一个键——调用方的其它 extra_body 键必须原样保留。"""
+        backend = LLMFactory.create("ollama/qwen3")
+        mock_create = AsyncMock(return_value=_make_nonstream_response("hi"))
+        with patch.object(backend._client.chat.completions, "create", mock_create):
+            await backend.chat(
+                [{"role": "user", "content": "hi"}],
+                extra_body={"thinking": {"type": "disabled"}, "top_k": 7})
+
+        assert mock_create.call_args.kwargs["extra_body"] == {"top_k": 7}
+
+    @pytest.mark.asyncio
+    async def test_drop_warning_once_per_backend(self, caplog):
+        """丢弃只警告一次（每后端实例）——否则每轮刷一条把日志淹没，且要说清怎么改。"""
+        import logging
+
+        backend = LLMFactory.create("ollama/qwen3")
+        mock_create = AsyncMock(return_value=_make_nonstream_response("hi"))
+        with caplog.at_level(logging.WARNING), \
+                patch.object(backend._client.chat.completions, "create", mock_create):
+            for _ in range(3):
+                await backend.chat([{"role": "user", "content": "hi"}],
+                                   extra_body={"thinking": {"type": "disabled"}})
+
+        hits = [r for r in caplog.records if "supports_thinking" in r.message]
+        assert len(hits) == 1, f"应恰好警告一次，实际 {len(hits)} 次"
+        assert "providers.yaml" in hits[0].message  # 给出可操作的修法

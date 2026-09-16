@@ -55,6 +55,7 @@ class OpenAICompatBackend(LLMBackend):
         base_url: str = "",
         beta_url: str = "",
         supports_prefix: bool = False,
+        supports_thinking: bool = False,
         logger: logging.Logger | None = None,
         http_client: httpx.AsyncClient | None = None,
         http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
@@ -68,6 +69,12 @@ class OpenAICompatBackend(LLMBackend):
             beta_url: DeepSeek prefix 续写专用的 beta API URL，
                 非空时创建独立的 _beta_client。
             supports_prefix: 是否支持 prefix continuation 特性。
+            supports_thinking: 是否支持 DeepSeek 风格的顶层 `thinking` 字段
+                （`{"thinking": {"type": "disabled"|"enabled"}}`）。**未声明时后端
+                丢弃该键**（S2-H3）——严格 OpenAI 风格 API 对未知顶层参数返回 400，
+                那会让该 provider 上 100% 回合失败，且日志只显示
+                GENERATION_PROVIDER_UNAVAILABLE（看不出是请求体带了外字段）。
+                来源是 `Module/config/providers.yaml::llm.<provider>.supports_thinking`。
             logger: 日志记录器，未提供时自动创建。
             http_client: 出站守卫挂载点（批次 5）——注入的 httpx.AsyncClient 实例。
                 仅静态复用（构造时使用），**reconnect 不重建**（单测/一次性场景）。
@@ -79,6 +86,9 @@ class OpenAICompatBackend(LLMBackend):
         key = api_key or "ollama"  # Ollama 接受任意非空值
         self._model = model
         self._supports_prefix = supports_prefix
+        self._supports_thinking = supports_thinking
+        # 丢弃告警只打一次（每个后端实例）——否则每轮都刷一条，日志被淹没
+        self._thinking_drop_warned = False
         self._logger = logger or logging.getLogger(__name__)
         self._api_key = key
         self._base_url = base_url
@@ -131,6 +141,35 @@ class OpenAICompatBackend(LLMBackend):
         async for chunk in self._stream_structured(messages, **kwargs):
             yield chunk
 
+    def _gate_extra_body(self, extra_body: dict[str, Any]) -> dict[str, Any]:
+        """provider 能力门控：未声明支持的 provider 上丢弃 DeepSeek 专属 `thinking`（S2-H3）。
+
+        为什么需要：`extra_body` 由调用方原样合并进请求体，后端此前**不做任何过滤**，
+        而主链与另外 ~10 个调用点硬编码 `{"thinking": {...}}`。严格 OpenAI 风格 API 对
+        未知顶层参数返回 `400 Unrecognized request argument supplied` ⇒ 该 provider 上
+        **100% 回合失败**，而日志只显示 `GENERATION_PROVIDER_UNAVAILABLE`——**看不出是
+        请求体带了外字段**，是本项目误诊成本最高的缺陷之一；宽容实现（Ollama compat）
+        静默忽略 ⇒ "同一个模型配法，一个 provider 能用、一个必死"。
+
+        **只丢 `thinking` 一个键**：调用方的其它 extra_body 键原样保留（门禁不越权）。
+
+        语义变化如实记录：对未声明的 provider 丢弃该键 = 从"显式关闭思考"变成
+        "不表态"（交给 provider 自己的默认）。这是有意的取舍——多发一个字段把整轮
+        打死，比少发一个字段让该 provider 用它自己的默认更糟。
+        """
+        if self._supports_thinking or "thinking" not in extra_body:
+            return extra_body
+        dropped = {k: v for k, v in extra_body.items() if k == "thinking"}
+        remaining = {k: v for k, v in extra_body.items() if k != "thinking"}
+        if not self._thinking_drop_warned:
+            self._thinking_drop_warned = True
+            self._logger.warning(
+                "provider 未声明 supports_thinking，已丢弃请求体中的 %s（model=%s）。"
+                "若该 provider 确实支持，请在 Module/config/providers.yaml 的对应条目"
+                "加 supports_thinking: true；否则严格 OpenAI 风格 API 会因未知参数 400",
+                dropped, self._model)
+        return remaining
+
     async def _stream_structured(
         self, messages: list[dict], **kwargs: Any
     ) -> AsyncIterator[dict]:
@@ -146,6 +185,7 @@ class OpenAICompatBackend(LLMBackend):
         if has_prefix:
             extra_body["prefix"] = True
         extra_body.update(caller_extra)
+        extra_body = self._gate_extra_body(extra_body)
 
         client = self._beta_client if has_prefix and self._beta_client else self._client
         extra_body_final = extra_body if extra_body else None
@@ -209,6 +249,7 @@ class OpenAICompatBackend(LLMBackend):
         if has_prefix:
             extra_body["prefix"] = True
         extra_body.update(caller_extra)
+        extra_body = self._gate_extra_body(extra_body)
 
         client = self._beta_client if has_prefix and self._beta_client else self._client
         extra_body_final = extra_body if extra_body else None

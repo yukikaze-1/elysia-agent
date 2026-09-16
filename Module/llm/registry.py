@@ -85,6 +85,9 @@ class LLMFactory:
             base_url=base_url,
             beta_url=beta_url,
             supports_prefix=cfg["supports_prefix"],
+            # S2-H3：能力位缺失 = 不声明 = 后端丢弃 DeepSeek 专属 thinking 键。
+            # 用 .get 而非 [] ——本键是**新增**的，第三方 providers.yaml 副本里没有它。
+            supports_thinking=cfg.get("supports_thinking", False),
             **kwargs,
         )
 

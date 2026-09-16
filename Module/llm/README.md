@@ -117,7 +117,16 @@ DeepSeek 的普通对话和 prefix 对话使用不同的端点，模块内部自
 
 DeepSeek V4 Pro 默认开启思考模式（thinking），会导致首 token 延迟显著增加（3-4s）。适合需要深度推理的场景，但对简单对话、结构化输出的场景不必要。
 
-通过 `extra_body={"thinking": {"type": "disabled"}}` 关闭思考模式，大幅降低 TTFT：
+通过 `extra_body={"thinking": {"type": "disabled"}}` 关闭思考模式，大幅降低 TTFT。
+
+> **provider 能力门控（S2-H3）**：`thinking` 是 **DeepSeek 风格**的顶层参数，
+> 不是 OpenAI 规范的一部分。后端按 `Module/config/providers.yaml` 的
+> `llm.<provider>.supports_thinking` 判定：**未声明（或 false）的 provider 上该键会被
+> 丢弃**并打一次 warning；调用方其它 `extra_body` 键原样保留。
+> 原因是严格 OpenAI 风格 API 对未知顶层参数返回 `400`，会让该 provider 上
+> **100% 回合失败**，而日志只显示 `GENERATION_PROVIDER_UNAVAILABLE`——看不出是请求体
+> 带了外字段。未声明 = "不表态"（交给 provider 默认），**不是**"显式关闭"；
+> 若某 provider 确实支持，在 providers.yaml 对应条目加 `supports_thinking: true`。
 
 ```python
 # 关闭思考 — 快速响应
