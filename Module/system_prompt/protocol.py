@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,9 @@ class PromptSection(ABC):
     name: str = ""
     version: str = "0.0.0"
     description: str = ""
+
+    #: 本 section 支持的「render 期临时覆盖」键集合。默认空 = 不接受任何覆盖。
+    render_override_keys: frozenset[str] = frozenset()
 
     @abstractmethod
     async def render(self) -> str:
@@ -63,9 +67,45 @@ class PromptSection(ABC):
 
         子类覆盖以接收需要的参数（如 user_name、mood 等）。
 
+        ⚠️ 各子类实现是 `kwargs.get(key, default)` 语义——**缺键 = 复位成默认值**。
+        故本方法只接受「一次完整的 per-request 上下文」的广播；**预算降级之类的
+        部分键试探不得走这里**（见 `override_for_render` 与
+        `SystemPromptManager.render` 的 render-local 不变式）。
+
         Args:
             **kwargs: 上下文键值对。
         """
+
+    def override_for_render(self, key: str, value: Any) -> Callable[[], None] | None:
+        """应用一个**仅在本轮 render 内有效**的覆盖，返回恢复原值的回调。
+
+        ## 为什么存在（Issue A，2026-09-16）
+
+        `SystemPromptManager.render(budget_tokens=…)` 的截断梯子需要在不污染
+        per-request 上下文的前提下试探「记忆条数降到 N 能不能装下」。它曾经走
+        `set_context(memory_limit=N)`——而那是**广播**：打到全部 section，且每个
+        section 的实现都是 `kwargs.get(key, default)`（缺键 = 复位默认值）。只带
+        `memory_limit` 的一次广播因此把整片 per-request 上下文清掉（实测 8 个
+        section / 12 个字段：user_name、speaking_style_c6、tts_provider、
+        stt_emotion、mood …），把「永不丢」的保护节清成空壳，并让记忆上限永久粘在
+        0（此后每一轮都不再检索 C4）。回归守卫见
+        `Module/system_prompt/tests/test_render_local_budget.py`。
+
+        ## 为什么默认「什么都不接受」
+
+        默认返回 None（不接受任何覆盖）是 **fail-safe**：覆盖是 opt-in 的显式契约，
+        未参与该契约的 section 永远不会被一个它不认识的 key 改到任何字段。反过来
+        （默认把 key 转发给 `set_context`）等于把「缺键 = 复位」的隐患换个入口重演。
+
+        Args:
+            key: 覆盖键（section 需在 `render_override_keys` 里显式声明支持）。
+            value: 覆盖值。
+
+        Returns:
+            恢复回调（调用即还原为本轮 render 之前的值）；本 section 不支持该 key
+            时返回 None。
+        """
+        return None
 
 
 class StaticSection(PromptSection):

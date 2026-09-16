@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 from Module.system_prompt.protocol import PromptSection
 
@@ -65,6 +65,18 @@ class SystemPromptManager:
         为什么先减记忆条数而不是直接丢整节：C4 是**弹性最大**的一块（LTM 检索结果，
         条目之间可独立取舍），而整节丢会让"她完全失忆"，减条数只是"少记起几件事"。
 
+        ## render-local 不变式（Issue A，2026-09-16）
+
+        **一次 render 的预算降级只能影响本次 render，不得永久修改下一次 render 的
+        prompt 上下文。** 梯子试探"记忆条数降到 N"时走 `PromptSection.override_for_render`
+        （opt-in：只有显式声明 `render_override_keys` 的 section 才会被覆盖），并在
+        `finally` 里**逆序**恢复——section 的 `render()` 抛异常也不会把状态漏出去。
+        **本方法不得调用 `self.set_context`**：它是广播，且各 section 是"缺键 = 复位
+        默认值"语义，一次只带 `memory_limit` 的广播会把整片 per-request 上下文清空
+        （实测 8 个 section / 12 个字段），把"永不丢"的保护节清成空壳，并让记忆上限
+        永久粘在 0（此后每轮都不再检索 C4）。回归守卫见
+        `Module/system_prompt/tests/test_render_local_budget.py`。
+
         Args:
             budget_tokens: system prompt 的 token 预算；None = 不设预算（预览/测试）。
 
@@ -89,20 +101,37 @@ class SystemPromptManager:
         if total <= budget_tokens:
             return _joined(rendered)
 
-        # ① C4 记忆逐条截：从 5 条起按 3/2/1/0 递减（0 = 该节渲染为空）
+        # ① C4 记忆逐条截：从 5 条起按 3/2/1/0 递减（0 = 该节渲染为空）。
+        #    覆盖是 render-local 的：无论正常返回还是抛异常，finally 都恢复原值。
         for limit in (3, 2, 1, 0):
-            self.set_context(memory_limit=limit)
-            retry: list[tuple[str, str]] = []
-            for section in self._sections:
-                result = await section.render()
-                if result:
-                    retry.append((section.name, result))
+            restores = self._apply_render_overrides({"memory_limit": limit})
+            try:
+                retry: list[tuple[str, str]] = []
+                for section in self._sections:
+                    result = await section.render()
+                    if result:
+                        retry.append((section.name, result))
+            finally:
+                self._restore_overrides(restores)
             rendered = retry
             total = estimate_tokens(_joined(rendered))
             if total <= budget_tokens:
-                logger.info(
-                    "system prompt 超预算 → 记忆条数降为 %d 后满足（估算 %d / 预算 %d）",
-                    limit, total, budget_tokens)
+                memory_text = next((text for name, text in rendered if name == "Memory"), "")
+                if limit == 0:
+                    logger.info(
+                        "system prompt 超预算 → C4 记忆节按预算整节省略（本轮上限 0）后满足"
+                        "（估算 %d / 预算 %d）", total, budget_tokens)
+                elif memory_text:
+                    logger.info(
+                        "system prompt 超预算 → C4 记忆条数上限降为 %d 后满足（估算 %d / 预算 %d）",
+                        limit, total, budget_tokens)
+                else:
+                    # 记忆节为空 ≠ 上限降到 0：可能是 LTM 检索无结果 / 检索失败 / 本轮没有
+                    # 检索输入。如实报出，不把"本来就没有记忆可注入"记成"我们降到了 N"。
+                    logger.info(
+                        "system prompt 超预算 → C4 记忆上限设为 %d 后满足，但该节本轮为空"
+                        "（无检索结果或无检索输入；估算 %d / 预算 %d）",
+                        limit, total, budget_tokens)
                 return _joined(rendered)
 
         # ② 仍超预算：按可丢顺序整节丢弃（保护节绝不丢）
@@ -116,7 +145,7 @@ class SystemPromptManager:
             if total <= budget_tokens:
                 break
         logger.warning(
-            "system prompt 超预算：丢弃 %s（记忆条数已降至 0）后估算 %d / 预算 %d",
+            "system prompt 超预算：丢弃 %s（C4 记忆本轮按上限 0 渲染）后估算 %d / 预算 %d",
             dropped or "无可丢节", total, budget_tokens)
         if total > budget_tokens:
             # 保护节自己就超预算——不静默截断身份/格式契约，如实报出
@@ -126,8 +155,45 @@ class SystemPromptManager:
                 "/".join(_PROTECTED_SECTIONS), total, budget_tokens)
         return _joined(rendered)
 
+    def _apply_render_overrides(self, overrides: dict[str, Any]) -> list[Callable[[], None]]:
+        """把 render 期临时覆盖应用到**声明支持它**的 section，收集恢复回调。
+
+        只打给 `render_override_keys` 里显式声明该 key 的 section——未声明的 section
+        一个字段都不会被碰（这正是它相对 `set_context` 广播的意义）。
+
+        Args:
+            overrides: {key: value} 覆盖项。
+
+        Returns:
+            恢复回调列表（按应用顺序）；调用方须在 `finally` 里经 `_restore_overrides` 恢复。
+        """
+        restores: list[Callable[[], None]] = []
+        for section in self._sections:
+            for key, value in overrides.items():
+                if key not in section.render_override_keys:
+                    continue
+                restore = section.override_for_render(key, value)
+                if restore is not None:
+                    restores.append(restore)
+        return restores
+
+    @staticmethod
+    def _restore_overrides(restores: Sequence[Callable[[], None]]) -> None:
+        """按**逆序**执行恢复回调（后应用的覆盖先恢复），使嵌套覆盖也能正确还原。
+
+        Args:
+            restores: `_apply_render_overrides` 返回的回调序列。
+        """
+        for restore in reversed(list(restores)):
+            restore()
+
     def set_context(self, **kwargs: Any) -> None:
         """透传 per-request 上下文给所有 section。
+
+        ⚠️ **广播语义**：每个 section 的实现是 `kwargs.get(key, default)`——缺键即
+        复位为默认值。故本方法只接受"一次完整的 per-request 上下文"（消费方见
+        `core/prompt/prompt_assembler.py`）；**预算降级不得走这里**（部分键会清掉
+        其余字段），见 `render` 的 render-local 不变式。
 
         Args:
             **kwargs: 上下文键值对（如 user_name、mood 等）。
