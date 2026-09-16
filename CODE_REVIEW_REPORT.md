@@ -1972,6 +1972,64 @@ ollama / gpt-sovits 的本地 `base_url`），由 DNS 层与出站客户端逐�
 - workflow_engine 384 passed；全量 5668 passed / 17 skipped / 1 xfailed / 0 failed；
   `check-contract` / `check-arch` / `check-timeouts` / `check-types` 全绿
 
+### §0.4.30 收尾终态：本轮的交付、验收与「真·剩余」清单（2026-09-16）
+
+#### (a) 交付（对应本轮目标的三部分）
+
+| 目标部分 | 交付 | 证据 |
+|---|---|---|
+| (1) 机械重核「从未排期」条目群 | **§0.4.18 真·剩余表** | 5 个只读审计覆盖 46 条（禁改仓库/禁跑测试），每条给**当前** `file:line`；裁定词表固定、「已修」必须双证（守卫测试或修复提交，缺守卫降级）；主 Agent 抽验 6 组守卫（31 passed）并亲核 `#14c`/`#21c`/`S2-H3`/`S2-H4`，另裁决审计间冲突 1 例 |
+| (2) `#46` 三条边角 | 行 13 `d17cc288`、行 7 `372b953a`、行 6 `3c0104d9` | `#46` 十四行表**全部收口** |
+| (3) 处置新暴露的高价值项 | 档 1 **5/5**、档 2 **5/5 + 2 条残余**、档 3 **12/12**、档 4 **3/7**（其余需 owner）；另修 `DAGNode.max_duration_s` 生产端与 3 条审计新发现 | 见 §0.4.19–§0.4.29；共 **34 个提交**，每条都带注入反证 |
+
+**本轮里最值钱的两条**（都不是"照单修"，而是重核挖出来的）：
+- **`DAGNode.max_duration_s` 全仓零写入** ⇒ S2-D4④ 那个"节点级超时执行点"**从未生效**
+  （§0.4.29：补 prompt + parser（fail-closed 校验）+ 两条路径对称，`check-contract`
+  当场报陈旧登记逼着同步）；
+- **`#14c` 一次网络抖动 = 角色域 503 到进程重启**（粘性 `_connected` 无复位点、观测面全盲、
+  零守卫）⇒ 改成"标志 + 后端句柄"判据，每次操作自愈。
+
+#### (b) 验收（本机，收尾时实测）
+
+- 全量 `pytest -q -n 8 --dist loadfile` → **5669 passed / 17 skipped / 1 xfailed / 0 failed**（72.0s）
+- **13 道门禁全绿**：lint / pyright / check-types / check-compose / check-env-lock /
+  check-arch / check-timeouts / check-contract / check-debug-auth / check-secrets /
+  check-test-sets / check-ci-isolation（+ `check_error_codes` 由 check-types 覆盖）
+- 本轮新增/收紧用例 **~90 条**，每条修复都配**注入反证**（含 3 次"修过头"的反向对照与
+  1 次门禁级反证）
+- **38 个提交待 push**（`origin/main` 落后本地 38）
+
+#### (c) 「真·剩余」：**全部需要 owner 决策或运维动作**（不需决策的实现项已清空）
+
+按"要你做什么"分三类，每条附**我的建议**与**不做的后果**：
+
+**C1 · 一句话就能解锁的语义决策（5 条）**
+
+| # | 决策点 | 我的建议 | 不做的后果 |
+|---|---|---|---|
+| 1 | **决策 #8 的适用范围**：owner 已裁定「一律 fail-closed（503）」，但落档去向只覆盖 `CharacterVersionRepository` 三条路径 | 按**字面**执行：三个仓储（`MessageRepository` 8 个读方法 / `SessionRepository` / `GenerationRepository`）统一 fail-closed，并把 `_ASYMMETRIC_JUSTIFIED` 清空 | 三个仓储的读路径继续"离线=空结果"，而"空历史"与"读不到"仍无法区分（`_ASYMMETRIC_JUSTIFIED` 的理由栏持续引用一个**已做出**的决定） |
+| 2 | `S2-H6`：`send_json` 定向投递失败语义 | 给**定向投递**加 `raise_on_error`（广播保持吞异常让慢客户端不拖累全局） | 桌面工具调用白等满 120s 而非立即"桌面不可用"；`bridge` 的快速回退分支仍是死代码 |
+| 3 | `S2-H3`：provider 能力门控放哪 | `providers.yaml` 加 `supports_thinking`（与既有 `supports_prefix`/`supports_multimodal` 同处） | 严格 OpenAI 兼容 provider 上 100% 回合失败，而日志只显示 `GENERATION_PROVIDER_UNAVAILABLE`（误诊成本最高的一条） |
+| 4 | `S2-H9`：prompt 超预算的截断策略 | 截**历史**（保 system + 近轮），预算按模型上下文留 25% 余量 | prompt 无上界：长会话最终以 provider 报错收场，且**没有任何观测面**提示"上下文快满了" |
+| 5 | `S2-H8` + `#21b`：贴图/附件给模型的替代文本；会话删除的级联范围 | ①贴图/附件注入占位文本（模型至少知道"用户发了东西"）；②全级联（`token_usage`/`generations`/`character_versions`）+ 守卫 | ①用户发的贴图模型**完全看不到**（v2 路径真实可达）；②删除会话后孤儿行永久残留（`delete_by_session` 早已写好却零生产调用点，`character_versions` 连删除方法都没有） |
+
+**C2 · 需要产品判断的两条（不影响正确性）**
+
+| # | 决策点 | 我的建议 |
+|---|---|---|
+| 6 | `S3-G7`：流式 `TEXT_DELTA` 粒度（无空格中文行整行才出首个 delta） | 保持现状（它是有意设计的一半）+ **在 spec 里补披露** + 加一条"首个 delta 不晚于首个边界"的守卫；改粗粒度会牵动 TTS 与 v2 segment 的时序，收益不明 |
+| 7 | 23 个预留枚举值域中的 4 个限制类码 + 4 个 DBT 节点类型 + 3 个 Experience 状态 | 明确"保留值域"或"删值域"——它们代表**未实现的产品能力**，不是"偶尔不产"（与 #45 的"改文案"是同一条线的另一半） |
+
+**C3 · 只有你能做的运维动作（2 件）**
+
+| # | 事项 | 为什么只能你做 |
+|---|---|---|
+| 8 | **CR-01**：轮换泄露的 DeepSeek key + Milvus 密码，然后清 git 历史 | 凭据在你的账号；`make check-secrets-history` 在完成前**预期为红**（须全量 clone 跑） |
+| 9 | **`audit` 接线**：升级 env 的 pip（现为 26.1.2，命中 `PYSEC-2026-3721`）→ `make lock-env` → 接进 CI | 会改动你的 conda 环境与 `environment.lock.yml`；**不要用 `--ignore-vuln` 消除红色**（那是把安全门禁挖空）。当前它按 §0.4.17 登记在 `_GATES_NOT_IN_CI`，由守卫盯着 |
+
+**已知风险（无决策可做，只能观察）**：间歇性 xdist worker 死亡（8 轮 soak 复现 1 次、
+那轮被并发改动污染，可复现性未建立）——**不宣称修好**；下一步只能是干净环境下的定向 soak。
+
 ---
 
 # Executive Summary
