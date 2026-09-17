@@ -47,14 +47,20 @@ _ID_INDEX = "_id_"
 #: 索引**选项**声明（S2-B1）：`{collection: {index_name: {option: value}}}`。
 #: 只登记"选项有意义"的索引——不在表里的按"不比选项"处理（默认非唯一、无 TTL）。
 #:
-#: ⚠️ **本表目前没有机器守卫**（勿照抄 `EXPECTED_INDEXES` 的说法）。`EXPECTED_INDEXES`
-#: 有 `test_schema_drift.py::_derive_expected_from_code` 的 AST 反向校验；那个校验
-#: 只提取索引**名字**，从不看 `ensure_index` 的 kwargs，也从不读本表 —— 实测把本表
-#: 整个换成 `{}` 或垃圾，`TestExpectedIndexesPinnedToCode` 仍全绿。
-#: 后果：键写错（如曾把 `idempotency` 误写成从未存在的 `idempotency_claims`）会让
-#: 该集合**一个选项都不比**，退化成"扫了、没比、报健康"（B3-CB-2）。
-#: 现有守卫只有一条：`TestIndexOptionConflicts::test_idempotency_ttl_option_is_gauged`
-#: 针对 `idempotency` 的**定点**回归；表级的 AST 守卫仍待补（见 todo.md follow-up N-4）。
+#: **机器守卫**（N-4，Batch 3.6）：`core/storage/tests/test_schema_drift.py::
+#: TestExpectedIndexOptionsPinnedToCode`。判据是 `core/storage/*.py` 里真实
+#: `ensure_index(...)` 调用的 **AST**——不是第二张手写表（两张手写表会**共同漂移**：
+#: 改名时两边一起改错，互相印证为绿）：
+#:   ① **集合键与索引名必须真实存在**。这两级都是运行期查找键（先按集合名取该集合声明、
+#:      再按索引名取该索引声明），任一层写错都会让该集合**一个选项都不比**：
+#:      `check_schema_drift()` 照常跑完报健康，而门禁实际已经失效（B3-CB-2：`idempotency`
+#:      曾误写成从未存在的 `idempotency_claims`）。
+#:   ② **代码里声明了选项的索引必须已登记**。整条漏登记与键写错的运行期后果完全相同
+#:      （都是 `expected.get(collection, {})` 取不到），只钉拼写的守卫抓不住它。
+#:   ③ 已知未登记项在测试里**显式记账**（`_KNOWN_UNREGISTERED_OPTION_INDEXES`，每条含
+#:      理由与解除条件）；补齐后不删条目即报"陈旧登记"。
+#: 运行期定点回归仍由 `TestIndexOptionConflicts::test_idempotency_ttl_option_is_gauged`
+#: 承担（构造冲突 → 断言被报出来）；上述守卫只静态比对声明，不重复 runtime 漂移逻辑。
 EXPECTED_INDEX_OPTIONS: dict[str, dict[str, dict[str, object]]] = {
     "attachments": {"attachment_id_1": {"unique": True}},
     "background_task_results": {
@@ -70,7 +76,9 @@ EXPECTED_INDEX_OPTIONS: dict[str, dict[str, dict[str, object]]] = {
     # 键必须是**真实集合名** `idempotency`（`idempotency_repo.COLLECTION`）。曾误写成
     # 从未存在的 `idempotency_claims`：`_option_mismatches` 按集合名取值，键不存在即
     # 该集合**一个选项都不比**，而它的索引名仍在 EXPECTED_INDEXES 里被扫描——退化成
-    # "扫了、没比、报健康"（B3-CB-2）。回归守卫见
+    # "扫了、没比、报健康"（B3-CB-2）。回归守卫：静态层面由
+    # `TestExpectedIndexOptionsPinnedToCode` 钉住（键/索引名必须来自真实声明），
+    # 运行期定点回归见
     # `test_schema_drift.py::TestIndexOptionConflicts::test_idempotency_ttl_option_is_gauged`。
     "idempotency": {"expires_at_1": {"expireAfterSeconds": 0}},
     "user_identity_profiles": {"user_id_1": {"unique": True}},

@@ -1,11 +1,14 @@
 """索引 schema 漂移自检测试。
 
-两条主线：
+三条主线：
 
 1. **派生表不漂移**（`TestExpectedIndexesPinnedToCode`）：`EXPECTED_INDEXES` 是从各仓储
    `connect()` 的 `ensure_index` 调用静态提取的**派生缓存**——本测试用 AST 重新提取并
    逐项断言一致。新增/修改索引却忘记同步该表时，这里会失败并指出差异。
-2. **漂移判定语义**（`TestCheckSchemaDrift`）：孤儿索引/缺失索引/集合缺席三态区分，
+2. **选项声明表只引用真实实体**（`TestExpectedIndexOptionsPinnedToCode`，N-4）：
+   `EXPECTED_INDEX_OPTIONS` 的**集合键与索引名**都必须能在 `ensure_index` 声明里找到，
+   且代码声明了选项的索引必须已登记——守卫的判据是**生产代码的 AST**，不是第二张手写表。
+3. **漂移判定语义**（`TestCheckSchemaDrift`）：孤儿索引/缺失索引/集合缺席三态区分，
    以及「未扫描 ≠ 健康」。
 """
 
@@ -28,6 +31,73 @@ from core.storage.schema_drift import (
 _STORAGE_DIR = Path(__file__).resolve().parent.parent
 _ID_INDEX = "_id_"
 
+#: 会影响"选项是否被比对"的 ensure_index kwargs（与 `_option_mismatches` 比对的选项同集）。
+_OPTION_KWARGS = ("unique", "expireAfterSeconds")
+
+#: `_static_option_value` 的"无法静态判定"哨兵（非常量表达式，如 `unique=desired_unique`）。
+_DYNAMIC = object()
+
+
+def _storage_source_paths() -> list[Path]:
+    """`core/storage/` 下的**生产**模块（排除测试与 `schema_drift.py` 自身）。"""
+    return [
+        path for path in sorted(_STORAGE_DIR.rglob("*.py"))
+        if "tests" not in str(path)
+        and not path.name.startswith("test_")
+        and path.name != "schema_drift.py"
+    ]
+
+
+def _module_constants(tree: ast.Module) -> dict[str, object]:
+    """模块级字面量常量（`X = "..."` 与 `X: str = "..."` 都收）。"""
+    consts: dict[str, object] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            value, targets = node.value.value, node.targets
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.value, ast.Constant):
+            value, targets = node.value.value, [node.target]
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                consts[target.id] = value
+    return consts
+
+
+def _ensure_index_collection(node: ast.Call, consts: dict[str, object]) -> str | None:
+    """从 `ensure_index(collection, keys, ...)` 提取集合名（字面量或模块级常量）。"""
+    if not node.args:
+        return None
+    first = node.args[0]
+    collection = (
+        consts.get(first.id) if isinstance(first, ast.Name)
+        else first.value if isinstance(first, ast.Constant)
+        else None
+    )
+    return collection if isinstance(collection, str) else None
+
+
+def _index_name_from_keys(keys: list[tuple[str, int]]) -> str:
+    """`[(field, direction), ...]` → Mongo 自动索引名（`field_1_other_-1`）。"""
+    return "_".join(f"{field}_{direction}" for field, direction in keys)
+
+
+def _static_option_value(kw: ast.keyword) -> object:
+    """把一个选项 kwarg 折叠成静态值；无法静态判定 → `_DYNAMIC`。
+
+    `expireAfterSeconds=<NAME>` 折叠成常量**名字符串**——与 `EXPECTED_INDEX_OPTIONS`
+    的登记约定一致（该表只比"有没有 TTL"，不比秒数）。
+    """
+    try:
+        value = ast.literal_eval(kw.value)
+    except Exception:
+        if kw.arg == "expireAfterSeconds" and isinstance(kw.value, ast.Name):
+            return kw.value.id
+        return _DYNAMIC
+    if kw.arg == "unique" and not isinstance(value, bool):
+        return _DYNAMIC
+    return value
+
 
 def _derive_expected_from_code() -> dict[str, set[str]]:
     """AST 解析 `core/storage/*.py`，提取 ensure_index 声明（测试用独立实现）。
@@ -41,18 +111,9 @@ def _derive_expected_from_code() -> dict[str, set[str]]:
     derived: dict[str, set[str]] = {}
     unresolved: list[str] = []
 
-    for path in sorted(_STORAGE_DIR.rglob("*.py")):
-        rel = str(path)
-        if "tests" in rel or path.name.startswith("test_") or path.name == "schema_drift.py":
-            continue
+    for path in _storage_source_paths():
         tree = ast.parse(path.read_text(encoding="utf-8"))
-
-        consts: dict[str, object] = {}
-        for node in tree.body:
-            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        consts[target.id] = node.value.value
+        consts = _module_constants(tree)
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -62,12 +123,7 @@ def _derive_expected_from_code() -> dict[str, set[str]]:
                 continue
             if not node.args:
                 continue
-            first = node.args[0]
-            collection = (
-                consts.get(first.id) if isinstance(first, ast.Name)
-                else first.value if isinstance(first, ast.Constant)
-                else None
-            )
+            collection = _ensure_index_collection(node, consts)
             if not isinstance(collection, str):
                 continue
             try:
@@ -75,14 +131,132 @@ def _derive_expected_from_code() -> dict[str, set[str]]:
             except Exception:
                 unresolved.append(f"{path.name}: {ast.unparse(node)[:80]}")
                 continue
-            name = "_".join(f"{field}_{direction}" for field, direction in keys)
-            derived.setdefault(collection, set()).add(name)
+            derived.setdefault(collection, set()).add(_index_name_from_keys(keys))
 
     assert not unresolved, (
         "存在无法静态解析的 ensure_index 调用——请改为字面量键，或同步扩展解析器：\n  "
         + "\n  ".join(unresolved)
     )
     return derived
+
+
+def _derive_option_table_from_code() -> tuple[
+    dict[str, dict[str, object]], list[str], list[str],
+]:
+    """AST 提取**带选项**的 ensure_index 声明（`EXPECTED_INDEX_OPTIONS` 的判据来源）。
+
+    与 `_derive_expected_from_code` 的区别：那个只看索引**名字**，本函数看 kwargs。
+    `EXPECTED_INDEX_OPTIONS` 的职责是 `{集合: {索引名: {选项: 值}}}`（见该表 docstring），
+    故本函数按同一形状派生——判据是**生产代码**，不手写第二张静态表。
+
+    Returns:
+        (declared, dynamic, unresolved)
+
+        - `declared`：`{collection: {index_name: {option: value} | _DYNAMIC}}`。
+          值为 `_DYNAMIC` 表示该索引确实带选项、但选项值是非常量表达式
+          （如 `character_version_repo` 的 `unique=desired_unique`：唯一性由重复探测
+          动态决定）。这类**算合法引用**（实体真实存在），但**不参与覆盖断言**
+          （静态判不了值，就不该假装判得了）。
+        - `dynamic`：`["collection.index: unique=<expr>"]`，供"解析器是否过度折叠"自检。
+        - `unresolved`：调用形态无法静态解析（集合名非常量）。非空即**拒答**——
+          静默跳过等于给守卫开后门（"判据无从成立"型假绿）。
+    """
+    declared: dict[str, dict[str, object]] = {}
+    dynamic: list[str] = []
+    unresolved: list[str] = []
+
+    for path in _storage_source_paths():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        consts = _module_constants(tree)
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "ensure_index"):
+                continue
+            option_kwargs = [kw for kw in node.keywords if kw.arg in _OPTION_KWARGS]
+            if not option_kwargs:
+                continue
+            collection = _ensure_index_collection(node, consts)
+            try:
+                keys = ast.literal_eval(node.args[1])
+            except Exception:
+                keys = None
+            if not isinstance(collection, str) or keys is None:
+                unresolved.append(f"{path.name}: {ast.unparse(node)[:90]}")
+                continue
+            name = _index_name_from_keys(keys)
+            opts: dict[str, object] = {}
+            unresolved_values = False
+            for kw in option_kwargs:
+                value = _static_option_value(kw)
+                if value is _DYNAMIC:
+                    dynamic.append(f"{collection}.{name}: {kw.arg}={ast.unparse(kw.value)}")
+                    unresolved_values = True
+                    continue
+                if kw.arg == "unique" and value is False:
+                    continue  # unique=False 就是默认语义，不登记
+                opts[str(kw.arg)] = value
+            if opts:
+                declared.setdefault(collection, {})[name] = opts
+            elif unresolved_values:
+                declared.setdefault(collection, {})[name] = _DYNAMIC
+
+    return declared, dynamic, unresolved
+
+
+def _option_table_reference_errors(
+    options: dict[str, dict[str, dict[str, object]]],
+    declared: dict[str, dict[str, object]],
+) -> list[str]:
+    """返回 `options` 里**指向不存在 schema 实体**的条目（空列表 = 全部指向真实集合/索引）。
+
+    判据是**生产代码**（`ensure_index` 声明的 AST），不是另一张静态表：
+    两张手写表会**共同漂移**——同名改名、两边一起改错，互相印证为绿。
+    """
+    errors: list[str] = []
+    for collection, indexes in sorted(options.items()):
+        if collection not in declared:
+            errors.append(
+                f"集合 {collection!r} 在任何 ensure_index 声明中都不存在（疑似拼写错误）")
+            continue
+        for name in sorted(indexes):
+            if name not in declared[collection]:
+                errors.append(
+                    f"索引 {collection}.{name} 不存在（该集合声明的带选项索引："
+                    f"{', '.join(sorted(declared[collection])) or '（无）'}）")
+    return errors
+
+
+def _option_table_coverage_errors(
+    options: dict[str, dict[str, dict[str, object]]],
+    declared: dict[str, dict[str, object]],
+    known_unregistered: dict[str, dict[str, str]],
+) -> list[str]:
+    """返回**代码声明了选项、但表未登记**的索引（空列表 = 覆盖完整）。
+
+    为什么这条也在守卫范围内：键写错与**整条漏登记**在运行期的后果完全一样——
+    `_option_mismatches` 用 `expected.get(collection, {})` 取值，两者都让该集合
+    "扫了、没比、报健康"。只钉拼写的守卫抓不住后者（把 `idempotency` 整条删掉即复现）。
+
+    `known_unregistered` 是**显式登记**的已知缺口（每条含理由与解除条件）：登记缺口
+    而非把它们悄悄排除，是因为"补进表"会扩大生产漂移自检的比对范围（改产品语义），
+    超出本批范围。补齐后必须删除对应条目——陈旧登记同样报红。
+    """
+    errors: list[str] = []
+    for collection, indexes in sorted(declared.items()):
+        for name in sorted(indexes):
+            if declared[collection][name] is _DYNAMIC:
+                continue  # 选项值动态 ⇒ 静态判不了，不要求登记（登记了也不算错）
+            if name in options.get(collection, {}):
+                continue
+            if name in known_unregistered.get(collection, {}):
+                continue
+            errors.append(
+                f"代码声明了 {collection}.{name} 的索引选项，但 EXPECTED_INDEX_OPTIONS "
+                "未登记——该索引的选项不会被比对")
+    return errors
 
 
 @pytest.mark.unit
@@ -114,6 +288,214 @@ class TestExpectedIndexesPinnedToCode:
         assert len(EXPECTED_INDEXES) == 13
         # 28 = 26（#6 前）+ background_task_results.{task_id_1, ttl_expires_at_1}
         assert total == 28, f"期望 28 个索引，实际 {total}"
+
+
+#: 代码声明了索引**选项**、但 `EXPECTED_INDEX_OPTIONS` 尚未登记的索引（N-15 记账）。
+#:
+#: 登记为**已知缺口**而不是补进 `EXPECTED_INDEX_OPTIONS`，是因为补表会扩大生产漂移
+#: 自检的比对范围（多比 4 条选项 = 改变产品语义），超出 N-4「补表级守卫」的范围。
+#: 每条都要写解除条件；补齐后**必须**删除对应条目——否则
+#: `test_unregistered_option_ledger_has_no_stale_entries` 报陈旧登记。
+_KNOWN_UNREGISTERED_OPTION_INDEXES: dict[str, dict[str, str]] = {
+    "character_instances": {
+        "owner_user_id_1_character_id_1_canonical_1":
+            "S3-20 新增的 partial 唯一索引（unique=True + partialFilterExpression）。"
+            "解除条件：确认线上该索引确为 unique 后登记进 EXPECTED_INDEX_OPTIONS",
+    },
+    "desktop_calls": {
+        "call_id_1":
+            "调用方一直去重（call_id 语义唯一），但选项表自 S2-B1 起就没登记它。"
+            "解除条件：登记 call_id_1 的 unique 进 EXPECTED_INDEX_OPTIONS",
+    },
+    "generations": {
+        "generation_id_1":
+            "同上：generation_id 语义唯一，选项表从未登记。"
+            "解除条件：登记 generation_id_1 的 unique 进 EXPECTED_INDEX_OPTIONS",
+    },
+    "idempotency": {
+        "conversation_id_1_client_request_id_1":
+            "同上：该唯一索引是幂等键的并发防线，选项表只登记了 expires_at_1 的 TTL。"
+            "解除条件：登记该索引的 unique 进 EXPECTED_INDEX_OPTIONS",
+    },
+}
+
+
+@pytest.mark.unit
+class TestExpectedIndexOptionsPinnedToCode:
+    """`EXPECTED_INDEX_OPTIONS` 只许引用真实存在的 schema 实体（N-4 表级结构守卫）。
+
+    ## 守什么
+
+    该表的职责是 `{集合: {索引名: 选项}}`——`_option_mismatches` 用**集合名**取该集合的
+    声明、再用**索引名**取该索引的声明。所以只要这两级键有一个不存在，对应的选项就
+    **一个都不比**：`check_schema_drift()` 照常"跑完、报健康"，而实际门禁已经失效
+    （B3-CB-2：键误写成从未存在的 `idempotency_claims`）。本类把两个层级都钉在
+    **生产代码的 AST** 上。
+
+    ## 为什么不是"第二张静态表 vs 第一张静态表"
+
+    判据来自 `_derive_option_table_from_code()`：解析 `core/storage/*.py` 里真实的
+    `ensure_index(...)` 调用。两张手写表会**共同漂移**（改名时两边一起改错，互相
+    印证为绿）；AST 判据不会——它读的是仓储 `connect()` 真正要建的东西。
+
+    ## 与既有守卫的分工
+
+    `TestIndexOptionConflicts::test_idempotency_ttl_option_is_gauged` 是**运行期**定点
+    回归（构造冲突 → 断言它被报出来）；本类只守**静态声明表没有指向不存在的实体**，
+    不重复 runtime 漂移逻辑。
+    """
+
+    def test_expected_index_options_reference_known_collections(self):
+        """表里的每个集合键都必须是真实 `ensure_index` 声明的集合（N-4 主不变量）。"""
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, _dynamic, unresolved = _derive_option_table_from_code()
+        assert not unresolved, (
+            "存在无法静态解析形态的 ensure_index 调用（集合名非常量）——拒答，"
+            "不假装守卫有效：\n  " + "\n  ".join(unresolved))
+
+        errors = _option_table_reference_errors(EXPECTED_INDEX_OPTIONS, derived)
+        assert not errors, (
+            "EXPECTED_INDEX_OPTIONS 指向了不存在的 schema 实体——这些条目在运行期"
+            "**一个选项都不会被比对**（扫了、没比、报健康）：\n  " + "\n  ".join(errors))
+
+    def test_expected_index_options_reference_known_index_names(self):
+        """集合对还不够：索引名写错时该索引的选项同样不会被比对。"""
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, _dynamic, _unresolved = _derive_option_table_from_code()
+        for collection, indexes in EXPECTED_INDEX_OPTIONS.items():
+            for name in indexes:
+                assert name in derived.get(collection, {}), (
+                    f"索引名 {collection}.{name} 不在该集合的 ensure_index 声明里——"
+                    f"实际声明：{sorted(derived.get(collection, {}))}")
+
+    def test_expected_index_options_cover_code_declared_options(self):
+        """反 vacuity：代码里**带选项**的索引必须已登记（漏登记 = 同一类假绿）。
+
+        键写错与整条漏登记在运行期后果完全一样（该集合一个选项都不比），只钉拼写的
+        守卫抓不住后者。已知未登记项见 `_KNOWN_UNREGISTERED_OPTION_INDEXES`。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, dynamic, _unresolved = _derive_option_table_from_code()
+        assert dynamic, (
+            "解析器把**所有**动态选项都折叠成了静态值——判据太宽，先检查解析器")
+        errors = _option_table_coverage_errors(
+            EXPECTED_INDEX_OPTIONS, derived, _KNOWN_UNREGISTERED_OPTION_INDEXES)
+        assert not errors, (
+            "代码声明了选项但 EXPECTED_INDEX_OPTIONS 未登记（扫了、没比、报健康）：\n  "
+            + "\n  ".join(errors))
+
+    def test_unregistered_option_ledger_has_no_stale_entries(self):
+        """已知缺口登记表不得陈旧：补进表之后必须删掉对应条目。"""
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, _dynamic, _unresolved = _derive_option_table_from_code()
+        stale: list[str] = []
+        for collection, entries in _KNOWN_UNREGISTERED_OPTION_INDEXES.items():
+            for name, reason in entries.items():
+                if name in EXPECTED_INDEX_OPTIONS.get(collection, {}):
+                    stale.append(f"{collection}.{name}（已登记进表，请删除本条目）")
+                elif name not in derived.get(collection, {}):
+                    stale.append(f"{collection}.{name}（代码里已无此带选项声明，请删除本条目）")
+                elif not reason.strip():
+                    stale.append(f"{collection}.{name}（缺理由/解除条件）")
+        assert not stale, "已知缺口登记表已陈旧：\n  " + "\n  ".join(stale)
+
+    # ── 判据灵敏度（fake-green 防护）：光"当前表绿"不构成守卫证据 ──────────────
+
+    def test_guard_flags_historical_typo_collection_key(self):
+        """变异 M4-1：键退回历史拼写 `idempotency_claims` → 必须被抓出来。
+
+        这条证明 B3-CB-2 的形态若重新出现，会被**自动**挡住（不需要人记得）。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, _dynamic, _unresolved = _derive_option_table_from_code()
+        mutated = {
+            ("idempotency_claims" if coll == "idempotency" else coll): idxs
+            for coll, idxs in EXPECTED_INDEX_OPTIONS.items()
+        }
+        errors = _option_table_reference_errors(mutated, derived)
+        assert any("idempotency_claims" in e for e in errors), (
+            f"历史拼写未被判据抓住：{errors}")
+
+    def test_guard_flags_arbitrary_unknown_collection_key(self):
+        """变异：任意不存在的集合键（不必是历史拼写）→ 必须红。
+
+        防"只针对 `idempotency_claims` 这一个字符串硬编码"的假守卫。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, _dynamic, _unresolved = _derive_option_table_from_code()
+        for bogus in ("definitely_not_a_collection", "idempotency_claims", "sessions_typo"):
+            mutated = dict(EXPECTED_INDEX_OPTIONS)
+            mutated[bogus] = {"whatever_1": {"unique": True}}
+            errors = _option_table_reference_errors(mutated, derived)
+            assert any(bogus in e for e in errors), f"{bogus} 未被判据抓住：{errors}"
+
+    def test_guard_flags_unknown_index_name(self):
+        """索引名写错（集合对但索引不存在）→ 必须红。"""
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, _dynamic, _unresolved = _derive_option_table_from_code()
+        mutated = dict(EXPECTED_INDEX_OPTIONS)
+        mutated["idempotency"] = {"expires_at_1_typo": {"expireAfterSeconds": 0}}
+        errors = _option_table_reference_errors(mutated, derived)
+        assert any("expires_at_1_typo" in e for e in errors), f"索引名错拼未被抓住：{errors}"
+
+    def test_guard_flags_deleted_and_emptied_table(self):
+        """删掉整条 / 清空全表 → 必须红（这两种形态复现**同一个**运行期缺陷）。
+
+        `_option_mismatches` 拿不到声明即不比选项——与键写错完全等价。缺了这条，
+        守卫只钉住了拼写，没钉住"门禁是否真的在比"。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, _dynamic, _unresolved = _derive_option_table_from_code()
+
+        deleted = {c: v for c, v in EXPECTED_INDEX_OPTIONS.items() if c != "idempotency"}
+        errors = _option_table_coverage_errors(
+            deleted, derived, _KNOWN_UNREGISTERED_OPTION_INDEXES)
+        assert any("idempotency" in e for e in errors), f"整条删除未被抓住：{errors}"
+
+        errors = _option_table_coverage_errors({}, derived, _KNOWN_UNREGISTERED_OPTION_INDEXES)
+        assert errors, "空表被判为合规——守卫退化成 vacuous"
+
+    def test_parser_survives_reformatting_and_reordering(self):
+        """AST 判据不得依赖空格/换行/参数顺序（格式化后仍稳定）。
+
+        判据若是"抄一份同名静态表"，格式化当然也不影响它——但那种守卫会共同漂移。
+        这条只证明 AST 路线对格式**免疫**（区别于行号/正则匹配）。
+        """
+        pretty = '''
+COLLECTION = "probe"
+
+async def connect(db):
+    await db.ensure_index(
+        COLLECTION,
+        [
+            ("alpha", 1),
+            ("beta", -1),
+        ],
+        expireAfterSeconds=PROBE_TTL_SECONDS,
+    )
+    await db.ensure_index(COLLECTION, [("gamma", 1)], unique=True)
+'''
+        tree = ast.parse(pretty)
+        consts = _module_constants(tree)
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "ensure_index"
+        ]
+        assert len(calls) == 2
+        assert _ensure_index_collection(calls[0], consts) == "probe"
+        assert _index_name_from_keys(ast.literal_eval(calls[0].args[1])) == "alpha_1_beta_-1"
+        assert _static_option_value(calls[0].keywords[0]) == "PROBE_TTL_SECONDS"
+        assert _static_option_value(calls[1].keywords[0]) is True
 
 
 @pytest.mark.unit
