@@ -1100,8 +1100,9 @@ class TestEndpoints:
         # P1-05：/ready 聚合 message/attachment repo 真实健康
         agent.message_repo.health_check = AsyncMock(return_value=True)
         agent.attachment_repo.health_check = AsyncMock(return_value=True)
-        # P0-3：用户身份权威存储纳入 chatReady 门禁
-        agent.user_identity_store.health_check = AsyncMock(return_value=True)
+        # P0-3 / N-1：用户身份可用性纳入 chatReady 门禁（判据是 `is_available`，
+        # 不是 repo ping）。真实 Agent 上它是布尔 property；stub 上显式声明。
+        agent.user_identity_store.is_available = True
         agent.tool_adapter.tool_names = ["t1", "t2"]
         agent.output = MagicMock()
         agent.bus = MagicMock()

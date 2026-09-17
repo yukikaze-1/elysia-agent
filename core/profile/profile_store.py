@@ -10,6 +10,23 @@ P0-3（fail-closed）：
   generation）一律 fail-closed 返回稳定公开错误；
 - `health_check()` 供数据库恢复协调器探测；Mongo 恢复后 `connect()` 重新装载权威
   档案并原子替换缓存（不覆盖 Mongo 中更高 revision 的文档）。
+
+N-11（failure truth 归属，Batch 4）：装载失败是**本 store 的事实**，不是 `connect()`
+调用方的日志行——`connect()` 仍按既有契约返回 None（调用链据此 fail-closed，不 raise
+到 `Agent.start()` 引起整体回滚），但失败原因由本对象持有（`last_error`，只读、进程内、
+**绝不进 HTTP**）。这样「当前身份可用吗」与「上一次为什么不可用」两个问题都有权威答主，
+而不是只有一行 warning。判定可用性的权威仍是 `is_available`——**没有**第二套 ready 标志。
+
+## 两个谓词回答两个不同问题（勿合并）
+
+| 谓词 | 问题 | 权威输入 |
+|---|---|---|
+| `is_available` | 依赖身份的产品路径**现在能不能服务**？ | `_cached is not None` 且 repo 已连接 |
+| `health_check()` | 权威库**现在通不通**（恢复协调器探针）？ | `repo.health_check()` 真实 ping（会重连） |
+
+「ping 通」**不**蕴含「身份已装载」：库里文档不合域模型时 repo 连得好好的，而
+`_cached` 恒为 None。故 `/ready` 的 identity 门禁必须读 `is_available`，读
+`health_check()` 会假绿（N-1）。
 """
 
 from __future__ import annotations
@@ -39,6 +56,9 @@ class UserIdentityStore:
         self._repo = repo
         self._cached: UserIdentity | None = None
         self._lock = threading.RLock()
+        # N-11：上一次失败装载的异常类型名（None = 无失败记录）。只存类型名——
+        # 完整消息可能含连接串/文件路径，而本属性虽是进程内诊断仍不放任扩散。
+        self._last_error: str | None = None
 
     # ---- 权威性判定 ----
 
@@ -49,10 +69,26 @@ class UserIdentityStore:
 
     @property
     def is_available(self) -> bool:
-        """权威身份是否可用。非权威模式（本地/单测）恒 True。"""
+        """权威身份是否**当前可用**（依赖身份的产品路径能否服务）。非权威模式恒 True。"""
         if self._repo is None:
             return True
         return self._cached is not None and self._repo.is_connected
+
+    @property
+    def last_error(self) -> str | None:
+        """最近一次**未被后续成功状态消解**的装载/读取失败的异常类型名；只读诊断。
+
+        语义（三条，写清楚是为了防止被当成第二套可用性判据）：
+        1. **不蕴含不可用**：本地模式 fallback 文件损坏后 bootstrap 成功，
+           `is_available` 为 True 而此处仍可能留有旧记录——两者回答不同问题，
+           故禁止写 `last_error is not None ⇔ not is_available`；
+        2. **会被消解**：成功装载（`connect()`）、成功 bootstrap（本地模式落盘）、
+           成功读回缓存文件（`get()`）都会清空它——失败历史不得把当前判定钉死；
+        3. **不出 HTTP**：`/ready` 只报布尔可用性，raw 异常/类型名不外泄
+           （Batch 4 §22/§50）。
+        """
+        with self._lock:
+            return self._last_error
 
     # ---- 生命周期 ----
 
@@ -61,6 +97,11 @@ class UserIdentityStore:
 
         权威模式装载失败**不**降级为本地 profile——返回 None 并清空缓存，业务侧
         据此 fail-closed。无 repo 时走本地 bootstrap。
+
+        N-11：失败**不** raise（调用方 `_start_persistence` / `_recover_dependency`
+        按 None 判定并保留降级进程；raise 会打穿到 `Agent.start()` 造成整体回滚），
+        但失败事实由本 store 持有——`is_available` False + `last_error` 可查，
+        成功装载时清空。
 
         Returns:
             装载到的权威身份；权威模式不可用时为 None。
@@ -78,12 +119,16 @@ class UserIdentityStore:
                 loaded = await repo.bootstrap_if_absent(seed)
             with self._lock:
                 self._cached = loaded
+                self._last_error = None
             return loaded
-        except Exception:
-            logger.warning(
+        except Exception as exc:
+            self._record_error(exc)
+            logger.error(
                 "用户身份权威装载失败——身份不可用（fail-closed，不伪造本地档案）",
                 exc_info=True)
             with self._lock:
+                # 不变量：不可用（_cached is None）与失败记录同一次加锁内成立，
+                # 不依赖调用方去读日志——日志可能被吞、被降级、被采样，状态不会。
                 self._cached = None
             return None
 
@@ -149,6 +194,10 @@ class UserIdentityStore:
                     return self._cached
             self._cached = UserIdentity(displayName=user_name, pronouns=LOCAL_DEFAULT_PRONOMS)
             self._persist(self._cached)
+            # 降级**成功**：新建身份已落盘（覆盖损坏缓存），服务可用 → 清空失败记录。
+            # 降级失败**没有**这条路（`_persist` 抛错会冒泡给调用方），故本地模式
+            # 不存在「报了成功其实不可用」的空档。
+            self._clear_error()
             return self._cached
 
     async def save(self, identity: UserIdentity) -> UserIdentity:
@@ -185,6 +234,20 @@ class UserIdentityStore:
 
     # ---- 内部 ----
 
+    def _record_error(self, exc: BaseException) -> None:
+        """记录一次失败装载/读取的**类型名**（调用方须已持锁；RLock 可重入）。
+
+        只留类型名：完整消息可能含连接串/路径，而 `last_error` 是进程内诊断，
+        不该成为 secret 的第二个落点（Batch 4 §22）。
+        """
+        with self._lock:
+            self._last_error = type(exc).__name__
+
+    def _clear_error(self) -> None:
+        """清空失败记录（调用方须已持锁；成功装载/成功 bootstrap 时调用）。"""
+        with self._lock:
+            self._last_error = None
+
     @staticmethod
     def _normalize_updates(updates: dict[str, object]) -> dict[str, object]:
         """白名单过滤 + initialized 只能置 true（C3 fix：未知字段跳过而非 setattr）。"""
@@ -217,14 +280,27 @@ class UserIdentityStore:
             return new
 
     def _load_from_file(self) -> UserIdentity | None:
+        """读本地 JSON 缓存文件；解析失败 → None（**刻意**不 raise，见下）。
+
+        这个 catch 是 **DEGRADATION_CATCH（load-bearing）**，不是 bug-masking：
+        两个调用方（`get()` / `bootstrap()`）都在无 repo 的本地模式下工作，
+        `bootstrap()` 失败后仍会产出合法内存身份并 `_persist` 覆盖损坏文件
+        ——删掉它会把本地 `GET /api/me` 变成 500，而那不是本批要修的语义。
+        N-11 只要求失败**留下可查状态**：故此处记录 `last_error`（可用性由
+        `bootstrap()` 的成功/失败决定，不是由"文件读没读到"决定）。
+        """
         if self._storage_path is None:
             return None
         try:
             data = json.loads(self._storage_path.read_text("utf-8"))
-            return UserIdentity.model_validate(data)
-        except Exception:
+            loaded = UserIdentity.model_validate(data)
+        except Exception as exc:
+            self._record_error(exc)
             logger.warning("UserIdentity 文件解析失败，重新 bootstrap：%s", self._storage_path)
             return None
+        # 读成功即"当前状态可信" → 清空旧失败记录（§21：失败历史不得钉死当前判定）
+        self._clear_error()
+        return loaded
 
     def _persist(self, identity: UserIdentity) -> None:
         if self._storage_path is None:
