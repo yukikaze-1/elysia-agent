@@ -181,10 +181,10 @@ class TestWriteFilePlugin:
 
         **S2-6 起消毒口径与 `SafetyPipeline` 统一**：原来插件自己用
         `session_id.replace("/", "_")`（"a/b\\c" → "a_b_c"），而 `safety.py` 的
-        `_sanitize_session_id` 只接受 `[a-zA-Z0-9_-]`、不合规即回退 `"default"`。
+        `sanitize_session_id` 只接受 `[a-zA-Z0-9_-]`、不合规即回退 `"default"`。
         **同一个 `{session_id}` 模板两套消毒规则**——正常路径下 `_safe_path` 来自
         管线所以看不出来，插件被直接调用时就会算出两个不同的目录。现在统一走
-        权威那一份（`_sanitize_session_id`）。
+        权威那一份（`sanitize_session_id`）。
         """
         sandbox_base = tmp_path / "data/sandbox"
         plugin = WriteFilePlugin()

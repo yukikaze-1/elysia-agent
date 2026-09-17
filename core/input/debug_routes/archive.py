@@ -193,9 +193,10 @@ async def archive_clear_handler(request: web.Request) -> web.Response:
             400,
         )
     # CR-04：类型化确认必须在**任何副作用之前**完成。
-    # 此前只在 clear_all() 内校验，而 release_all_attachments()（不可逆的附件软删）
-    # 排在它之前 —— confirm 写错时先软删全部附件、再返回 400，即"防误删守卫触发了
-    # 不可逆删除"。存储层仍会再校验一次（权威），此处是**顺序**修复。
+    # 此前只在 clear_all() 内校验，而附件软删（那时由 release_all_attachments 承担，
+    # 该函数已随 Batch 3.2 删除、由 collect_all_attachment_refs + release_after_commit
+    # 取代）排在它之前 —— confirm 写错时先软删全部附件、再返回 400，即"防误删守卫
+    # 触发了不可逆删除"。存储层仍会再校验一次（权威），此处是**顺序**修复。
     try:
         require_confirm(target=MESSAGE_CONFIRM_TOKEN,
                         confirm=confirm, operation="清空归档")
@@ -402,8 +403,8 @@ async def sessions_clear_handler(request: web.Request) -> web.Response:
     if not await agent.session_repo.health_check():
         return _protocol_error_response(
             "STORAGE_UNAVAILABLE", "MongoDB 不可用", 503, retryable=True)
-    # CR-04：类型化确认先于副作用（同 archive_clear_handler——此前
-    # release_all_attachments 排在 clear_all 的 confirm 校验之前）。
+    # CR-04：类型化确认先于副作用（同 archive_clear_handler——此前附件软删排在
+    # clear_all 的 confirm 校验之前；该软删函数已随 Batch 3.2 删除）。
     try:
         require_confirm(target=SESSION_CONFIRM_TOKEN,
                         confirm=confirm, operation="清空会话")
