@@ -10,8 +10,10 @@ from core.schema.event import (
     InterruptData,
     StateChangeData,
     TaskResultData,
+    TaskUserOutcome,
     UserInputData,
     SystemTickData,
+    task_user_outcome,
 )
 
 
@@ -62,6 +64,56 @@ class TestTaskResultData:
         with pytest.raises(ValidationError):
             TaskResultData.model_validate(
                 {"event_type": "task_result", "task_id": "t1"})
+
+    def test_status_defaults_to_unlabelled(self):
+        """Batch 1.8：`status` 有默认空串——reminder 等合成事件与旧记录照常构造。"""
+        d = TaskResultData(task_id="t1", result="r", original_intent="i",
+                           dispatched_at="")
+        assert d.status == ""
+
+    def test_status_round_trips(self):
+        d = TaskResultData(task_id="t1", result="r", original_intent="i",
+                           dispatched_at="", is_error=True, status="cancelled")
+        assert d.model_dump()["status"] == "cancelled"
+
+
+@pytest.mark.unit
+class TestTaskUserOutcome:
+    """内部终态 → 用户级语义的**唯一映射点**（Batch 1.8 §8）。"""
+
+    def test_known_terminal_kinds_map_one_to_one(self):
+        assert task_user_outcome("completed", False) == TaskUserOutcome.COMPLETED
+        assert task_user_outcome("failed", True) == TaskUserOutcome.FAILED
+        assert task_user_outcome("cancelled", True) == TaskUserOutcome.CANCELLED
+
+    def test_failure_and_cancellation_are_distinguishable(self):
+        """`is_error` 一个布尔区分不了这两者——这正是本批要补的那一格。"""
+        assert task_user_outcome("failed", True) != task_user_outcome("cancelled", True)
+
+    def test_interrupted_reads_as_failure(self):
+        """停机/硬杀补记的终态（未产生结果）对用户就是"没做成"。"""
+        assert task_user_outcome("interrupted", True) == TaskUserOutcome.FAILED
+
+    def test_legacy_record_without_status_falls_back_to_is_error(self):
+        """旧持久化记录没有 `status` → 按 `is_error` 兜底，失败不得翻成成功。"""
+        assert task_user_outcome("", True) == TaskUserOutcome.FAILED
+        assert task_user_outcome("", False) == TaskUserOutcome.COMPLETED
+
+    def test_unknown_or_normalized_status(self):
+        # 未知内部码 / 大小写 / 空白：归一后仍能识别；"cancelled_by_user" 这类
+        # 未登记的码不在值域内 → 按 is_error 兜底（失败不翻成功）。
+        assert task_user_outcome("FAILED", True) == TaskUserOutcome.FAILED
+        assert task_user_outcome(" interrupted ", True) == TaskUserOutcome.FAILED
+        assert task_user_outcome("planning_failed", True) == TaskUserOutcome.FAILED
+        assert task_user_outcome("cancelled_by_user", True) == TaskUserOutcome.FAILED
+        assert task_user_outcome(None, True) == TaskUserOutcome.FAILED
+
+    def test_contradictory_input_never_claims_success(self):
+        """`status=completed` + `is_error=True` 这类矛盾输入取失败（§5 U2 方向不对称）。"""
+        assert task_user_outcome("completed", True) == TaskUserOutcome.FAILED
+        # 反向矛盾不改变"非成功"的结论
+        assert task_user_outcome("failed", False) == TaskUserOutcome.FAILED
+        assert task_user_outcome("cancelled", False) == TaskUserOutcome.CANCELLED
 
 
 @pytest.mark.unit

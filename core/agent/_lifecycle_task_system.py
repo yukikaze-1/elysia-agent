@@ -417,6 +417,10 @@ class _LifecycleTaskSystem:
                         original_intent=info.intent,
                         dispatched_at=info.dispatched_at,
                         is_error=is_error,
+                        # Batch 1.8：终态 kind 必须随载荷走。只凭 `is_error` 一个布尔，
+                        # 下游无法区分 failed 与 cancelled，用户可见措辞就只能靠猜
+                        # （原缺陷：一律说"任务已完成"）。
+                        status=kind,
                     )
                     status = kind
                     if kind == "failed":
@@ -500,6 +504,7 @@ class _LifecycleTaskSystem:
                     original_intent=intent,
                     dispatched_at=entry.dispatched_at,
                     is_error=True,
+                    status="interrupted",
                 )
                 await self._persist_task_result(
                     interrupted, status="interrupted", delivered=False)
@@ -520,6 +525,10 @@ class _LifecycleTaskSystem:
           （at-least-once：宁可重复，不可丢失）。
 
         读失败（Mongo 离线）→ 记 warning 后返回，记录仍在库里，下轮启动再补投。
+
+        单条坏文档（Batch 1.8 / Challenger D1）→ **跳过该条 + warning**，其余照常补投。
+        此前它会一路冒泡成启动失败（`lifecycle.start()` 对启动步骤的 BaseException
+        回滚），一条坏文档就能让 Agent 起不来，并把它后面的正常记录全部堵死。
         """
         repo = self._bg_result_repo()
         if repo is None:
@@ -533,18 +542,40 @@ class _LifecycleTaskSystem:
             return
         if not pending:
             return
+        skipped = 0
         for doc in pending:
-            payload = TaskResultData(
-                task_id=doc.get("task_id", ""),
-                result=doc.get("result", ""),
-                original_intent=doc.get("original_intent", ""),
-                dispatched_at=str(doc.get("dispatched_at") or ""),
-                is_error=bool(doc.get("is_error", False)),
-            )
+            try:
+                payload = TaskResultData(
+                    task_id=doc.get("task_id", ""),
+                    result=doc.get("result", ""),
+                    original_intent=doc.get("original_intent", ""),
+                    dispatched_at=str(doc.get("dispatched_at") or ""),
+                    is_error=bool(doc.get("is_error", False)),
+                    # Batch 1.8：库里的 `status` 是终态类型真相（`upsert_pending` 从建
+                    # 集合起就在写它），此前补投路径从不读回——恢复 truth 于是在最后一
+                    # 跳丢掉了终态 kind。`or ""` 是 **纵深防御**：本仓没有任何写入方能
+                    # 产出缺 `status` 的记录（`background_task_repo` 只有一次提交，
+                    # `$set` 里一直带它），空串只可能来自被外力改写的文档；此时由
+                    # `task_user_outcome` 按 is_error 兜底，不会把失败翻成成功。
+                    status=str(doc.get("status") or ""),
+                )
+            except Exception:
+                # Batch 1.8（Challenger D1）：`doc.get(k, default)` 在"键存在但值为
+                # null"时返回 None（不是 default），pydantic 随即抛 ValidationError。
+                # 此前它直接冒泡出启动步骤循环 → `lifecycle.start()` 的 BaseException
+                # 回滚 → **一条坏文档让整个 Agent 起不来**，且排在它后面的正常记录
+                # 一条都补投不出去。坏文档不该被渲染成一条内容残缺的宣告（那是在对
+                # 用户编造内容），所以这里**跳过并留痕**：记录仍是 `delivered=False`，
+                # 下次启动会再次尝试并再次告警——不静默、不丢、不阻断。
+                skipped += 1
+                logger.warning(
+                    "启动补投：跳过一条无法解析的终态记录（task_id=%r，保持待补投）",
+                    doc.get("task_id"), exc_info=True)
+                continue
             self._bus.post(payload)
             # Issue B（B-1）：**不**在这里 mark_delivered——投递确认属于消费侧。
             # 若在这里标记，"已入队"又会冒充"已认领"（原缺陷的同一根因）。
-        logger.info("启动补投 %d 条后台任务终态（上次进程未送达）", len(pending))
+        logger.info("启动补投 %d 条后台任务终态（上次进程未送达）", len(pending) - skipped)
 
     async def _replay_task_result_wal(self) -> None:
         """把本地 WAL 里的候选终态补进仓储（#6 硬杀窗口），必须在补投之前。
@@ -606,6 +637,9 @@ class _LifecycleTaskSystem:
                 original_intent=str(cand.get("original_intent") or ""),
                 dispatched_at=str(cand.get("dispatched_at") or ""),
                 is_error=is_error,
+                # Batch 1.8：同一映射（与 live 排空、Mongo 补投一致）——补录进库的
+                # 终态 kind 必须与 WAL 里记的一致，否则重启后又是一次"最后一步丢真相"。
+                status=status,
             )
             if await self._persist_task_result(payload, status=status, delivered=False):
                 done.append(task_id)

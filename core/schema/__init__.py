@@ -72,7 +72,9 @@ from core.schema.event import (  # noqa: F401
     StateChangeData,
     SystemTickData,
     TaskResultData,
+    TaskUserOutcome,
     UserInputData,
+    task_user_outcome,
 )
 
 # ── 记忆（提取 + 去重） ──

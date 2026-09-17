@@ -24,6 +24,7 @@ from typing import Awaitable, Any, Callable, cast, TYPE_CHECKING
 
 from core.utils import new_message_id, new_generation_id
 from core.schema.types import MessageId, RequestId, SessionId
+from core.schema.event import TaskUserOutcome, task_user_outcome
 
 from core.cognitive.generation import GenerationContext
 from core.cognitive.generation_registry import GenerationRegistry
@@ -95,6 +96,31 @@ _EMPTY_RESPONSE_THRESHOLD = 5
 # 工具名、轮次、被丢弃的调用全部零痕迹；若该轮又恰好无文本，用户收到的是
 # **彻底的空回复**（空响应守卫的条件是 `not raw_tool_calls`，此处不成立）。
 _TOOL_LIMIT_FALLBACK = "抱歉，我这轮调用工具的次数用完了，还没得出结果。你能把需求再说明确一些吗？"
+
+# 后台任务终态的唤醒措辞框架（Batch 1.8 §10/§11）：**只按用户级 outcome 分支**，
+# 值 = (终态陈述, 细节标签, 对 LLM 的行为指令)。
+# 不按内部 error_type 堆 case——`planning_failed` / `execution_failed` / `timeout` /
+# `interrupted` 一律压进同一个 FAILED 档；内部 taxonomy 仍可用于日志与归因，但它
+# 不是用户级状态判断的依据。缺失的键在类型上不可达（outcome 只可能是这三个成员）。
+_WAKE_UP_FRAMING: dict[TaskUserOutcome, tuple[str, str, str]] = {
+    TaskUserOutcome.COMPLETED: (
+        "已执行完毕",
+        "结果摘要",
+        "请自然地告知用户任务已完成，询问是否现在汇报详细结果，还是稍后再说。",
+    ),
+    TaskUserOutcome.FAILED: (
+        "未能完成",
+        "失败信息",
+        "请自然地告知用户任务未能完成，并简短说明失败原因；"
+        "如实转述即可，不要把它说成成功。",
+    ),
+    TaskUserOutcome.CANCELLED: (
+        "已被取消，未产出结果",
+        "取消信息",
+        "请自然地告知用户该任务已被取消，并简短说明取消原因；"
+        "如实转述即可，不要把它说成成功。",
+    ),
+}
 
 # Task 8（B1 闭环）：binding 缺 instance_id 时回退内置 Elysia 的 default instance。
 # DEFAULT_INSTANCE_ID 是「无 binding → 哪个 instance」的兜底；DEFAULT_CHARACTER_ID 仅
@@ -1151,8 +1177,16 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         注入当前时间避免 LLM 产生时间幻觉（如凌晨说"今早"）。
         v1: 统一礼貌询问。后续 TODO(v2): 检查对话上下文动态调整。
 
+        **终态事实必须与后台任务真实 outcome 一致**（Batch 1.8 U1/U2）。本方法此前
+        恒定输出"已执行完毕 … 请自然地告知用户任务已完成"，对 failed / cancelled
+        同等成立：于是同一条消息里既有"结果摘要: 任务执行失败: …"又有"任务已完成"，
+        而 LLM 只会照着后半句向用户复述。现在措辞按**用户级 outcome**
+        （`task_user_outcome`，唯一映射点）分支，内部 taxonomy 不进文案。
+
         Args:
-            ctx: 任务结果上下文字典，含 original_intent（原始意图）和 result（结果摘要）
+            ctx: 任务结果上下文字典（`TaskResultData.model_dump()`），含
+                original_intent（原始意图）、result（结果摘要）、
+                status（内部终态 kind，可缺失）与 is_error
 
         Returns:
             格式化的系统唤醒消息字符串
@@ -1160,12 +1194,18 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         now = datetime.datetime.now()
         time_str = now.strftime("%Y-%m-%d %H:%M:%S")
         weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][now.weekday()]
+        # 内部终态 → 用户级语义只走这一个映射；措辞层不猜字符串、不按 error_type
+        # 堆分支。缺失 status 的旧记录 / 未知终态按 is_error 兜底——失败绝不会
+        # 因为"字段没有"而被翻成成功。
+        outcome = task_user_outcome(
+            str(ctx.get("status") or ""), bool(ctx.get("is_error", False)))
+        status_line, detail_label, instruction = _WAKE_UP_FRAMING[outcome]
         return (
             f"[系统通知] 当前时间: {time_str}（{weekday}）。"
             f"你此前委派的后台任务"
             f"（{ctx.get('original_intent', '')}）"
-            f"已执行完毕。结果摘要: {ctx.get('result', '')}。"
-            f"请自然地告知用户任务已完成，询问是否现在汇报详细结果，还是稍后再说。"
+            f"{status_line}。{detail_label}: {ctx.get('result', '')}。"
+            f"{instruction}"
         )
 
 
