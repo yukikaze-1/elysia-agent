@@ -115,6 +115,8 @@
 | 裸 `create_task` 必须逐点登记所有权 | `make check-arch`（R6，19 点 / 22 处） | 同上 | **push/backend** |
 | **跨包私有访问（含私有方法）必须公开化或显式标注** | `core/tests/test_cross_package_privacy.py`（5 例） | `make test-normal` | **push/backend** |
 | 输入层任何未标注私有穿透即红（比全仓更严） | `core/input/tests/test_layer_discipline.py` | `make test-normal` | **push/backend** |
+| **索引选项声明表只许指向真实 schema 实体**：集合键/索引名写错或整条漏登记 ⇒ 该集合选项**一个都不比**却照报健康（B3-CB-2） | `core/storage/tests/test_schema_drift.py::TestExpectedIndexOptionsPinnedToCode`（9 例；判据 = 生产 `ensure_index(...)` 的 **AST**，非第二张手写表） | `make test-quick` / `test-normal` | **push/backend** |
+| **上传目录在调用期解析**：import 期固化 ⇒ 测试的环境隔离静默失效、文件写进真实图片目录（B3-CB-7） | `core/input/tests/test_upload_dir_isolation.py`（4 例：真实上传 + 正对照 + 真实目录 delta=0 + fresh 子进程） | `make test-quick` / `test-normal` | **push/backend** |
 | 具名超时预算必须表态（外层 ≥ 内层 / 叶子 + 理由） | `make check-timeouts` | `scripts/check_timeout_budget.py` | **push/backend** |
 | 契约枚举成员必须有生产者、字段有读必须有写 | `make check-contract` | `scripts/check_contract_reachability.py` | **push/backend** |
 | 契约产物无漂移（ts / schema / raw_ts / golden frames） | `make check-types` | `frontend_contract --check` 等 | **push/backend + frames** |

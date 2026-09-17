@@ -339,12 +339,12 @@ semantics / prompt budget cross-path / provider portability / error protocol ext
 | # | 位置 | 现象 | 状态 |
 |---|------|------|------|
 | **B3-CB-1** | `core/profile/user_identity.py::UserIdentity.pronouns` + `core/input/character_routes.py:254` | 契约允许 PUT `pronouns: null`（读契约本就是 `string \| null`），`_normalize_updates` 不过滤 None → Mongo 存 `null` → 读回 `model_validate` 抛 `ValidationError`（`pronouns: str` 不接受 None） | ✅ **FIXED**（`fb438167`，`CONFIRMED_USER_REACHABLE` / **CRITICAL**）。实测比原记录更重：**PUT 自己就 500**（读回在同一次 `update_if_revision` 内）、**省略该键**同样污染、污染后重试返回**谎报的 409**、`/ready` 因探 ping 而**保持绿**。真实 MongoDB 8 复现 + 验证。修法=域模型 1 行改 `str \| None`（**保留默认值**，故键缺失仍「她」、无需 migration，且顺带修好已污染记录） |
-| **B3-CB-2** | `core/storage/schema_drift.py:63` `EXPECTED_INDEX_OPTIONS` | 键写成**从未存在**的 `idempotency_claims`，真集合名是 `idempotency`（`idempotency_repo.py:50`） | ✅ **FIXED**（`0302566a`，`CONFIRMED_DEPLOYMENT_REACHABLE` / MEDIUM）。危害不止"少报一条"：键不存在即该集合**一个选项都不比**，退化成**"扫了、没比、报健康"**。修这个键会让一条原本绿的用例变红（其 mock 靠 `ttl_` 前缀猜 TTL），已一并改为**从声明派生**。**残留**：该表仍**无 AST 守卫**（见 follow-up N-4） |
+| **B3-CB-2** | `core/storage/schema_drift.py:63` `EXPECTED_INDEX_OPTIONS` | 键写成**从未存在**的 `idempotency_claims`，真集合名是 `idempotency`（`idempotency_repo.py:50`） | ✅ **FIXED**（`0302566a`，`CONFIRMED_DEPLOYMENT_REACHABLE` / MEDIUM）。危害不止"少报一条"：键不存在即该集合**一个选项都不比**，退化成**"扫了、没比、报健康"**。修这个键会让一条原本绿的用例变红（其 mock 靠 `ttl_` 前缀猜 TTL），已一并改为**从声明派生**。**残留**：该表仍**无 AST 守卫**（见 follow-up N-4）→ **已补**（`1382ae43`，Batch 3.6） |
 | **B3-CB-3** | `Module/config/preflight.py`（`_check_llm_env` 的 URL 检查 + `_check_mongo_env`/`_check_milvus_env` + 两处 connectivity） | 判据是"env 变量是否被设置"，而运行期走 `resolve_base_url`（env → providers.yaml 默认值）与 `config.database.*`（CLI>env>YAML>默认） | ✅ **FIXED**（`edd67cef`，`CONFIRMED_DEPLOYMENT_REACHABLE` / HIGH）。`.env.example` 对齐的配置（只缺 `MONGODB_URI`，该行本就注释掉）修前 `10/13 failed=1` 退 1、修后 `11/13 通过`。修法=判据接到运行期**同一个** `resolve_base_url` / `config.database.*`。防反向假绿已实测：`mimo`（任何一层都无地址）**继续 FAIL** |
 | **B3-CB-4** | `scripts/clean_db.py::PROTECTED_COLLECTIONS` | docstring 自称「列在这里是给测试当回归守卫用」，常量零引用 | ❌ **FALSE_POSITIVE**（LOW，仅 docstring 措辞）。原审计把"**这个常量**有无消费者"当成了"**保护属性**有无守卫"——守卫存在且不读该常量：`core/tests/test_clean_db.py:39-49` 硬编码集合名双向断言，另两条把清单逐字面量钉死。变异模拟：两种改法各 2 条用例红。见 follow-up N-7 |
 | **B3-CB-5** | `core/tests/test_doc_counts.py` | 文档数字门禁不含根 `README.md`；正则只认粗体格式 | ✅ **ALREADY_FIXED**（`0937e85a`：根 README 已入参数化列表 + 格式统一，三份都写 46 = AST 实数 46）+"正则漏格式"子断言**是假阳性**（判据逐文件 fail-closed，匹配不到会**直接红**）。**残留窄洞**：门禁**范围硬编码三份文档**，`docs/architecture.md:372` 写「43 个 @property」用同一格式却永不被检查（见 follow-up N-5） |
 | **B3-CB-6** | `core/profile/profile_store.py:188-200` ↔ `core/storage/user_identity_repo.py:40-43` | 两份**语义不同**的白名单（store 版额外约束 `initialized` 只能置 true），两侧对未知键都**静默 `continue`** | ⏸ **KEEP AS-IS**（`CONFIRMED_BUT_CURRENTLY_UNREACHABLE` / LOW，风险 MEDIUM）。两侧**集合完全相等**；调用点穷举：store 2 个、repo 1 个、无动态派发；HTTP 入口因 `UserIdentityUpdate` `extra="forbid"` 且无 `initialized` 字段而**无法**构造分岔（实测 400）。判潜在分岔风险，非活 bug |
-| ~~B3-CB-7~~ ✅ | `core/input/upload_routes.py::_IMAGES_DIR` 模块级常量 + `test_server.py::image_app` 的 `monkeypatch.setenv` | 测试 docstring 声称"图片落盘重定向到 tmp_path"，但常量在 **import 期**固化 ⇒ 隔离**从未生效** | ✅ **ALREADY_FIXED**（`800e54da`）。Batch 3.5 用**测量**复核：真实目录 delta = **0**，且**正对照**证明同一批测试确实写了 2 个 PNG 到重定向目录（否则 delta=0 无意义）。**残留**：无回归守卫能挡住重新引入（见 follow-up N-8） |
+| ~~B3-CB-7~~ ✅ | `core/input/upload_routes.py::_IMAGES_DIR` 模块级常量 + `test_server.py::image_app` 的 `monkeypatch.setenv` | 测试 docstring 声称"图片落盘重定向到 tmp_path"，但常量在 **import 期**固化 ⇒ 隔离**从未生效** | ✅ **ALREADY_FIXED**（`800e54da`）。Batch 3.5 用**测量**复核：真实目录 delta = **0**，且**正对照**证明同一批测试确实写了 2 个 PNG 到重定向目录（否则 delta=0 无意义）。**残留**：无回归守卫能挡住重新引入（见 follow-up N-8）→ **已补**（`6c559816`+`210e9c37`，Batch 3.6） |
 
 ### Batch 3.5 新登记的 out-of-scope findings（**只记录，未修**）
 
@@ -356,17 +356,33 @@ semantics / prompt budget cross-path / provider portability / error protocol ext
 | **N-1** | `core/profile/profile_store.py::health_check` + `core/input/health.py:141` | `health_check()` 返回 **True** 而 `is_available` 为 **False** ⇒ 身份已死时 `/ready` 的 `chatReady` 仍 200，而 `/api/me` 返回 503（探针契约 vs 可用性契约不一致） | 是 B3-CB-1 的**放大因素**而非同一缺陷；B3-CB-1 修好后不再自然可达。需单独判"ready 该探什么" |
 | **N-2** | `core/profile/profile_store.py::_update_local`（`setattr`） | 绕过 pydantic 校验：本地模式下 `pronouns=None` 被静默接受；`_load_from_file` 读回失败会**重新 bootstrap** ⇒ 静默数据丢失 | 本地/单测路径，非生产装配路径 |
 | **N-3** | `core/input/character_routes.py:271` | 409 的 `details.currentRevision` 读**陈旧进程内缓存** ⇒ 谎报（报 1，库实为 2），文档承诺的 CAS 恢复路径可死循环 | 独立缺陷；修它需先想清"409 该报谁" |
-| **N-4** | `core/storage/schema_drift.py:49-50` | docstring 自称 `EXPECTED_INDEX_OPTIONS` 由 AST 反向校验守护，**实测覆盖为 0**（把整张表换成垃圾仍全绿）。B3-CB-2 修的是**键**这个具体缺陷，"下次再改错键不会被发现"仍成立 | 属**门禁建设**（新增 AST 守卫），非本次键名缺陷本身 |
+| **N-4** | `core/storage/schema_drift.py:49-50` | docstring 自称 `EXPECTED_INDEX_OPTIONS` 由 AST 反向校验守护，**实测覆盖为 0**（把整张表换成垃圾仍全绿）。B3-CB-2 修的是**键**这个具体缺陷，"下次再改错键不会被发现"仍成立 | ✅ **GUARDED**（`1382ae43`，Batch 3.6）。`TestExpectedIndexOptionsPinnedToCode` 的判据取自 `core/storage/*.py` 真实 `ensure_index` 调用的 **AST**（非第二张手写表）：集合键/索引名必须存在 + 代码声明了选项的索引必须已登记（整条漏登记与写错键运行期后果相同）+ 已知缺口显式记账。变异实测六种全红：历史 typo / 任意假集合 / 索引名错拼 / 删整条 / 清空全表 / **代码侧改集合名**；改回绿 |
 | **N-5** | `core/tests/test_doc_counts.py` | 门禁范围是**硬编码三份文档**；`docs/architecture.md:372` 写「**43 个同名 `@property`**」（同一粗体格式、真值 46）**永不被检查** | B3-CB-5 的残留**窄洞**（原报告归因于正则，实为范围）；扩范围属另一件事 |
 | **N-6** | `docs/architecture/invariants.md:162` | §7 关于 `test_doc_counts` 的那行**已过期**：仍说"门禁不含根 README、README 写 39"，而这两点已被 `0937e85a` 修掉（§7 登记 `a7ae2cbf` 与修复相隔 **6 秒**，未回头更新） | 文档准确性；本批已记账 |
 | **N-7** | `scripts/clean_db.py:95` | docstring 说常量「列在这里是给测试当回归守卫用」，而真正的守卫（`core/tests/test_clean_db.py`）**不读它** | 仅措辞失实；保护属性本身已被守卫（B3-CB-4 判假阳性的原因） |
-| **N-8** | B3-CB-7 的修复**缺回归守卫** | `_images_dir()` 若被改回 import 期常量，**整套图片测试仍然全绿**（pre/post 都绿——这正是它当初能潜伏的原因）。建议加"晚设 `ELYSIA_PATH_DATA_UPLOADS_IMAGES` 后 `_images_dir()` 必须跟随"的断言 | 属补守卫，非 correctness 缺陷本身 |
+| **N-8** | B3-CB-7 的修复**缺回归守卫** | `_images_dir()` 若被改回 import 期常量，**整套图片测试仍然全绿**（pre/post 都绿——这正是它当初能潜伏的原因）。建议加"晚设 `ELYSIA_PATH_DATA_UPLOADS_IMAGES` 后 `_images_dir()` 必须跟随"的断言 | ✅ **GUARDED**（`6c559816` + `210e9c37`，Batch 3.6）。`core/input/tests/test_upload_dir_isolation.py` 走**真实上传路径**（env → create_app → POST /api/images → 落盘）：正对照（重定向目录真的多出 1 个 PNG）+ 负证据（真实默认目录 before/after 快照相同，`None`≠`[]`，目录被创建也算变化）+ fresh 子进程（先 import 后设 env）。变异实测：退回 import 期常量 → 3 条红，失败原因即"文件落错目录"（真实目录 delta 出现该 PNG）；改回绿 |
 | **N-10** | `Module/config/preflight.py::_check_llm_env` + `Module/llm/registry.py` | `gemini/<model>` 设了 key+URL 时预检**全绿**，运行期 `LLMFactory.create` 却**无条件** `NotImplementedError`（STT 侧早有 `_STT_STUB_PROVIDERS`，LLM 侧没有） | **既有**（非本批引入）；属补"未实现 provider"冻结表 |
 | **N-11** | `core/profile/profile_store.py::connect` / `_load_from_file` | `except Exception` 吞掉一切——修前正是它把"被污染记录"变成**静默重置为 bootstrap** | 既有 fail-closed 取舍；改动需先定"装载失败该不该自杀" |
 | **N-12** | `GET /api/me` + `pronouns: ""` | 存量文档若是空串 pronouns，GET 仍 500 | **既有且不可达**（契约 `_text()` 拒空串，仓内无写入者） |
-| **N-13** | `core/storage/schema_drift.py` `EXPECTED_INDEX_OPTIONS` | **表级** AST 守卫仍缺（本批只补了 `idempotency` 的定点回归 + 改正了失实注释；把整表换成垃圾仍全绿） | 属门禁建设，非键名缺陷本身 |
+| **N-13** | `core/storage/schema_drift.py` `EXPECTED_INDEX_OPTIONS` | **表级** AST 守卫仍缺（本批只补了 `idempotency` 的定点回归 + 改正了失实注释；把整表换成垃圾仍全绿） | ✅ **GUARDED**（`1382ae43`，Batch 3.6）——与 **N-4** 是同一条，见上表 N-4 |
 | **N-14** | `Module/config/tests/test_preflight.py` 两条弱用例 | `test_minimax_key_present_passes` 随 ambient `.env` 走两条不同代码路径（哪条都没钉住）；`test_c1_llm_url_source_is_the_runtime_default` 只测 helper | 测试加固；本批已把**造成漏报**的那条补成 PRE_FIX_RED |
+| **N-15** | `core/storage/schema_drift.py` `EXPECTED_INDEX_OPTIONS` | **覆盖缺口**（Batch 3.6 建守卫时 census 出来）：代码声明了 `unique=True` 但选项表**从未登记**的索引 4 条——`generations.generation_id_1`、`desktop_calls.call_id_1`、`idempotency.conversation_id_1_client_request_id_1`（幂等并发防线）、`character_instances.owner_user_id_1_character_id_1_canonical_1`（S3-20 的 partial 唯一索引）。后果与 B3-CB-2 同类但**只影响单条索引**："扫了、没比、报健康" | 补表会**扩大生产漂移自检的比对范围**（= 改产品语义，可能新增启动期 `option_conflicts` ERROR），超出 Batch 3.6「补守卫」范围。已在测试里 **显式记账**（`_KNOWN_UNREGISTERED_OPTION_INDEXES`，每条含解除条件；补齐后不删条目即报"陈旧登记"） |
 | **N-9** | 多处模块级 `ProjectPath...resolve()` 常量 | 与 B3-CB-7 同形（import 期求值、可被测试 env 改写）：`core/tools/vision/plugin.py:23`、`core/storage/secret_store.py:46`、`core/providers/custom_providers.py:16`、`core/utils/log_setup.py:16` 等 | 同形但**未被证明有实际损害**；不做无证据的批量改动 |
+
+### Batch 3.6（Regression Guard Completion，2026-09-18）
+
+> 输入集合**冻结**为两条已定位的 guard gap（N-4 / N-8）——都是
+> `ALREADY_FIXED_BEHAVIOR + REGRESSION_GUARD_MISSING`，**不是**新 bug。本批只补自动
+> 回归保护，**production behavior delta = 0**（唯一的生产文件改动是 `schema_drift.py`
+> 里那段"本表没有机器守卫"的失实注释）。
+> 完整证据见 [`docs/review/2026-09-18-Batch3.6-regression-guard-completion-执行记录.md`](docs/review/2026-09-18-Batch3.6-regression-guard-completion-执行记录.md)。
+
+| # | 状态 | 守卫位置 | 变异证据（红→绿，独立 worktree） |
+|---|---|---|---|
+| **N-4** | ✅ **GUARDED**（`1382ae43`） | `core/storage/tests/test_schema_drift.py::TestExpectedIndexOptionsPinnedToCode` | 历史 typo `idempotency_claims` / 任意假集合 / 索引名错拼 / 删整条 / 清空全表 / 代码侧改集合名 → 全红；改回绿 |
+| **N-8** | ✅ **GUARDED**（`6c559816`+`210e9c37`） | `core/input/tests/test_upload_dir_isolation.py` | `_images_dir()` 退回 import 期常量 → 3 条红（失败原因=文件落错目录，真实目录 delta 出现该 PNG）；改回绿 |
+
+**本批新登记（只记录，未修）**：**N-15**（选项表的 4 条 `unique` 覆盖缺口，见上表）。
 
 ### 测试侧清理候选（Batch 3 审计登记，**本批未做**）
 
