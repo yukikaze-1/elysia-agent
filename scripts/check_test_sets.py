@@ -151,6 +151,98 @@ def _reported_counts(out: str) -> tuple[int | None, int | None]:
     return None, None
 
 
+def judge(
+    quick: set[str], total_q: int,
+    normal: set[str], total_n: int,
+    remainder: set[str], total_r: int,
+) -> tuple[int, list[str]]:
+    """纯判定：给定三组收集结果，返回 (退出码, 输出行)。
+
+    抽成纯函数是为了**能在毫秒内被合成数据覆盖**——判定的正确性不该只能靠
+    "跑三次真收集（约 35s）"来验证（那样没人会为它写用例，退化分支就会长期无覆盖）。
+
+    退出码：0=通过；1=代数被破坏；2=无法判定（拒答，**不得**当作通过）。
+    拒答优先于通过：退化输入上 `∅ ∪ ∅ == ∅` 平凡成立，不能据此报绿。
+    """
+    lines: list[str] = []
+
+    # ── 判据 0：非退化——三次收集必须看到同一个非空全量，且**都真的选中了东西**
+    #
+    # 2026-09-17（Batch 2.2）修复的假绿：本判据此前**只比 `total`**（pytest 自报的
+    # "N/M tests collected" 里的 M），而 M 是 `-m` 过滤**之前**的全量——marker 表达式
+    # 一旦拼错/失效，`selected` 变 0 而 M **保持非零**，于是 `∅ ∪ ∅ == ∅` 平凡成立、
+    # 门禁打印"通过"并退出 0。实测：把三个表达式都改成不存在的 marker，
+    #   Quick=0 / remainder=0 / Normal=0，而 total 仍是 5932 —— 旧判据**照绿**。
+    # 这正是本项目"假绿③"的近亲：判据看得见的现象（M）与它要防的事（表达式失效）
+    # 不是同一个量。修法是同时断言**选中数**（`len(nodeids)`）非零。
+    if total_q != total_n or total_n != total_r or total_n == 0:
+        lines.append("测试集合门禁无法判定（拒答）：三次收集的总测试数不一致或为 0"
+                     f"（quick={total_q} normal={total_n} remainder={total_r}）"
+                     "——集合代数在退化输入上会平凡成立，不能据此报绿")
+        return 2, lines
+    # 只有 Quick / Normal 必须非空。**`remainder` 的空集是合法的**——它按设计可能
+    # 只有个位数（当前 3 条），收口到 0 也正常；把它列入"必须非空"会制造假红
+    # （第一版就犯了这个错，靠纯函数的合成用例当场发现）。
+    empty = [name for name, s in
+             (("Quick", quick), ("Normal", normal)) if not s]
+    if empty:
+        lines.append("测试集合门禁无法判定（拒答）："
+                     f"{'、'.join(empty)} 选中 **0 条**，但全量收集为 {total_n} 条"
+                     "——表达式已失效（marker 拼错/改名），"
+                     "空集上的代数恒等式平凡成立，不能据此报绿。")
+        lines.append(f"  Quick     = {EXPR_QUICK!r} → {len(quick)}")
+        lines.append(f"  Normal    = {EXPR_NORMAL!r} → {len(normal)}")
+        lines.append(f"  remainder = {EXPR_REMAINDER!r} → {len(remainder)}")
+        return 2, lines
+    # 刻意**不**在这里断言"排除子句真的排除了东西"（如 `len(normal) == total_n` ⇒ 拒答）。
+    #
+    # 第一版修复加过这一条，随后被证明是**假红**：它把"语料的性质"当成了"不变量的性质"。
+    # 一个全是 unit/service 的仓库里，`not slow and not external` **合法地**选中全量，
+    # 于是健康的树会被判成"排除子句失效"（用 3 条测试的合成树实测：exit=2）。
+    # 门禁的绿不该取决于"必须有测试带 slow marker"——那是环境/语料状态，不是表达式正确性。
+    #
+    # 表达式本身是否失效，由上面那两条（Quick / Normal 选中数非零）与
+    # `scripts/tests/test_check_test_sets.py::TestExpressionSingleSource`（Makefile ↔
+    # 常量逐字单源）覆盖。不要把语料性质重新塞回判据里——那正是这条被删掉的原因。
+
+    problems: list[str] = []
+
+    # ── 判据 1：Quick ∪ remainder == Normal（无遗漏）
+    union = quick | remainder
+    if union != normal:
+        lost = sorted(normal - union)
+        extra = sorted(union - normal)
+        problems.append(
+            f"Quick ∪ remainder ≠ Normal：遗漏 {len(lost)} 条、多出 {len(extra)} 条")
+        problems.extend(f"  遗漏: {n}" for n in lost[:10])
+        problems.extend(f"  多出: {n}" for n in extra[:10])
+
+    # ── 判据 2：Quick ∩ remainder == ∅（无重复）
+    both = quick & remainder
+    if both:
+        problems.append(f"Quick ∩ remainder ≠ ∅：{len(both)} 条被跑两遍")
+        problems.extend(f"  重复: {n}" for n in sorted(both)[:10])
+
+    # ── 判据 3：「无 marker 测试」与「快/慢 marker 交叠」不在这里查
+    # 它们由根 `conftest.py::pytest_collection_modifyitems` 在**每个** pytest 进程
+    # （含每个 xdist worker）内、`-m` 过滤之前断言——零额外收集成本，且覆盖全量。
+    # 本脚本只负责"表达式代数"这一件需要独立收集才能验证的事。
+
+    if problems:
+        lines.append("测试集合门禁失败：")
+        lines.extend(f"  {p}" for p in problems)
+        return 1, lines
+
+    lines.append("测试集合门禁通过：")
+    lines.append(f"  |Quick|      = {len(quick)}   ({EXPR_QUICK})")
+    lines.append(f"  |remainder|  = {len(remainder)}   ({EXPR_REMAINDER})")
+    lines.append(f"  |Normal|     = {len(normal)}   ({EXPR_NORMAL})")
+    lines.append(f"  |Quick ∩ remainder| = {len(both)}（互斥）")
+    lines.append(f"  |Quick ∪ remainder| = {len(union)} == |Normal|")
+    lines.append(f"  全量收集 = {total_n}")
+    return 0, lines
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI 入口。"""
     args = argv if argv is not None else sys.argv[1:]
@@ -178,55 +270,17 @@ def main(argv: list[str] | None = None) -> int:
     normal, total_n = collected["normal"]
     remainder, total_r = collected["remainder"]
 
-    # ── 判据 0：非退化——三次收集必须看到同一个非空全量
-    if total_q != total_n or total_n != total_r or total_n == 0:
-        print("测试集合门禁无法判定（拒答）：三次收集的总测试数不一致或为 0"
-              f"（quick={total_q} normal={total_n} remainder={total_r}）"
-              "——集合代数在退化输入上会平凡成立，不能据此报绿")
-        return 2
-
-    problems: list[str] = []
-
-    # ── 判据 1：Quick ∪ remainder == Normal（无遗漏）
-    union = quick | remainder
-    if union != normal:
-        lost = sorted(normal - union)
-        extra = sorted(union - normal)
-        problems.append(
-            f"Quick ∪ remainder ≠ Normal：遗漏 {len(lost)} 条、多出 {len(extra)} 条")
-        problems.extend(f"  遗漏: {n}" for n in lost[:10])
-        problems.extend(f"  多出: {n}" for n in extra[:10])
-
-    # ── 判据 2：Quick ∩ remainder == ∅（无重复）
-    both = quick & remainder
-    if both:
-        problems.append(f"Quick ∩ remainder ≠ ∅：{len(both)} 条被跑两遍")
-        problems.extend(f"  重复: {n}" for n in sorted(both)[:10])
-
-    # ── 判据 3：「无 marker 测试」与「快/慢 marker 交叠」不在这里查
-    # 它们由根 `conftest.py::pytest_collection_modifyitems` 在**每个** pytest 进程
-    # （含每个 xdist worker）内、`-m` 过滤之前断言——零额外收集成本，且覆盖全量。
-    # 本脚本只负责"表达式代数"这一件需要独立收集才能验证的事。
-
-    if problems:
-        print("测试集合门禁失败：")
-        for p in problems:
-            print(f"  {p}")
-        return 1
-
-    if quiet:
+    code, lines = judge(quick, total_q, normal, total_n, remainder, total_r)
+    if quiet and code == 0:
+        # `--quiet` 只压缩**通过**时的输出；拒答/失败必须完整打印原因（否则
+        # 调用方只看到一个退出码，重跑才发现——"原因必须自己打出来"）。
         print(
             f"测试集合门禁通过：Quick {len(quick)} + remainder {len(remainder)} "
             f"= Normal {len(normal)}（全量 {total_n}），交集 0")
-    else:
-        print("测试集合门禁通过：")
-        print(f"  |Quick|      = {len(quick)}   ({EXPR_QUICK})")
-        print(f"  |remainder|  = {len(remainder)}   ({EXPR_REMAINDER})")
-        print(f"  |Normal|     = {len(normal)}   ({EXPR_NORMAL})")
-        print(f"  |Quick ∩ remainder| = {len(both)}（互斥）")
-        print(f"  |Quick ∪ remainder| = {len(union)} == |Normal|")
-        print(f"  全量收集 = {total_n}")
-    return 0
+        return 0
+    for line in lines:
+        print(line)
+    return code
 
 
 if __name__ == "__main__":

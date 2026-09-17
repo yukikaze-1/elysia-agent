@@ -30,11 +30,11 @@ Plain Python（无 `pyproject.toml` 等构建系统）。前端 Vue 3 + Vite + T
 make test-quick
 # 或: pytest -m "unit or service" -q -x --tb=short -n 8 --dist loadfile
 
-# 提交前 — 排除 slow（全量离线；串行 ≈5min13s，-n 8 后 ≈1min03s）
+# 提交前 — 排除 slow/external（**真正离线**，2026-09-17 起；串行 ≈5min13s，-n 8 后 ≈1min03s）
 make test-normal
 # 或: pytest -m "not slow and not external" -q --tb=short -n 8 --dist loadfile
 
-# Normal 中不在 Quick 里的余集（当前 3 条 integration）——两者互斥，见 docs/testing.md
+# Normal 中不在 Quick 里的余集（**2026-09-17 起 0 条**；两者互斥，见 docs/testing.md）
 make test-remainder
 
 # 全量（含 slow，无界，慢）
@@ -112,9 +112,9 @@ python -m pytest frontend_contract/tests/ -v
 |--------|------|----------|
 | `unit` | 纯函数/类，无 I/O，无 Agent | `make test-quick`（`-m "unit or service"`） |
 | `service` | 单模块 + mock/fake，不连真实依赖 | `make test-quick` |
-| `integration` | 需真实 DB 或外部 API | `make test-remainder`（Normal−Quick 的余集） |
+| `integration` | 需真实 DB 或外部 API（**当前 10 条全部与 slow/external 同标**） | `make test-full` / `test-external`；**不在 Normal** |
 | `slow` | 完整管线或 >1s | `make test-full` 才跑 |
-| `external` | 真实 LLM/DB 凭据（opt-in） | `make test-external`（须 `RUN_EXTERNAL_TESTS=1`） |
+| `external` | 真实 LLM/DB 凭据（opt-in） | `make test-external`（须 `RUN_EXTERNAL_TESTS=1`）；**`make test-normal` 排除它** |
 | `real_mongo` | 真实 MongoDB 测试层（S2-R6-1，非凭据：走容器） | `make test-real-mongo`（须 `RUN_REAL_MONGO_TESTS=1` + `ELYSIA_TEST_MONGODB_URI`；`tests/real_mongo/`）。**CI 为 push-only + self-hosted**（job 内自起 `docker-compose.test.yml`，不用按分钟计费的 GitHub-hosted `services:`）；PR 侧不跑 |
 
 marker 纪律由根 `conftest.py` 的收集钩子强制：**每个测试必须有分层 marker**，且

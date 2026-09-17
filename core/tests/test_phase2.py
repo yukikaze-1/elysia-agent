@@ -148,7 +148,7 @@ class TestSessionPersistence:
 # ============================================================================
 
 class TestLongTermMemory:
-    @pytest.mark.integration
+    @pytest.mark.external
     @pytest.mark.asyncio
     async def test_insert_and_search_async(self):
         from core.memory.long_term import LongTermMemory

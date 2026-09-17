@@ -106,8 +106,19 @@ _REDIRECTED_TESTS: set[str] = set()
 _FAST_LAYER = frozenset({"unit", "service"})
 """快门禁层——`make test-quick` / PR 门禁的范围。"""
 
-_SLOW_LAYER = frozenset({"slow", "integration", "external"})
-"""慢/外部层——放宽到 `-m "not slow and not external"` 才进来。"""
+_SLOW_LAYER = frozenset({"slow", "integration", "external", "real_mongo"})
+"""慢/外部层——`-m "not slow and not external"` 之外、或需真实依赖的那些。
+
+`real_mongo` 必须在这里（2026-09-17 Batch 2.2 补）：它是 `pytest.ini` 注册的第 6 个
+分层 marker，但此前**不在 `_LAYER_MARKERS` 里**。后果是：一个只带 `real_mongo`
+的测试会被判成「没有任何分层 marker」而在收集期报错；今天之所以没爆，纯属 8 个
+`real_mongo` 用例**都恰好同时带了 `external`**（实测 `|external ∩ real_mongo| = 8`）
+——即纪律的成立依赖"每个作者都记得再写一个 external"，而不是依赖判据本身。
+
+进 `_SLOW_LAYER`（而非 `_FAST_LAYER`）是对的：真实 MongoDB 测试层既不在 Quick
+也不在 Normal，属放宽档（`make test-real-mongo`，须 `RUN_REAL_MONGO_TESTS=1`）。
+放进 `_SLOW_LAYER` 同时禁止它与 `unit`/`service` 混用——它本来就跑不了纯单测语义。
+"""
 
 _LAYER_MARKERS = _FAST_LAYER | _SLOW_LAYER
 

@@ -359,7 +359,7 @@ class TestStreamingIntegration:
         text = "".join(chars)
         assert "今天过得怎么样" in text
 
-    @pytest.mark.integration
+    @pytest.mark.external
     @pytest.mark.asyncio
     async def test_real_stream_think_structured(self, real_env):
         """真实 LLM 结构化流式输出 content 字典。"""
@@ -384,7 +384,7 @@ class TestStreamingIntegration:
         # 这个简单查询不应有工具调用（由 LLM 决定）
         await adapter.close()
 
-    @pytest.mark.integration
+    @pytest.mark.external
     @pytest.mark.asyncio
     async def test_streaming_delivers_tokens_immediately(self, real_env):
         """第一个块应快速到达，而不是在整个响应完成后。"""

@@ -44,8 +44,14 @@ test-quick:
 test-normal:
 	$(PYTEST) -m "not slow and not external" -q --tb=short $(PYTEST_XDIST)
 
-# Normal 中**不在** Quick 里的部分（互斥余集）。当前只有 3 条 integration——
-# 保留它是因为 Quick/remainder 的互斥性是 CI 分层的前提，而它是该前提的可运行定义。
+# Normal 中**不在** Quick 里的部分（互斥余集）。**2026-09-17 起为 0 条**——
+# 原先这里有 3 条 `integration`-only 的用例，它们实际打真实 DeepSeek / 真实 Milvus
+# （其中一条还断言"首块 < 10s"这种**网络延迟上界**），却因为表达式恰好落在 Normal 里
+# 而**在 push 门禁里跑**——`make test-normal` 被文档描述为"全量离线"，实际不成立。
+# Batch 2.2 把那 3 条的 marker 改正为 `external`（它们本来就符合 pytest.ini 对该
+# marker 的定义），于是 Normal 真正离线、且 Normal == Quick。
+# 目标**保留**：它是 Quick/remainder 互斥性的可运行定义，也是"日后又有用例落进
+# Normal−Quick 时"的现成执行点（当前跑起来是 0 条，属正常）。
 # 不并行：条数极少，起 worker 的固定成本（每个约 1-2s import）反而更大。
 test-remainder:
 	$(PYTEST) -m "not slow and not external and not unit and not service" -q --tb=short
