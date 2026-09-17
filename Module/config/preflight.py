@@ -113,10 +113,31 @@ def _check_dotenv() -> None:
         _fail(".env 不存在 — 请先运行: cp .env.example .env，然后编辑填入 API key")
 
 
-def _check_llm_env(config: Any) -> None:
-    """根据 LLM provider 检查对应 env var（API key + URL）。"""
+def _resolved_llm_url(provider: str) -> tuple[str, str]:
+    """按**运行期同一判据**解析 LLM base URL。
+
+    返回 `(解析结果, env key)`——解析结果为空串表示该 provider **任何一层都没有**
+    默认地址（此时运行期 `LLMFactory.create` 同样会拒绝建连）。
+
+    为什么要复用 `resolve_base_url` 而不是自己看 env：本模块此前只判
+    `os.getenv(url_key)`，而运行期的回退链是
+    `explicit > env > providers.yaml::<provider>.base_url`。于是
+    `providers.yaml` 已内置默认地址（deepseek/openai/ollama）时，
+    只设 `DEEPSEEK_API_KEY`、不设 `DEEPSEEK_URL` 的配置**运行期完全可用**，
+    预检却报 FAIL ⇒ `app.py --check` 退 1 ⇒ `scripts/start.sh` 拒绝启动一个
+    本来能跑的部署（Batch 3.5 / B3-CB-3）。判据必须与实际启动条件同一权威，
+    而不是"配置是否长得像某张静态表"。
+    """
+    from Module._common.registry_helpers import resolve_base_url
     from Module.config.providers import load_provider_defaults
 
+    defaults = load_provider_defaults("llm").get(provider, {})
+    url_key = str(defaults.get("url_key", "") or "")
+    return resolve_base_url(url_key, defaults), url_key
+
+
+def _check_llm_env(config: Any) -> None:
+    """根据 LLM provider 检查 API key 与 base URL（判据与运行期一致）。"""
     model_id = config.llm.model
     provider = _parse_provider(model_id)
     if provider == "ollama":
@@ -132,15 +153,18 @@ def _check_llm_env(config: Any) -> None:
     else:
         _fail(f"{key} 未设置 — LLM provider '{provider}' 需要此环境变量")
 
-    # 检查 URL
-    defaults = load_provider_defaults("llm").get(provider, {})
-    url_key = defaults.get("url_key", "")
-    if url_key:
-        url_val = os.getenv(url_key, "")
-        if url_val:
-            _pass(f"LLM URL ok ({url_key} 已设置)")
-        else:
-            _fail(f"{url_key} 未设置 — LLM provider '{provider}' 需要此环境变量")
+    # URL：按运行期回退链解析（env → providers.yaml 默认值），只有**真的没有**
+    # 任何默认地址才 FAIL（运行期同样建不出后端）。
+    resolved, url_key = _resolved_llm_url(provider)
+    if resolved:
+        source = f"{url_key} 已设置" if url_key and os.getenv(url_key) else "providers.yaml 默认值"
+        _pass(f"LLM URL ok ({source} → {resolved})")
+    else:
+        _fail(
+            f"LLM provider '{provider}' 没有可用的 base URL — "
+            f"请设置 {url_key or '该 provider 的 URL 环境变量'}，"
+            f"或在 Module/config/providers.yaml 里写默认值"
+        )
 
 
 def _check_pip_deps() -> None:
@@ -167,26 +191,72 @@ def _check_character_file(config: Any) -> None:
         _fail(f"角色配置文件不存在: {config.agent.character}")
 
 
-def _check_mongo_env() -> None:
-    """检查 MONGODB_URI 是否设置。"""
-    val = os.getenv("MONGODB_URI", "")
+def _check_mongo_env(config: Any) -> None:
+    """检查 MongoDB 连接串（判据 = 运行期真正会用的那个值）。
+
+    运行期**不看 env**：`Agent.__init__` 把 `config.database.mongodb_uri` 显式传给
+    每个仓储（`agent.py:175` 等 → `DocumentDBFactory.create(base_url=…)`），而该值由
+    `ConfigLoader` 按 `CLI > env > config.yaml > dataclass 默认` 解析。config.yaml
+    自带 `mongodb_uri: mongodb://localhost:27017`，dataclass 默认也是它 ⇒
+    **只缺 `MONGODB_URI` 环境变量从来不是启动阻碍**。旧实现只判
+    `os.getenv("MONGODB_URI")` 并报 FAIL，会让 `scripts/start.sh` 拒绝一个本来能跑的
+    部署（Batch 3.5 / B3-CB-3）。
+    """
+    val = str(getattr(getattr(config, "database", None), "mongodb_uri", "") or "")
     if val:
-        _pass(f"数据库 env ok (MONGODB_URI 已设置)")
+        _pass(f"MongoDB 连接串 ok ({val})")
     else:
-        _fail("MONGODB_URI 未设置 — 请在 .env 中设置，如 MONGODB_URI=mongodb://localhost:27017")
+        _fail(
+            "MongoDB 连接串为空 — 请设置 MONGODB_URI 环境变量，"
+            "或在 config.yaml 的 database.mongodb_uri 填写"
+        )
 
 
-def _check_milvus_env() -> None:
-    """检查 MILVUS_URI 是否设置。"""
-    val = os.getenv("MILVUS_URI", "")
+def _check_milvus_env(config: Any) -> None:
+    """检查 Milvus 端点（判据 = 运行期真正会用的那个值）。
+
+    同 `_check_mongo_env`：运行期读 `config.database.milvus_uri`
+    （`agent.py:197` 传给 `MemoryRepositoryV2`），config.yaml 与 dataclass 默认均为
+    `http://localhost:19530`。
+    """
+    val = str(getattr(getattr(config, "database", None), "milvus_uri", "") or "")
     if val:
-        _pass(f"数据库 env ok (MILVUS_URI 已设置)")
+        _pass(f"Milvus 端点 ok ({val})")
     else:
-        _fail("MILVUS_URI 未设置 — 请在 .env 中设置，如 MILVUS_URI=http://localhost:19530")
+        _fail(
+            "Milvus 端点为空 — 请设置 MILVUS_URI 环境变量，"
+            "或在 config.yaml 的 database.milvus_uri 填写"
+        )
+
+
+def _provider_url_note(provider_key: str, module: str) -> tuple[str, str]:
+    """按运行期同一回退链解析某 provider 的 base URL。
+
+    返回 `(解析结果, 人读来源说明)`。空串表示该 provider 在任何一层都没有地址
+    （运行期同样建不出后端）。与 `_resolved_llm_url` 同判据，只是多一句来源描述，
+    供 WARN/PASS 文案使用——避免"运行期有默认值、预检却说未设置"这种谎报。
+    """
+    from Module._common.registry_helpers import resolve_base_url
+    from Module.config.providers import load_provider_defaults
+
+    defaults = load_provider_defaults(module).get(provider_key, {})
+    url_key = str(defaults.get("url_key", "") or "")
+    resolved = resolve_base_url(url_key, defaults)
+    if not resolved:
+        return "", "无任何可用地址"
+    if url_key and os.getenv(url_key):
+        return resolved, f"{url_key} 已设置"
+    return resolved, "providers.yaml 默认值"
 
 
 def _check_tts_env(config: Any) -> None:
-    """根据 TTS provider 检查对应 env var (WARN 级别)。"""
+    """根据 TTS provider 检查可用性（WARN 级别——可选子系统不阻断启动）。
+
+    判据与运行期一致：先看该 provider 的**凭据/地址**是否真的缺失，而不是
+    "env 变量是否被设置"。`gpt-sovits` 是本地 provider（`env_key: ""`），
+    地址来自 `providers.yaml::tts.gpt-sovits.base_url`，缺 `GPT_SOVITS_URL`
+    环境变量时运行期照常可用——旧实现却报"将不可用"。
+    """
     if not config.tts.enabled:
         _pass("TTS 未启用，跳过 env 检查")
         return
@@ -195,6 +265,11 @@ def _check_tts_env(config: Any) -> None:
     if key is None:
         _warn(f"未知 TTS provider: {provider}")
         return
+    resolved, source = _provider_url_note(provider, "tts")
+    if resolved:
+        _pass(f"TTS 可用 ({provider} → {resolved}，{source})")
+        return
+    # 地址本身就没有默认值（如 minimax）：此时凭据才是唯一判据
     val = os.getenv(key, "")
     if val:
         _pass(f"TTS env ok ({key} 已设置)")
@@ -203,7 +278,10 @@ def _check_tts_env(config: Any) -> None:
 
 
 def _check_stt_env(config: Any) -> None:
-    """根据 STT provider 检查对应 env var (WARN 级别)。"""
+    """根据 STT provider 检查可用性（WARN 级别——可选子系统不阻断启动）。
+
+    同 `_check_tts_env`：判据是"运行期能否建出后端"，不是"env 变量是否被设置"。
+    """
     if not config.stt.enabled:
         _pass("STT 未启用，跳过 env 检查")
         return
@@ -215,6 +293,11 @@ def _check_stt_env(config: Any) -> None:
     if provider in _STT_STUB_PROVIDERS:
         _warn(f"STT provider '{provider}' 暂未实现（factory 会抛出 NotImplementedError）")
         return
+    resolved, source = _provider_url_note(provider, "stt")
+    if resolved:
+        _pass(f"STT 可用 ({provider} → {resolved}，{source})")
+        return
+    # sensevoice 的 base_url 是空串且 env_key 为空 ⇒ 只有 SENSEVOICE_URL 能给地址
     val = os.getenv(key, "")
     if val:
         _pass(f"STT env ok ({key} 已设置)")
@@ -330,9 +413,13 @@ async def _check_stt_connectivity(config: Any) -> None:
         _warn(f"STT 连通异常 ({config.stt.model}): {e}")
 
 
-async def _check_milvus_connectivity() -> None:
-    """Milvus 向量数据库连通性探活。"""
-    uri = os.getenv("MILVUS_URI", "")
+async def _check_milvus_connectivity(config: Any) -> None:
+    """Milvus 连通性探活。
+
+    端点取自 `config.database.milvus_uri`（运行期权威），不是 `os.getenv`——
+    否则 config.yaml 里配了地址时会去连一个空串，报出与运行期无关的失败。
+    """
+    uri = str(getattr(getattr(config, "database", None), "milvus_uri", "") or "")
     try:
         import httpx
         async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
@@ -345,9 +432,12 @@ async def _check_milvus_connectivity() -> None:
         _fail(f"Milvus 不可达 ({uri}): {e}")
 
 
-async def _check_mongodb_connectivity() -> None:
-    """MongoDB 文档数据库连通性探活。"""
-    uri = os.getenv("MONGODB_URI", "")
+async def _check_mongodb_connectivity(config: Any) -> None:
+    """MongoDB 连通性探活。
+
+    连接串取自 `config.database.mongodb_uri`（运行期权威），理由同上。
+    """
+    uri = str(getattr(getattr(config, "database", None), "mongodb_uri", "") or "")
     try:
         import motor.motor_asyncio
     except ImportError:
@@ -383,8 +473,8 @@ def run(config: Any, full: bool = False) -> bool:
     _check_pip_deps()
     _check_character_file(config)
     _check_embedding_model()
-    _check_mongo_env()
-    _check_milvus_env()
+    _check_mongo_env(config)
+    _check_milvus_env(config)
 
     # 阶段 2：WARN
     _check_tts_env(config)
@@ -397,8 +487,8 @@ def run(config: Any, full: bool = False) -> bool:
         asyncio.run(_check_llm_connectivity(config))
         asyncio.run(_check_tts_connectivity(config))
         asyncio.run(_check_stt_connectivity(config))
-        asyncio.run(_check_milvus_connectivity())
-        asyncio.run(_check_mongodb_connectivity())
+        asyncio.run(_check_milvus_connectivity(config))
+        asyncio.run(_check_mongodb_connectivity(config))
 
     # 摘要
     print()
