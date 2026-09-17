@@ -37,10 +37,14 @@ import pytest
 
 from paths import ProjectPath
 
-# ⚠️ 被测模块在**收集期**（本模块 import 时）就被加载——这不是风格选择，是守卫的前提。
-# `_images_dir()` 的旧实现是模块级常量，在 **import 那一刻**定格目录。只有"先 import、
-# 后设 env"的时序，本文件的用例才能确定地抓住它；若把 import 挪进 fixture/测试体
-# （那时 env 已设好），旧实现会被冻到 tmp 上、守卫退化成假绿（pytest 收集顺序敏感）。
+# ⚠️ 被测模块在**收集期**（本模块 import 时）就被加载：`_images_dir()` 的旧实现是模块级
+# 常量，在 **import 那一刻**定格目录 ⇒ 只有"先 import、后设 env"的时序才能确定地抓住它。
+# 实测边界（Batch 3.6 Challenger）：**今天**即便删掉本行、改回 fixture 内 import，守卫照样
+# 红——`core/input/tests/__init__` → `core/input/__init__` → `server` 这条包链已在收集期
+# 加载了它（隐式链）。所以本行是**冗余保险**，不是唯一保障：
+#   · 它把"先 import 后设 env"的时序**显式化**，不再依赖包 `__init__` 的连带 import；
+#   · 一旦包 `__init__` 被改惰性/精简（实测该场景下端到端用例会**静默变绿**），
+#     本行 + 下面前提自检会把状态报出来。
 # 见 `test_guard_precondition_module_imported_at_collection_time`。
 from core.input import upload_routes  # noqa: E402
 from core.input.server import create_app  # noqa: E402
@@ -90,13 +94,15 @@ def _make_images_app(monkeypatch, tmp_path) -> tuple[Path, object]:
 def test_guard_precondition_module_imported_at_collection_time():
     """守卫前提自检：被测模块必须在**任何 fixture 之前**（收集期）已加载。
 
-    旧实现（模块级常量）在 import 那一刻定格目录。删掉本文件顶部的
-    `from core.input import upload_routes`、把 import 挪进 fixture，会让旧实现冻到
-    tmp 上、上面两条用例退化成假绿——这条把前提变成**可执行的**。
+    旧实现（模块级常量）在 import 那一刻定格目录，所以"先 import、后设 env"是抓它的前提。
 
-    诚实边界：在 `core/input/__init__.py` 目前连带 import server 的情况下，即便删掉
-    顶部 import，本断言仍可能因包初始化而通过；真正不依赖任何外部 import 行为的证据
-    是 fresh 子进程用例（那里 import 与设 env 的顺序由脚本显式控制）。
+    **实测边界**（Batch 3.6 Challenger，别把它读强了）：
+    - 删掉顶部 import、改回 fixture 内 import ⇒ 本断言**仍通过**（包 `__init__` 链已在
+      收集期加载了该模块），端到端用例也照样红——即"有人挪了 import"**不是**本断言能
+      发现的形态；那类退化由 fresh 子进程用例兜住（它自己控制 import 与设 env 的顺序）。
+    - 真正会静默退化的形态是**包 `__init__` 链也断掉**（实测：把 `from .server import
+      create_app` 从 `core/input/__init__.py` 移除 + fixture 内 import ⇒ 端到端用例
+      `1 passed` 变绿）。那种状态下**只有本断言会红**——这就是它存在的理由。
     """
     assert "core.input.upload_routes" in sys.modules, (
         "采集期未加载 core.input.upload_routes——守卫的时序前提被破坏了")
