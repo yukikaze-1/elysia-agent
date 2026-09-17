@@ -331,17 +331,37 @@ reminder persistence / `plan_too_large` semantics / task LLM provider H3 /
 workflow model reporter / F5 STT provider-test asymmetry / `/debug tts_ok,stt_ok`
 semantics / prompt budget cross-path / provider portability / error protocol extension。
 
-### 正确性 bug（Batch 3 审计发现，**未修**）
+### 正确性 bug（Batch 3 审计发现）
 
-| # | 位置 | 现象 | 影响 |
+> **状态列由 Batch 3.5 复核后填写**（2026-09-17）——逐条独立复现/复核，**不凭报告标签接受**。
+> 完整证据见 [`docs/review/2026-09-17-Batch3.5-correctness-triage-执行记录.md`](docs/review/2026-09-17-Batch3.5-correctness-triage-执行记录.md)。
+
+| # | 位置 | 现象 | 状态 |
 |---|------|------|------|
-| **B3-CB-1** | `core/profile/user_identity.py::UserIdentity.pronouns` + `core/input/character_routes.py:252` | 契约允许 PUT `pronouns: null`，`_normalize_updates` 不过滤 None → Mongo 存 `null` → 读回 `model_validate` 抛 `ValidationError`（`pronouns: str` 不接受 None）。**已独立复现**（两个兄弟字段 `preferredAddress`/`defaultCharacterId` 为 None 时正常） | 此后每次 `get()` 都抛 ⇒ `/api/me`、preview、会话创建、generation 全 500（`character_routes.py:265-269` 只捕 `StorageUnavailableError`）。修法：`_normalize_updates` 丢弃 None 或字段改 `str \| None` |
-| **B3-CB-2** | `core/storage/schema_drift.py:63` `EXPECTED_INDEX_OPTIONS` | 键写成**从未存在**的 `idempotency_claims`，真集合名是 `idempotency`（`idempotency_repo.py:50`） | S2-B1 的「同名索引选项不符」检查对该集合**永远不生效**；该表无任何 AST 守卫（实测 `core/storage/tests` 498 passed 仍全绿）。另 4 个 unique/TTL 索引未登记 |
-| **B3-CB-3** | `Module/config/preflight.py:133-142`（及 `_check_mongo_env`/`_check_milvus_env`） | 用 `os.getenv("DEEPSEEK_URL")` 判 FAIL，而运行期 `resolve_base_url()` 会回退 `providers.yaml::llm.deepseek.base_url`。实测：只设 `DEEPSEEK_API_KEY` → preflight `failed=1`，而同进程 `LLMFactory.create(...)._client.base_url == https://api.deepseek.com`（完全可用）。数据库两项同理（只看 env，忽略 `config.yaml::database.*` 与默认值） | `app.py --check` 退 1 ⇒ `scripts/start.sh` **拒绝启动一个本来可用的配置** |
-| **B3-CB-4** | `scripts/clean_db.py::PROTECTED_COLLECTIONS` | docstring 自称「列在这里是给测试当回归守卫用」，但 `scripts/tests/` **没有** clean_db 测试，常量零引用 | 「用户身份不可删」这条保护**没有机器守卫** |
-| **B3-CB-5** | `core/tests/test_doc_counts.py` | 文档数字门禁**不含根 `README.md`**，且正则只认粗体 `**N 个同名 @property**` ⇒ 根 README 的「39 个 @property」（实际 46）永远抓不到；该守卫在 `docs/architecture/invariants.md` 中 0 登记（现已登记进 §7） | 文档数字失真不会被自动发现。修法：扩范围 + 登记，而不是每轮手改数字 |
-| **B3-CB-6** | `core/profile/profile_store.py:189-200` ↔ `core/storage/user_identity_repo.py:40` | 两份**语义不同**的白名单（store 版额外约束 `initialized` 只能置 true），两侧对未知键都**静默 `continue`** | 静默丢更新；两份会分岔 |
-| ~~B3-CB-7~~ ✅ | `core/input/upload_routes.py::_IMAGES_DIR` 模块级常量 + `test_server.py::image_app` 的 `monkeypatch.setenv` | 测试 docstring 声称"图片落盘重定向到 tmp_path"，但常量在 **import 期**固化 ⇒ 隔离**从未生效**。实测单跑图片用例真实目录 `441 → 442` | **已修（`ebf6ba4d`）**：改为 `_images_dir()` 调用期解析；修复后 delta=0。累积的 442 个测试残留 PNG 已清理。纪律：**能被测试改写的输入不能在 import 期求值** |
+| **B3-CB-1** | `core/profile/user_identity.py::UserIdentity.pronouns` + `core/input/character_routes.py:254` | 契约允许 PUT `pronouns: null`（读契约本就是 `string \| null`），`_normalize_updates` 不过滤 None → Mongo 存 `null` → 读回 `model_validate` 抛 `ValidationError`（`pronouns: str` 不接受 None） | ✅ **FIXED**（`fb438167`，`CONFIRMED_USER_REACHABLE` / **CRITICAL**）。实测比原记录更重：**PUT 自己就 500**（读回在同一次 `update_if_revision` 内）、**省略该键**同样污染、污染后重试返回**谎报的 409**、`/ready` 因探 ping 而**保持绿**。真实 MongoDB 8 复现 + 验证。修法=域模型 1 行改 `str \| None`（**保留默认值**，故键缺失仍「她」、无需 migration，且顺带修好已污染记录） |
+| **B3-CB-2** | `core/storage/schema_drift.py:63` `EXPECTED_INDEX_OPTIONS` | 键写成**从未存在**的 `idempotency_claims`，真集合名是 `idempotency`（`idempotency_repo.py:50`） | ✅ **FIXED**（`0302566a`，`CONFIRMED_DEPLOYMENT_REACHABLE` / MEDIUM）。危害不止"少报一条"：键不存在即该集合**一个选项都不比**，退化成**"扫了、没比、报健康"**。修这个键会让一条原本绿的用例变红（其 mock 靠 `ttl_` 前缀猜 TTL），已一并改为**从声明派生**。**残留**：该表仍**无 AST 守卫**（见 follow-up N-4） |
+| **B3-CB-3** | `Module/config/preflight.py`（`_check_llm_env` 的 URL 检查 + `_check_mongo_env`/`_check_milvus_env` + 两处 connectivity） | 判据是"env 变量是否被设置"，而运行期走 `resolve_base_url`（env → providers.yaml 默认值）与 `config.database.*`（CLI>env>YAML>默认） | ✅ **FIXED**（`edd67cef`，`CONFIRMED_DEPLOYMENT_REACHABLE` / HIGH）。`.env.example` 对齐的配置（只缺 `MONGODB_URI`，该行本就注释掉）修前 `10/13 failed=1` 退 1、修后 `11/13 通过`。修法=判据接到运行期**同一个** `resolve_base_url` / `config.database.*`。防反向假绿已实测：`mimo`（任何一层都无地址）**继续 FAIL** |
+| **B3-CB-4** | `scripts/clean_db.py::PROTECTED_COLLECTIONS` | docstring 自称「列在这里是给测试当回归守卫用」，常量零引用 | ❌ **FALSE_POSITIVE**（LOW，仅 docstring 措辞）。原审计把"**这个常量**有无消费者"当成了"**保护属性**有无守卫"——守卫存在且不读该常量：`core/tests/test_clean_db.py:39-49` 硬编码集合名双向断言，另两条把清单逐字面量钉死。变异模拟：两种改法各 2 条用例红。见 follow-up N-7 |
+| **B3-CB-5** | `core/tests/test_doc_counts.py` | 文档数字门禁不含根 `README.md`；正则只认粗体格式 | ✅ **ALREADY_FIXED**（`0937e85a`：根 README 已入参数化列表 + 格式统一，三份都写 46 = AST 实数 46）+"正则漏格式"子断言**是假阳性**（判据逐文件 fail-closed，匹配不到会**直接红**）。**残留窄洞**：门禁**范围硬编码三份文档**，`docs/architecture.md:372` 写「43 个 @property」用同一格式却永不被检查（见 follow-up N-5） |
+| **B3-CB-6** | `core/profile/profile_store.py:188-200` ↔ `core/storage/user_identity_repo.py:40-43` | 两份**语义不同**的白名单（store 版额外约束 `initialized` 只能置 true），两侧对未知键都**静默 `continue`** | ⏸ **KEEP AS-IS**（`CONFIRMED_BUT_CURRENTLY_UNREACHABLE` / LOW，风险 MEDIUM）。两侧**集合完全相等**；调用点穷举：store 2 个、repo 1 个、无动态派发；HTTP 入口因 `UserIdentityUpdate` `extra="forbid"` 且无 `initialized` 字段而**无法**构造分岔（实测 400）。判潜在分岔风险，非活 bug |
+| ~~B3-CB-7~~ ✅ | `core/input/upload_routes.py::_IMAGES_DIR` 模块级常量 + `test_server.py::image_app` 的 `monkeypatch.setenv` | 测试 docstring 声称"图片落盘重定向到 tmp_path"，但常量在 **import 期**固化 ⇒ 隔离**从未生效** | ✅ **ALREADY_FIXED**（`800e54da`）。Batch 3.5 用**测量**复核：真实目录 delta = **0**，且**正对照**证明同一批测试确实写了 2 个 PNG 到重定向目录（否则 delta=0 无意义）。**残留**：无回归守卫能挡住重新引入（见 follow-up N-8） |
+
+### Batch 3.5 新登记的 out-of-scope findings（**只记录，未修**）
+
+> 复核 B3-CB-1..7 过程中**顺带看到**、但不属于本批 7 条输入集合的缺陷。按 §35 规则
+> 记录不修。完整背景见 Batch 3.5 执行记录 §12/§17。
+
+| # | 位置 | 现象 | 为什么不在 Batch 3.5 |
+|---|---|---|---|
+| **N-1** | `core/profile/profile_store.py::health_check` + `core/input/health.py:141` | `health_check()` 返回 **True** 而 `is_available` 为 **False** ⇒ 身份已死时 `/ready` 的 `chatReady` 仍 200，而 `/api/me` 返回 503（探针契约 vs 可用性契约不一致） | 是 B3-CB-1 的**放大因素**而非同一缺陷；B3-CB-1 修好后不再自然可达。需单独判"ready 该探什么" |
+| **N-2** | `core/profile/profile_store.py::_update_local`（`setattr`） | 绕过 pydantic 校验：本地模式下 `pronouns=None` 被静默接受；`_load_from_file` 读回失败会**重新 bootstrap** ⇒ 静默数据丢失 | 本地/单测路径，非生产装配路径 |
+| **N-3** | `core/input/character_routes.py:271` | 409 的 `details.currentRevision` 读**陈旧进程内缓存** ⇒ 谎报（报 1，库实为 2），文档承诺的 CAS 恢复路径可死循环 | 独立缺陷；修它需先想清"409 该报谁" |
+| **N-4** | `core/storage/schema_drift.py:49-50` | docstring 自称 `EXPECTED_INDEX_OPTIONS` 由 AST 反向校验守护，**实测覆盖为 0**（把整张表换成垃圾仍全绿）。B3-CB-2 修的是**键**这个具体缺陷，"下次再改错键不会被发现"仍成立 | 属**门禁建设**（新增 AST 守卫），非本次键名缺陷本身 |
+| **N-5** | `core/tests/test_doc_counts.py` | 门禁范围是**硬编码三份文档**；`docs/architecture.md:372` 写「**43 个同名 `@property`**」（同一粗体格式、真值 46）**永不被检查** | B3-CB-5 的残留**窄洞**（原报告归因于正则，实为范围）；扩范围属另一件事 |
+| **N-6** | `docs/architecture/invariants.md:162` | §7 关于 `test_doc_counts` 的那行**已过期**：仍说"门禁不含根 README、README 写 39"，而这两点已被 `0937e85a` 修掉（§7 登记 `a7ae2cbf` 与修复相隔 **6 秒**，未回头更新） | 文档准确性；本批已记账 |
+| **N-7** | `scripts/clean_db.py:95` | docstring 说常量「列在这里是给测试当回归守卫用」，而真正的守卫（`core/tests/test_clean_db.py`）**不读它** | 仅措辞失实；保护属性本身已被守卫（B3-CB-4 判假阳性的原因） |
+| **N-8** | B3-CB-7 的修复**缺回归守卫** | `_images_dir()` 若被改回 import 期常量，**整套图片测试仍然全绿**（pre/post 都绿——这正是它当初能潜伏的原因）。建议加"晚设 `ELYSIA_PATH_DATA_UPLOADS_IMAGES` 后 `_images_dir()` 必须跟随"的断言 | 属补守卫，非 correctness 缺陷本身 |
+| **N-9** | 多处模块级 `ProjectPath...resolve()` 常量 | 与 B3-CB-7 同形（import 期求值、可被测试 env 改写）：`core/tools/vision/plugin.py:23`、`core/storage/secret_store.py:46`、`core/providers/custom_providers.py:16`、`core/utils/log_setup.py:16` 等 | 同形但**未被证明有实际损害**；不做无证据的批量改动 |
 
 ### 测试侧清理候选（Batch 3 审计登记，**本批未做**）
 
