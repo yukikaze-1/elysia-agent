@@ -311,7 +311,7 @@ L2  Module/workflow_engine/  后台任务 — Planner → Executor → Evaluator
 | [scripts/README.md](scripts/README.md) | 工具脚本（启动/预检/清理数据库） |
 | [docs/readme-conventions.md](docs/readme-conventions.md) | README 编写规范（模板 + 面包屑规则 + 检查清单） |
 | [docs/code-style-guide.md](docs/code-style-guide.md) | 代码风格与类型约束（ID NewType 体系 + 权威归属 + StrEnum/coerce + getattr 纪律） |
-| [docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md) | Agent 公开接口设计（薄 getter + 写方法；当前 39 个 @property） |
+| [docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md](docs/superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md) | Agent 公开接口设计（薄 getter + 写方法；当前 **46 个同名 `@property`**——`core/agent/agent.py` 自身计数，不含 `AgentLifecycle` 的私有 `_state`） |
 | [docs/superpowers/specs/archive/2026-08/2026-08-02-service-runtime-state-design.md](docs/superpowers/specs/archive/2026-08/2026-08-02-service-runtime-state-design.md) | 服务运行时状态 + 热插拔设计（ServiceState + set_service + capabilities 嵌套） |
 | [docs/superpowers/specs/archive/2026-09/2026-09-04-character-stage-e-runtime-binding-design.md](docs/superpowers/specs/archive/2026-09/2026-09-04-character-stage-e-runtime-binding-design.md) | 阶段 E CharacterRuntime 与会话绑定设计（M3：engine per-instance + RuntimeRegistry + CharacterRuntimeState） |
 | [docs/superpowers/plans/archive/2026-09/2026-09-04-character-stage-e-runtime-binding-plan.md](docs/superpowers/plans/archive/2026-09/2026-09-04-character-stage-e-runtime-binding-plan.md) | 阶段 E 实施计划（14 Task：RuntimeState/Repo/Runtime/Registry → _prepare_turn 回合解析 → 接线 → 读端 → README） |
@@ -508,7 +508,7 @@ Agent/
 
 ## 测试
 
-测试统计由 `scripts/print_test_stats.py` 生成（不手写易漂移数字）。当前（2026-08-16）全量收集 3804：unit 2070 / service 1580 / integration 52 / slow 57 / external 36（真实 LLM E2E，独立 opt-in）；合并门禁 `-m "not external"` 3768。详见 [docs/testing.md](docs/testing.md)。
+测试统计由 `scripts/print_test_stats.py` 生成（不手写易漂移数字）。当前（2026-09-17，Batch 3）全量收集 6003：unit 3390 / service 2585 / integration 7 / slow 39 / external 18（真实 LLM E2E，独立 opt-in）；合并门禁 `-m "not external"` 5985。详见 [docs/testing.md](docs/testing.md)。
 
 ```bash
 conda activate Elysia
@@ -519,7 +519,7 @@ make test-quick
 # 提交前 — 排除慢速（~5min）
 make test-normal
 
-# 全量（~22min）
+# 全量（含 slow，无界；实测含 slow 层完整跑一遍耗时可观）
 make test-full
 
 # 导入风格门禁（禁相对导入，秒级）
@@ -598,9 +598,6 @@ base_personality_file: personality.md    # L1 Core 文本（相对路径）
 voice: elysia_v2                         # [占位] TTS voice ID
 
 emotion:
-  thresholds:
-    excitement: 0.6
-    sadness: 0.3
   idle_expressions: [neutral, blink]
 
 wake_words: [Elysia, 爱莉, 爱莉希雅, 妖精小姐]

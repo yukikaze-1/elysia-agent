@@ -578,7 +578,7 @@ L4 Mood（当前情绪）    LLM `<mood>` 标签每轮更新（自由文本）�
 
 **CharacterReflector**（子组件）：缓冲 50 对 user/assistant 消息 → LLM 反思 → 提交事件到 `CharacterEngine.consume_trigger("reflector", ...)`，更新 L3 State。
 
-**AwarenessTrigger**（C9 激活判定）：L3 非空 + 距上次触发超过 5 分钟（300s） → C9 渲染。冷却时间戳持久化到 CharacterState，重启不丢失。（注：`engine.py` 中 `AWARENESS_COOLDOWN_SECONDS=3600` 为已废弃的死代码，实际冷却由 `awareness.py` 的 `AWARENESS_JUDGMENT_COOLDOWN=300` 控制。）
+**AwarenessTrigger**（C9 激活判定）：L3 非空 + 距上次触发超过 5 分钟（300s） → C9 渲染。冷却时间戳持久化到 CharacterState，重启不丢失。冷却时长常量的唯一来源是 `awareness.py` 的 `AWARENESS_JUDGMENT_COOLDOWN=300`。
 
 **阻尼机制**：L3 偏移 L1 特质时，L1 决定"怎么说"（表达方式），L3 影响"说什么"（内容倾向）。Phase 2 引入 L4→L3、L3→L2 向上回流压缩。
 
@@ -1040,9 +1040,9 @@ base_personality_file: personality.md   # L1 Core 文本
 voice: elysia_v2                        # [占位] TTS voice ID
 
 emotion:
-  thresholds: {excitement: 0.6, sadness: 0.3}
   idle_expressions: [neutral, blink]
 
+# P3-01-RESERVED：预留给 Live2D / 前端渲染；from_yaml 目前不读，故不是生效配置项
 appearance:
   height: "162cm"
   hair: "粉色长发"

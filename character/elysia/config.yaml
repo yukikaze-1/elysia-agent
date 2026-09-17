@@ -107,18 +107,17 @@ personality:
     你每轮回复开头声明的 <mood> 会影响你的表达方式——心情愉快时语速轻快、♪更多、主动提议；心情低落时语速放缓、♪减少、句子更克制。不需要机械套用规则：用你自己的判断，让语气和心情自然一致。心情不只是标签——它应该真的渗透到你说话的方式里。
 
 # ---- 外观（待启用） ----
-# 预留给 Live2D / 前端渲染，代码暂未消费
+# P3-01-RESERVED：预留给 Live2D / 前端渲染，代码暂未消费（勿按引用审计删除）。
+# 注：`CharacterConfig.from_yaml()` 目前不读本块，故它不是"配置项"而是设计意图记录。
 appearance:
   height: "162cm"
   hair: "粉色长发"
   eyes: "粉红色"
 
 # ---- 情绪引擎 ----
-# 由 EmotionEngine（L4 Mood）消费
+# `idle_expressions` 由 IdleMonitor / EmotionDetector 消费（闲置时推送的 Live2D 表情）。
+# L4 Mood 本身由主回复流的 <mood> 标签驱动，不需要阈值配置。
 emotion:
-  thresholds:                          # 情绪触发阈值
-    excitement: 0.6                    #   兴奋（关键词匹配灵敏度）
-    sadness: 0.3                       #   悲伤
   idle_expressions:                    # 闲置时随机推送的 Live2D 表情
     - neutral
     - blink

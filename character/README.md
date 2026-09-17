@@ -33,8 +33,7 @@ character/<角色名>/
 | `name` | string | ✓ | 角色显示名（注入 system prompt） |
 | `base_personality_file` | string | ✓ | L1 Core 文本文件名，相对于 config.yaml 目录 |
 | `voice` | string | — | [占位] TTS voice ID。MiniMax/GPT-SoVits 音色由各自的 voices.yaml 管理 |
-| `emotion.thresholds` | dict | — | 情绪触发阈值（excitement/sadness 等） |
-| `emotion.idle_expressions` | list | — | Live2D 闲置表情列表 |
+| `emotion.idle_expressions` | list | — | Live2D 闲置表情列表（IdleMonitor / EmotionDetector 消费） |
 | `proactive.enabled` | bool | — | 是否启用主动搭话 |
 | `proactive.interval` | int | — | 空闲检查间隔（秒） |
 | `proactive.triggers` | list | — | 触发条件列表 |

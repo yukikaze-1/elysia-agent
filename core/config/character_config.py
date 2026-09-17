@@ -11,7 +11,6 @@ from paths import get_project_root
 
 @dataclass
 class EmotionConfig:
-    thresholds: dict[str, float] = field(default_factory=dict)
     idle_expressions: list[str] = field(default_factory=lambda: ["neutral"])
 
 
@@ -79,7 +78,6 @@ class CharacterConfig:
             base_personality=base_personality,
             personality=raw.get("personality", {}),
             emotion=EmotionConfig(
-                thresholds=emotion_raw.get("thresholds", {}),
                 idle_expressions=emotion_raw.get("idle_expressions", ["neutral"]),
             ),
             wake_words=raw.get("wake_words", []),

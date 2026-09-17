@@ -270,7 +270,7 @@ provider，不进 CI）；`scripts/tests/test_stage4_smoke.py` 为 slow pytest �
 ```
 character/
 └── <name>/                  # One directory per character
-    ├── config.yaml           # YAML config (name, wake_words, emotion thresholds, proactive, etc.)
+    ├── config.yaml           # YAML config (name, wake_words, emotion.idle_expressions, proactive, etc.)
     ├── personality.md        # L1 Core personality text (natural language, loaded at startup)
     └── reference/            # GPT-generated reference materials (optional)
 ```
