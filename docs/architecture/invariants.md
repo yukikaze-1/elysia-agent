@@ -71,7 +71,8 @@
 ## 3. Runtime（R）
 
 来源：[2026-09-17 Batch 1.6 执行记录](../review/2026-09-17-Batch1.6-runtime-authority-lifecycle-执行记录.md)、
-[2026-09-16 Batch 1 执行记录](../review/2026-09-16-Batch1-correctness-durability-执行记录.md) §4。
+[2026-09-16 Batch 1 执行记录](../review/2026-09-16-Batch1-correctness-durability-执行记录.md) §4、
+[2026-09-18 Batch 4 执行记录](../review/2026-09-18-Batch4-runtime-health-truthfulness-执行记录.md)。
 
 | ID | Invariant | Test | Gate | CI |
 |---|---|---|---|---|
@@ -79,11 +80,82 @@
 | **R2** | runtime reporter **读 runtime 权威**（不是 bootstrap，也不是持久化快照） | `core/agent/tests/test_runtime_authority_end_to_end.py::test_switch_then_restart_keeps_every_reporter_consistent` | `make test-quick` / `test-normal` | **push/backend** |
 | **R3** | **显式 CLI 覆盖跨 reload 存活**："没传" 与 "传了等于默认值" 必须可区分（argparse 的 default 不得冒充显式覆盖） | `core/agent/tests/test_cli_overrides.py`（22 例，含 `test_explicit_override_survives_every_reload`） | `make test-quick` / `test-normal` | **push/backend** |
 | **R4** | 独立子系统**拥有自己的资源生命周期**（谁创建谁关闭；停机后必须 drain 再关依赖） | `core/agent/tests/test_task_llm_ownership.py`（10 例） | `make test-quick` / `test-normal` | **push/backend** |
+| **R5** | **readiness 反映真实可用性**：`/ready` 的 identity 门禁读「身份已装载且权威库连着」的运行时状态，不读代理量（ping 通 / 对象存在 / repo 已构造） | `core/profile/tests/test_ready_identity_truthfulness.py::test_RHT2_ready_503_when_identity_load_failed`、`::test_RHT5c_failed_reload_does_not_serve_stale_identity`、`core/agent/tests/test_identity_readiness_lifecycle.py::test_healthy_start_is_ready_and_does_not_touch_health_check_probe` | `make test-quick` / `test-normal` | **push/backend** |
+| **R6** | **关键装载失败留在运行时状态**：失败事实由拥有该 lifecycle 的对象（`UserIdentityStore`）持有并可查（`is_available` = 不可用 + `last_error` = 类型名），不得只以日志形式存在；成功恢复后必须消解，不得钉死判定 | `core/profile/tests/test_ready_identity_truthfulness.py::test_RHT1_load_failure_sets_unavailable_and_queryable_error`、`::test_RHT6_reconnect_clears_failure_and_restores_ready`、`core/agent/tests/test_identity_readiness_lifecycle.py::test_start_with_undecodable_identity_keeps_process_alive_but_not_ready` | `make test-quick` / `test-normal` | **push/backend** |
 
 **R4 的静态面**：`scripts/check_architecture.py` 的 **R6**（裸 `create_task`/
 `ensure_future` 必须逐点登记「任务存哪 / 谁取消 / 谁等待 / 异常谁看」，
 19 个登记点 / 22 处 spawn）。门禁：`make check-arch`，**push/backend**。
 运行期契约见 `Module/_common/task_scope.py`（`AsyncTaskScope` / `cancel_and_drain`）。
+
+### 3.1 Readiness contract（PD-1 落纸）
+
+> **Identity availability is required for chat readiness.**
+> **Process liveness is independent from readiness.**
+
+**三种语义，互不冒充**：
+
+| 端点 | 回答的问题 | 判据 | 契约 |
+|---|---|---|---|
+| `/health` | 进程还活着吗 | 进程内存读取，**零网络探针** | **恒 200** |
+| `/ready` | 对外承诺的核心 chat 能力现在可用吗 | core chat 门禁（见下） | `chatReady` → 200，否则 503 |
+| `/ready` 的 `fullReady` | 长期记忆真的能持久化吗 | `chatReady` ∧ Milvus ∧ embedding | **不**门禁 HTTP，只可观测 |
+
+**为什么「身份不可用 ⇒ 不就绪」是产品语义而不是新增严格性**：产品自己早已对同一
+权威 fail-closed——`UserIdentityStore.is_available`（`_cached is not None` 且
+`repo.is_connected`）是这三处的围栏判据：`/api/me`（`core/input/character_routes.py`
+→ 503 `STORAGE_UNAVAILABLE`）、对话轮次的身份快照
+（`CognitiveLoop._identity_snapshot` → 503）、角色服务（`service/queries.py` 预览、
+`service/instances.py` 归档）。**产品不服务，readiness 就不许说就绪**；否则运维/部署
+看到的绿与用户拿到的 503 直接矛盾（N-1 的实测形态：同一受控状态下 `/ready` 200
+而 `/api/me` 503）。
+
+**范围纪律（不泛化）**：本门禁只覆盖「聊天/用户请求的必要依赖」这一条身份状态，
+不把 TTS/STT/Workflow/Memory/可选集成或任意 warning 塞进 `/ready`。允许
+`Agent` 进程继续运行而 `readiness=false`——「不就绪」不等于「进程必须退出」。
+
+**为什么不是 `health_check()`**：两个谓词回答两个问题，且**调用它还有副作用**。
+
+| 谓词 | 问题 | 实现 | 副作用 |
+|---|---|---|---|
+| `is_available` | 身份现在能不能服务？ | `_cached is not None and repo.is_connected`（纯读） | 无 |
+| `health_check()` | 权威库现在通不通？ | `repo.health_check()` → 真实 `ping()` | 失败时 `_mark_unavailable()`（`_db = None`）并**重连** |
+
+「ping 通」不蕴含「身份已装载」：库里文档不合域模型时 repo 连得好好的，而 `_cached`
+恒为 None。故 `/ready` 读 `health_check()` 会假绿；而读 `is_available` 同时让探针
+（`/ready`）、修复器（`_dependency_needs_recovery("identity")`，本就是
+`not store.is_available`）与产品围栏三者**同源**，并恢复「探针无副作用」。
+`health_check()` 的职责**不变**——它仍是数据库恢复协调器的探针。
+
+**未就绪的判据表**：
+
+| 进程 | 身份状态 | chat 能力 | 期望 `/ready` |
+|---|---|---|---|
+| 存活 | 已装载可用 | 可用 | ready（200） |
+| 存活 | 装载失败/重载失败 | 不可用 | **not ready（503）** |
+| 存活 | 从未配置 repo（本地/单测模式） | 可用（本地 bootstrap） | ready（200） |
+| 存活 | 失败后恢复（`connect()` 重载成功） | 可用 | ready（200） |
+| 停机窗口（`_state ≠ RUNNING`） | 任意 | — | not ready（503），CR-08 |
+
+**本契约**不**包含的判定（经复核后的接受项，防止把它读成更强的承诺）**：
+
+1. `is_available` 只看「repo 句柄仍在 + 缓存非空」，**不**做新鲜度探测——权威库在
+   缓存之后挂掉、或权威文档被**外部写入者**改坏/删除时，`is_available` 仍为真
+   （缓存即服务），身份**写**路径会 fail-closed（`update_if_revision` 真查库 → 503/409），
+   而恢复协调器**不会**因此重载（`_dependency_needs_recovery("identity")` =
+   `not is_available` 为假）。⇒ **R5 的强度只到"装载期真值"**：它保证「装载/重载失败 ⇒
+   不就绪」，不保证「缓存与权威文档逐轮比对」。要闭合这一段需要 freshness 机制
+   （按 revision/updatedAt 轮询比对 + 防抖），属**独立设计**，不在本批（§77 禁止为
+   两条 finding 新增 debounce/hysteresis）；已登记为 follow-up。
+2. 本地模式（无 repo）`is_available` 恒 True：该模式下 `storage_path` 无生产调用方
+   （`Agent` 与 `create_app` 两条装配路径都不传），且本地模式没有异步装载窗口，
+   故「loading ⇒ not ready」这一行在本地模式不适用；
+3. `/ready` 的 identity 门禁是**进程内状态读取**，不重新加载、不重试、不写状态；
+4. `/ready` 的判据是 `is True`（显式布尔）：真值非布尔（duck-typed 替身的
+   `is_connected = 1`）会被判 **not ready**。生产 `Repository.is_connected` 是
+   `self._db is not None`（真布尔），故这是**有意的保守方向**而非缺陷——宁可拒绝
+   一个无法确认的"可用"，也不让替身属性冒充健康（守卫：
+   `test_ready_503_when_availability_is_truthy_but_not_bool`）。
 
 ---
 

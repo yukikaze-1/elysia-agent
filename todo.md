@@ -30,8 +30,8 @@
 
 | ID | 标题 | Reach | Sev | Ev | Status | 候选批次 |
 |---|---|---|---|---|---|---|
-| **N-1** | `/ready` 的 identity 门禁探「repo 可达」而非「身份已装载且可用」⇒ 装载失败时 `/ready` 200 而 `/api/me` 503 | DEPLOYMENT | HIGH | E1(HEAD)+E3(3.5) | **OPEN** `TRUTHFULNESS` | **Batch 4-A** |
-| **N-11** | `ProfileStore.connect` / `_load_from_file` 吞掉一切异常（N-1 的上游：失败不可观测） | DEPLOYMENT | MEDIUM | E1+E3(3.5) | **OPEN** | **Batch 4-A** |
+| **N-1** | ~~`/ready` 的 identity 门禁探「repo 可达」而非「身份已装载且可用」⇒ 装载失败时 `/ready` 200 而 `/api/me` 503~~ | DEPLOYMENT | HIGH | E1(HEAD)+E3(3.5)+**E3(4)** | **GUARDED** `e0ec4009` | ✅ Batch 4 |
+| **N-11** | ~~`ProfileStore.connect` / `_load_from_file` 吞掉一切异常（N-1 的上游：失败不可观测）~~ | DEPLOYMENT | MEDIUM | E1+E3(3.5)+**E2(4)** | **GUARDED** `fc648e20` | ✅ Batch 4 |
 | **N-3** | 409 `details.currentRevision` 读进程内陈旧缓存 ⇒ 谎报，文档承诺的 CAS 恢复路径可死循环 | USER | MEDIUM | E1 | **OPEN** `TRUTHFULNESS` | Batch 4-C（需 `PD-2`） |
 | **KB-6** | TTS 密集短句（5+）时 `wait_all()` 无超时 ⇒ FSM 卡 `SPEAKING`（已用 read timeout 120s→30s 缓解，根因未复现） | USER | MEDIUM | E1+E0 | **INSUFFICIENT_EVIDENCE** | 需先复现 |
 | **F8** | prompt 预算 cross-path：`core/character/preview.py` 调 `build_messages` **不传** `prompt_budget_tokens`（chat 路径传） ⇒ 预览路径可超 context → provider 400。**实测（Challenger）：内置角色预览 system prompt ≈9283 est tokens，ollama 窗口 8192/预算 6144 ⇒ 小窗口 provider 上 100% 复现** | USER | MEDIUM | E1+E2 | **OPEN** | 独立小批（不在 4-A/B/C 内） |
@@ -48,8 +48,8 @@
 
 | ID | 标题 | Reach | Sev | Ev | Status | 候选批次 |
 |---|---|---|---|---|---|---|
-| **N-1** | 同上（readiness 假绿） | DEPLOYMENT | HIGH | E1+E3 | **OPEN** | **Batch 4-A** |
-| **N-11** | 同上（吞异常 ⇒ 不可观测） | DEPLOYMENT | MEDIUM | E1 | **OPEN** | **Batch 4-A** |
+| **N-1** | 同上（readiness 假绿） | DEPLOYMENT | HIGH | E1+E3+**E2/E3(4)** | **GUARDED** `e0ec4009` | ✅ Batch 4 |
+| **N-11** | 同上（吞异常 ⇒ 不可观测） | DEPLOYMENT | MEDIUM | E1+**E2(4)** | **GUARDED** `fc648e20` | ✅ Batch 4 |
 | **N-3** | 同上（409 谎报 revision） | USER | MEDIUM | E1 | **OPEN** | Batch 4-C |
 | **N-10** | `gemini/<model>` 预检全绿，运行期 `LLMFactory.create` 无条件 `NotImplementedError`（LLM 侧无 stub 冻结表，STT 侧有 `_STT_STUB_PROVIDERS`） | DEPLOYMENT | MEDIUM | E3(3.5)+E1(HEAD) | **OPEN** `TRUTHFULNESS` | **Batch 4-B** |
 | **F6** | `/api/providers/test` 的 **STT 缺省模型读 config**，而 llm/tts 读 runtime ⇒ 测的不是跑的那个 | ADMIN | MEDIUM | E1 | **OPEN** `TRUTHFULNESS` | **Batch 4-B** |
@@ -144,7 +144,7 @@
 
 | ID | 决策点 | 阻塞谁 | 现状 |
 |---|---|---|---|
-| **PD-1** | 身份装载失败时：**fail-closed 启动** vs **降级运行**？`/ready` 该探什么？ | **N-1 + N-11（Batch 4-A）** | 今天是「吞异常 + 只探 ping」 |
+| **PD-1** | 身份装载失败时：**fail-closed 启动** vs **降级运行**？`/ready` 该探什么？ | ~~**N-1 + N-11（Batch 4-A）**~~ | ✅ **已裁决并落纸（Batch 4）**：产品语义**早已**是 fail-closed / 降级运行（三处产品围栏按 `is_available` 503，但**进程不回滚**）；`/ready` 探 `is_available`（非 `health_check`）。契约见 [`docs/architecture/invariants.md`](docs/architecture/invariants.md) §3.1 + 不变量 R5/R6 |
 | **PD-2** | 409 的 `currentRevision` **该报谁**（权威库现值 vs 客户端期望值）？ | N-3 | **降级为形式确认**（Challenger：只有"权威值"有用——回显客户端期望值无法收敛；且 `UserIdentityRepository.get()` 已存在，只需一个小公开访问器）。真实前提是**多进程/外部写**（同进程更新会刷新缓存） |
 | **PD-3** | 那 4 条 `unique` 是否纳入 schema drift enforcement？ | GR-3（N-15） | **降级为形式确认**（`check_schema_drift` 从不 raise、只 `logger.error` ⇒ 不存在"让启动变红"的风险）。真正需要独立设计的是 `GR-24` 的**部分索引**语义 |
 | **PD-4** | 审批流是否启用？（`WAITING_APPROVAL` live-lock 只在 Evaluator v2 产出 `ASK_APPROVAL` 后可达；`core/hitl.py` 自陈「没有任何触发路径」） | F1（**不是当前 bug**） | 能力已备、未接线 |
@@ -206,8 +206,10 @@
 
 | 层 | ID | 报什么 | 实际是什么 | Reach | Sev |
 |---|---|---|---|---|---|
-| 进程健康 | **N-1** | `/ready` 200 + `chatReady` | identity 未装载/不可用（`/api/me` 503） | DEPLOYMENT | HIGH |
-| 进程健康 | **N-11** | 静默成功（只 warning） | 装载/读取失败被吞，无处可查 | DEPLOYMENT | MEDIUM |
+| 进程健康 | **N-1** | ~~`/ready` 200 + `chatReady`~~ | identity 未装载/不可用（`/api/me` 503） | DEPLOYMENT | HIGH |
+| ~~进程健康~~ | ~~**N-1**~~ | ✅ **已修（Batch 4 `e0ec4009`）**：`/ready` 改读 `is_available`，与产品围栏同源 | 守卫 `core/profile/tests/test_ready_identity_truthfulness.py` + `core/agent/tests/test_identity_readiness_lifecycle.py`（修前 12 红） | — | — |
+| 进程健康 | **N-11** | ~~静默成功（只 warning）~~ | 装载/读取失败被吞，无处可查 | DEPLOYMENT | MEDIUM |
+| ~~进程健康~~ | ~~**N-11**~~ | ✅ **已修（Batch 4 `fc648e20`）**：失败由 `UserIdentityStore` 持有（`is_available` + `last_error`），成功恢复即消解 | 同上（+ `tests/real_mongo/test_real_identity_readiness.py` 真库旁证） | — | — |
 | API 元数据 | **N-3** | `details.currentRevision = 1` | 权威库已是 2（进程内缓存） | USER | MEDIUM |
 | provider 能力 | **N-10** | preflight `[PASS]` | 运行期 `NotImplementedError`（gemini） | DEPLOYMENT | MEDIUM |
 | provider 探测 | **F6** | `/api/providers/test` 测 config 里的模型 | 运行时用的是另一个（STT） | ADMIN | MEDIUM |
@@ -247,6 +249,7 @@
 | **B3-CB-5** | 文档数字门禁漏根 README | **ALREADY_FIXED** `0937e85a`；残留窄洞见 `N-5`/`GR-1` |
 | **B3-CB-6** | 两份语义不同的 `UPDATABLE_FIELDS` 白名单 | **KEEP_AS_IS**（当前不可达：契约 `extra="forbid"` 挡住分岔） |
 | **B3-CB-7** | `_IMAGES_DIR` import 期固化 ⇒ 测试隔离从未生效 | **ALREADY_FIXED** `800e54da` + **GUARDED** `6c559816`/`210e9c37` |
+| **N-1 / N-11** | `/ready` 探 ping 假绿 + 装载失败无可查状态（同一因果链） | **GUARDED** `e0ec4009` + `fc648e20`；PD-1 契约落纸 `invariants.md` §3.1（R5/R6） |
 | **N-4 ≡ N-13** | `EXPECTED_INDEX_OPTIONS` 无表级 AST 守卫 | **GUARDED** `1382ae43` + `34b0faf6`（选项键集，Challenger F-A1） |
 | **N-8**(guard) | B3-CB-7 缺回归守卫 | **GUARDED** `6c559816`+`210e9c37`+`36bb5bcf`+`cc413eb4` |
 | **F9** | Batch 2 的 F401 / CI / privacy guard | 已由 Batch 2 完成（见其执行记录） |

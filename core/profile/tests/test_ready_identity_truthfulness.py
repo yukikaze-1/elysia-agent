@@ -30,7 +30,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -74,8 +74,6 @@ def _store_with_load_failure() -> UserIdentityStore:
 
 def _mock_agent(store: UserIdentityStore, *, milvus_ok: bool = True) -> MagicMock:
     """健康端点用 stub agent——**只**替身与身份无关的子系统，身份走真实对象。"""
-    from unittest.mock import AsyncMock
-
     agent = MagicMock()
     agent.status.current_name.return_value = "idle"
     agent.llm.model = "test-model"
@@ -136,8 +134,6 @@ async def test_RHT1_load_failure_sets_unavailable_and_queryable_error():
     # ② 失败原因可查（不靠日志文本；日志会被吞、被降级、被采样）
     assert store.last_error == "ValueError", (
         "装载失败的类型必须留在运行时状态里，否则「为什么不可用」只能靠翻日志")
-    # ③ 失败与不可用同源：不允许「有失败记录但报可用」的分叉
-    assert (store.last_error is not None) == (not store.is_available)
 
 
 @pytest.mark.asyncio
@@ -257,7 +253,6 @@ async def test_RHT4_local_bootstrap_path_is_not_misjudged_unavailable(tmp_path):
 
     assert ui is not None and ui.displayName == "妖梦"
     assert store.is_available is True
-    assert store.last_error is None
     assert json.loads(path.read_text("utf-8"))["displayName"] == "妖梦"
 
 
@@ -320,6 +315,43 @@ async def test_RHT5b_authoritative_failure_has_no_fallback_so_unavailable():
     assert store.get() is None
     assert store.is_available is False
     assert store.last_error is not None
+
+
+@pytest.mark.asyncio
+async def test_RHT5c_failed_reload_does_not_serve_stale_identity():
+    """**重载失败不得继续供应旧身份**（M2b 变异存活暴露的缺口）。
+
+    先成功装载（缓存里有合法身份），随后 Mongo/文档坏掉、恢复协调器触发一次重载：
+    这次重载失败必须**清空**缓存——否则产品路径会继续用一份「已经无法从权威库确认」
+    的身份服务（`is_available` 因 `_cached is not None` 保持 True），而真值早已变坏。
+    这正是「report 陈旧 ≠ 当前真值」在本 store 上的形态。
+    """
+    class _FlakyRepo(UserIdentityRepository):
+        def __init__(self, db) -> None:
+            super().__init__(db=db)
+            self.broken = False
+
+        async def get(self, user_id: str):
+            if self.broken:
+                raise ValueError("重载时文档已损坏")
+            return await super().get(user_id)
+
+    db = FakeDocumentDBBackend()
+    repo = _FlakyRepo(db=db)
+    await repo.connect()
+    await repo.bootstrap_if_absent(_seed_identity())
+    store = UserIdentityStore(repo=repo)
+
+    loaded = await store.connect(user_name="妖梦")
+    assert loaded is not None and store.is_available is True
+
+    repo.broken = True                       # 权威库里的文档坏了
+    reloaded = await store.connect(user_name="妖梦")   # 恢复协调器的重载
+
+    assert reloaded is None
+    assert store.get() is None, "重载失败后不得继续供应上一次装载的旧身份"
+    assert store.is_available is False
+    assert store.last_error == "ValueError"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -507,6 +539,85 @@ def test_unavailable_is_exact_bool():
     """
     assert UserIdentityStore().is_available is True
     assert _store_with_load_failure().is_available is False
+
+
+@pytest.mark.asyncio
+async def test_ready_503_when_availability_is_truthy_but_not_bool(aiohttp_client):
+    """M8 守卫：`/ready` 只接受**真布尔** True，真值（1/"yes"）不算可用。
+
+    这是 `is True` 的**可执行判据**（否则该写法只是注释里的主张，变异可以存活）：
+    判据接到真值非布尔时，真值比较会静默放过，而显式布尔比较会拒绝——宁可保守地
+    报 not ready（fail-closed 方向），也不让"没接线"冒充健康。
+
+    注意实现方式：用**假 repo 的真实 `is_connected=1`** 制造 `is_available == 1`，
+    **不**改 store 的类属性——那会污染同进程内其它用例（§41 全局状态纪律）。
+    """
+    class _TruthyIsConnectedRepo(UserIdentityRepository):
+        """真实仓储，但 `is_connected` 返回真值非布尔（模拟 duck-typed 替身）。"""
+
+        @property
+        def is_connected(self) -> bool:      # type: ignore[override]
+            return 1                          # type: ignore[return-value]
+
+    db = FakeDocumentDBBackend()
+    repo = _TruthyIsConnectedRepo(db=db)
+    store = UserIdentityStore(repo=repo)
+    store.__dict__["_cached"] = _seed_identity()   # 缓存有身份（否则必然 False）
+
+    assert store.is_available == 1
+    assert store.is_available is not True, "前提：本用例构造的是真值非布尔"
+
+    async with _app_and_client(store) as client:
+        resp = await client.get("/ready")
+        data = await resp.json()
+
+    assert resp.status == 503, "真值非布尔不得被当成可用（保守方向：拒绝）"
+    assert data["dependencies"]["identity"] is False
+
+
+@pytest.mark.asyncio
+async def test_close_marks_identity_unavailable():
+    """M9 守卫（service 层）：`is_available` 必须含 **repo 连接状态**这一合取项。
+
+    `repo.close()` 真实存在（停机路径必走），此后 repo 句柄失效 → 身份不可用。
+    少了这个合取项，"已 close 的 store" 会继续报可用（缓存还在），本用例即红。
+    """
+    db = FakeDocumentDBBackend()
+    repo = UserIdentityRepository(db=db)
+    await repo.connect()
+    store = UserIdentityStore(repo=repo)
+    assert await store.connect(user_name="妖梦") is not None
+    assert store.is_available is True
+
+    await store.close()
+
+    assert repo.is_connected is False
+    assert store.is_available is False, (
+        "repo 句柄已失效（close 之后）——身份不得继续报可用")
+    assert store.get() is not None, "缓存本身仍在（可用性判据不是'缓存空不空'）"
+
+
+@pytest.mark.asyncio
+async def test_successful_file_read_clears_previous_failure(tmp_path):
+    """M10 守卫：`_load_from_file` 读成功必须**消解**旧失败记录。
+
+    与 RHT5a 的分工：那条断言的是 `bootstrap()`（修复路径）消解；这条断言**纯读**
+    路径消解——否则"先损坏、后由外部修好"的文件会让 `last_error` 永久停留在一个
+    已经不成立的事实上。
+    """
+    path = tmp_path / "profile.json"
+    path.write_text("{ 这不是合法 JSON", encoding="utf-8")
+    store = UserIdentityStore(storage_path=str(path))
+    assert store.get() is None                      # 触发读失败
+    assert store.last_error == "JSONDecodeError"
+
+    # 外部把文件换成合法文档（不经过本 store 的修复路径）
+    path.write_text(
+        '{"userId": "usr_local_default", "displayName": "妖梦", "pronouns": "她"}',
+        encoding="utf-8")
+
+    assert store.get() is not None                  # 纯读成功
+    assert store.last_error is None, "读成功即当前状态可信——旧失败记录必须消解"
 
 
 @pytest.mark.asyncio

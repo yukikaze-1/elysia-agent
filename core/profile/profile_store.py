@@ -79,9 +79,9 @@ class UserIdentityStore:
         """最近一次**未被后续成功状态消解**的装载/读取失败的异常类型名；只读诊断。
 
         语义（三条，写清楚是为了防止被当成第二套可用性判据）：
-        1. **不蕴含不可用**：本地模式 fallback 文件损坏后 bootstrap 成功，
-           `is_available` 为 True 而此处仍可能留有旧记录——两者回答不同问题，
-           故禁止写 `last_error is not None ⇔ not is_available`；
+        1. **不是可用性判据**：它记的是"最近有没有失败过"，不是"现在能不能服务"。
+           判可用性一律用 `is_available`；反向也不成立——读路径可服务不等于写路径
+           可服务（`is_available` 只看 repo 句柄与缓存，写入仍真查库）；
         2. **会被消解**：成功装载（`connect()`）、成功 bootstrap（本地模式落盘）、
            成功读回缓存文件（`get()`）都会清空它——失败历史不得把当前判定钉死；
         3. **不出 HTTP**：`/ready` 只报布尔可用性，raw 异常/类型名不外泄
@@ -122,14 +122,15 @@ class UserIdentityStore:
                 self._last_error = None
             return loaded
         except Exception as exc:
-            self._record_error(exc)
+            with self._lock:
+                # 不变量：**同一次加锁内**同时落"不可用"与"失败记录"，不依赖调用方去读
+                # 日志——日志可能被吞、被降级、被采样，状态不会。两者分开写会留下一个
+                # 跨线程可观察窗口（失败已记录而陈旧身份仍在服务，Challenger 加试 3）。
+                self._record_error(exc)
+                self._cached = None
             logger.error(
                 "用户身份权威装载失败——身份不可用（fail-closed，不伪造本地档案）",
                 exc_info=True)
-            with self._lock:
-                # 不变量：不可用（_cached is None）与失败记录同一次加锁内成立，
-                # 不依赖调用方去读日志——日志可能被吞、被降级、被采样，状态不会。
-                self._cached = None
             return None
 
     async def health_check(self) -> bool:
@@ -235,16 +236,22 @@ class UserIdentityStore:
     # ---- 内部 ----
 
     def _record_error(self, exc: BaseException) -> None:
-        """记录一次失败装载/读取的**类型名**（调用方须已持锁；RLock 可重入）。
+        """记录一次失败装载/读取的**类型名**。
 
         只留类型名：完整消息可能含连接串/路径，而 `last_error` 是进程内诊断，
         不该成为 secret 的第二个落点（Batch 4 §22）。
+
+        自己持锁（`RLock` 可重入）——调用方 `connect()` / `_load_from_file()` 已在锁内，
+        但本方法不依赖该前提，单独调用同样安全。
         """
         with self._lock:
             self._last_error = type(exc).__name__
 
     def _clear_error(self) -> None:
-        """清空失败记录（调用方须已持锁；成功装载/成功 bootstrap 时调用）。"""
+        """清空失败记录（成功装载 / 成功 bootstrap / 成功读回文件时调用）。
+
+        自己持锁（`RLock` 可重入），语义与 `_record_error` 对称。
+        """
         with self._lock:
             self._last_error = None
 

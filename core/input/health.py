@@ -104,10 +104,11 @@ async def _readiness_payload(
     """Readiness 负载：核心 chat 门禁 + 依赖明细（BE-P2-01 D9）。
 
     - ``chatReady``（HTTP 门禁）= ``mongo_ok``（session+message+attachment 真实 ping，
-      ``asyncio.gather`` 并行探测）且 ``identity_ok``（用户身份权威存储可达，
-      P0-3 fail-closed）且 ``lifecycle_ok``（``Agent._state == RUNNING``，CR-08：
-      停机窗口必须立刻摘除）且（非 product_mode 或 ``idempotency_ok`` 真实 ping
-      且补偿状态满足）；product 模式幂等门禁 = ping AND not ``needs_recovery``
+      ``asyncio.gather`` 并行探测）且 ``identity_ok``（用户身份**已装载且可用**
+      ——``UserIdentityStore.is_available``，纯读；P0-3 fail-closed / N-1）且
+      ``lifecycle_ok``（``Agent._state == RUNNING``，CR-08：停机窗口必须立刻摘除）
+      且（非 product_mode 或 ``idempotency_ok`` 真实 ping 且补偿状态满足）；
+      product 模式幂等门禁 = ping AND not ``needs_recovery``
       （BE-P1-07 D4：降级期记录未 reconcile 时 chatReady 保持 false）；
     - ``fullReady`` = ``chatReady`` 且 ``milvus_ok`` 且 ``embedding_ok``——后者是
       "长期记忆真的能持久化"的完整条件（C/CR-10：嵌入不可用时 `insert()` 只写进程内
@@ -135,10 +136,20 @@ async def _readiness_payload(
     # 全都正常，长期记忆实际"只在进程内、重启即丢"（CR-10 的静默丢数据）。
     embedding_ok = bool(getattr(agent.long_term, "embedding_ready", False))
 
-    # P0-3：用户身份权威存储（Mongo user_identity_profiles）纳入门禁——身份不可用时
-    # 不得用占位身份继续生成/建会话（fail-closed）。无 repo 的本地模式 health_check
-    # 恒 True，不门禁。
-    identity_ok = await _probe(agent.user_identity_store.health_check)
+    # P0-3 / N-1：用户身份权威存储（Mongo user_identity_profiles）纳入门禁——身份不可用
+    # 时不得用占位身份继续生成/建会话（fail-closed）。
+    #
+    # 判据是 `is_available`（**身份已装载且权威库仍连着**），不是 `health_check()`
+    # （那只证明「库 ping 通」）。两者不是同一问题：库里文档不合域模型时 repo 连得好好的
+    # 而 `_cached` 恒 None（N-1 的假绿根因）——此时产品入口早已 fail-closed
+    # （`/api/me` 与 `CognitiveLoop._identity_snapshot` 都读 `is_available` → 503），
+    # `/ready` 若读 ping 就与它们直接矛盾：探针 200 而对话轮次 503。
+    #
+    # 三个附带收益：① 与 `_dependency_needs_recovery("identity")`（本就是
+    # `not store.is_available`）同源，探针与修复器首次一致；② 纯读，无副作用——
+    # `repo.health_check()` 会在 ping 失败时 `_mark_unavailable()` 并**重连**，
+    # 而探针不该触发副作用；③ 非权威（本地）模式 `is_available` 恒 True，语义不变。
+    identity_ok = agent.user_identity_store.is_available is True
 
     # idempotency：repo 为 None（纯内存 dev）→ 无持久依赖可探视为 ok；product 模式
     # 真实 ping 且补偿完成（ping AND not needs_recovery——D4：降级期记录未 reconcile

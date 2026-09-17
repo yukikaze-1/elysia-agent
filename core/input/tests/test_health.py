@@ -26,8 +26,11 @@ def _make_mock_agent() -> MagicMock:
     # P1-05：/ready 聚合 message/attachment repo 真实健康
     agent.message_repo.health_check = AsyncMock(return_value=True)
     agent.attachment_repo.health_check = AsyncMock(return_value=True)
-    # P0-3：用户身份权威存储纳入 chatReady 门禁
-    agent.user_identity_store.health_check = AsyncMock(return_value=True)
+    # P0-3 / N-1：用户身份**可用性**是 chatReady 的门禁输入，且判据是
+    # `is_available`（已装载且权威库仍连着）而**不是** `health_check()`（库 ping 通）。
+    # 真实 Agent 上它是布尔 property；此处显式声明健康态（MagicMock 的属性默认是
+    # Mock 对象，照抄真实契约才不会被"真值恒真"掩盖判据错误）。
+    agent.user_identity_store.is_available = True
     agent.tool_adapter.tool_names = ["t1", "t2"]
     agent.output = MagicMock()
     agent.bus = MagicMock()
@@ -104,9 +107,14 @@ class TestHealthEndpoints:
 
     @pytest.mark.asyncio
     async def test_ready_identity_down_503(self, app, aiohttp_client):
-        """P0-3：用户身份权威存储 down → /ready 503（fail-closed），不提供聊天门禁。"""
+        """P0-3 / N-1：身份**不可用**（未装载成功）→ /ready 503（fail-closed）。
+
+        注意翻转的是 `is_available`（可用性权威），不是 repo 的 ping 结果——
+        「库通但身份没装上」正是 N-1 的假绿形态，其真实复现见
+        `core/profile/tests/test_ready_identity_truthfulness.py`。
+        """
         agent = app["agent"]
-        agent.user_identity_store.health_check = AsyncMock(return_value=False)
+        agent.user_identity_store.is_available = False
         client = await aiohttp_client(app)
         resp = await client.get("/ready")
         assert resp.status == 503
