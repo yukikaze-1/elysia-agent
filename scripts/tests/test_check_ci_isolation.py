@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts.check_ci_isolation import check_workflow_file
+from scripts.check_ci_isolation import _wipes_workspace_root, check_workflow_file
 
 pytestmark = pytest.mark.unit
 
@@ -47,6 +47,8 @@ name: CI
 on:
   push: {branches: [main]}
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   quick:
     name: Quick
@@ -63,6 +65,8 @@ name: CI
 on:
   push: {branches: [main]}
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   pr-gate:
     name: PR Gate
@@ -89,6 +93,8 @@ name: CI
 on:
   push: {branches: [main]}
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   pr-gate:
     name: PR Gate
@@ -134,6 +140,8 @@ class TestAcceptSecure:
 name: CI
 on:
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   quick:
     name: Quick
@@ -161,6 +169,8 @@ class TestDeadJobRule:
 name: CI
 on:
   push: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   external:
     if: github.event_name == 'workflow_dispatch'
@@ -180,6 +190,8 @@ on:
   workflow_dispatch:
     inputs:
       suite: {type: choice}
+permissions:
+  contents: read
 jobs:
   full:
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'full'
@@ -200,6 +212,8 @@ jobs:
 name: Reusable
 on:
   workflow_call:
+permissions:
+  contents: read
 jobs:
   work:
     if: github.event_name == 'push'
@@ -220,6 +234,8 @@ jobs:
 name: CI
 on:
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   sneaky:
     if: github.event_name == 'push'
@@ -242,6 +258,8 @@ name: CI
 on:
   push: {branches: [main]}
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   backend:
     if: github.event_name == "push"
@@ -265,7 +283,7 @@ class TestCliDefaultScan:
 
         # 目录里有一个死 job 的 workflow → 扫到并红
         (tmp_path / "a.yml").write_text(
-            "name: A\non:\n  push: {branches: [main]}\njobs:\n"
+            "name: A\non:\n  push: {branches: [main]}\npermissions:\n  contents: read\njobs:\n"
             "  x:\n    if: github.event_name == 'schedule'\n"
             "    runs-on: self-hosted\n    steps:\n      - run: echo hi\n",
             encoding="utf-8")
@@ -273,7 +291,7 @@ class TestCliDefaultScan:
 
         # 换成合法文件 → 绿
         (tmp_path / "a.yml").write_text(
-            "name: A\non:\n  push: {branches: [main]}\njobs:\n"
+            "name: A\non:\n  push: {branches: [main]}\npermissions:\n  contents: read\njobs:\n"
             "  x:\n    if: github.event_name == 'push'\n"
             "    runs-on: self-hosted\n    steps:\n      - run: echo hi\n",
             encoding="utf-8")
@@ -294,6 +312,8 @@ class TestUnresolvableRunsOnRule:
 name: CI
 on:
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   gate:
     name: Gate
@@ -311,6 +331,8 @@ jobs:
 name: CI
 on:
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   gate:
     name: Gate
@@ -327,6 +349,8 @@ jobs:
 name: CI
 on:
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   gate:
     name: Gate
@@ -344,7 +368,7 @@ jobs:
         """控制组：所有已知托管镜像名都要放行，否则规则会逼人往错方向改。"""
         for image in ("ubuntu-latest", "ubuntu-24.04", "windows-2022", "macos-14"):
             yaml_text = (
-                "name: CI\non:\n  pull_request: {branches: [main]}\njobs:\n"
+                "name: CI\non:\n  pull_request: {branches: [main]}\npermissions:\n  contents: read\njobs:\n"
                 "  gate:\n    name: Gate\n"
                 f"    runs-on: {image}\n"
                 "    steps:\n      - name: Test\n        run: echo hi\n"
@@ -366,6 +390,8 @@ class TestSelfHostedCleanupRule:
 name: CI
 on:
   push: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   backend:
     name: Backend
@@ -426,6 +452,8 @@ jobs:
 name: CI
 on:
   pull_request: {branches: [main]}
+permissions:
+  contents: read
 jobs:
   gate:
     name: Gate
@@ -675,14 +703,24 @@ class TestRealRepoWorkflows:
         )
 
     def test_every_self_hosted_cleanup_site_is_fail_closed(self):
-        """**全部 5 处**复用同一 cleanup 模式的地方都必须 fail-closed。
+        """**每个**复用同一 cleanup 模式的地方都必须 fail-closed。
 
-        ci.yml backend / ci.yml real-mongo / ci.yml frontend / nightly.yml full /
-        nightly.yml external —— 一处漏掉就是一条跨 job 泄漏路径。条数也钉住：
-        新增或删除清理点必须同步改这里，否则「守卫没装在改动上」。
+        一处漏掉就是一条跨 job 泄漏路径。**扫描面必须来自 glob 而不是硬编码清单**：
+        此前这里写死 `for name in ("ci.yml", "nightly.yml")`，而 docstring 自称
+        "全部 5 处"——实际清理点有 **6 处**，`contract-frames.yml:frames` 因为不在
+        那个元组里而**结构性地不被覆盖**（2026-09-17 Batch 2.2 审计实测）。
+        「守卫没装在改动上」正是这样发生的：清单少一个文件名，守卫就少一处，
+        而测试仍然全绿——它只证明"清单里的那几处没问题"。
+
+        改为扫 `*.yml`（并**断言**扫描面非空，避免 glob 失效时退化成空集通过），
+        新 workflow 自动进入覆盖；下面的期望清单显式列出当前 6 处，
+        新增/删除清理点仍会红——但**漏一个文件**不再可能。
         """
+        workflow_files = sorted(
+            p.name for p in (self._ROOT / ".github" / "workflows").glob("*.yml"))
+        assert workflow_files, "没有扫到任何 workflow——glob 失效会让本用例空转通过"
         sites = []
-        for name in ("ci.yml", "nightly.yml"):
+        for name in workflow_files:
             for job_id, job in self._jobs(name).items():
                 for step in job.get("steps", []) or []:
                     run = str(step.get("run", ""))
@@ -696,5 +734,272 @@ class TestRealRepoWorkflows:
                     assert '= "/"' in run, f"{name}:{job_id} 缺「拒绝 /」守卫"
         assert sorted(sites) == [
             "ci.yml:backend", "ci.yml:frontend", "ci.yml:real-mongo",
+            "contract-frames.yml:frames",
             "nightly.yml:external", "nightly.yml:full",
         ], sites
+
+
+# ══════════════════════════════════════════════════════════════════
+# 清空形态的识别面（2026-09-17 Batch 2.2 修复的假阴性）
+# ══════════════════════════════════════════════════════════════════
+#
+# `_wipes_workspace_root()` 是「清理纪律」三道子句（两道守卫 + fail-closed）的**唯一
+# 入口判据**：不认作 wipe，那三道就一条都不适用。而它此前对 `rm` 的要求是"整个 token
+# **就是**工作区根"，于是下面这些**真清空**的写法全部不被识别 ⇒ 门禁照绿：
+#
+#     rm -rf "$WS"/*        rm -rf $WS/*        rm -rf "$WS"/.* "$WS"/*
+#     rm -rf "${GITHUB_WORKSPACE}"/*           find "$WS" … -delete
+#
+# 为什么这条重要：`frontend/vite.config.ts` 用 `outDir: ../static` +
+# `emptyOutDir: false`，而 `static/assets|index.html|debug.html` 是 gitignore 的——
+# **前端 job 的绿依赖"上一次的构建产物被清掉"**。识别面漏一个形态，
+# 就等于那条依赖没有任何守卫。
+#
+# 下面用**正向覆盖**（每个形态都必须被认作 wipe）与**负向覆盖**（子路径/无关删除
+# 不得被认作 wipe，否则会制造假红）把判据钉住。
+
+
+class TestWorkspaceWipeRecognition:
+    """哪些命令算"清空 workspace 根"——判据的正反两面。"""
+
+    _POSITIVE = (
+        'find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',   # 规范写法
+        'rm -rf "$WS"/*',                                            # 最像真实写法的
+        'rm -rf $WS/*',
+        'rm -rf "${GITHUB_WORKSPACE}"/*',
+        'rm -rf "$WS"/.* "$WS"/*',                                   # 连点文件一起删
+        'rm -rf "$WS"/',
+        'rm -rf "$WS"',
+        'rm -rf ./*',
+        'rm -rf *',
+        'rm -rf ./ ./.git',
+        'find "$WS" -mindepth 1 -maxdepth 1 -delete',
+        'find "$WS" -mindepth 1 -delete',
+    )
+
+    _NEGATIVE = (
+        'rm -rf node_modules',                 # 目标不是工作区根
+        'rm -rf "$WS"/static/assets',          # 子路径：删构建产物，不是清空根
+        'rm -rf ${GITHUB_WORKSPACE}/frontend/node_modules',
+        'rm -rf frontend/node_modules',
+        'rm -rf /tmp/scratch',
+        'npm ci && npm run build',
+        'git reset --hard',
+    )
+
+    @pytest.mark.parametrize("command", _POSITIVE)
+    def test_wipe_forms_are_recognised(self, command):
+        """每种真清空形态都必须被认作 wipe——否则三道清理子句整条不适用。"""
+        assert _wipes_workspace_root(command), (
+            f"未识别为清空 workspace：{command!r}\n"
+            "识别不到 ⇒ 守卫标记与 fail-closed 检查都不会执行 ⇒ 门禁假绿。"
+        )
+
+    @pytest.mark.parametrize("command", _NEGATIVE)
+    def test_non_wipe_deletions_are_not_flagged(self, command):
+        """无关删除**不得**被认作 wipe——否则会要求它带守卫，制造假红。"""
+        assert not _wipes_workspace_root(command), (
+            f"被误判为清空 workspace：{command!r}\n"
+            "它删的不是工作区根；要求它带清理守卫只会训练人忽略门禁。"
+        )
+
+    def test_unrecognised_wipe_form_is_actually_red(self, tmp_path):
+        """**端到端反证**：用一个此前漏检的形态写一个 self-hosted job，
+        缺守卫时必须报违规（而不只是"识别函数返回 True"）。
+
+        这条防的是"识别修好了、但子句没接上"——判据与后果要一起验。
+        """
+        head = (
+            "name: CI\n"
+            "on:\n"
+            "  push: {branches: [main]}\n"
+            "jobs:\n"
+            "  backend:\n"
+            "    name: Backend\n"
+            "    if: github.event_name == 'push'\n"
+            "    runs-on: self-hosted\n"
+            "    steps:\n"
+            "      - name: Checkout\n"
+            "        shell: bash\n"
+            "        run: |\n"
+        )
+        # 此前漏检的形态，且**不带**任何守卫与 fail-closed
+        yaml_text = head + '          rm -rf "$WS"/*\n'
+        violations = check_workflow_file(_write(tmp_path, yaml_text))
+        assert any("缺少守卫" in v for v in violations), (
+            f"`rm -rf \"$WS\"/*` 缺守卫却未被报违规——清理纪律整条失效：{violations}"
+        )
+        assert any("退出码" in v for v in violations), (
+            f"`rm -rf \"$WS\"/*` 没有 fail-closed 检查却未被报违规：{violations}"
+        )
+
+    def test_guarded_variant_of_a_newly_recognised_form_is_green(self, tmp_path):
+        """同一形态带上完整守卫与 fail-closed 后必须绿——防修成"凡新形态即红"。"""
+        head = (
+            "name: CI\n"
+            "on:\n"
+            "  push: {branches: [main]}\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  backend:\n"
+            "    name: Backend\n"
+            "    if: github.event_name == 'push'\n"
+            "    runs-on: self-hosted\n"
+            "    steps:\n"
+            "      - name: Checkout\n"
+            "        shell: bash\n"
+            "        run: |\n"
+        )
+        body = (
+            '          WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE 未设置——拒绝清理}"\n'
+            '          if [ "$WS" = "/" ]; then\n'
+            '            echo "FATAL: / 拒绝清理"\n'
+            '            exit 1\n'
+            '          fi\n'
+            '          if ! rm -rf "$WS"/*; then\n'
+            '            echo "FATAL: 清理失败"\n'
+            '            exit 1\n'
+            '          fi\n'
+        )
+        assert check_workflow_file(_write(tmp_path, head + body)) == []
+
+
+# ══════════════════════════════════════════════════════════════════
+# 最小 token 权限（2026-09-17 Batch 2.2）
+# ══════════════════════════════════════════════════════════════════
+#
+# 判据：每个 workflow 顶层必须显式声明 `permissions:`。不声明就继承**仓库默认**
+# （可能是 read/write），而本仓每个 job 都只需读代码——凭据来自宿主 `.env`
+# （仅受信 ref 加载），不来自 `GITHUB_TOKEN`；而 token 会嵌进 git fetch URL 并落进
+# workspace 的 `.git/config`，给写权限纯属放大 blast radius。
+#
+# 存在理由：`ci.yml` 早就为此写了注释与 `permissions: contents: read`，但
+# `contract-frames.yml` 与 `nightly.yml` **一直没跟上**——即「同一条纪律只装在
+# 改动过的那个文件上」。这类缺陷靠"记得同步"是防不住的，故改成门禁强制。
+
+
+class TestWorkflowPermissionsRule:
+    """workflow 必须声明最小 token 权限——真实仓库的 3 个文件都已在覆盖内。"""
+
+    _HEAD_NO_PERM = (
+        "name: CI\n"
+        "on:\n"
+        "  push: {branches: [main]}\n"
+        "jobs:\n"
+        "  backend:\n"
+        "    name: Backend\n"
+        "    if: github.event_name == 'push'\n"
+        "    runs-on: self-hosted\n"
+        "    steps:\n"
+        "      - run: echo hi\n"
+    )
+
+    def test_missing_permissions_is_rejected(self, tmp_path):
+        violations = check_workflow_file(_write(tmp_path, self._HEAD_NO_PERM))
+        assert any("permissions" in v for v in violations), violations
+
+    def test_declared_permissions_is_accepted(self, tmp_path):
+        yaml_text = self._HEAD_NO_PERM.replace(
+            "jobs:\n", "permissions:\n  contents: read\njobs:\n", 1)
+        assert check_workflow_file(_write(tmp_path, yaml_text)) == []
+
+    def test_real_workflows_all_declare_permissions(self):
+        """真实仓库的每个 workflow 都必须有 `permissions:`（回归网）。
+
+        这条防的是"门禁有判据、但真实文件靠人工记住"——判据与现状要一起钉。
+        """
+        root = Path(__file__).resolve().parents[2]
+        missing = []
+        for path in sorted((root / ".github" / "workflows").glob("*.yml")):
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if data.get("permissions") is None:
+                missing.append(path.name)
+        assert missing == [], (
+            f"这些 workflow 没有声明 permissions：{missing}——"
+            "会继承仓库默认（可能是 read/write），而本仓 job 只需读代码"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════
+# 守卫写法等价性（2026-09-17 Batch 2.2 修复的假红）
+# ══════════════════════════════════════════════════════════════════
+#
+# `_is_push_only()` 与死 job 判定（`_guarded_events`）**必须共用同一个正则**。
+# 此前前者做子串匹配、要求字面量 `"== 'push'"`，而后者用正则、允许
+# `github.event_name=='push'`（无空格）——于是：
+#
+#     if: github.event_name=='push'   # 正确加了 guard，只差空格
+#     runs-on: self-hosted
+#
+# 被判成**非受信 PR 可达 job** ⇒ 报「PR 可达 job 不得 self-hosted」⇒ **假红**。
+# 假红的代价不是"多报一条"，而是**逼人去删 guard**（把 `if:` 拿掉就"过"了），
+# 正好是信任边界反方向。故这里把写法等价性钉住。
+
+
+class TestEventGuardSpellingEquivalence:
+    """同一个 guard 的合法写法必须得到同一个判定。"""
+
+    _EQUIVALENT_PUSH = (
+        "github.event_name == 'push'",
+        "github.event_name=='push'",
+        'github.event_name == "push"',
+        "github.event_name  ==  'push'",
+    )
+
+    @pytest.mark.parametrize("cond", _EQUIVALENT_PUSH)
+    def test_push_guard_spellings_are_all_trusted(self, cond):
+        from scripts.check_ci_isolation import _is_push_only
+
+        assert _is_push_only({"if": cond}), (
+            f"{cond!r} 被判成非受信——它是合法的 push guard，判非受信会让"
+            "self-hosted push job 假红，进而逼人删掉 guard"
+        )
+
+    def test_no_space_spelling_does_not_red_a_real_self_hosted_job(self, tmp_path):
+        """端到端：`==` 两侧无空格的 guard 必须让 self-hosted push job 通过。"""
+        yaml_text = (
+            "name: CI\n"
+            "on:\n"
+            "  push: {branches: [main]}\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  backend:\n"
+            "    name: Backend\n"
+            "    if: github.event_name=='push'\n"
+            "    runs-on: self-hosted\n"
+            "    steps:\n"
+            "      - name: Checkout\n"
+            "        shell: bash\n"
+            "        run: |\n"
+            "          WS=\"${GITHUB_WORKSPACE:?未设置}\"\n"
+            "          if [ \"$WS\" = \"/\" ]; then exit 1; fi\n"
+            "          if ! find \"$WS\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; then\n"
+            "            echo FATAL\n"
+            "            exit 1\n"
+            "          fi\n"
+        )
+        assert check_workflow_file(_write(tmp_path, yaml_text)) == [], (
+            "无空格写法被误判为违规——这是假红，且会逼人去删 guard"
+        )
+
+    def test_pull_request_guard_is_still_untrusted(self, tmp_path):
+        """反向对照：真 PR 可达的 self-hosted job 必须仍然红（别修过头）。"""
+        yaml_text = (
+            "name: CI\n"
+            "on:\n"
+            "  push: {branches: [main]}\n"
+            "  pull_request: {branches: [main]}\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  bad:\n"
+            "    name: Bad\n"
+            "    if: github.event_name=='pull_request'\n"
+            "    runs-on: self-hosted\n"
+            "    steps:\n"
+            "      - run: echo hi\n"
+        )
+        violations = check_workflow_file(_write(tmp_path, yaml_text))
+        assert any("self-hosted" in v for v in violations), violations

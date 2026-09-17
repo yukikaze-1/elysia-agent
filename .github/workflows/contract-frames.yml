@@ -27,6 +27,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# 最小权限（2026-09-17 Batch 2.2 补齐）：与 ci.yml 同一条纪律——本仓 job 只需读代码
+# （self-hosted checkout 用 github.token 拉取同样只需 contents:read）。此前本文件
+# **没有** permissions 块 ⇒ 继承仓库默认（可能是 read/write），而 ci.yml 的头注释
+# 正是为修这个而写的。token 会嵌进 git fetch URL 并落进 workspace 的 .git/config，
+# 多给写权限没有任何收益。
+permissions:
+  contents: read
+
 # 信任边界（P0-02）：本 job 现为 **push-only（受信 ref）**，故允许 self-hosted；
 # 由 scripts/check_ci_isolation.py 静态强制（含密闭清理三条子句）。
 #

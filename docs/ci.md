@@ -12,7 +12,7 @@
 
 | workflow | job | 触发 | runs-on | 内容 |
 |---|---|---|---|---|
-| `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / 密钥扫描 / 集合代数 / compose 安全策略 / 环境锁 / 依赖与静态安全扫描 `make audit`）+ 离线用例 `make test-normal` |
+| `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / 密钥扫描 / 集合代数 / compose 安全策略 / 环境锁 / 依赖与静态安全扫描 `make audit`）+ **离线**用例 `make test-normal` |
 | `ci.yml` | `real-mongo` | push | `[self-hosted, Linux, X64]` | 真实 MongoDB 层：job 内自起 `docker-compose.test.yml`，`make test-real-mongo`，收尾 `down` |
 | `ci.yml` | `frontend` | push | `[self-hosted, Linux, X64]` | `npm ci` + `vue-tsc --noEmit && vite build` |
 | `contract-frames.yml` | `frames` | push（路径过滤） | `[self-hosted, Linux, X64]` | golden frames + 契约三产物漂移检查 |
@@ -87,18 +87,85 @@ GitHub 托管 runner **按分钟计费**。账号额度/账单被卡之后，这
   恶意 PR 的 `Makefile`/`pytest`/`npm ci` 的 postinstall 会在持久 runner 上以宿主权限执行
   任意代码——这是**明确拒绝**的取舍，不是遗漏。
 - **只有 push 到 main（受信 ref）** 才允许 self-hosted + 宿主 Elysia env + 真实 `.env`。
-- 门禁还管三件容易被绕过的事：① **死 job**（守卫引用的事件必须在 `on:` 里声明过——
+- 门禁还管五件容易被绕过的事：① **死 job**（守卫引用的事件必须在 `on:` 里声明过——
   否则"写一个永不触发的守卫"就是绕过本门禁的静默通道）；② **表达式 `runs-on`**
   （`${{ vars.CI_RUNNER }}` 无法静态判定 → **拒答**，不默认它安全）；③ **self-hosted
   清理必须密闭、受守卫、fail-closed**：禁止裸 glob（不匹配 dotfile）、清空 workspace
   根目录必须带 `${GITHUB_WORKSPACE:?` 与拒绝 `/` 两道守卫、且清理命令的**退出码必须被
-  显式检查**（`set -e` 不算——那会改变 retry loop 的控制流）。
+  显式检查**（`set -e` 不算——那会改变 retry loop 的控制流）；④ **每个 workflow 必须
+  显式声明 `permissions:`**（不声明就继承仓库默认，可能是 read/write，而本仓 job 只需
+  读代码——凭据来自宿主 `.env` 而非 `GITHUB_TOKEN`）；⑤ **同一条纪律必须在扫描到的
+  每个 workflow 上生效**，而不是只装在改动过的那个文件上。
+
+#### 2026-09-17（Batch 2.2）修掉的两处判据缺陷
+
+这两处的共同形状是「**判据看不见它要防的东西**」，值得记住：
+
+- **清空形态识别面太窄（假阴性）**：`_wipes_workspace_root()` 是清理三道子句的**唯一
+  入口**——不认作 wipe 就一条都不适用。而它此前要求 `rm` 的整个 token **就是**工作区根，
+  于是 `rm -rf "$WS"/*`、`rm -rf "${GITHUB_WORKSPACE}"/*`、`find "$WS" … -delete`
+  这些**真清空**的写法全部不被识别，门禁照绿。这不是"少见写法"：前端 job 的绿依赖
+  上一次构建产物被清掉（`vite.config.ts` 用 `outDir: ../static` + `emptyOutDir: false`，
+  而 `static/assets|index.html|debug.html` 是 gitignore 的）。现已覆盖这些形态，
+  并由 `TestWorkspaceWipeRecognition` 用正反两面的参数化用例钉住。
+- **守卫写法等价性（假红）**：`_is_push_only()` 与死 job 判定此前**各自**判"有没有
+  push guard"——前者子串匹配、要求字面量 `"== 'push'"`，后者用正则、允许无空格。
+  于是 `if: github.event_name=='push'`（正确加了 guard，只差空格）被判成非受信 ⇒
+  self-hosted push job 报「PR 可达 job 不得 self-hosted」。**假红的代价不是多报一条，
+  而是逼人去删 guard**——正好是信任边界反方向。现已共用同一个正则。
 
 **无 `if` 的 job 被按 PR 可达保守判定**（无守卫 = 任何事件都为真）。所以 self-hosted job
 必须**显式**写 `if: github.event_name == 'push'`——判据方向是对的：不写清楚就当作不受信。
 
 > ⚠️ **清理是承重的，不是卫生问题**：`backend` job 的 `Load .env` 明确依赖"上一步已把
 > workspace 清空"，清理一旦失败或漏掉点文件，上一个 job 留下的凭据就会跨 job 泄漏给下一个。
+
+## 到底为什么不能给 PR 开 self-hosted（2026-09-17 Batch 2.2 复核）
+
+结论：**本仓保持 push-only**，且这不是"暂时没做"，而是一个明确的、有理由的取舍。
+要改，必须先有隔离 runner（见下）。
+
+三种触发方式的实际信任差异（GitHub 官方模型，勿凭印象改）：
+
+| | `pull_request`（fork） | `pull_request`（同仓） | `pull_request_target` |
+|---|---|---|---|
+| secrets | **不传**（除 `GITHUB_TOKEN`） | 传 | **传**（拿到 base 仓的 token 与仓库/组织 secrets） |
+| `GITHUB_TOKEN` | **只读** | 按 `permissions:` | **读写** |
+| 运行谁的代码 | **fork 的**（工作流取自 PR merge commit） | 同仓代码 | **base 默认分支**；只有显式 checkout 才碰 fork 代码 |
+| 可否落到 self-hosted | 只要 `runs-on` 命中就能——**这是最危险的一种** | 同左 | 同左 |
+
+三条决定性事实：
+
+1. **`pull_request`（含同仓）+ `self-hosted` = 让 PR 作者以宿主用户 `yomu` 执行任意
+   代码**。宿主机上有真实 `.env`（14 个凭据名：`DEEPSEEK_API_KEY` / `MONGODB_URI` /
+   `MILVUS_URI` / `SERVER_AUTH_TOKEN` / `ATTACHMENT_SIG_SECRET` …）、**持久 workspace**
+   与真实用户身份。`make` 会执行 Makefile、`pytest` 会执行仓库里的 conftest、
+   `npm ci` 会执行依赖包的 postinstall——每一条都是任意代码执行。
+2. **`pull_request_target` 更危险，不是更安全**：它拿 secrets + 写权限 token，且
+   "只跑 base 分支代码"的保护**只要有一个步骤 checkout 了 PR head 就整体失效**。
+   GitHub 自己的文档就用 `make test` 执行来自 PR head 的 Makefile 当反面教材。
+3. **environment + required reviewers 保护不了 self-hosted runner**：它们管的是
+   "什么时候批准"，而批准**之后**不受信代码照样在持久机器上跑。官方原文明确说这类
+   工作流"not run in an isolated environment"。
+
+### 那么 PR 门禁想恢复，前提是什么
+
+**唯一安全的前提是"一次性隔离的执行环境"**：ephemeral / 容器 / VM 隔离的 runner，
+且**打上与常驻 runner 不同的 label**（常驻 runner 持有 `self-hosted, Linux, X64`
+——新 label 必须与它们不相交，否则 PR job 仍会落到宿主上）。建成之前：
+
+- 不要把 `pull_request` 加回任何 self-hosted job（`check_ci_isolation` 会直接红）；
+- 不要用 `pull_request_target` 绕过——它是同一风险的加强版；
+- 不要把"手工 `workflow_dispatch` 跑 PR"当成安全方案：那正是 pwn request 的形状，
+  除非它跑在上面那个隔离 runner 上。
+
+**账单约束仍然成立**：GitHub-hosted job 在额度/账单被卡后**根本不会启动**（0～3 秒
+失败并附一条与代码无关的注解）。所以"用 GitHub-hosted 兜底 PR 门禁"这条路在本仓
+当前状态下不成立——它只会给每个 PR 挂一个与代码无关的红叉，而那比没有门禁更糟
+（训练人忽略红色）。
+
+> **这是 owner 2026-09-17 明确选择的方案**：保持 push-only，把安全模型写成文档 +
+> 可执行门禁（`scripts/check_ci_isolation.py`），而不是加一个跑不起来或有风险的 PR job。
 
 ## 开放 PR 时的恢复清单
 
@@ -136,7 +203,11 @@ GitHub 托管 runner **按分钟计费**。账号额度/账单被卡之后，这
 - **收尾走 `always()` + 显式退出码 + 断言容器确实没了**：`down` 返回 0 不等于清理生效，
   残留会污染下一次运行。
 - **部分 job 刻意不加载 `.env`**（`frontend` / `real-mongo` / `frames`）：它们零凭据需求，
-  少一个 `.env` 就少一条外泄路径。只有 `backend` 加载（受信 push ref + 已密闭清理）。
+  少一个 `.env` 就少一条外泄路径。实际加载 `.env` 的是 **3 个 job**：`ci.yml:backend`
+  与 `nightly.yml` 的 `full`/`external`（都从 `/home/yomu/elysia-agent/.env` 取，见
+  `nightly.yml` 的两处 `Load .env`）。**本文件此前只写了 `backend`**——那是不准确的，
+  而"哪些 job 会接触宿主凭据"正是本文件最该说清的一件事（2026-09-17 Batch 2.2 更正）。
+  `frontend` / `real-mongo` / `frames` 仍然零凭据需求，刻意不加载。
 - **唯一一个 runner**：本仓只注册了 1 个 self-hosted runner，所以"并列 job 并行跑"是假的
   ——见 `docs/testing.md` 的 CI 性能专项，那批把 `Quick` + `Normal` 合并成了单个 `backend`。
 

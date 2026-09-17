@@ -38,6 +38,12 @@ on:
         default: full
         required: true
 
+# 最小权限（2026-09-17 Batch 2.2 补齐）：与 ci.yml 同一条纪律。本文件的 `external`
+# job 会读宿主 .env（受信手工触发，见上），但**仓库 token 本身**仍只需读代码——
+# 凭据来自 .env，不来自 token；给它写权限只是白白放大 blast radius。
+permissions:
+  contents: read
+
 jobs:
   full:
     name: Full Suite (pytest -q, external skipped)

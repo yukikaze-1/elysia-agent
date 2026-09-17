@@ -89,6 +89,13 @@ _HOST_ENV_MARKERS = (
 
 _EVENT_GUARD_RE = re.compile(r"github\.event_name\s*==\s*['\"]([a-z_]+)['\"]")
 
+_TRUSTED_EVENTS = frozenset({"push", "workflow_dispatch", "schedule"})
+"""受信触发（不受信 pull_request 永不触发它们）——`_is_push_only` 的判据词汇表。
+
+与 `_EVENT_GUARD_RE` 配对使用：**同一个正则**既供死 job 判定、也供这里的守卫识别，
+避免两处对空格/引号的要求不一致而互相打架（曾经就因此产生假红，见 `_is_push_only`）。
+"""
+
 _EVENT_INHERITING = frozenset({"workflow_call"})
 """`on:` 里出现它时，`github.event_name` 取自调用方——死 job 判定对这类文件不适用。"""
 
@@ -105,11 +112,53 @@ _BARE_GLOB_RM_RE = re.compile(r"\brm\s+(?:(?:-[A-Za-z]+|--)\s+)*(?:\./)?\*(?=\s|
 
 # 「清空了 workspace 根目录」的判定：规范写法（find 顶层逐项删）或对根/通配符 rm。
 # 注意 `rm -rf node_modules` **不算**——它的目标不是 workspace 根，套守卫只会造成假红。
+#
+# 2026-09-17（Batch 2.2）修复的**假阴性**：此前 rm 分支要求整个 token **就是**
+# 工作区根（`$WS` / `${GITHUB_WORKSPACE}` / `.` / `*`），于是下面这些**同样清空
+# workspace** 的写法全部不被认作 wipe ⇒ 三道清理子句（守卫标记 ×2 + fail-closed）
+# **一条都不适用**，门禁照绿。实测（audit F1，已被本修复覆盖）：
+#
+#     rm -rf "$WS"/*                          ← 最像真实写法的那个，漏
+#     rm -rf $WS/*         rm -rf "$WS"/.* "$WS"/*      rm -rf "${GITHUB_WORKSPACE}"/*
+#     find "$WS" -mindepth 1 -maxdepth 1 -delete        ← 同样是真清空，漏
+#
+# 为什么这条重要：`frontend/vite.config.ts` 用 `outDir: ../static` +
+# `emptyOutDir: false`，而 `static/assets|index.html|debug.html` 是 gitignore 的——
+# **前端 job 的绿依赖"上一次的构建产物被清掉"**。清理纪律漏检等于该依赖无人守。
 _WS_WIPE_FIND_MARKER = "-mindepth 1 -maxdepth 1 -exec rm"
+# `find … -delete` 形态：同一条命令里出现 `-mindepth 1` 与 `-delete`，即视为清空。
+# 刻意不要求 `-maxdepth 1`、也不要求路径正好是 `$WS`——把整个工作区删光、或删光它
+# 某个子树的顶层，都是"清空 workspace"的同类形态；漏检的代价（清理纪律整条不适用）
+# 远大于多要求一处守卫的成本（守卫本身无害，只是要求在删除前先校验 `$WS`）。
+# 真实仓库的 6 处清理全是 `find … -exec rm` 规范写法，故本形态今天零命中。
+_WS_WIPE_FIND_DELETE_RE = re.compile(
+    r"\bfind\b[^\n]*\s-mindepth\s+1\b[^\n]*\s-delete\b")
+# 「工作区根」的写法枚举。**顺序要紧**：长的必须在短的前面——
+# `\./\*` 必须排在 `\.` 之前、`\*` 之前也要有 `\./\*`。否则正则在首个候选处就
+# 匹配成功（如 `rm -rf ./*` 用 `\.` 只吃掉 `.`），随后 `(?![\w.*/-])` 看到 `/`
+# 而失败，且**不会回头重试更长的候选**——整条命令就此漏检（实测：
+# `rm -rf ./*`、`rm -rf "$WS"/*`、`rm -rf "${GITHUB_WORKSPACE}"/*` 三条全 miss）。
+_WS_ROOT_TOKEN = (
+    r"(?:\./\*|\.|\*|\./|\$WS|\"\$WS\"|\$\{GITHUB_WORKSPACE\}|\"\$\{GITHUB_WORKSPACE\}\")"
+)
+# `rm …` 的目标里出现工作区根 token 即算清空。
+#
+# 三点刻意设计（每一处都被实测假红/漏报教过）：
+#  ① **不加行尾锚点**：`rm -rf "$WS"/.* "$WS"/*`（连点文件一起删的常见写法）第一个
+#     token 后面跟的是空格 + 第二个目标，锚点会让它整条漏掉——而它比单目标更彻底。
+#  ② **候选按长到短排列**（见 `_WS_ROOT_TOKEN`）：否则 `./*` 会被 `\.` 抢先匹配，
+#     随后断言看到 `/` 而失败，且不会回头重试更长的候选。
+#  ③ **断言只禁"后面跟着一个名字"**：`(?![\w-]|/\.?[\w-])`。
+#     子路径（`"$WS"/static/assets`）要排除——那是删构建产物，不是清空工作区；
+#     但 `/` 本身**不能**禁，因为 `"$WS"/*`、`"$WS"/.*`、`"$WS"/` 都是工作区根的
+#     直接内容，禁了它们会漏报（实测漏 3 条）。
+#     第一版写成可选后缀组 `(?:/\*|…)?` + `(?![\w.*-])`，有个回溯洞：可选组可以整体
+#     不匹配，于是 `"$WS"/static/assets` 里的 `"$WS"` 单独成立、断言看到的 `/`
+#     又不在 `[\w.*-]` 里 ⇒ 删子目录被误判成清空（实测 2 条假红）。
 _WS_WIPE_RM_RE = re.compile(
     r"\brm\s+(?:(?:-[A-Za-z]+|--)\s+)*"
-    r"(?:\.|\*|\./\*|\$WS|\"\$WS\"|\$\{GITHUB_WORKSPACE\}|\"\$\{GITHUB_WORKSPACE\}\")"
-    r"(?=\s|$)")
+    + _WS_ROOT_TOKEN +
+    r"(?![\w-]|/\.?[\w-])")
 
 _WS_GUARD_MARKERS = (
     ("${GITHUB_WORKSPACE:?", "未设置即失败（`${GITHUB_WORKSPACE:?…}`）"),
@@ -177,9 +226,15 @@ def _is_push_only(job: dict[str, Any]) -> bool:
     只认单引号会把一个**正确加了 guard** 的受信 job 误判成不受信（假红），
     而那会逼人去删 guard——正好是反方向。
     """
+    # 判据与死 job 判定**共用同一个正则**，而不是各自做子串匹配——两者此前对
+    # "`==` 两侧的空格"要求不同：死 job 判定允许 `github.event_name=='push'`
+    # （正则含 `\s*`），而这里要求字面量 `"== 'push'"` ⇒ 一个**正确加了 guard** 的
+    # self-hosted push-only job 会被判成非受信而**假红**，那会逼人去删 guard——
+    # 正好是反方向（2026-09-17 Batch 2.2 实测复现：`if: github.event_name=='push'`）。
+    # 引号先归一：`== 'push'` 与 `== "push"` 语义相同（YAML 里两种都合法）。
     cond = str(job.get("if", "")).replace('"', "'")
-    trusted_guard = any(g in cond for g in (
-        "== 'push'", "== 'workflow_dispatch'", "== 'schedule'"))
+    guarded = set(_EVENT_GUARD_RE.findall(cond))
+    trusted_guard = bool(guarded & _TRUSTED_EVENTS)
     has_pr_ref = "pull_request" in cond
     return trusted_guard and not has_pr_ref
 
@@ -236,7 +291,11 @@ def _shell_code_lines(text: str) -> str:
 
 def _wipes_workspace_root(text: str) -> bool:
     """步骤是否清空 workspace **根目录**（见 docstring 第五条 b 的判定口径）。"""
-    return _WS_WIPE_FIND_MARKER in text or bool(_WS_WIPE_RM_RE.search(text))
+    return (
+        _WS_WIPE_FIND_MARKER in text
+        or bool(_WS_WIPE_FIND_DELETE_RE.search(text))
+        or bool(_WS_WIPE_RM_RE.search(text))
+    )
 
 
 def _check_self_hosted_cleanup(job_name: str, steps: list[dict[str, Any]]) -> list[str]:
@@ -287,6 +346,17 @@ def check_workflow_file(path: str | Path) -> list[str]:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     jobs: dict[str, Any] = (data or {}).get("jobs", {}) or {}
     declared = _declared_events(data or {})
+    # 最小 token 权限（2026-09-17 Batch 2.2）：workflow 必须显式声明 `permissions`。
+    # 不声明就继承**仓库默认**（可能是 read/write），而本仓每个 job 都只需读代码
+    # ——凭据来自宿主 `.env`（仅受信 ref 加载），不来自 `GITHUB_TOKEN`；而 token 会
+    # 嵌进 git fetch URL 并落进 workspace 的 `.git/config`，给写权限纯属放大 blast
+    # radius。ci.yml 早就为此写了注释与块，但另外两个 workflow 一直没跟上——
+    # 这正是「同一条纪律只装在改动过的那个文件上」。故改成**门禁强制**，
+    # 新增 workflow 忘记声明会直接红。
+    if (data or {}).get("permissions") is None:
+        violations.append(
+            "workflow 顶层缺少 `permissions:` 块——会继承仓库默认（可能是 read/write）。"
+            "本仓 job 只需读代码，请显式声明 `permissions:` + `contents: read`")
     # 可复用 workflow（`on: workflow_call`）里 `github.event_name` 取自**调用方**，
     # 所以它的 job 用 `if: github.event_name == 'push'` 是正当写法、不是死守卫。
     # 不豁免的话，本仓加第一个 reusable workflow 就会让 CI 假红。
