@@ -37,9 +37,6 @@ from Module.tool.protocol import ToolProgress
 
 logger = logging.getLogger(__name__)
 
-#: 兼容旧名（本模块内历史引用）。跨包一律用公开名——R3 禁止跨包导入下划线符号。
-_sanitize_session_id = sanitize_session_id
-
 
 # ============================================================================
 # SafetyProfile — 每个插件声明自己的安全边界

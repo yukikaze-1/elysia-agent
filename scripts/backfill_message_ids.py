@@ -26,8 +26,6 @@ from core.utils.message_id import stable_tool_message_id  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-_EMPTY_ID_FILTER = {"message_id": {"$in": ["", None]}}
-
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="回填历史工具消息空 message_id")

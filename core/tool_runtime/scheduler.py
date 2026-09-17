@@ -592,8 +592,8 @@ class ToolCallDispatcher:
           desktop/vision 声明 120s → 实际 125s（此前被一律硬切在 60s）。
 
         **不使用 getattr 兜底**：executor 必须实现 `declared_request_timeout`
-        （ToolAdapter 与 ToolControlManager 都有）。缺了就在这里 AttributeError 报出来——
-        静默退回 60s 正是本项要消除的"设计好的路径被悄悄截断"。
+        （生产实现是 ToolAdapter；底层同名方法在 Module/tool/manager.py）。缺了就在这里
+        AttributeError 报出来——静默退回 60s 正是本项要消除的"设计好的路径被悄悄截断"。
         """
         executor = self._tool_executor
         if executor is None:
@@ -612,8 +612,8 @@ class ToolCallDispatcher:
         插件**返回**的错误照旧按 `ErrorType.is_retryable` 重试。
 
         与 `_timeout_for` 同一纪律：**不使用 getattr 兜底**——executor 必须实现
-        `declares_idempotent`（ToolAdapter 与 ToolControlManager 都有）。缺了就在这里
-        AttributeError 报出来；静默兜底成 True 恰好会掩盖本项要消除的"重复副作用"，
+        `declares_idempotent`（生产实现是 ToolAdapter；底层同名方法在 Module/tool/manager.py）。
+        缺了就在这里 AttributeError 报出来；静默兜底成 True 恰好会掩盖本项要消除的"重复副作用"，
         兜底成 False 又会让缺失无声无息。executor 未注入时返回 False（fail-safe，
         该分支此时本就不可达：`_execute_tool` 会先抛 RuntimeError）。
         """
