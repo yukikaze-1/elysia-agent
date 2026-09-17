@@ -117,15 +117,6 @@ class CharacterRuntimeRegistry:
             self._flush_tasks.try_spawn(rt.flush(), name=f"release-flush-{instance_id}")
             logger.debug("runtime released: %s (%s)", instance_id, reason)
 
-    def flush(self, instance_id: str) -> None:
-        rt = self._runtimes.get(instance_id)
-        if rt is not None:
-            rt.dirty = False
-
-    def flush_all(self) -> None:
-        for rt in self._runtimes.values():
-            rt.dirty = False
-
     async def close_all(self) -> None:
         """关机 flush 全部（A1：shutdown 走这里，非单 engine）。
 

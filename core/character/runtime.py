@@ -52,7 +52,6 @@ class CharacterRuntime:
         self.profile = profile
         self._engine: "CharacterEngineProtocol | None" = None
         self.lock = asyncio.Lock()
-        self.dirty = False
         # BE-STAGEH-01：generation 与破坏性变更（reset-evolution）的互斥 lease。
         # 判定 + 登记必须落在同一原子步内，故用同步 _op_guard——asyncio.Lock 的
         # acquire 是 await 点，会让「检查」与「登记」之间被其他任务插入。
@@ -216,4 +215,3 @@ class CharacterRuntime:
     async def flush(self) -> None:
         if self._persist_fn is not None:
             await self._persist_fn(self.state)
-        self.dirty = False

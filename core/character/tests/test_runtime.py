@@ -71,16 +71,14 @@ def test_snapshot_state_returns_copy():
     assert rt.state.self_l2 == ""
 
 @pytest.mark.asyncio
-async def test_flush_sets_dirty_false_and_persist():
+async def test_flush_persists_state():
     calls = []
     rt = _rt()
     rt.state.self_l2 = "v2"
-    rt.dirty = True
     async def _persist(state):
         calls.append(state.self_l2)
     rt.set_persist_fn(_persist)
     await rt.flush()
-    assert rt.dirty is False
     assert calls == ["v2"]
 
 

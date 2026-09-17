@@ -1296,8 +1296,9 @@ class Agent(AgentLifecycle, AgentServer):
 
         Task 7（记忆 v2 隔离）：不再返回全局单例——per-runtime 化后经 registry 解析
         default runtime 的 consolidator。注意：不调 registry.get(..., lambda: None)——get
-        会把 factory() 结果存入 dict，lambda: None 会污染 _runtimes（后续 _evict_if_needed
-        访问 rt.dirty 崩溃）。agent 属性是 _runtime_registry（非 _registry）。
+        会把 factory() 结果存入 dict，lambda: None 会污染 _runtimes（此后该条目在
+        _evict_if_needed 里被当作真实 runtime 驱逐时 rt.flush() 会 AttributeError）。
+        agent 属性是 _runtime_registry（非 _registry）。
         """
         rt = self._runtime_registry._runtimes.get(DEFAULT_INSTANCE_ID)  # noqa: SLF001
         return rt.consolidator if rt else None
