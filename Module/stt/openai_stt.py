@@ -1,7 +1,6 @@
 """OpenAI 兼容 STT 后端 — 用于 custom provider（Whisper API 格式）。"""
 
 import logging
-import struct
 from io import BytesIO
 from typing import Any, AsyncIterator, Callable
 
@@ -10,29 +9,6 @@ from openai import AsyncOpenAI
 
 from Module.stt.protocol import STTBackend
 from Module._common.test_helpers import make_test_method
-
-
-def _make_silence_wav(duration_sec: float = 1.0, sample_rate: int = 16000) -> bytes:
-    """生成静音 WAV 字节，用于连通性测试。
-
-    Args:
-        duration_sec: 静音时长（秒）。
-        sample_rate: 采样率（Hz）。
-
-    Returns:
-        完整的 WAV 格式静音字节数据。
-    """
-    num_samples = int(sample_rate * duration_sec)
-    data = b"\x00\x00" * num_samples
-    header = struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF", 36 + len(data),
-        b"WAVE", b"fmt ", 16,
-        1, 1, sample_rate,
-        sample_rate * 2, 2, 16,
-        b"data", len(data),
-    )
-    return header + data
 
 
 class OpenAICompatSTTBackend(STTBackend):

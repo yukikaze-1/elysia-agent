@@ -17,9 +17,6 @@ from Module.tts.protocol import TTSBackend
 from Module.tts.text_preprocess import strip_all_markup
 from Module._common.test_helpers import make_test_method
 
-# 32000 Hz * 1 channel * 2 bytes/sample
-BYTES_PER_SECOND = 64000
-
 _TTS_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
 
 

@@ -51,10 +51,6 @@ class ModelManifest:
     revision: str  # 不可变 commit hash
     files: tuple[ManifestFile, ...]
 
-    def file_hash_map(self) -> dict[str, str]:
-        """返回 path → sha256 映射。"""
-        return {f.path: f.sha256 for f in self.files}
-
 
 # 默认 BGE 模型 manifest（sha256 于 2026-08-10 从固定 revision 快照计算并
 # 与官方 HuggingFace endpoint 抽查比对一致；不含 .gitattributes/README.md

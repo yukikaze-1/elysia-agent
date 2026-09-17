@@ -15,20 +15,11 @@ import httpx
 from Module.stt.protocol import STTBackend
 from Module._common.test_helpers import make_test_method
 
-# SenseVoice 情绪标签
-_EMOTION_TAGS: dict[str, str] = {
-    "HAPPY": "😊", "SAD": "😔", "ANGRY": "😡", "NEUTRAL": "",
-    "FEARFUL": "😰", "DISGUSTED": "🤢", "SURPRISED": "😮",
-    "EMO_UNKNOWN": "",
-}
+# SenseVoice 情绪标签（正则只做**识别**；标签 → emoji 的映射单源在 core/schema/mood.py，
+# 经 stt_emotion_emoji / stt_event_emoji 消费——此处不再维护第二份映射表）
 _EMOTION_RE = re.compile(r"<\|(HAPPY|SAD|ANGRY|NEUTRAL|FEARFUL|DISGUSTED|SURPRISED|EMO_UNKNOWN)\|>")
 
 # SenseVoice 音频事件标签
-_EVENT_TAGS: dict[str, str] = {
-    "Speech": "", "BGM": "🎼", "Applause": "👏", "Laughter": "😀",
-    "Cry": "😭", "Cough": "😷", "Sneeze": "🤧", "Breath": "",
-    "Sing": "", "Speech_Noise": "", "GBG": "", "Event_UNK": "",
-}
 _EVENT_RE = re.compile(
     r"<\|(Speech|BGM|Applause|Laughter|Cry|Cough|Sneeze|Breath|Sing|Speech_Noise|GBG|Event_UNK)\|>"
 )
