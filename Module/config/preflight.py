@@ -229,12 +229,15 @@ def _check_milvus_env(config: Any) -> None:
         )
 
 
-def _provider_url_note(provider_key: str, module: str) -> tuple[str, str]:
-    """按运行期同一回退链解析某 provider 的 base URL。
+def _provider_url_note(provider_key: str, module: str) -> tuple[str, str, str]:
+    """按运行期同一回退链解析某 provider 的地址与凭据需求。
 
-    返回 `(解析结果, 人读来源说明)`。空串表示该 provider 在任何一层都没有地址
-    （运行期同样建不出后端）。与 `_resolved_llm_url` 同判据，只是多一句来源描述，
-    供 WARN/PASS 文案使用——避免"运行期有默认值、预检却说未设置"这种谎报。
+    返回 `(解析出的地址, 来源说明, 运行期凭据 env key)`。第三项取自
+    `providers.yaml` 的 `env_key` —— 与运行期 `resolve_api_key(cfg["env_key"], …)`
+    **同一个字段**：空串即"该 provider 不需要凭据"（本地服务，如 gpt-sovits /
+    sensevoice），非空即"缺它运行期就建不出后端"（如 minimax）。
+
+    空地址表示该 provider 在任何一层都没有地址（运行期同样建不出后端）。
     """
     from Module._common.registry_helpers import resolve_base_url
     from Module.config.providers import load_provider_defaults
@@ -243,19 +246,51 @@ def _provider_url_note(provider_key: str, module: str) -> tuple[str, str]:
     url_key = str(defaults.get("url_key", "") or "")
     resolved = resolve_base_url(url_key, defaults)
     if not resolved:
-        return "", "无任何可用地址"
+        return "", "无任何可用地址", str(defaults.get("env_key", "") or "")
     if url_key and os.getenv(url_key):
-        return resolved, f"{url_key} 已设置"
-    return resolved, "providers.yaml 默认值"
+        return resolved, f"{url_key} 已设置", str(defaults.get("env_key", "") or "")
+    return resolved, "providers.yaml 默认值", str(defaults.get("env_key", "") or "")
+
+
+def _judge_optional_provider(provider: str, module: str, label: str) -> None:
+    """可选子系统（TTS/STT）单 provider 判定：地址与凭据**逐项**判，全部齐备才 PASS。
+
+    ⚠️ 两处刻意的设计，都是被实测反例逼出来的：
+
+    1. **不"地址有了就提前 PASS"**：`minimax` 的地址在 `.env` 里有
+       （`MINIMAX_TTS_URL`），而 `MINIMAX_API_KEY` 缺了运行期是
+       `ValueError: MiniMax TTS 需要 api_key` —— 提前 PASS 会把一个**建不出来的
+       后端**报成可用（Batch 3.5 Challenger 实测复现）。
+    2. **凭据需求只认 provider 自己声明的 `env_key`**，不回退本模块的静态表：
+       静态表 `_TTS_PROVIDER_ENV["gpt-sovits"]` 存的是 **`GPT_SOVITS_URL`（地址，
+       不是凭据！）**，把它当成"凭据 key"会让一个无需凭据的本地 provider
+       被要求设 URL 环境变量——正是本次要修的 B3-CB-3 原病。
+       故 `env_key` 为空串 ⇒ 本地服务、无需凭据（gpt-sovits / sensevoice）。
+    """
+    resolved, source, cred_key = _provider_url_note(provider, module)
+    if not cred_key:
+        # 本地 provider：只判地址即可（gpt-sovits 靠 providers.yaml 默认值即可建出）
+        if resolved:
+            _pass(f"{label} 可用 ({provider} → {resolved}，{source}；本地服务无需凭据)")
+        else:
+            _warn(f"{provider} 没有可用地址 — {label} ('{provider}') 将不可用")
+        return
+    if not os.getenv(cred_key, ""):
+        _warn(f"{cred_key} 未设置 — {label} ('{provider}') 将不可用")
+        return
+    if resolved:
+        _pass(f"{label} 可用 ({provider} → {resolved}，{source})")
+    else:
+        _warn(f"{provider} 没有可用地址 — {label} ('{provider}') 将不可用")
 
 
 def _check_tts_env(config: Any) -> None:
     """根据 TTS provider 检查可用性（WARN 级别——可选子系统不阻断启动）。
 
-    判据与运行期一致：先看该 provider 的**凭据/地址**是否真的缺失，而不是
-    "env 变量是否被设置"。`gpt-sovits` 是本地 provider（`env_key: ""`），
-    地址来自 `providers.yaml::tts.gpt-sovits.base_url`，缺 `GPT_SOVITS_URL`
-    环境变量时运行期照常可用——旧实现却报"将不可用"。
+    判据与运行期一致：**地址与凭据都齐备**才算可用，而不是"env 变量是否被设置"。
+    `gpt-sovits` 是本地 provider（`env_key: ""`），地址来自
+    `providers.yaml::tts.gpt-sovits.base_url`，缺 `GPT_SOVITS_URL` 环境变量时运行期
+    照常可用——旧实现却报"将不可用"。
     """
     if not config.tts.enabled:
         _pass("TTS 未启用，跳过 env 检查")
@@ -265,22 +300,14 @@ def _check_tts_env(config: Any) -> None:
     if key is None:
         _warn(f"未知 TTS provider: {provider}")
         return
-    resolved, source = _provider_url_note(provider, "tts")
-    if resolved:
-        _pass(f"TTS 可用 ({provider} → {resolved}，{source})")
-        return
-    # 地址本身就没有默认值（如 minimax）：此时凭据才是唯一判据
-    val = os.getenv(key, "")
-    if val:
-        _pass(f"TTS env ok ({key} 已设置)")
-    else:
-        _warn(f"{key} 未设置 — TTS ('{provider}') 将不可用")
+    _judge_optional_provider(provider, "tts", "TTS")
 
 
 def _check_stt_env(config: Any) -> None:
     """根据 STT provider 检查可用性（WARN 级别——可选子系统不阻断启动）。
 
-    同 `_check_tts_env`：判据是"运行期能否建出后端"，不是"env 变量是否被设置"。
+    同 `_check_tts_env`：判据是"运行期能否建出后端"（地址 + 凭据逐项判），
+    不是"env 变量是否被设置"。
     """
     if not config.stt.enabled:
         _pass("STT 未启用，跳过 env 检查")
@@ -293,16 +320,7 @@ def _check_stt_env(config: Any) -> None:
     if provider in _STT_STUB_PROVIDERS:
         _warn(f"STT provider '{provider}' 暂未实现（factory 会抛出 NotImplementedError）")
         return
-    resolved, source = _provider_url_note(provider, "stt")
-    if resolved:
-        _pass(f"STT 可用 ({provider} → {resolved}，{source})")
-        return
-    # sensevoice 的 base_url 是空串且 env_key 为空 ⇒ 只有 SENSEVOICE_URL 能给地址
-    val = os.getenv(key, "")
-    if val:
-        _pass(f"STT env ok ({key} 已设置)")
-    else:
-        _warn(f"{key} 未设置 — STT ('{provider}') 将不可用")
+    _judge_optional_provider(provider, "stt", "STT")
 
 
 def _check_embedding_model() -> None:

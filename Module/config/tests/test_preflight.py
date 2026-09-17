@@ -170,6 +170,51 @@ class TestCheckTTSEnv:
         captured = capsys.readouterr()
         assert "跳过" in captured.out
 
+    def test_minimax_key_missing_warns_even_when_url_present(self, monkeypatch, capsys):
+        """**地址有了不等于可用**：缺凭据必须继续 WARN（Batch 3.5 Challenger 反例）。
+
+        这一条是回归守卫。第一版修法在"地址解析成功"时就提前 `_pass` 并 return，
+        于是下面这个配置被报成 `[PASS] TTS 可用`：
+
+            MINIMAX_TTS_URL=https://api.minimaxi.com（工作区 .env 里**确实**有）
+            MINIMAX_API_KEY=（未设）
+
+        而运行期对同一配置是 `TTSFactory.create(...)` →
+        `ValueError: MiniMax TTS 需要 api_key` —— 即把一个**建不出来的后端**报成可用。
+        那整条分支当时**零覆盖**（把新加的提前 return 整块删掉，26 条用例仍全绿）。
+        """
+        monkeypatch.setenv("MINIMAX_TTS_URL", "https://api.minimaxi.com")
+        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+        m = _fresh_module()
+        _reset_counts(m)
+        cfg = MagicMock()
+        cfg.tts.enabled = True
+        cfg.tts.model = "minimax/speech-2.8-hd"
+        m._check_tts_env(cfg)
+        out = capsys.readouterr().out
+        assert "WARN" in out and "MINIMAX_API_KEY" in out, out
+        assert m._COUNTS.passed == 0, out
+        assert m._COUNTS.warned == 1, out
+
+    def test_gpt_sovits_needs_no_credential(self, monkeypatch, capsys):
+        """本地 provider（`env_key: ""`）只要地址可解析即可用，**不得**要求设 env。
+
+        `_TTS_PROVIDER_ENV["gpt-sovits"]` 存的是 `GPT_SOVITS_URL`（**地址**，不是凭据）；
+        若把它当成"凭据 key"回退，就会要求用户设 URL 环境变量 ——
+        那正是 B3-CB-3 要修的原病（运行期靠 `providers.yaml` 默认值即可建出，
+        实测 `TTSFactory.create("gpt-sovits/default")` 在无 `GPT_SOVITS_URL` 时成功）。
+        """
+        monkeypatch.delenv("GPT_SOVITS_URL", raising=False)
+        m = _fresh_module()
+        _reset_counts(m)
+        cfg = MagicMock()
+        cfg.tts.enabled = True
+        cfg.tts.model = "gpt-sovits/default"
+        m._check_tts_env(cfg)
+        out = capsys.readouterr().out
+        assert "PASS" in out, out
+        assert m._COUNTS.warned == 0, out
+
     def test_minimax_key_missing_warns(self, monkeypatch, capsys):
         # 同时清掉 MINIMAX_TTS_URL：判据是"运行期能不能建出后端"，而地址（URL）与
         # 凭据（key）任一层能给值就算可用。工作区的 .env 里**确实**设了
