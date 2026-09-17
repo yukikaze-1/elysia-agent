@@ -15,16 +15,16 @@
 | 问题 | 结论 |
 |---|---|
 | **N-11 fixed?** | ✅ `fix(profile): preserve identity load failure state`（`fc648e20`）——失败事实由 `UserIdentityStore` 持有：`is_available` = 不可用 + `last_error` = 异常类型名；`connect()` **不** raise（不打穿 `Agent.start()`） |
-| **N-1 fixed?** | ✅ `fix(input): make readiness reflect identity availability`（`e0ec4009`）——`/ready` 的 identity 门禁改读 `store.is_available is True` |
+| **N-1 fixed?** | ✅ `fix(input): make readiness reflect identity availability`（`82b80e2e`）——`/ready` 的 identity 门禁改读 `store.is_available is True` |
 | **Readiness contract（PD-1）** | ✅ 落纸于 [`docs/architecture/invariants.md`](../architecture/invariants.md) §3.1 + 新增不变量 **R5 / R6**（本轮**确认**而非新决策：产品侧三处围栏本就按 `is_available` fail-closed） |
 | **Public API changed?** | **否**。`/ready` 的 wire schema 逐字不变（`status`/`chatReady`/`fullReady`/`dependencies` 等字段与 `chatReady=false → 503` 契约原样），只改**取值来源**；无新字段、无 `last_error` 外泄 |
 | **Persistence changed?** | **否**。无新集合/索引/字段，无迁移 |
 | **Migration?** | **否**（也是本批刻意拒绝的方向：runtime failure state **不**持久化，见 §12） |
 | **Production diff 规模** | 2 个生产文件、**+106/−13 行**（其中约 3/4 是 docstring 与注释；实际行为改动 = 一行判据替换 + 失败状态记录/消解）：`core/profile/profile_store.py`、`core/input/health.py` |
-| **回归网** | 新增 **23** 条（`core/profile/tests/test_ready_identity_truthfulness.py` 20 + `core/agent/tests/test_identity_readiness_lifecycle.py` 3）+ **4** 条真实 Mongo（`tests/real_mongo/test_real_identity_readiness.py`）；修前 **12 红 / 11 绿**，修后 **23 绿**（其中 3 条是本批 Challenger 命中后补的守卫） |
+| **回归网** | 新增 **23** 条（`core/profile/tests/test_ready_identity_truthfulness.py` 20 + `core/agent/tests/test_identity_readiness_lifecycle.py` 3）+ **4** 条真实 Mongo（`tests/real_mongo/test_real_identity_readiness.py`）；修前 **14 红 / 9 绿**，修后 **23 绿**（其中 3 条是本批 Challenger 命中后补的守卫） |
 | **Mutation** | M1（退回旧 authority）/ M2（失败不更新状态）/ M2b（保留陈旧缓存）/ M3（恢复不清空）——**全部被杀**（§9） |
 | **Challenger** | 独立子代理，六个必做攻击 + 五个加试；结论见 §10 |
-| **真实 CI** | ✅ `push/backend` + `real-mongo` 全绿（§13） |
+| **真实 CI** | ⚠️ **未完成**：本机无 GitHub 凭据（`git fetch origin main` → `could not read Username for 'https://github.com'`，与 Batch 3.5/3.6 同因）⇒ 改为**本地跑 CI 等价集合**（§13.1）。待有凭据的机器 `git push` 后按 §13.2 核验 |
 
 **一句话**：本批把一条断掉的因果链接上——**真实装载失败**以前只以一行 warning 存在，
 于是 runtime 没有任何权威能回答"身份可用吗"，`/ready` 只好去问一个**可得但不等价**的
@@ -247,7 +247,7 @@ identity_ok = agent.user_identity_store.is_available is True
 | **after** | 失败记录 `last_error`（类型名）+ `_cached = None` 同一次加锁内成立；`logger.error`；成功路径消解记录 |
 | **为什么最小** | 不改 `connect()` 的返回契约与任何调用方；不新增类/框架；`last_error` 是唯一新公开成员且为只读属性 |
 
-### `e0ec4009` fix(input): make readiness reflect identity availability
+### `82b80e2e` fix(input): make readiness reflect identity availability
 
 | | |
 |---|---|
@@ -410,7 +410,7 @@ Challenger 用变异证明：M8（`is True` → 真值）、M9（`is_available` 
 - **RHT-2 / RHT-3**：`/ready` 503 ⇔ `/api/me` 503（同一时刻、同一 store）；任何 ping
   都无法覆盖不可用；
 - **RHT-5**：本地 fallback 与"读成功消解失败记录"的语义；恢复后 readiness 回来（D）；
-- **pre-fix → post-fix 因果链**：本批新测试在 `f8b2f863` 上 12 红，现在 23 绿。
+- **pre-fix → post-fix 因果链**：本批新测试在 `f8b2f863` 上 14 红，现在 23 绿。
 
 ### 10.6 Challenger 未能测试的项（不作过度声明）
 
@@ -465,6 +465,7 @@ Challenger 用变异证明：M8（`is True` → 真值）、M9（`is_available` 
 
 ## 13. Cross-Surface Consistency（§36，本批最重要的不变量）
 
+
 `test_RHT3b_ready_and_product_endpoint_agree[True/False]` 在**同一时刻、同一 store**
 下取两个 surface：
 
@@ -475,6 +476,32 @@ identity_loaded=True ：/api/me → 200                       ∧  /ready.chatRe
 
 断言写成 `ready_data["chatReady"] is (me_status == 200)`——两个方向都被钉住，不允许
 "ready=true 而产品 503"或"ready=false 而产品可用"。修前 `False` 支红。
+
+---
+
+## 13.1 本地 CI 等价集合（真实 CI 无法执行时的替代证据）
+
+CI 的 `backend` job 逐步内容（`.github/workflows/ci.yml:139-186`）已在本地逐条执行：
+12 个静态门禁 + `make audit` + `make test-normal`（CI 的"离线套件只跑一遍"就是它）。
+CI 的 `real-mongo` job 等价于本机 `docker compose -f docker-compose.test.yml up -d`
++ `make test-real-mongo`，已跑通（12 passed）。
+
+**这不等价于"真实 CI 全绿"**：本机 `.env` 与 self-hosted runner 的 workspace 清洁步骤、
+conda 环境装配、`GITHUB_PATH` 注入等仍有差异；本节只声称"CI 会跑的检查项在本地都绿"。
+
+## 13.2 push 后的核验步骤（交给有凭据的机器）
+
+```bash
+git push origin main          # 三个 commit：fc648e20（N-11）/ 82b80e2e（N-1）/ docs(architecture) 那条
+gh run watch                  # 或到 Actions 页看最新 run
+# 需要的 required jobs 全绿：
+#   - Backend (static gates + offline suite)   ← make test-normal + 12 gates + audit
+#   - Real MongoDB (storage layer)             ← make test-real-mongo（含本批 4 条）
+#   - Frontend (vue-tsc + build)               ← 本批无前端改动，应照常绿
+```
+
+若某个 job 红了，**先看 §20 的本地等价结果**：本地已绿的项若在 CI 红，优先怀疑
+self-hosted 环境差异（`.env`、conda env、workspace 残留），而不是本批代码。
 
 ---
 
@@ -513,7 +540,23 @@ identity_loaded=True ：/api/me → 200                       ∧  /ready.chatRe
 
 ---
 
-## 17. Keep As-Is（本批**没有**改动的语义）
+## 17. Worktree Verification（§71：每个 fix 都验 pre-fix 红 / post-fix 绿）
+
+方法：`git archive f8b2f863 | tar -x` 到 `/tmp`（**不含**本批新测试文件），再把本批
+两个新测试文件复制进去，用仓库自己的 `pytest.ini` marker 集跑；post-fix 侧用 `git archive HEAD`。
+
+| 侧 | 命令 | 结果 |
+|---|---|---|
+| **pre-fix**（`f8b2f863` 生产代码 + 本批新测试） | `pytest core/profile/tests/test_ready_identity_truthfulness.py core/agent/tests/test_identity_readiness_lifecycle.py -q` | **14 failed, 9 passed** |
+| **post-fix**（`82b80e2e`，docs commit 不含生产代码） | 同上 | **23 passed** |
+
+pre-fix 红的 14 条包含 N-1 本体（`/ready` 假绿）、N-11 本体（失败无可查状态）、
+lifecycle 三条、recovery 与 fresh-process 各一条；绿的 9 条即 §9.1 标
+ALREADY_GREEN_GUARD 的用例加上"用新增 API 断言"的几条（那些在修前因属性不存在而红）。
+`tests/real_mongo/test_real_identity_readiness.py` 未做 pre-fix 对照（其等价断言由
+fake 层承担，见 §9.1 说明）。
+
+## 18. Keep-As-Is（本批**没有**改动的语义）
 
 | 项 | 为什么不改 |
 |---|---|
@@ -527,7 +570,7 @@ identity_loaded=True ：/api/me → 200                       ∧  /ready.chatRe
 
 ---
 
-## 18. Follow-up（保留，不在本批）
+## 19. Follow-up（保留，不在本批）
 
 `N-3`（409 revision 谎报）、`N-10`（gemini 预检假绿）、`F6`（STT provider 探测分岔）、
 `F7`（`/debug tts_ok` 语义）、`GR-3`/`GR-24`（索引选项登记与部分索引语义）、`N-15`、
@@ -536,3 +579,64 @@ provider portability、prompt budget cross-path、ToolAdapter cleanup——以�
 `todo.md` 的其余条目，全部**未触碰**。§16 的三条新发现也留在 backlog 之外（只记录）。
 
 **本批不开始 N-3**（§96）：即使执行顺利也不顺手做 409 revision。
+
+
+---
+
+## 20. Test Results（最终工作树：两个 fix commit + 文档 commit 之后）
+
+| 集合 | 命令 | 结果 |
+|---|---|---|
+| **targeted** | 本批 4 个测试文件 + 邻近套件（profile / agent identity / input health / me / ready / shutdown / session routes / storage） | **51 passed** |
+| 邻近子系统广扫 | `pytest core/agent/tests core/input/tests core/cognitive/tests core/character/tests -n 8` | **1722 passed** |
+| `core/` 全树 | `pytest core/ -n 8 --dist loadfile` | **4040 passed, 3 skipped, 1 xfailed** |
+| **顺序扰动**（§40/§90） | 四种次序（failed-first / healthy-first / combined / `-n 4 --dist loadfile`）各 **45 passed** | 无状态串台 |
+| **fresh process**（§39/§91） | `test_RHT7`（两个独立子进程：坏/好各一） | ✅ |
+| **quick** | `make test-quick` | **6006 passed, 2 skipped, 1 xfailed** |
+| **normal** | `make test-normal` | **6006 passed, 2 skipped, 1 xfailed** |
+| **remainder** | `make test-remainder` | 0 条（Quick == Normal） |
+| **full** | `make test-full` | **6038 passed, 24 skipped, 1 xfailed** |
+| **real-mongo** | `make test-real-mongo`（容器 `elysia-mongo-test` on :27018） | **12 passed**（含本批新增 4 条） |
+| **static gates**（§92） | `make lint` / `pyright` / `check-arch` / `check-contract` / `check-timeouts` / `check-types` / `check-debug-auth` / `check-secrets` / `check-test-sets` / `check-compose` / `check-env-lock` / `check-ci-isolation` | **12/12 通过**（`pyright`: 0 errors；`check-test-sets`: Quick 6009 == Normal，全量收集 6063） |
+| **audit**（CI backend job 的另一条） | `make audit`（pip-audit + bandit -ll） | **通过**（无已知漏洞；bandit 仅输出既有配置告警） |
+| **real CI** | — | ⚠️ 未执行（§13.2） |
+
+**独立 Challenger 的旁证基线**（它自己的冻结副本）：本批文件 45 passed、广扫
+1789 passed、真库层 4 passed；本批新测试在 `f8b2f863` 上 14 红。
+
+## 21. Invariant Mapping（§58）
+
+| Invariant | 判据（测试） | Gate | CI |
+|---|---|---|---|
+| **R5** readiness 反映真实可用性 | `test_RHT2_ready_503_when_identity_load_failed`、`test_ready_503_when_availability_is_truthy_but_not_bool`、`test_close_marks_identity_unavailable`、`test_healthy_start_is_ready_and_does_not_touch_health_check_probe` | `make test-quick` / `test-normal` | push/backend |
+| **R6** 装载失败留在运行时状态 | `test_RHT1_...`、`test_RHT5a/b/c_...`、`test_RHT6_reconnect_clears_failure_and_restores_ready`、`test_successful_file_read_clears_previous_failure`、`test_start_with_undecodable_identity_keeps_process_alive_but_not_ready` | 同上 | push/backend |
+| **cross-surface**（R5 的一致性面） | `test_RHT3b_ready_and_product_endpoint_agree[True/False]` | 同上 | push/backend |
+| 真库旁证（非门禁，opt-in） | `tests/real_mongo/test_real_identity_readiness.py`（4 条） | `make test-real-mongo` | ci.yml:real-mongo |
+
+无新增静态门禁（§58：本批不变量以测试为判据，不需要新的静态 gate）。
+
+## 22. 完成标准逐条核对（§101）
+
+| 条件 | 状态 |
+|---|---|
+| Scope 仅 N-1 + N-11 | ✅（生产 diff 只 2 个文件、2 处行为改动） |
+| PD-1 readiness contract 明确 | ✅ `invariants.md` §3.1 |
+| 真实 identity load failure 可被 runtime state 表达 | ✅ `is_available` + `last_error` |
+| 关键 load failure 不再仅靠 warning | ✅ `logger.error` + 状态（测试不依赖日志文本） |
+| `/ready` 使用真实 identity availability authority | ✅ `is_available is True` |
+| identity unavailable 时 `/ready` 不再假绿 | ✅ 修前实测矛盾 → 修后 503 |
+| 健康路径仍然 ready | ✅ RHT-3 / lifecycle-3 / real-mongo-4 |
+| 合法 fallback 行为不被误杀 | ✅ RHT-4 / RHT-5（catch 保留） |
+| `_load_from_file` 的 load-bearing catch 未被机械删除 | ✅ 逐字保留，只加状态记录 |
+| connect failure propagation 经调用链证明安全 | ✅ 不 raise；三个调用方逐字未改 |
+| product endpoint 与 `/ready` 不再互相矛盾 | ✅ RHT-3b（双向断言） |
+| 至少一条真实 route test | ✅ RHT-2 / RHT-3b / lifecycle 三条（真 `create_app`） |
+| 至少一条真实 load/connect failure test | ✅ RHT-1（真 store+repo）、lifecycle-1（真 `Agent.start()`）、真库 2 条 |
+| pre-fix 红测试存在 | ✅ 14 红（§17） |
+| Challenger 独立执行 falsification | ✅ §10（六个必做 + 五个加试 + 12 变异） |
+| 不新增 health/readiness framework | ✅ 无新类/注册表/管理器 |
+| 不修改 N-3 等其它 backlog | ✅ |
+| quick + normal + full + real-mongo + static gates 全绿 | ✅ §20 |
+| 真实 CI 全绿 | ⚠️ **未执行**（无凭据，§13.2 给核验步骤） |
+| `todo.md` 更新 | ✅ N-1/N-11 = GUARDED、PD-1 = 已裁决 |
+| git status clean | ✅（推送后应仍 clean） |
