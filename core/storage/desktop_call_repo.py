@@ -440,16 +440,6 @@ class DesktopCallRepository(Repository):
 
     # ---- internal helpers ----
 
-    async def _apply_update(self, call_id: str, update: dict) -> None:
-        """把字段更新应用到 cache + Mongo（可达时）。updated_at 缺省自动推进。"""
-        cached = self._cache.get(call_id)
-        if cached is None:
-            return
-        update = dict(update)
-        update.setdefault("updated_at", now_iso())
-        cached.update(update)
-        await self._persist(call_id, cached)
-
     async def _apply_update_cas(
         self, call_id: str, update: dict, *, expect_status: str,
     ) -> bool | None:

@@ -5,7 +5,6 @@
 
 - `release_message_attachments`：单条消息删除联动
 - `release_messages_attachments`：批量消息删除联动（清空/会话删除用）
-- `release_all_attachments`：释放全部归档消息的附件 refs（分页遍历）
 - `release_session_attachments`：释放单会话归档消息的附件 refs（_id 游标遍历）
 
 **#41（CR-04 彻底版）追加的「快照 → 提交 → 释放」三件套**：
@@ -196,26 +195,6 @@ async def release_after_commit(agent: "Agent", snapshot: RefSnapshot) -> bool:
             len(snapshot), pending, e, exc_info=True,
         )
         return True
-
-
-async def release_all_attachments(agent: "Agent") -> None:
-    """释放全部归档消息的附件 refs（archive/sessions 清空场景，分页遍历）。
-
-    .. deprecated:: #41
-        新代码请用 `collect_all_attachment_refs` + `release_after_commit`——本函数在
-        提交**前**调用会把"释放成功但提交失败"变成不可逆损失。「先释放后提交」的
-        其余调用点（REST 会话删除 manager）仍在使用，见各自的 journal 通道。
-    """
-    skip = 0
-    while True:
-        msgs, _ = await agent.message_repo.query_offset(
-            skip=skip, limit=_ATTACHMENT_RELEASE_BATCH)
-        if not msgs:
-            break
-        await release_messages_attachments(agent, msgs)
-        skip += len(msgs)
-        if len(msgs) < _ATTACHMENT_RELEASE_BATCH:
-            break
 
 
 async def release_session_attachments(agent: "Agent", sid: SessionId) -> None:
