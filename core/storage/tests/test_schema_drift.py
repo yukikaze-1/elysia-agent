@@ -39,10 +39,15 @@ _DYNAMIC = object()
 
 
 def _storage_source_paths() -> list[Path]:
-    """`core/storage/` 下的**生产**模块（排除测试与 `schema_drift.py` 自身）。"""
+    """`core/storage/` 下的**生产**模块（排除测试与 `schema_drift.py` 自身）。
+
+    按**相对** `core/storage/` 的路径段判断，而不是绝对路径的子串：否则 checkout 落在
+    名字含 `tests` 的目录下（如 `/tmp/chal-tests-a/…`）会把所有源文件都筛掉、
+    守卫全线报红（fail-closed，但纯噪声）。
+    """
     return [
         path for path in sorted(_STORAGE_DIR.rglob("*.py"))
-        if "tests" not in str(path)
+        if "tests" not in path.relative_to(_STORAGE_DIR).parts
         and not path.name.startswith("test_")
         and path.name != "schema_drift.py"
     ]
@@ -259,6 +264,39 @@ def _option_table_coverage_errors(
     return errors
 
 
+def _option_table_key_errors(
+    options: dict[str, dict[str, dict[str, object]]],
+    declared: dict[str, dict[str, object]],
+) -> list[str]:
+    """返回**登记了、但选项键集与代码声明不符**的索引（空列表 = 键集一致）。
+
+    为什么"索引名已登记"还不够：`_option_mismatches` 的第一行是
+    `want = expected.get(name); if not want: continue` —— **空字典（falsy）与拼错的
+    选项键都会让它直接跳过该索引**，于是"扫了、没比、报健康"在下一层复现
+    （B3-CB-2 同型；Challenger 实测：把 `{"unique": True}` 改成 `{}` 或 `{"unicorn": True}`，
+    运行期 `option_conflicts` 从 `{'attachments': ('attachment_id_1',)}` 变成 `{}`）。
+
+    只比**键集**，不比**值**：值写错会让运行期报出选项冲突（鸣笛方向，不是假绿），
+    且 TTL 按设计只比"有没有"、不比秒数；动态声明的索引（`_DYNAMIC`）整体跳过。
+    """
+    errors: list[str] = []
+    for collection, indexes in sorted(options.items()):
+        for name, entry in sorted(indexes.items()):
+            code_opts = declared.get(collection, {}).get(name)
+            if code_opts is None or code_opts is _DYNAMIC:
+                continue  # 集合/索引/静态值任一不成立时由 R1/R2 报，不重复
+            if set(entry) != set(code_opts):  # type: ignore[arg-type]
+                if entry:
+                    errors.append(
+                        f"{collection}.{name} 登记的选项键 {sorted(entry)} 与代码声明 "
+                        f"{sorted(code_opts)} 不符——键不匹配的选项不会被比对")
+                else:
+                    errors.append(
+                        f"{collection}.{name} 登记为空选项 {{}}——`_option_mismatches` "
+                        "会**直接跳过**该索引（该索引的选项不会被比对）")
+    return errors
+
+
 @pytest.mark.unit
 class TestExpectedIndexesPinnedToCode:
     """EXPECTED_INDEXES 必须与代码实际声明逐项一致（防止派生表静默过期）。"""
@@ -341,8 +379,15 @@ class TestExpectedIndexOptionsPinnedToCode:
     ## 与既有守卫的分工
 
     `TestIndexOptionConflicts::test_idempotency_ttl_option_is_gauged` 是**运行期**定点
-    回归（构造冲突 → 断言它被报出来）；本类只守**静态声明表没有指向不存在的实体**，
-    不重复 runtime 漂移逻辑。
+    回归（构造冲突 → 断言它被报出来）；本类只守**静态声明表**，不重复 runtime 漂移逻辑。
+
+    ## 边界：校验什么、不校验什么
+
+    - **校验**：集合键、索引名、以及**选项键集**（三者任一错 ⇒ 该索引的选项不会被比对）；
+      代码声明了选项的索引必须已登记（减去显式记账的已知缺口）。
+    - **不校验**：选项的**值**。值写错会让运行期报出 `option_conflicts`（鸣笛方向），
+      不是假绿；且 TTL 按设计只比"有没有"、不比秒数，`expireAfterSeconds` 的值本就
+      不该被钉死。动态声明的索引（`unique=desired_unique`）整体不参与值/键比对。
     """
 
     def test_expected_index_options_reference_known_collections(self):
@@ -386,6 +431,41 @@ class TestExpectedIndexOptionsPinnedToCode:
         assert not errors, (
             "代码声明了选项但 EXPECTED_INDEX_OPTIONS 未登记（扫了、没比、报健康）：\n  "
             + "\n  ".join(errors))
+
+    def test_expected_index_options_declare_the_same_option_keys_as_code(self):
+        """登记的**选项键集**必须与代码声明一致（索引名对 ≠ 选项真的在被比）。
+
+        Challenger 实测的漏洞（Batch 3.6 §7 F-A1）：把 `{"unique": True}` 改成 `{}` 或
+        `{"unicorn": True}`，只钉名字的守卫全绿，而运行期 `option_conflicts` 从
+        `{'attachments': ('attachment_id_1',)}` 变成 `{}`——"扫了、没比、报健康"下沉一层。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, _dynamic, _unresolved = _derive_option_table_from_code()
+        errors = _option_table_key_errors(EXPECTED_INDEX_OPTIONS, derived)
+        assert not errors, (
+            "EXPECTED_INDEX_OPTIONS 的选项键与代码声明不符——这些索引的选项不会被比对：\n  "
+            + "\n  ".join(errors))
+
+    def test_blank_option_entry_is_really_a_runtime_blind_spot(self):
+        """为什么必须比选项**键集**：空声明/错键会被 `_option_mismatches` 直接跳过。
+
+        直接调用运行期函数（不是复刻它的语义）：库里 `attachment_id_1` 没有 unique 时，
+        声明 `{"unique": True}` 会被报出来，而 `{}` 或 `{"unicorn": True}` 一声不吭。
+        这条是上面那条静态规则的**理由锚点**——它红了说明运行期语义变了，守卫的
+        必要性论证需要重写。
+        """
+        from core.storage.schema_drift import _option_mismatches
+
+        live = [{"name": "attachment_id_1"}]  # 库里该索引**不是** unique
+        # 声明正确 → 冲突被报出来
+        assert _option_mismatches(
+            "attachments", live, {"attachment_id_1": {"unique": True}}) == ["attachment_id_1"]
+        # 索引名在、选项声明为空 → 一声不吭（`if not want: continue`）
+        assert _option_mismatches("attachments", live, {"attachment_id_1": {}}) == []
+        # 索引名在、选项键拼错 → 同样一声不吭（没有任何选项参与比对）
+        assert _option_mismatches(
+            "attachments", live, {"attachment_id_1": {"unicorn": True}}) == []
 
     def test_unregistered_option_ledger_has_no_stale_entries(self):
         """已知缺口登记表不得陈旧：补进表之后必须删掉对应条目。"""
@@ -444,6 +524,30 @@ class TestExpectedIndexOptionsPinnedToCode:
         mutated["idempotency"] = {"expires_at_1_typo": {"expireAfterSeconds": 0}}
         errors = _option_table_reference_errors(mutated, derived)
         assert any("expires_at_1_typo" in e for e in errors), f"索引名错拼未被抓住：{errors}"
+
+    def test_guard_flags_blanked_and_misspelled_option_keys(self):
+        """变异 F-A1（Challenger 命中）：索引名对、但选项键被清空/拼错 → 必须红。
+
+        这是"索引名已登记"与"选项真的在被比"之间的那一步；只钉名字的守卫对它是假绿。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        derived, _dynamic, _unresolved = _derive_option_table_from_code()
+
+        blanked = {c: dict(v) for c, v in EXPECTED_INDEX_OPTIONS.items()}
+        blanked["attachments"] = {"attachment_id_1": {}}
+        errors = _option_table_key_errors(blanked, derived)
+        assert any("attachment_id_1" in e for e in errors), f"空选项未被抓住：{errors}"
+
+        misspelled = {c: dict(v) for c, v in EXPECTED_INDEX_OPTIONS.items()}
+        misspelled["attachments"] = {"attachment_id_1": {"unicorn": True}}
+        errors = _option_table_key_errors(misspelled, derived)
+        assert any("unicorn" in e for e in errors), f"错键未被抓住：{errors}"
+
+        ttl_blanked = {c: dict(v) for c, v in EXPECTED_INDEX_OPTIONS.items()}
+        ttl_blanked["desktop_calls"] = {"ttl_expires_at_1": {}}
+        errors = _option_table_key_errors(ttl_blanked, derived)
+        assert any("ttl_expires_at_1" in e for e in errors), f"TTL 空选项未被抓住：{errors}"
 
     def test_guard_flags_deleted_and_emptied_table(self):
         """删掉整条 / 清空全表 → 必须红（这两种形态复现**同一个**运行期缺陷）。
