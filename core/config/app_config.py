@@ -17,8 +17,6 @@ class AgentConfig:
 @dataclass
 class LLMConfig:
     model: str = ConfigField(default="deepseek/deepseek-chat")
-    base_url: str = ConfigField(default="https://api.deepseek.com", env="LLM_BASE_URL")
-    api_key: str = ConfigField(default="", secret=True, env="LLM_API_KEY")
 
 
 @dataclass
@@ -79,9 +77,6 @@ class ServerConfig:
 class TTSConfig:
     enabled: bool = ConfigField(default=False)
     model: str = ConfigField(default="gpt-sovits/default")
-    base_url: str = ConfigField(default="http://localhost:9880", env="TTS_API_URL")
-    api_key: str = ConfigField(default="", secret=True, env="TTS_API_KEY")
-    voices_config: str = ConfigField(default="")
     rate_limit_rpm: int = ConfigField(
         default=20,
         env="TTS_RATE_LIMIT_RPM",
@@ -93,8 +88,6 @@ class TTSConfig:
 class STTConfig:
     enabled: bool = ConfigField(default=False)
     model: str = ConfigField(default="sensevoice/sense-voice")
-    base_url: str = ConfigField(default="http://localhost:20042", env="SENSEVOICE_URL")
-    api_key: str = ConfigField(default="", secret=True, env="STT_API_KEY")
 
 
 @dataclass
