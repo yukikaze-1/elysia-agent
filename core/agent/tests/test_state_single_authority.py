@@ -43,7 +43,7 @@ def _real_agent() -> Agent:
     a._config.stt.enabled = False
     a._config.tts.enabled = False
     a._cognitive = mock.MagicMock()
-    a._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
+    a._cognitive.tts_manager.set_enabled = mock.AsyncMock()
     a._tts = None
     return a
 
@@ -164,7 +164,7 @@ class TestServiceFlagSingleAuthority:
 
         asyncio.run(_LifecycleServices._sync_tts_gate(agent))
 
-        agent._cognitive._tts_mgr.set_enabled.assert_awaited_once_with(True)  # noqa: SLF001
+        agent._cognitive.tts_manager.set_enabled.assert_awaited_once_with(True)
 
     def test_apply_service_enabled_only_syncs_gate(self):
         """`_apply_service_enabled` 不再写任何内存槽位（只刷新投影）。"""
@@ -176,7 +176,7 @@ class TestServiceFlagSingleAuthority:
 
         assert agent.stt_enabled is True
         assert agent.tts_enabled is False
-        agent._cognitive._tts_mgr.set_enabled.assert_awaited_once_with(False)  # noqa: SLF001
+        agent._cognitive.tts_manager.set_enabled.assert_awaited_once_with(False)
 
     def test_derivation_point_is_unique_in_production_code(self):
         """结构性：三态回退只能在 `_effective_service_enabled` 里写一次。

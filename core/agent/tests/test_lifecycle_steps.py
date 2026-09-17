@@ -408,7 +408,7 @@ def _real_service_agent(*, stt_default: bool = False, tts_default: bool = False)
     a._config.stt.enabled = stt_default
     a._config.tts.enabled = tts_default
     a._cognitive = mock.MagicMock()
-    a._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
+    a._cognitive.tts_manager.set_enabled = mock.AsyncMock()
     a._tts = None
     # S2-A5：`Agent.__init__` 设置的"重启时以配置为准"标志。替身绕过 `__init__`，
     # 必须显式补上——否则 `_apply_service_state` 会 AttributeError（它不是可选能力，
@@ -507,7 +507,7 @@ class TestStartTTSGate:
         # 不再有 Agent 内存槽位需要预置。
         agent._tts = None  # 对齐 Agent.__init__ 初始值
         agent._cognitive.configure = mock.MagicMock()
-        agent._cognitive._tts_mgr.set_enabled = mock.AsyncMock()
+        agent._cognitive.tts_manager.set_enabled = mock.AsyncMock()
 
     @pytest.mark.asyncio
     async def test_builds_with_startup_model_when_hotplug_open(self, fake_agent):
@@ -528,7 +528,7 @@ class TestStartTTSGate:
             http_client_factory=mock.ANY)
         assert agent._tts is backend
         agent._cognitive.configure.assert_called_once_with(tts=backend)
-        agent._cognitive._tts_mgr.set_enabled.assert_awaited_once_with(True)
+        agent._cognitive.tts_manager.set_enabled.assert_awaited_once_with(True)
 
     @pytest.mark.asyncio
     async def test_desktop_runtime_skips_creation(self, fake_agent):
@@ -660,7 +660,7 @@ class TestServiceFlagsFollowSessionOnSwitch:
         assert agent.tts_enabled is True
         # TTS 管理器标志是 loop 的实际门控——派生投影必须跟着走，否则"开关显示开着
         # 但不会说话"
-        agent._cognitive._tts_mgr.set_enabled.assert_awaited_once_with(True)  # noqa: SLF001
+        agent._cognitive.tts_manager.set_enabled.assert_awaited_once_with(True)
 
     @pytest.mark.asyncio
     async def test_apply_service_enabled_does_not_switch_llm(self, fake_agent):

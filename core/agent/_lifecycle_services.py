@@ -131,8 +131,10 @@ class _LifecycleServices:
         改动路径都只调本方法。
         """
         if self._cognitive is not None:
-            # 内部接线（loop gate 唯一来源），非跨模块私有访问
-            await self._cognitive._tts_mgr.set_enabled(self.tts_enabled)  # noqa: SLF001
+            # 走 CognitiveLoop.tts_manager 公开只读口（Batch 3.3 简化 #1）：
+            # 此前是 `_tts_mgr` 私有穿透 + 一行 SLF001 豁免标注，而公开口本来就存在，
+            # 其 docstring 自陈就是为清掉这处穿透而加的。
+            await self._cognitive.tts_manager.set_enabled(self.tts_enabled)
 
     async def _apply_service_enabled(self) -> None:
         """把**当前会话**的三态开关同步到运行时槽位（S2-C3）。

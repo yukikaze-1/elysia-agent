@@ -21,7 +21,7 @@ def fake_agent():
     # S2-C3：`_apply_service_enabled` 会同步 TTS 管理器标志（loop 的唯一门控），
     # 真实 Agent 一定有它——替身必须建模成可 await 的方法，否则调用点一 await 就炸。
     a._cognitive = MagicMock()
-    a._cognitive._tts_mgr.set_enabled = AsyncMock()
+    a._cognitive.tts_manager.set_enabled = AsyncMock()
     # session（带 deque messages）——批次 3：公开接口 agent.session（= session_manager.active）
     a.session = MagicMock()
     a.session.save = AsyncMock()

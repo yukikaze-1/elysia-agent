@@ -115,7 +115,7 @@ def _host(
     a._cognitive = MagicMock()
     a._cognitive.configure = MagicMock()
     # `_sync_tts_gate` 会 await 它（真实的 TTSStreamManager.set_enabled 是协程）
-    a._cognitive._tts_mgr.set_enabled = AsyncMock()
+    a._cognitive.tts_manager.set_enabled = AsyncMock()
     a._bus = MagicMock()
     a._output = MagicMock()
     a._output.channels = []
