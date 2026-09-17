@@ -263,6 +263,22 @@
 
 ## 代码清理
 
+### Batch 2 Challenger 复核留下的项（2026-09-17）
+
+独立 Challenger 对 `4203198f..e2003080` 做了对抗式复核。**已修**的三处
+（permissions 只查存在性 / `rm -rf "$GITHUB_WORKSPACE"/*` 漏检 / docstring 宣传不存在的
+`--report`）见 commit `ec71d3c1`。以下是**已知局限与接受的风险**——记在这里而不是
+默默留着，因为它们都是"判据看起来比实际强"的来源：
+
+| 优先级 | 项 | 现状与理由 |
+|--------|-----|-----------|
+| P2 | **打印守卫的"同名遮蔽"** | 守卫按「属性名归属包」近似判跨包：**在访问方包里定义一个同名 `def _x`**，就能让该名字在全仓免检。实测（在 `/tmp` 副本里）：`core/adapter/` 加一个 `def _broadcast(*a, **k): pass` 后，9 处违规塌成 1 处。这是"按名字近似"的**固有代价**（同名属性本来就会漏报，模块 docstring 已记载），本批让私有方法也进归属表后**更容易触发**（以前要凑一个同名赋值，现在一行 `def` 就够）。**未修**：修它需要真正的类型/所有权推断（或给归属表加"是否在访问方包内定义"以外的证据），属独立专项；现在的定位仍是**回归网**而非完备审计工具。 |
+| P3 | **守卫扫描面只含 `core` + `Module`** | `_ROOTS = ("core", "Module")`，故 `scripts/`、`frontend_contract/`、根级 `tests/` 里的跨包私有穿透看不见。实际存在（且已标注）的实例：`scripts/dev/seed_stage_h_pinned.py:129`、`scripts/dev/stage_h_pinned_smoke.py:87`。CLAUDE.md 的「全仓跨包守卫」措辞比实际宽——扩到全仓需先处理 `scripts/` 的一批刻意豁免。 |
+| P3 | **非字面量私有访问仍不可见** | `getattr(obj, var)` / `operator.attrgetter("_x")(obj)` / `vars(obj)["_x"]` / `obj.__getattribute__("_x")` 均 0 命中。字面量 `getattr(obj, "_x")` 与点式深读**已覆盖**。 |
+| P3 | **清空形态识别仍有长尾** | 纯字符串判定已覆盖 4 种 `$GITHUB_WORKSPACE` 写法 + 当前目录 + `find -delete`。仍漏：`find … -print0 \| xargs -0 rm -rf`、`for d in "$WS"/*; do rm -rf "$d"; done`、`git clean -ffdx`。这类"间接清空"要靠 shell 解析，属独立专项；本仓 6 处清理点全用规范 `find … -exec rm` 写法，故当前无实例。 |
+| P3 | **`if:` 守卫是"token 存在性"而非布尔求值** | `if: github.event_name == 'push' \|\| true`、`… \|\| github.event.action != ''` 会被判成受信 push-only（实际 PR 可达）。要真判需表达式求值器。 |
+| P3 | **`# noqa: F401` 无门禁检查陈旧** | RUF100 未启用，故"导入已被使用、noqa 还留着"不会被拦。F401 现在**启用**了（18 个文件带该标注，11 个是承重的），所以这 38 处标注不会误导；但陈旧 noqa 属长期债务，见上一节。 |
+
 ### Batch 2.3（2026-09-17）F401 启用后的 follow-up
 
 F401 已于本批启用（`ruff.toml` 的 `select` + `"**/__init__.py"` per-file-ignore），

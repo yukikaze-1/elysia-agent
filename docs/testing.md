@@ -2,15 +2,15 @@
 
 ## 分层体系
 
-测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-14）全量收集 5033：
+测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-17，脚本输出）全量收集 6002：
 
 | 层 | marker | 标准 | 测试数 |
 |---|--------|------|--------|
-| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 2798 |
-| 服务 | `service` | 单模块 + mock/fake 替身，不连真实依赖 | 2211 |
-| 集成 | `integration` | 需真实数据库或外部 API | 10 |
+| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 3389 |
+| 服务 | `service` | 单模块 + mock/fake 替身，不连真实依赖 | 2585 |
+| 集成 | `integration` | 需真实数据库或外部 API | 7 |
 | 慢速 | `slow` | 起 Agent 且连真实依赖 / 端到端 / >1s | 39 |
-| 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 7 |
+| 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 18 |
 
 > **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁。
 > 各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
@@ -25,9 +25,9 @@
 ### 合并门禁的两个集合是**互斥**的（2026-09-14 CI 性能专项）
 
 ```bash
-make test-quick       # pytest -m "unit or service"                    → 4991 收集（4989 passed + 2 skipped）
-make test-remainder   # pytest -m "not slow and not external and not unit and not service" → 3
-make test-normal      # pytest -m "not slow and not external"          → 4994 收集（4992 passed + 2 skipped）
+make test-quick       # pytest -m "unit or service"                    → 5952 收集
+make test-remainder   # pytest -m "not slow and not external and not unit and not service" → 0（2026-09-17 起）
+make test-normal      # pytest -m "not slow and not external"          → 5952 收集（**真正离线**，2026-09-17 起）
 ```
 
 `test-quick ∪ test-remainder == test-normal`，且两者交集为空。这两条恒等式由
@@ -69,7 +69,7 @@ make test-normal      # pytest -m "not slow and not external"          → 4994 
 `make test-quick` / `make test-normal` 默认带 `-n 8 --dist loadfile`
 （`PYTEST_N` 可覆盖：`make test-normal PYTEST_N=12`）。
 
-**实测档位曲线**（本机 24 核；`-m "not slow and not external"`，修复后列为 4992 passed / 2 skipped = 4994 收集）。
+**实测档位曲线**（本机 24 核；`-m "not slow and not external"`。下表 passed/skipped 数是 2026-09-14 的实测快照，仅用于比较**并行档位曲线**；该档位当前收集 **5952**，权威计数以 `scripts/print_test_stats.py` 输出为准）。
 两列是**同一天的两次扫描**——"修复前"是还没动 embedding 替身（见下节，它占了 teardown
 的 44.7%）时测的，"修复后"是打上替身之后：
 
@@ -263,11 +263,11 @@ conda activate Elysia
 make test-quick
 # 或: pytest -m "unit or service" -q -x --tb=short -n 8 --dist loadfile
 
-# 提交前 — 排除 slow（全量离线；串行 ≈5min13s，-n 8 后 ≈1min03s）
+# 提交前 — 排除 slow/external（**真正离线**；串行 ≈5min13s，-n 8 后 ≈1min03s）
 make test-normal
 # 或: pytest -m "not slow and not external" -q --tb=short -n 8 --dist loadfile
 
-# Normal 中不在 Quick 里的余集（当前 3 条 integration）
+# Normal 中不在 Quick 里的余集（**2026-09-17 起 0 条**——原先那 3 条实为 external）
 make test-remainder
 
 # 全量（含 slow；slow 无界，慢）

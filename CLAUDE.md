@@ -112,7 +112,7 @@ python -m pytest frontend_contract/tests/ -v
 |--------|------|----------|
 | `unit` | 纯函数/类，无 I/O，无 Agent | `make test-quick`（`-m "unit or service"`） |
 | `service` | 单模块 + mock/fake，不连真实依赖 | `make test-quick` |
-| `integration` | 需真实 DB 或外部 API（**当前 10 条全部与 slow/external 同标**） | `make test-full` / `test-external`；**不在 Normal** |
+| `integration` | 需真实 DB 或外部 API（**当前 7 条，且全部与 slow/external 同标**——`-m "integration and not slow and not external"` 实测为 0） | `make test-full`（它含 slow 层）；**不在 Normal**，也不在 `test-external`（那些是 external-only） |
 | `slow` | 完整管线或 >1s | `make test-full` 才跑 |
 | `external` | 真实 LLM/DB 凭据（opt-in） | `make test-external`（须 `RUN_EXTERNAL_TESTS=1`）；**`make test-normal` 排除它** |
 | `real_mongo` | 真实 MongoDB 测试层（S2-R6-1，非凭据：走容器） | `make test-real-mongo`（须 `RUN_REAL_MONGO_TESTS=1` + `ELYSIA_TEST_MONGODB_URI`；`tests/real_mongo/`）。**CI 为 push-only + self-hosted**（job 内自起 `docker-compose.test.yml`，不用按分钟计费的 GitHub-hosted `services:`）；PR 侧不跑 |
