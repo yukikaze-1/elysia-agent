@@ -1,477 +1,306 @@
-# 待做
+# 待做（Backlog）
 
-> **CI 配置**：WorkflowEngine 已用 `external` marker 取代 `--ignore`（F1）——unit/service 测试入 `test-quick`/`test-normal` 合并门禁，真实 LLM/DB 集成测试标 `external`、独立 `test-external` opt-in（`RUN_EXTERNAL_TESTS=1`）。`test-quick`/`test-normal` 不再跳过任何目录。
+> **本文件是 backlog 的 current source of truth**（2026-09-18 由 [Batch 4 backlog triage](docs/review/2026-09-18-Batch4-backlog-triage.md) 重构）。
+>
+> 用法：
+> 1. 找活干先看 **§1 Canonical Backlog**——每个活动项有稳定 ID、可达性、证据级别与候选批次；
+> 2. 词表见 §1.1；**FIXED ≠ GUARDED**（行为已修但无回归保护 = `FIXED`；行为已修且守卫可靠 = `GUARDED`）；
+> 3. 已关闭项只留一行索引（§5），逐条证据在 `docs/review/` 与 `docs/completed/`；
+> 4. **本次重构没有删除任何证据**：重构前全文见 `git show 69f2e5a9:todo.md`，长叙事各条都指向其执行记录。
+>
+> 覆盖审计（旧文件每一节 → 现在在哪）见 triage 文档 §7。
 
-## 决策记录
+## 1. Canonical Backlog（Active）
 
-> **任务中心（TaskSystem + TaskService）暂缓不做（2026-08-30）**：产品任务中心按当前决策继续暂缓。正式依据见
+### 1.1 词表（统一口径）
+
+| 维度 | 取值 |
+|---|---|
+| **Status** | `OPEN` / `GUARDED` / `FIXED` / `ALREADY_FIXED` / `FALSE_POSITIVE` / `KEEP_AS_IS` / `DEFERRED` / `CURRENTLY_UNREACHABLE` / `PRODUCT_DECISION_REQUIRED` / `INSUFFICIENT_EVIDENCE` / `SUPERSEDED` |
+| **Reachability** | `USER` / `DEPLOYMENT` / `ADMIN` / `INTERNAL` / `LEGACY_DATA_ONLY` / `CURRENTLY_UNREACHABLE` / `UNKNOWN` |
+| **Evidence** | `E3` 真实 runtime/integration 复现；`E2` 定向测试/子进程复现；`E1` 静态控制流证据；`E0` 仅假设 |
+| **Severity** | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW`；架构/功能项写 `N/A` 并单独评估维护风险 |
+| **标签** | `TRUTHFULNESS`＝reported truth ≠ actual truth（本项目最大主题，见 §3） |
+
+> 新 ID 约定：`KB-*` 已知 Bug 表、`OBS-*` 运行时健康/观测、`DEP-*` 部署与配置、`PD-*` 产品决策、
+> `AR-*` 架构债、`GR-*` 门禁/测试债、`FEAT-*` 未来功能。这些 ID 是**本批为原先无 ID 的条目首次分配**；
+> 已有 ID（`N-*`/`F*`/`B3-*`/`CR-*`/`P2-*`/`S2-*`/`M19/M20`）一律保留，编号漂移见 §2。
+
+### 1.2 Correctness（13 行：9 条 USER/DEPLOYMENT 可达 + 4 条 INTERNAL 侧）
+
+| ID | 标题 | Reach | Sev | Ev | Status | 候选批次 |
+|---|---|---|---|---|---|---|
+| **N-1** | `/ready` 的 identity 门禁探「repo 可达」而非「身份已装载且可用」⇒ 装载失败时 `/ready` 200 而 `/api/me` 503 | DEPLOYMENT | HIGH | E1(HEAD)+E3(3.5) | **OPEN** `TRUTHFULNESS` | **Batch 4-A** |
+| **N-11** | `ProfileStore.connect` / `_load_from_file` 吞掉一切异常（N-1 的上游：失败不可观测） | DEPLOYMENT | MEDIUM | E1+E3(3.5) | **OPEN** | **Batch 4-A** |
+| **N-3** | 409 `details.currentRevision` 读进程内陈旧缓存 ⇒ 谎报，文档承诺的 CAS 恢复路径可死循环 | USER | MEDIUM | E1 | **OPEN** `TRUTHFULNESS` | Batch 4-C（需 `PD-2`） |
+| **KB-6** | TTS 密集短句（5+）时 `wait_all()` 无超时 ⇒ FSM 卡 `SPEAKING`（已用 read timeout 120s→30s 缓解，根因未复现） | USER | MEDIUM | E1+E0 | **INSUFFICIENT_EVIDENCE** | 需先复现 |
+| **F8** | prompt 预算 cross-path：`core/character/preview.py` 调 `build_messages` **不传** `prompt_budget_tokens`（chat 路径传） ⇒ 预览路径可超 context → provider 400。**实测（Challenger）：内置角色预览 system prompt ≈9283 est tokens，ollama 窗口 8192/预算 6144 ⇒ 小窗口 provider 上 100% 复现** | USER | MEDIUM | E1+E2 | **OPEN** | 独立小批（不在 4-A/B/C 内） |
+| **KB-8** | tokenizer NORMAL 态 `_pending` / `_held` 缓冲**无上界**（长无换行段落可撑到 MB 级） | INTERNAL | LOW | E1 | **OPEN** | 小修 |
+| **F13** | 系统注入文本（唤醒词）被当作「用户消息」参与记忆提取 / mood 判定 | USER | LOW | E1 | **OPEN** | 小修 |
+| **P2-01r** | 会话列表 `list_all` 仍预取 200 ⇒ **第 201+ 条不可分页/搜索**；显式 session 过期无级联清理 worker | USER | MEDIUM | E1 | **OPEN** | Batch 4 备选 |
+| **KB-2** | LLM 有时不输出 `<mood>`（回退关键词），deepseek-v4-flash 结构化输出不稳定 | USER | LOW | E3 | **OPEN** | prompt 小修 |
+| **KB-4** | VAD 易被环境音触发（aggressiveness / 降噪） | USER | LOW | E3 | **OPEN** | 调参 |
+| **KB-10** | TTS 取消 + HTTP 流清理交互可能泄漏（`Module/tts/gpt_sovits.py`，2026-06-22 记录） | INTERNAL | LOW | E1 | **OPEN** | 零散 |
+| **F17** | 可选节点失败时任务仍报 `COMPLETED`（文案同时含「已完成」与失败列表）——引擎终态定义问题 | INTERNAL | MEDIUM | E1 | **OPEN** → `PD-6` | 需语义决策 |
+| **F3** | `plan_too_large` 语义重构（需新枚举值 ⇒ 触契约可达性门禁） | INTERNAL | LOW | E1 | **OPEN** → `PD-5` | 需契约决策 |
+
+### 1.3 Runtime / Observability（TRUTHFULNESS 主表，见 §3）
+
+| ID | 标题 | Reach | Sev | Ev | Status | 候选批次 |
+|---|---|---|---|---|---|---|
+| **N-1** | 同上（readiness 假绿） | DEPLOYMENT | HIGH | E1+E3 | **OPEN** | **Batch 4-A** |
+| **N-11** | 同上（吞异常 ⇒ 不可观测） | DEPLOYMENT | MEDIUM | E1 | **OPEN** | **Batch 4-A** |
+| **N-3** | 同上（409 谎报 revision） | USER | MEDIUM | E1 | **OPEN** | Batch 4-C |
+| **N-10** | `gemini/<model>` 预检全绿，运行期 `LLMFactory.create` 无条件 `NotImplementedError`（LLM 侧无 stub 冻结表，STT 侧有 `_STT_STUB_PROVIDERS`） | DEPLOYMENT | MEDIUM | E3(3.5)+E1(HEAD) | **OPEN** `TRUTHFULNESS` | **Batch 4-B** |
+| **F6** | `/api/providers/test` 的 **STT 缺省模型读 config**，而 llm/tts 读 runtime ⇒ 测的不是跑的那个 | ADMIN | MEDIUM | E1 | **OPEN** `TRUTHFULNESS` | **Batch 4-B** |
+| **F7** | `/debug` 的 `tts_ok = agent.tts is not None`（存在性），而 `stt_ok` 是真实连通标志 ⇒ 面板混用两种语义 | ADMIN | LOW | E1 | **OPEN** `TRUTHFULNESS` | **Batch 4-B** |
+| **F5** | workflow 模型 reporter 缺（debug 只报主模型 `llm_model`，不报 task/workflow 用的模型） | ADMIN | LOW | E1 | **OPEN** | Batch 4-B 可选 |
+| **OBS-1** | 间歇性 xdist worker 死亡（8 轮 soak 中 1 次，且那轮被并发改动污染） | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定向 soak |
+| **OBS-2** | `context_window` 六家 provider 数值为**估算值**（只影响 prompt 截断时机，不影响正确性） | DEPLOYMENT | LOW | E1 | **OPEN**（校准） | 零散 |
+| **F18r** | Mongo 补投对坏文档：永久 `delivered=False` + 每次启动告警，**无人工清理入口** | ADMIN | LOW | E1 | **OPEN** | 零散 |
+| **N-6** | `docs/architecture/invariants.md` §7 关于 `test_doc_counts` 的那行已过期 | INTERNAL | LOW | E1 | **OPEN**（文档） | 顺手 |
+| **N-7** | `scripts/clean_db.py` docstring 说常量「给测试当守卫用」，实际守卫不读它 | INTERNAL | LOW | E1 | **OPEN**（文档） | 顺手 |
+| **F5d** | 运维文档剩余：存储/GC/删除/TTL/restart 说明未更新 | INTERNAL | LOW | E1 | **OPEN**（文档） | 顺手 |
+| **F16** | `terminal_payload` 的 `.get(k, default)` 在值为 `null` 时不生效（今天不可达） | CURRENTLY_UNREACHABLE | LOW | E1 | **CURRENTLY_UNREACHABLE** | 不排 |
+| **F12** | 失败细节长度上界（仅当未来某 provider 回显长文本才需要） | INTERNAL | LOW | E0 | **DEFERRED** | 触发式 |
+| **KB-5** | `_execute_tool` 的 60s 超时需要构造慢工具手工验证 | INTERNAL | LOW | E0 | **OPEN**（测试缺口） | ≡ 归入 `GR-19`（指针，不单独计数） |
+| **OBS-3** | `Module/tts/openai_tts.py::test()` 曾记「假阴性」；当前实现已走 `make_test_method(_health_check)`（GET /health <400）⇒ **疑已消解，需一次定点复核**才能关闭 | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定点复核 |
+| **OBS-4** | Batch 1.6 §12#6 的遗留（`consolidator` + `Cannot send a request, as the client has been closed`）在 HEAD 上**定位不到**：`consolidator.py` 无 `close`、`_apply_service_state` 已在 `core/agent/_lifecycle_services.py:158` ⇒ 记录本身疑似错位，需一次定性复核 | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定点复核 |
+| **OBS-5** | Batch 1.6 §12#2 后半：把 stt/tts 的 `model`/`enabled` 补进 `/debug/api`（需跑 `make gen-types`）——F7 只覆盖了**标志语义**，字段补齐这半没被任何条目跟踪 | ADMIN | LOW | E1 | **OPEN** | 零散 |
+
+### 1.4 Deployment / Config truthfulness
+
+| ID | 标题 | Reach | Sev | Ev | Status | 候选批次 |
+|---|---|---|---|---|---|---|
+| **N-10** | 见 §1.3（provider 能力假绿） | DEPLOYMENT | MEDIUM | E3 | **OPEN** | **Batch 4-B** |
+| **DEP-2** | **无数据库迁移机制**：新增集合/索引由 `ensure_index` 自动覆盖，但**删/改已有索引**只能人工 `drop_index`（`ARCH-INC-P1-04` 明确不做框架） | DEPLOYMENT | MEDIUM | E1 | **KEEP_AS_IS**（发生频率低、影响单集合） | 触发式 |
+| **DEP-3** | `scripts/clean_db.py` 清的是 **v1** `long_term_memory`，而生产写 **v2** ⇒ 该脚本从不触碰真实记忆；修它 = 破坏范围变更 | ADMIN | MEDIUM | E1 | **PRODUCT_DECISION_REQUIRED**（`PD-7`） | 需决策 |
+| **DEP-4** | S2-H9 的**写侧**长度上限未做（owner 选的是运行期截历史 + 定预算） | DEPLOYMENT | LOW | E1 | **PRODUCT_DECISION_REQUIRED**（`PD-11`） | 需决策 |
+| **DEP-5** | `config.yaml::database.milvus_token` 带 `secret=True` ⇒ loader 显式跳过 YAML，**该行永不生效** | DEPLOYMENT | LOW | E3 | **OPEN** | 顺手 |
+| **DEP-6** | `requirements*.txt` 宽范围声明 + `environment.lock.yml` 精确锁并存；uv 迁移未做 | DEPLOYMENT | LOW | E1 | **DEFERRED** | 触发式 |
+| **SEC-1** | **CR-01**：真实 DeepSeek key 仍在公开 remote 历史里且**有效**（owner 裁定暂不处理；最低成本止血=只轮换 ≈10 分钟） | DEPLOYMENT | HIGH | E3 | **KEEP_AS_IS**（owner-deferred） | owner 决定 |
+| **SEC-2** | bandit **Low 19 项**已知基线（B603/B607 17 + B112 2）；门禁判据是 Medium+ 为 0 | INTERNAL | LOW | E3 | **KEEP_AS_IS** | — |
+| **P2-02r** | 契约层业务长度上限（content/ID/attachments ≤10）+ 附件 bounded batch 查询未做 | INTERNAL | LOW | E1 | **OPEN** | 零散 |
+
+### 1.5 Persistence / Recovery
+
+| ID | 标题 | Reach | Sev | Ev | Status | 候选批次 |
+|---|---|---|---|---|---|---|
+| **F2** | reminder **无持久化**：进程重启提醒即丢（用户已收到「已设置提醒」）——修法是 feature 形状（durable store + 启动恢复） | USER | MEDIUM | E1+E2 | **OPEN** | 独立小批 |
+| **F14** | durable delivery（WAL + 仓储 + 启动补投）**已由 Batch 1.7 完成**；exactly-once **刻意不承诺**（at-least-once 语义） | INTERNAL | N/A | E3 | **KEEP_AS_IS** | — |
+| **RB-1** | Mongo 3 个 write-only 字段（`attachments.sha256` / `background_task_results.delivered_at` / `message_archive.metadata.incomplete`）：未连真实 Mongo 无法证明旧记录可读 | LEGACY_DATA_ONLY | LOW | E1 | **DEFERRED**（`LIKELY_DEAD` 不删） | 真实 Mongo 抽样 |
+| **N-12** | 存量文档若 `pronouns: ""`，`GET /api/me` 仍 500（契约 `_text()` 拒空串 ⇒ 仓内无写入者） | LEGACY_DATA_ONLY | LOW | E3 | **CURRENTLY_UNREACHABLE** | 不排 |
+
+### 1.6 Architecture Debt
+
+| ID | 标题 | 维护风险 | Ev | Status |
+|---|---|---|---|---|
+| **AR-1** | `ToolAdapter` 4 个零消费者转发成员（`resolve_llm_name`/`executing_now`/`history`/`capability_status`）收窄公开面 | 中（改公开面需全量回归） | E1 | **KEEP_AS_IS**（`REFACTOR_LATER`，dead-code 清单登记） |
+| **AR-2** | `OutputManager._broadcast` 2 处穿透（需窄语义方法） | 中 | E1 | **KEEP_AS_IS**（同上） |
+| **AR-3** | 事件消费块 mixin 抽取（Batch 3 登记） | 低 | E1 | **DEFERRED** |
+| **AR-4** | provider portability（F10）：切换 provider 的运行时能力未成体系。**`AR-5` 是它的一个实例**（不单独计数） | 中 | E1 | **OPEN**（架构/未来能力） |
+| **AR-5** | ≡ `AR-4` 的实例：task LLM provider H3——`TASK_SYSTEM_MODEL` 是**裸模型名**，连接参数按主模型解析 ⇒ 工作流**不能用另一个 provider**（已在 docstring 成文解释） | 低 | E1 | **KEEP_AS_IS**（要跨 provider 需契约决策，属 `AR-4`） |
+| **AR-6** | error protocol 大扩展（结构化下传 `error_type`，F15） | 低 | E0 | **DEFERRED** |
+| **AR-7** | 包级伪环：`core/prompt/prompt_assembler.py` + `core/memory/consolidator.py`（文件级 DAG，可选惰性化） | 低 | E1 | **OPEN**（可选打磨） |
+| **AR-8** | P2-09 残留：EventBus lifecycle epoch（旧 epoch 事件潜在重放，风险低） | 低 | E1 | **OPEN** |
+| **AR-9** | **N-9**：模块级 import 期 `ProjectPath...resolve()` 常量——**census 9 个常量 / 8 个文件**：`custom_providers.py:16`、`log_setup.py:16`、`image_source.py:51-52`（2 个）、`consolidator.py:34`、`vision/plugin.py:23`、`server.py:51`、`secret_store.py:46`、`memory_reflector.py:32`；另有同形的**类属性** `TokenTracker._pending_file`（`conftest.py` 已把它记为"已知缺口"）。**已证一个实例有害**（Challenger，Batch 4）：`image_source._IMAGES_DIR` 在**读路径**使用，而 ≥4 个测试文件晚设 `ELYSIA_PATH_DATA_UPLOADS_IMAGES` ⇒ 重定向对读路径静默无效（`/Elysia.png` 仍从真实仓库文件生成 data URI）。**无测试断言错误结果**，故严重性仍 LOW；且 N-8 的守卫**只覆盖上传路由**，不含 `image_source`（守卫范围窄于它声称的类） | 低 | E1（image_source 实例 E2） | **OPEN**（其余 8 个仍无已证损害） |
+| **AR-14** | `ConfigLoader(env_path=…)` 形参：无生产调用方（Module 是库 ⇒ 无法证明仓外无调用方）。Batch 1.6 §12 R5 另记「加 DeprecationWarning 或删除参数」 | 低 | E1 | **KEEP_AS_IS**（`LIKELY_DEAD` 不删） |
+| **AR-15** | Batch 1.5 R4 的两个**一次性 `.env` 加载器**仍在：`Module/_common/env.py::_LOAD_ATTEMPTED` + `Module/config/loader.py` 的 `_loaded`/`ensure_dotenv`（docstring 自陈"入口点 API，库代码不要调用"；现存调用点 `scripts/dev/stage_h_pinned_smoke.py:301`） | 低 | E1 | **OPEN** |
+| **AR-10** | 反向依赖残留：`Module/tool/safety.py` lazy `core.utils` + `Module/bench` lazy core（已评估接受 / CLR 豁免） | 低 | E1 | **KEEP_AS_IS** |
+| **AR-11** | F11 accepted→consumed 窗口（ACK 证明入 EventBus ≠ 业务已持久化；BE-RISK-01） | 中 | E3 | **KEEP_AS_IS**（已接受的 at-least-once 边界） |
+| **AR-12** | 两套 CLI driver：`AgentServer.run_repl`（0 代码消费者，但 8 处文档承诺）vs `app.py::run_interactive`（真实入口，**行为已分岔**：后者有 `wait_until_idle()`） | 低 | E1 | **PRODUCT_DECISION_REQUIRED**（`PD-10`） |
+| **AR-13** | F4 残余：`handle_json_message`（≈16 圈 / 80 行）可选进一步拆分（已改为 `_WS_HANDLERS` 注册表薄壳，非阻塞） | 低 | E1 | **OPEN**（可选） |
+
+### 1.7 Guardrail / Test Debt
+
+| ID | 标题 | Sev | Ev | Status |
+|---|---|---|---|---|
+| **GR-1** | **N-5**：文档数字门禁范围**硬编码三份文档** ⇒ `docs/architecture.md:372` 的「43 个 @property」（真值 46）永不被检查 | LOW | E1 | **OPEN** |
+| **GR-2** | **N-14**：`Module/config/tests/test_preflight.py` 两条弱用例（`test_minimax_key_present_passes` 随 ambient `.env` 走两条路径；`test_c1_*` 只测 helper） | LOW | E1 | **OPEN** |
+| **GR-3** | **N-15**：`EXPECTED_INDEX_OPTIONS` 有 **4 条 `unique` 未登记**（`generations.generation_id_1`/`desktop_calls.call_id_1`/`idempotency.conversation_id_1_client_request_id_1`/`character_instances.owner_user_id_1_character_id_1_canonical_1`）⇒ 这 4 条索引的选项**不被比对**。**Challenger 复核后降级**：`check_schema_drift` 从不 raise、冲突只 `logger.error`（"只报告不处置"就是实现本身）⇒ 补登记是**低风险机械收尾**，不是产品决策（`PD-3` 降为形式确认） | LOW | E2+E1 | **OPEN**（机械收尾：补 4 条 + 删 4 条记账） |
+| **GR-24** | **同表的新盲点（Challenger 发现）**：`_option_mismatches` **不比对 `partialFilterExpression`** ⇒ `character_instances.owner_user_id_1_character_id_1_canonical_1` 这类**部分唯一索引**只能"半登记"：库里是**普通唯一**索引（同样 `unique:true`）时**不报冲突**，而 `create_index(partialFilterExpression=…)` 必抛 ⇒ 仓储 `_db` 永久 None。GR-3 的解除条件（"确认线上该索引确为 unique"）**不足以**关闭它 | MEDIUM | E2 | **OPEN**（需独立的"部分索引"登记语义） |
+| **GR-4** | R4 eager 环判据**可复现漏报**（包节点 `X` 与 `X.__init__` 分裂；相对导入整类跳过）——真实仓库当前 0 环 | MEDIUM | E2 | **OPEN**（独立专项） |
+| **GR-5** | 私有穿透守卫的**同名遮蔽**（访问方包内 `def _x` 即让该名字全仓免检）——按属性名近似的固有代价 | MEDIUM | E2 | **KEEP_AS_IS**（定位是回归网，非完备审计） |
+| **GR-6** | 守卫扫描面不含 `scripts/`、`frontend_contract/` | LOW | E1 | **OPEN** |
+| **GR-7** | 非字面量私有访问不可见（`getattr(obj, var)` / `attrgetter` / `vars(...)["_x"]`） | LOW | E1 | **OPEN** |
+| **GR-8** | R6「条数漂移」分支零覆盖（变异实测仍 20 passed） | LOW | E2 | **OPEN** |
+| **GR-9** | RUF100 未启用 ⇒ 863 处 `# noqa` 无陈旧检查（其中 38 处 F401） | LOW | E2 | **DEFERRED**（独立专项） |
+| **GR-10** | CI 未扫描 `env:` / `with:` / `working-directory:` / `container:` 里的宿主路径 | LOW | E1 | **OPEN** |
+| **GR-11** | 清空形态识别长尾（`xargs` / `for` 循环 / `git clean`）——本仓 6 处清理点全用规范写法，无实例 | LOW | E1 | **KEEP_AS_IS** |
+| **GR-12** | `if:` 守卫是 token 存在性而非布尔求值（保守方向 = 当 PR 可达，更严） | LOW | E1 | **KEEP_AS_IS** |
+| **GR-13** | `scripts/print_test_stats.py` 不检查子进程返回码（统计打印器、非门禁） | LOW | E1 | **KEEP_AS_IS** |
+| **GR-14** | `docs/testing.md` 档位计数陈旧（全量 5033 vs 5932 等，自称脚本生成却已漂移） | LOW | E3 | **OPEN** |
+| **GR-15** | `pytest.ini` 未启用 `--strict-markers` | LOW | E1 | **OPEN** |
+| **GR-16** | E6：desktop golden 未从 runtime 单源（generator 带 `offset/limit`，runtime 只支持 `path`；`--check` 只查自洽） | MEDIUM | E1 | **OPEN** |
+| **GR-17** | `Module/workflow_engine/tests/helpers` 的 `use_mocks` 支路 + `mock_plugin.py`（173 行）：7/7 调用点显式 `use_mocks=False` ⇒ **从未执行**（`LIKELY_DEAD`）。注意 helper 的**默认值是 True**（新调用方省略 kwarg 即可达）⇒ 删除须原子，**或**先把默认改 False | MEDIUM | E2 | **OPEN** |
+| **GR-18** | 3 个 0 字节空测试包 `Module/workflow_engine/tests/{infra,learning,safety}/__init__.py` | LOW | E1 | **OPEN**（可删） |
+| **GR-19** | 测试覆盖缺口：`audio_buffer`(3) / `server`(4) / `console`(1) / 并发压力(4) / DescribeImagePlugin(0) / CognitiveLoop 边界 / OutputManager 错误隔离；**含 `KB-5`（工具 60s 超时手工场景）** | LOW | E1 | **OPEN** |
+| **GR-20** | `KB-7`：`core/tests/test_phase2.py` / `test_phase3.py` 裸 `setdefault("DEEPSEEK_API_KEY","test")`（进程 env 污染隐患） | LOW | E1 | **OPEN** |
+| **GR-21** | token 结构 4 项低残留（`TokenLabel` 显示 `cached:0` / `flush_pending` 部分失败可重复插入 / role 判别变严格 / `TypeAdapter` 注解不精确 / debug `current_turn` 无消费者） | LOW | E1 | **OPEN** |
+| **GR-22** | 前端遗留（a11y 12 项 / CSP 2 项 / AudioWorklet / messageRouter / useLocalStorage / Vue errorHandler / 命名 / 硬编码颜色） | LOW | E1 | **DEFERRED**（FE 独立 spec） |
+| **GR-23** | `# type: ignore` 剩 23 处（二/三梯队）+ `Any` 剩 ~22 处（JSON 容器 / 流式协议 / 通用协程，多属不可消除） | LOW | E1 | **OPEN**（长期） |
+
+### 1.8 Product Decisions（需 owner 拍板）
+
+| ID | 决策点 | 阻塞谁 | 现状 |
+|---|---|---|---|
+| **PD-1** | 身份装载失败时：**fail-closed 启动** vs **降级运行**？`/ready` 该探什么？ | **N-1 + N-11（Batch 4-A）** | 今天是「吞异常 + 只探 ping」 |
+| **PD-2** | 409 的 `currentRevision` **该报谁**（权威库现值 vs 客户端期望值）？ | N-3 | **降级为形式确认**（Challenger：只有"权威值"有用——回显客户端期望值无法收敛；且 `UserIdentityRepository.get()` 已存在，只需一个小公开访问器）。真实前提是**多进程/外部写**（同进程更新会刷新缓存） |
+| **PD-3** | 那 4 条 `unique` 是否纳入 schema drift enforcement？ | GR-3（N-15） | **降级为形式确认**（`check_schema_drift` 从不 raise、只 `logger.error` ⇒ 不存在"让启动变红"的风险）。真正需要独立设计的是 `GR-24` 的**部分索引**语义 |
+| **PD-4** | 审批流是否启用？（`WAITING_APPROVAL` live-lock 只在 Evaluator v2 产出 `ASK_APPROVAL` 后可达；`core/hitl.py` 自陈「没有任何触发路径」） | F1（**不是当前 bug**） | 能力已备、未接线 |
+| **PD-5** | `plan_too_large` 语义 + 新契约枚举值 | F3 | 需契约可达性登记 |
+| **PD-6** | 可选节点失败的任务终态语义（今天仍 `COMPLETED`） | F17 | 引擎终态定义 |
+| **PD-7** | `clean_db.py` 破坏范围：让它真的清 v2（危险）vs 保持只清 v1（无用） | DEP-3 | 代码内已标注「勿擅自改」 |
+| **PD-8** | `live2d.directive` 是否接线（当前全链路就绪但 `core/` 零发射点，协议已标注客户端需容忍缺席） | FEAT-2 | `KEEP_COMPAT` |
+| **PD-9** | 任务中心（TaskSystem）是否恢复？（2026-08-30 决策暂缓，恢复激励点已写明） | FEAT-16 | 暂缓 |
+| **PD-10** | 两套 CLI driver（`run_repl` vs `app.py::run_interactive`）去留——**行为已分岔** | AR-12 | 8 处文档承诺 |
+| **PD-11** | 记忆/工具参数的**写侧** `max_length` 是否加（S2-H9 的另一半） | DEP-4 | 只做了运行期截断 |
+
+### 1.9 Future Features（**不与 correctness 混排**）
+
+| ID | 功能 | 现状 |
+|---|---|---|
+| **FEAT-1** | 提醒持久化 | ≡ `F2`（指针，不单独计数） |
+| **FEAT-2** | Live2D directive 接线（契约/发送链路/门禁/单测全就绪，`core/` 0 发射点） | ≡ `KB-1`（指针，不单独计数）；待 `PD-8` |
+| **FEAT-3** | 多模态：AI→用户图片输出（`ToolResult.images` 已设计）/ `type:"file"` / `VideoPart`·`AudioPart` 全链路 | Phase 2 |
+| **FEAT-4** | 记忆导出/备份（JSON）+ 记忆统计（类型/年龄/poignancy → DebugInfo） | 未做 |
+| **FEAT-5** | MacroMemory + MacroReflector（每日日记，需新 Milvus 集合） | 未做 |
+| **FEAT-6** | CharacterEngine Phase 2（C3/C7 动态化、L4→L3 汇聚、话题检测触发 C9、模板精简） | 未做 |
+| **FEAT-7** | 唤醒词：开关手工验证 + 自定义 .onnx 训练流程 | 实现已完成，验证待做 |
+| **FEAT-8** | Docker 化部署（agent + SenseVoice + GPT-SoVits 多阶段构建） | 数据库 compose 已有 |
+| **FEAT-9** | 意图路由 + 渐进式工具披露（触发条件：工具 >15 规则分类 / >20 必须分类 / ≥3 次误用） | 评估过，暂不做 |
+| **FEAT-10** | F2 代码块格式重新启用（解析器已支持，仅需模板取消注释 + 前端渲染确认） | 一行开关 |
+| **FEAT-11** | 性能：时钟补 TTS span + bench 断言进 CI | 未做 |
+| **FEAT-12** | MiniMax SSE 真流式 / `t2a_async_v2` 长文本（上次尝试已回退） | 待上游 |
+| **FEAT-13** | poignancy 时间衰减 | 未做 |
+| **FEAT-14** | 角色切换（需独立 spec：CharacterConfig 重载、voice lookup、`gpt_sovits_voices.yaml` 单发音人）+ 多角色 prompt 模板 | 评估过 |
+| **FEAT-15** | 页面加载优化（Live2D iframe 481KB 竞争主线程 → WS onopen 延迟 ~200ms） | 有开关可缓解 |
+| **FEAT-16** | 任务中心 TaskSystem（三实体 + A~E 分批；恢复激励点：需要可查询/可控/可恢复的任务历史） | **暂缓**（`PD-9`） |
+| **FEAT-17** | 多前端支持（Qt 等）：评估结论 YAGNI，触发条件=确定做第二前端 | 记录 |
+| **FEAT-18** | README 截图（聊天页/Debug/启动流程） | 未做 |
+| **FEAT-19** | 前端 Live2D 集成（Cubism SDK v5 需 TS+npm+bundler 构建；当前仅 SDK 文件到位、默认关闭） | 未做（前端批） |
+
+## 2. ID 与编号漂移（**读旧文档必看**）
+
+| 你现在看到 | canonical | 说明 |
+|---|---|---|
+| 「N-8 = ProjectPath 常量」「N-9 = gemini」「N-10 = 吞异常」「N-11 = 空串 pronouns」「N-12 = 弱用例」（**Batch 3.5 报告 §12 的编号**） | **N-9 / N-10 / N-11 / N-12 / N-14** | todo.md 在 Batch 3.6 把「B3-CB-7 缺回归守卫」插入为 **N-8**，其后整体 +1 |
+| `N-8`（guard gap） | 与 **N-9**（ProjectPath 常量）**不是一回事** | 前者已 GUARDED，后者 OPEN |
+| `N-13` | ≡ **N-4** | 同一条（表级 AST 守卫缺失），已 GUARDED |
+| `F5`（Batch 1.6 用） | ≡ **F6**（Batch 1.8 表里的「provider-test STT F5」） | STT provider-test 不对称；**不要**与 Batch 1.8 的 `F5 = workflow model reporter` 混 |
+| `B3-CB-5 / B3-CB-4 / B3-CB-7` 的「残留」 | **N-5 / N-7 / N-8(guard)** | 残留已各归其 canonical 条目 |
+| `KB-*` / `OBS-*` / `DEP-*` / `PD-*` / `AR-*` / `GR-*` / `FEAT-*` | 本批**首次分配** | 原先无 ID 的条目，便于引用；不是给已有 ID 的问题再造 ID |
+
+> ⚠️ **`F` 命名空间比 `N` 更乱（Challenger 复核）**：Batch 1.6 的 F5/F7/F8/F9、Batch 1.7 的 F5/F6/F7/F8、
+> Batch 1.8 的**两份表**（攻击清单 F1..F9 与 follow-up F1..F18）各有一套编号——同一个 `F7`/`F8`
+> 在 Batch 1.8 文件内就指两件事。**本文与 `todo.md` 一律以 Batch 1.8 的 follow-up 表（F1..F18）为准**；
+> 引用旧号时必须带上来源批次（例如"1.6-F5"）。
+
+> ⚠️ **Batch 3.5 报告内自身有两套 N 编号**：§12（N-8=ProjectPath / N-9=gemini / N-10=吞异常 / N-11=`""` / N-12=弱用例）
+> 与 §17（N-8=guard gap / N-13=表守卫）。§3.2 的映射以 §12 为准；§9 里"见 §12 的 N-10..N-13"是**断链**
+> （§12 没有 N-13，且 §12 的 N-10..N-12 只有 3 条），读旧报告时不要被它带走。
+
+## 3. Truthfulness Backlog（reported ≠ actual，单列）
+
+> 本项目最大的主题簇。四层同型：**探测的是 A，报告成 B**。
+
+| 层 | ID | 报什么 | 实际是什么 | Reach | Sev |
+|---|---|---|---|---|---|
+| 进程健康 | **N-1** | `/ready` 200 + `chatReady` | identity 未装载/不可用（`/api/me` 503） | DEPLOYMENT | HIGH |
+| 进程健康 | **N-11** | 静默成功（只 warning） | 装载/读取失败被吞，无处可查 | DEPLOYMENT | MEDIUM |
+| API 元数据 | **N-3** | `details.currentRevision = 1` | 权威库已是 2（进程内缓存） | USER | MEDIUM |
+| provider 能力 | **N-10** | preflight `[PASS]` | 运行期 `NotImplementedError`（gemini） | DEPLOYMENT | MEDIUM |
+| provider 探测 | **F6** | `/api/providers/test` 测 config 里的模型 | 运行时用的是另一个（STT） | ADMIN | MEDIUM |
+| 面板标志 | **F7** | `tts_ok: true` | 仅表示对象非空，不代表可用 | ADMIN | LOW |
+| 门禁 | **N-15** | “13 个集合无漂移” | 4 条 `unique` 从未参与比对 | DEPLOYMENT | MEDIUM |
+| 门禁（已修） | N-4/N-8 | — | Batch 3.6 已 GUARDED，且守卫本身又被 Challenger 补强 | — | — |
+
+## 4. Deferred / Currently Unreachable / Keep-As-Is
+
+| ID | 为什么不排 | 重开条件 |
+|---|---|---|
+| **N-12** 空串 pronouns | 仓内无写入者（契约拒空串），存量数据形态 | 出现写入者或存量数据出现空串 |
+| **N-2** `_update_local` 绕过 pydantic | **前半已由 `fb438167` 关闭**（`pronouns: str \| None` ⇒ `None` 合法）；剩后半：`_load_from_file` 读回失败会**重新 bootstrap**（静默重置）——**仅本地/单测模式**可达，生产装配恒定权威 repo | 本地模式被产品化 / `_load_from_file` 路径进入生产 |
+| **AR-14** `ConfigLoader(env_path=…)` | 无生产调用方；Module 是库，无法证明仓外无调用方 | 需要收窄 Module 公开面时 |
+| **AR-15** 两个一次性 `.env` 加载器 | 现存调用点只剩 `scripts/dev/stage_h_pinned_smoke.py`；库代码已不调用 | 收敛入口点 API 时 |
+| **OBS-4** Batch 1.6 §12#6（consolidator + client closed） | HEAD 上定位不到（记录疑似错位） | 复现出该报错时 |
+| **F1** `WAITING_APPROVAL` live-lock | Evaluator v1 **不产出** `ASK_APPROVAL`；`core/hitl.py` 自陈三处无触发路径 | 启用审批流 / Evaluator v2（`PD-4`） |
+| **F16** `terminal_payload.get(null)` | 今天不可达 | 出现 `null` 值载荷 |
+| **F12** 失败细节长度上界 | 现文本是引擎编写的短诊断串 | 某 provider 回显长文本 |
+| **RB-1** Mongo write-only 字段 | 无真实 Mongo 抽样 → 不能升级为 `PROVEN_DEAD` | 一次真实 Mongo 抽样 |
+| **GR-9** RUF100 | 863 处命中，独立专项 | 私有穿透纪律迁移进 ruff 时 |
+| **GR-22** 前端遗留 | 属前端仓/独立 spec | 前端批次 |
+| **AR-1/AR-2/AR-5/AR-10/AR-11** | 见 §1.6（`KEEP_AS_IS`/`REFACTOR_LATER`，理由已入库） | 公开面收窄专项 / 产品决策 |
+| **DEP-2 / DEP-4 / DEP-6 / SEC-1 / SEC-2** | 见 §1.4/§1.5（已接受或已裁定） | owner 决定 / 触发条件 |
+| **KB-3** INTERRUPT+TTS emoji 合并 | 后端那半已修（`4bb8aff7`，S3-G7）；**剩余竞态在外部前端仓** | 前端仓修 |
+| **KB-9** `ConfirmModal` @keydown | 前端遗留（现行为已可靠） | 前端加固批次 |
+| **KB-1** `live2d.directive` 无发射点 | `KEEP_COMPAT`（协议已标注客户端容忍缺席） | `PD-8` |
+
+## 5. Closed / Historical（一行索引；详细证据在 `docs/review/`）
+
+| ID | 一句话 | 关闭于 |
+|---|---|---|
+| **B3-CB-1** | `pronouns: null` write-valid/read-invalid（PUT 500 → 重启 503） | FIXED `fb438167`；守卫 `core/input/tests/test_me_pronouns_roundtrip.py` |
+| **B3-CB-2** | `EXPECTED_INDEX_OPTIONS` 键 `idempotency_claims` 永不生效 | FIXED `0302566a` + **GUARDED** `1382ae43`/`34b0faf6` |
+| **B3-CB-3** | preflight 把可用配置判死（`start.sh` 拒绝启动） | FIXED `edd67cef`（+ `466e3242` TTS 凭据回归） |
+| **B3-CB-4** | `PROTECTED_COLLECTIONS` 自称有守卫 | **FALSE_POSITIVE**（守卫存在，只是不读该常量）→ 措辞见 `N-7` |
+| **B3-CB-5** | 文档数字门禁漏根 README | **ALREADY_FIXED** `0937e85a`；残留窄洞见 `N-5`/`GR-1` |
+| **B3-CB-6** | 两份语义不同的 `UPDATABLE_FIELDS` 白名单 | **KEEP_AS_IS**（当前不可达：契约 `extra="forbid"` 挡住分岔） |
+| **B3-CB-7** | `_IMAGES_DIR` import 期固化 ⇒ 测试隔离从未生效 | **ALREADY_FIXED** `800e54da` + **GUARDED** `6c559816`/`210e9c37` |
+| **N-4 ≡ N-13** | `EXPECTED_INDEX_OPTIONS` 无表级 AST 守卫 | **GUARDED** `1382ae43` + `34b0faf6`（选项键集，Challenger F-A1） |
+| **N-8**(guard) | B3-CB-7 缺回归守卫 | **GUARDED** `6c559816`+`210e9c37`+`36bb5bcf`+`cc413eb4` |
+| **F9** | Batch 2 的 F401 / CI / privacy guard | 已由 Batch 2 完成（见其执行记录） |
+| **M19 / M20** | resume 后 pause 被销毁 / cancel 规划期不推终态 | FIXED（E2/E3，`bb69485`…`5aa7368`） |
+| **LoggerFactory** | 被取代的旧设计（stdout 污染对话流） | 已删（2026-09-12），`get_caller_logger` 迁 `Module/_common` |
+| **空 LLM 响应被静默吞掉** | 空响应守卫 + 兜底回复 | FIXED 2026-08-02（`_EMPTY_RESPONSE_NUDGE`） |
+| **`flush_after_response` 超时层不匹配** | 两层各自计时 ⇒ 任务被外层砍掉 | FIXED `b3e513df`（预算单源到 `drain` 总预算） |
+| **STT 运行时切换不生效** | `switch_stt` 真建后端 + 运行时槽位 | FIXED 2026-08-03 |
+| **STT env 变量陈旧** | 统一到 `SENSEVOICE_URL`（运行期唯一生效路径） | FIXED 2026-08-07 |
+| **WS 无法带 Bearer（浏览器前端）** | 决策：v1 浏览器聊天已停用，无消费方 | CLOSED（2026-08-11 决策，不做） |
+| **`.env` 含真实 key** | 被 gitignore、从未进历史；`.env.example` 的 9 键**已于 `67eeab83`（2026-09-13）补入模板**（注释形态，凭据类刻意不预填） | 复核降级 2026-09-11 + **ALREADY_FIXED `67eeab83`** |
+| **DEP-1** | `.env.example` 落后 9 键 —— **ALREADY_FIXED**（同上一行；旧记录的"缺 9 键 / 9/9 MISSING"已过期，9 键都在模板里，只是注释形态） | ALREADY_FIXED `67eeab83` |
+| **Batch 1.5 R4/R5 的一部分** | `EnvManager` 类名已不存在（loader 侧只剩 `_loaded`/`ensure_dotenv`，见 `AR-15`）；`config_test_helpers` 陈旧注释与 `test_phase3` 死代码已随批次清理 | SUPERSEDED（形状已变，残留归 `AR-15`） |
+| **`memory_repo.clear_all()` 无守卫** | 类型化 `?confirm=` 守卫 + 修掉「存储不可用却报成功」 | FIXED 2026-09-11（残余 `DEP-3`） |
+| **后台协程所有权分散** | 43 站点普查 + 7 处定点修复 + R6 门禁 | FIXED 2026-09-12（`ARCH-INC-P2-03`） |
+| **`Module/llm/registry` 反向依赖 core.input.ssrf** | ssrf 下沉 `Module/_common`，Module→core 生产反向依赖清零 | FIXED 2026-08-14 |
+| **idempotency_repo 反向依赖 input** | `GRACE_SECONDS` 单源下沉 | FIXED 2026-08-14 |
+| **input 层内聚（ws_handler 1825 行等）** | 批次 A/B/C/D 拆分完成（注册表分发 + 5 域 REST + 纯装配 server） | FIXED 2026-08-14 |
+| **`llm_adapter.close` fire-and-forget** | `close()` 先 `drain` 热切换遗留关闭任务（3s 预算） | FIXED（`ARCH-INC-P2-03`，见 `core/adapter/llm_adapter.py:159`） |
+| **token 统一结构 / 模块化评估 / Electron v2 联调 / 阶段 3·4 联调** | 各批 23/41+ 项全部 ✅ | 见 `docs/review/`（archive/2026-08）与 `docs/completed/` |
+| **两个偶发失败的 external 集成测试** | `test_integration_global_constraints_*` / `test_multi_step_task` —— 随文件删除消解（那些用例 `external` 门控、100% skip，确定性单测早已迁移） | FIXED 2026-09-10（删文件） |
+| **`Module/tool/safety.py`（618 行）拆分** | 评估结论：**不拆** | CLOSED（`docs/review/2026-09-17-Batch3-*`） |
+| **Claude 原生持久记忆** | 已启用（2026-08-01 起持续写入关键决策/教训）；后续写入属实践而非 TODO | CLOSED |
+| **`/api/providers/test` 等历史联调项** | 后端侧全部闭环 | 见 `docs/review/archive/2026-08/*` |
+
+## 6. 判例：不要把下列问题登记成后端缺陷（前端/其他仓的适配面）
+
+1. `generation.segment.completed.content` 是后端**权威完整文本**；inner voice / TTS 场景允许零 delta。由前端 Adapter/Accumulator 消费，后端不为兼容错误前端伪造 delta。
+2. `generation.completed.conversationUsage` 的真实定义是 `{total, byModel}`；前端不应虚构会话累计 `input/output`。若产品需要累计拆分，另立需求扩展 tracker 与契约。
+3. raw wire 用 `type/delta/mood/generationId`，领域层用 `event/text/emotion/responseId`——属 Main Adapter 的正常改名职责。
+4. Desktop bridge 的 `tool.request/tool.status` 安全元数据、状态机与重连交叠精确投递已实现并通过专项测试；缺口主要是 Electron `ToolResult` 领域接口过窄。
+
+## 7. 决策记录（仍然有效，勿删）
+
+> **任务中心（TaskSystem + TaskService）暂缓不做（2026-08-30）**：正式依据见
 > [`docs/2026-08-29-task-system-overall-architecture-design.md`](docs/2026-08-29-task-system-overall-architecture-design.md)
-> 与 [`docs/2026-08-29-task-system-backend-architecture-design.md`](docs/2026-08-29-task-system-backend-architecture-design.md)
-> （Task/TaskStep/ToolExecution 三实体目标架构 + 分批实施 A~E + 待决策 TSA-P01~P10/BE-D01~D13）。
-> `docs/2026-08-30-后端架构分层与模块化增量评估.md` 亦明确排除任务中心，聚焦收窄现有边界治理（即时工具调度语义收窄、应用用例边界、边界门禁、数据库迁移）。
-> 暂缓期内不把普通工具调用并入 WorkflowEngine，不创建产品 TaskRecord，不动现有 wire 契约，不实现任务中心 REST/WS API。
-> 恢复激励点：需要可查询/可控/可恢复展示的任务历史时，从批次 A（公共契约 + 持久读模型）启动。
-
-> **`core/task` 预留能力保留（2026-09-12）**：评估稿 §ARCH-INC-P1-01 批次 B 原计划
-> 「删除无消费者的 background/DAG/progress/checkpoint 预留」——**作废**。与下节 §代码清理
-> 的桩代码决策同源：`depends_on` / `children_ids` / `run_in_background` / `progress` /
-> checkpoint 持久化 / `dispatch_background()` / `new_background()` 全部保留。
-> P1-01 剩余范围因此收窄为**仅命名与概念**（`core/task` → `core/tool_runtime`、
-> `TaskScheduler` → `ToolCallDispatcher`、`Task` → `QueuedToolCall`、
-> `parent_id` → `request_id`）。**改名已于 2026-09-13 完成**：连同包外零引用的
-> `TaskType`/`TaskStatus` → `QueuedToolCallKind`/`QueuedToolCallState` 一并收口；
-> checkpoint 反序列化兼容旧键 `parent_id`。`QueuedToolCallKind.BACKGROUND` 保留，
-> 不做枚举消除。见 `core/tool_runtime/README.md`。
-
-## Code Review 报告（2026-09-12）—— 收口后的剩余项（2026-09-16 更新）
-
-报告见 [`CODE_REVIEW_REPORT.md`](CODE_REVIEW_REPORT.md)。46 条「从未排期」条目已在 §0.4.18
-机械重核（裁定分布：**已修 17 / 部分修 3 / 仍存在 25 / 已撤回 1**），档 1–3 全部处置，
-`#44`/`#45`/`#46` 收口；owner 的十项裁定与执行见 §0.4.31 / §0.4.32。
-**当前仍开着的只有下面这些**（其余"未做项"都已有裁定或已完成）：
-
-| 项 | 状态 | 说明 |
-|---|---|---|
-| **CR-01 凭据泄露（S0）** | **未关**（owner 裁定暂不处理） | 真实 DeepSeek key 仍在公开 remote 的历史里**有效**；`make check-secrets-history` 继续预期为红（按设计不在 CI，是判据而非门禁）。最低成本止血：只轮换凭据、不清历史 ≈10 分钟 |
-| bandit **Low 19 项** | 已知基线 | B603/B607（subprocess 固定参数）17 + B112（try/except/continue）2。`make audit` 的判据是 **Medium 及以上 0 项**（与项目一贯声明的"0 Medium / 0 High"一致）；要收紧到零容忍需逐处 `# nosec` + 理由或改绝对路径 |
-| 间歇性 xdist worker 死亡 | 未复现 / **不宣称修好** | 8 轮 soak 里 1 次，那轮被并发改动污染；下一步只能是干净环境下的定向 soak |
-| `context_window` 数值 | **估算值待校准** | 六家 provider 已写进 `Module/config/providers.yaml` 并逐条注明来源（deepseek 131072 / openai 128000 / gemini 1048576 / ollama 8192 / mimo·custom 32768）；只影响 prompt 截断时机，不影响正确性 |
-| `S2-H9` 的**写侧**长度上限 | 未做（未纳入裁定） | owner 选的是"定预算 + 截历史"（运行期截断）；记忆/工具参数的写入侧 `max_length` 属另一个选项 |
-
-## 已知 Bug
-
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| 低 | **`live2d.directive` 无生产发射点** | 契约模型（`frontend_contract/ws_message.py::Live2DDirectiveMessage`）、发送链路（`Module/output/manager.py::live2d_directive` → `websocket.py::on_live2d_directive`）与 v2-only 门禁均已就绪且有单测，但 `core/` 内零调用者——该帧实际永不发送，Live2D 表现指令目前只能靠 `expression` 帧。协议文档 §14.5 已明确标注（「客户端需能容忍其缺席」），非回归；是否接线属产品决策（Live2D 表现层需求），未排期。 |
-| 中 | **LLM 有时不输出 <mood> 标签** | deepseek-v4-flash 遵循结构化输出不稳定，部分轮次 `<mood>` 缺失，回退到关键词 fallback。需强化 prompt 或在 F2 加更强制性的约束 |
-| 中 | **INTERRUPT + TTS 同时触发时 emoji 合并到上一气泡** | `finalizeDelta` 和下一句 delta 的时序竞争。Phase 3.5 延后，需单独 mini-spec。**后端那半已消失（`4bb8aff7`，S3-G7）**：`StreamProcessor` 里"emoji 尾并入上一条 SENTENCE"的分支已删除（其实现前提是句末标点不落盘那个缺陷），emoji 尾现在自成一条 SENTENCE；剩下的竞态在外部前端仓 |
-| 低 | **语音识别容易被环境音触发** | VAD 对环境噪音敏感，需调整 aggressiveness 或加降噪 |
-| 低 | **工具执行超时需手动测试** | `_execute_tool` 的 60s 超时，需构造慢工具场景验证 |
-| ~~低~~ ✅ | **~~`test_integration_global_constraints_respected`/`test_integration_global_constraints_default_ok` 偶发失败~~** | **2026-09-10 随文件删除而消解**：`Module/workflow_engine/tests/integration/test_delegation_preparer.py` 整文件已删（该文件的 11 个用例带 `external` 标记，所有门禁里 100% skip，从不执行；其确定性单测早已迁至 `core/cognitive/tests/test_delegation_preparer.py`，51 个 unit 测试）。原记录：真实 LLM 集成测试偶发 FAIL，根因是 LLM 判定不稳定（intent 缺收件人邮箱 → 时而 `too_vague` 时而不） |
-| ~~低~~ ✅ | **~~`test_multi_step_task` 偶发失败~~** | **2026-09-10 随文件删除而消解**：`Module/workflow_engine/tests/integration/test_planner.py` 整文件已删（4 个用例同样 `external`-gated 从不执行；其中 `test_simple_task`/`test_multi_step_task` 本身零断言、只 print；plan/replan 解析由 `tests/unit/test_planner.py` 41 个确定性测试覆盖）。原记录：DeepSeek 偶发返回截断 JSON 致 `PlanParseError` |
-| 中 | **TTS 密集短句导致 wait_all 阻塞** | TTS 连续 5+ 短句密集入队时 MiniMax 部分请求无响应，`_transition_idle()` → `wait_all()` 永久等待，FSM 卡在 SPEAKING。已缩短 read timeout 120s→30s 缓解，根因（wait_all 无超时）待重现后修复。 |
-| ~~低~~ ✅ | **~~`flush_after_response` 超时层不匹配~~** | **已修（`b3e513df`，#20b）**：外层 `wait_for` **删除**，预算单源到 `AsyncTaskScope.drain` 的**总预算**语义（`core/cognitive/loop.py::_AFTER_RESPONSE_DRAIN_TIMEOUT`）——原"逐任务 5s + 外层 10s"两层各自计时会让靠后的任务被外层直接砍掉，连取消都来不及。守卫：`core/cognitive/tests/test_flush.py` + `core/agent/tests/test_lifecycle_flush.py` |
-| 低 | **`ConfirmModal` @keydown 在不可聚焦 `<div>`** | `frontend/src/debug/components/shared/ConfirmModal.vue:35` — overlay div 无 `tabindex`，依赖按钮聚焦后事件冒泡。弹窗内只有文字+两个按钮，点击文字不会失焦，现有行为已可靠。加固：加 `tabindex="0"` |
-| ~~中~~ ✅ | **STT 运行时切换不生效** | 2026-08-03 已修（服务运行时状态特性）：`switch_stt` 真正建后端（先建后关 + 1s 连通性测试 + 写 ServiceState）；`stt_transcribe` 收进 agent 运行时动态读 `agent.stt` 槽位，热切换对既有 WS 连接生效（不再依赖启动期闭包） |
-| 低 | **`core/tests/test_phase2.py`/`test_phase3.py` 裸 `setdefault("DEEPSEEK_API_KEY","test")`** | 与 `test_task_scheduler._ensure_api_key` 同模式（后者已改 monkeypatch，2026-08-02）。当前 test-quick collection 顺序下未触发，但属进程 env 污染隐患——collection 顺序变化或并行跑时可能污染真实 LLM 集成测试。建议统一改 monkeypatch |
-| ~~中~~ ✅ **关闭（2026-08-11 决策：不做）** | **前端 WS 无法携带 Bearer token → `AGENT_ACCESS_TOKEN` 模式下浏览器前端 WS 连不上** | 业务中间件只认 `Authorization` 头，WS 握手不能设自定义 Header（浏览器限制）。**2026-08-11 决策**：v1 浏览器聊天已停用（`SERVE_CHAT` 默认关，见本批次）；Electron 用 Node `ws` 带 `Authorization` header（real-backend.ts:254-260，已核实）不受影响；Debug 页走 REST/SSE 无 WS。**无浏览器 WS 客户端 → WS query-param token 无消费方，不做**。原修法（`/ws?token=...`）保留为未来若恢复浏览器聊天时的备选 |
-| ~~中~~ ✅ | **空 LLM 响应被静默吞掉** | 2026-08-02 已修：`_think_loop` 空响应守卫——无文本+无工具调用 → 注入 nudge 系统消息重试一次 → 仍空发兜底回复。兜底同时注入 `all_sentences` 保证 session 归档与显示一致。见 `core/cognitive/loop.py` `_EMPTY_RESPONSE_NUDGE`/`_EMPTY_RESPONSE_FALLBACK` + `core/cognitive/tests/test_empty_response_guard.py` |
-| 低 | **NORMAL 态 `_pending`/`_held` 缓冲无界** | `tokenizer.py:288/300/306` — `_pending += c`（普通文本/行中反引号）、`_held += c`（行首反引号前缀）无上界。C 节加固（2026-08-02）只覆盖 tag 态 7 缓冲，NORMAL 态路径漏网：长无换行段落可把 `_pending` 撑到 MB 级、巨型反引号行撑 `_held`。既有行为非回归，final review 判 defer（load-bearing：分支成为"内存已全有界"引用来源但不覆盖此路径）。修法：给 `_pending`/`_held` 加上界（如 `FENCE_MAX_CONTENT` 同量级），超限按 SPEECH 落盘 |
-| ~~低~~ ✅ | **STT env 变量陈旧：`SENSEVOICE_URL` vs `STT_API_URL`** | 2026-08-07 已修：统一到 `SENSEVOICE_URL`（运行时唯一生效路径——registry 经 `providers.yaml` 的 `url_key` 读取，preflight/.env.example/config 全部对齐）。原 todo 记录修法方向「统一到 `STT_API_URL`」**有误**——那是旧变量，照它配置的 env 不会被运行时读取（实测：`STTFactory.create` 只认 `SENSEVOICE_URL`）。修复：`Module/stt/config.py` + `core/config/app_config.py` 的 `env="STT_API_URL"` → `"SENSEVOICE_URL"`；`Module/bench/bench.py` 同改；`test_preflight.py` 测试删错变量 bug（`delenv("STT_API_URL")` → `delenv("SENSEVOICE_URL")`）；`test_config.py` env_key 同改 + 新增 env 绑定守护测试；`config_test_helpers.test_defaults` 加 env 隔离（防本地 .env 污染默认值断言） |
-
-> **阶段 3 真实联调后端整改（2026-08-15，已闭环）**：前端阶段 3 已冻结 `HistoryCategory.sticker`、自然日日期发送与逐文件 `kind` multipart，后端补三处确定性契约错位（`docs/review/archive/2026-08/2026-08-15-阶段3真实联调后端整改清单.md`）：**BE-S3-INT-P0-01** `/api/search/messages` 支持 `category=sticker`（白名单 8 值枚举化，`{"type":"sticker"}` $elemMatch；`snippet` 空串合法）；**BE-S3-INT-P1-01** 日期参数 handler 层 fail-fast（严格 `YYYY-MM-DD`，非格式 400 `CONTRACT_VALIDATION`，不再吞 200 空结果；与前端 FE-S3-INT-P0-01 同步放行）；**BE-S3-INT-P0-02** `/api/uploads` 逐文件 `kind`（每文件一组 `kind+files` 邻接配对 + 单 kind 特判旧形态 + 悬空/歧义 400 + 保留 ≤10 文件与整批原子性）。category/kind 白名单收敛为契约层 `SearchCategory`（8 值）/`UploadKind`（4 值）StrEnum（D3-B，不被字段引用 → TS 快照零漂移）。设计见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-15-stage3-integration-backend-fixes-design.md)（决策 D1-D9）、实现见 [plan](docs/superpowers/plans/archive/2026-08/2026-08-15-stage3-integration-backend-fixes.md)，执行记录见 `docs/progress/archive/2026-08/2026-08-15-stage3-integration-backend-fixes-execution-record.md`。commit `dc84415c..6287c05d`（4 feature）+ `c517221c`（final review low-2 测试补丁），`test-quick` 3581 / `test-normal` 3689 passed，ruff/pyright 0 errors/check-types 全绿。
-
-> **阶段 3 真实联调后端复验修复（2026-08-15，已闭环）**：真实 Windows Electron 复验新发现 2 项后端 P0（`docs/review/archive/2026-08/2026-08-15-阶段3真实联调后端复验问题清单.md`）：**BE-S3-RUN-P0-01** 视觉工具会话换绑——`ToolContext.services["session"]` 启动注入后从不更新，`describe_image` 从旧会话读图 → `core/cognitive/loop.py::process()` 每轮目标会话解析后原子换绑 `services["session"]`+`["_session_msg_count"]`（`clone_for_call` 浅拷贝，本 turn 工具副本立即可见；失败/切换由下一轮覆盖）；**BE-S3-RUN-P0-02** 音频 MIME 规范化——探测值（WebM→`video/webm`、WAV→`audio/x-wav`）原样写记录/响应，`kind=audio + video/webm` 非法致前端判「不支持」+ 重载前后 mime 漂移 → `core/schema/utils.py::normalize_attachment_mime` 单源（audio+video/webm→audio/webm、audio+x-wav→audio/wav），写路径（上传）/读路径（消息恢复）/下载 Content-Type 三处共用，存量记录经读路径兼容，未知 mime 静默回退改 `logger.warning`。决策 D0-D5（合并单批/同步两派生值/process 内联/规范化函数放 schema/utils/存量纯读路径）。设计见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-15-stage3-run-backend-fixes-design.md)、实现见 [plan](docs/superpowers/plans/archive/2026-08/2026-08-15-stage3-run-backend-fixes.md)，执行记录见 `docs/progress/archive/2026-08/2026-08-15-stage3-run-backend-fixes-execution-record.md`。commit `df165e30..e5bd3a75`（4 feature）+ `9bdd110d`（注释收敛）+ `5b1da8ba`（协议文档）+ `b5bf4a25`（验收跟进），`test-quick` 3600 / `test-normal` 3708 passed，ruff/pyright 0 errors/check-types 全绿。（注：「已闭环」指开发修复闭环，真实 Electron 回归通过前后端阶段 3 标记停留在「部分联调通过」。）
-
-> **阶段 4 联调前后端整改（2026-08-15，已闭环）**：阶段 4（Profile/模型切换/三语音模式/TTS 播放）主体已实现，联调前清 4 项（`docs/review/archive/2026-08/2026-08-15-阶段4联调前后端整改清单.md`）：**BE-S4-INT-P0-01** 内置 SenseVoice Profile 测试丢失默认地址——`/api/providers/test` 走 `STTFactory.create` 从 `providers.yaml` 解析空 `base_url`，覆盖构造函数默认 → httpx `InvalidURL`；`sensevoice.py` 定义 `DEFAULT_BASE_URL` 单源（构造函数/`STTConfig`/`STTFactory` 三处引用），工厂内置分支空值兜底（custom 分支后，custom 仍 `raise ValueError`）——一处修复覆盖启动/切换/听写快照/Profile 测试 4 调用点（`server.py:221/422`、`voice_sessions.py:457`、`provider_routes.py:303`），优先级 body > env > providers.yaml > 内置默认；**BE-S4-INT-P0-02** 阶段 4 机器契约样例——`gen_contract_frames.py` 补 9 类缺帧（voice.transcript/dictation.*/audio/audio_cancelled/switch_model_result/service_mode_result/set_tts_voice_result）+ 5 REST 文件，共 17 golden 进 `--check` 漂移门禁，结果帧正反例键形状对齐模型注释；**BE-S4-INT-P1-01** `scripts/stage4_smoke.py` 确定性契约 smoke（进程内 `create_app` + 真 agent(fake LLM) + STT/TTS 桩，5 场景 24 检查——含 save/delete/PROFILE_IN_USE/switch_model/set_tts_voice，失败非零退出，`STAGE4_SMOKE_LIVE=1` opt-in 真实 provider）；**BE-S4-INT-P2-01** todo.md 能力说明更新（多会话/契约生成门禁/环境锁精确边界）。决策 D0-D6（合并单批/工厂层共享常量兜底/按流程拆 JSONL/裸 wire REST 样例/smoke 独立脚本/只改 7 行/后端产物前端另行消费）。设计见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-15-stage4-联调前整改-design.md)、实现见 [plan](docs/superpowers/plans/archive/2026-08/2026-08-15-stage4-联调前整改.md)，执行记录见 `docs/progress/archive/2026-08/2026-08-15-stage4-联调前整改-execution-record.md`。commit `bd614239`（spec）+ `867d3f9b`（plan）+ `36f11449`（P0-01）+ `b17fa478`（P0-02）+ `7cc352eb`（smoke）+ `0d5fef91`（todo.md）+ `d3f03d3a`（pyright）+ `a7b96d56`（文档同步）+ `dfedfd51`（final review 补子场景），`test-quick` 3617 / `test-normal` 3725 passed，ruff/pyright 0 errors/check-types 全绿。（注：前端 checker 消费产物提升为 error 属 `elysia-frontend` 另行推进，见清单 §4.4；后端阶段 4 仅可标记「已开发/自动化已验证」，真实 Electron 联调通过前不得「已完整联调」。）
-
-## Electron v2 联调：后端契约封口（2026-08-09 审计）
-
-> 审计基线：后端 `911bbe0`、Electron 前端 `4bc7f01`。后端 Electron 专项测试 `576 passed`，所以下表主要是**跨仓库契约与产品化封口**，不是已实现主链路整体不可用。完整前端侧审计与 raw→domain 映射见 `/home/yomu/elysia-frontend/docs/18-Cyrene-Electron-真实后端契约差异与前端修复清单-2026-08-09.md`。本节取代下文“多前端支持（2026-08-01）”中已经过时的“契约只存在于手写 TS / 尚无多会话”前提。
->
-> **Batch 9A+9B+9C（8 项）已于 2026-08-09 完成**：commit `9e96657..d58493d`（8 个 feature commit）。设计见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-09-electron-v2-contract-9abc-design.md)（含 4 项用户拍板 + 探索定案 + 两轮 code-review 15 finding 记录），实现见 [plan](docs/superpowers/plans/archive/2026-08/2026-08-09-electron-v2-contract-9abc-plan.md)（两轮 review 19 finding 记录）。**跨仓 replay CI 本批未做（D2：仅后端侧产物 + golden frames 归档）**；产品化门禁 2 项（Electron 侧 raw parser/mapper replay 回填）defer 单独批次。
->
-> **外部 code review（2026-08-10）**：`docs/review/archive/2026-08/code-review-2026-08-09-electron-v2-contract-9abc.md`（基线 a5fc620..0939eef）审出 4 P1 + 2 P2，复验两轮又 7 项。修复 commit：`fb66c30`（P1-1~P2-2 六项：离线 create 判幽灵 / profile dictation 全局 STT 门禁 / text 绕过校验 TypeError 断连 / TS ClientMessage UnknownMessage 放宽 / 删除竞态复活 / golden frames 语义）、`bfd5840`（R1-R5：v2 list-content docstring+测试 / RECORDING 超限帧毁转录 / delete pending 门禁 / error ACK 收口 / gen_schema fail-fast）、`0abd000`（S3+S6：段/WAV 不再 640 整帧截断 / 超限 error 移入终止分支）。**2026-08-10 后续复验修复**：原 S1「极窄残余窗口」已取消 defer——现用 per-session accepted-work 引用 + lifecycle lock + deleting/deleted tombstone 覆盖 EventBus、pending、生成、realtime voice 与异步 after-response/save，删除统一由 `SessionManager.delete()` 最终门禁；同时补齐任意 BINARY chunk 跨帧重组、Mongo 离线摘要 list/detail/rename 读后写一致，以及标准 JSONL golden/tool `conversationId`。同步报告见 `docs/review/archive/2026-08/electron-v2-backend-followup-fix-report-2026-08-10.md`。仍保留的明确决策：S2 握手 `"2.0"` 400 锁死为 9B-3 设计决策；S4 `<640B` **整段录音**视为空转写不发 transcript；S7 显式未缓存会话 resolve 两次 Mongo 往返（缓存命中零开销、显式未缓存低频）。
->
-> **Electron 接入充分性复审（2026-08-10）**：基线 `9fdbfc1`，报告见 `docs/review/archive/2026-08/electron-v2-backend-integration-readiness-review-2026-08-10.md`。本批关闭 Desktop 新旧连接交叠误投、当前 cancel/fail golden 缺失以及协议/安全文档漂移；单机真实联调可开始。远程发布仍受下表 fail-closed 鉴权、持久化幂等和实际请求限流三项产品化门禁约束。
->
-> **Electron 首次真实联调后端复核（2026-08-11 加固批次，已闭环）**：基线 `b5b7e6e`，报告见 `docs/review/archive/2026-08/electron-v2-first-integration-backend-review-2026-08-11.md`。P0×2（并发 claim 所有权 + DuplicateKey 不判死、idempotency 生命周期/readiness/durable 初值）+ P1×5（持久 claim 状态机与崩溃恢复、dev 降级连续性、WS 限流 clientRequestId 关联、ACK 判别联合 + 负面 golden、clean-start 会话发现）+ P2×3（探针分层、限流认证主体分桶、公开文档漂移）**全部闭环**。设计见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-11-electron-v2-backend-hardening-design.md)（决策记录 D1-D9 + D2 执行期记录偏差：Rejected `clientRequestId` 无 min_length 允许空串——handler「缺少 clientRequestId」拒绝路径回显空串）；联调执行见 [runbook](docs/archive/electron-v2-first-integration-runbook.md)（runtime SHA/schemaHash 待联调回填）。
-
-> **Electron v2 后端加固后复核（2026-08-12，报告见 `docs/review/electron-v2-backend-post-hardening-review-2026-08-12.md`）**：BE-P1-06（recover 只补最小 claim、终态 ACK 负载丢失——重启后 rejected 变 `INTERNAL/未知错误`）+ BE-P1-07（离线启动首轮探测前 Mongo 恢复 → 首轮直接 true 漏补偿）**本批修复**：完整记录 restore 条件 upsert + store 显式 `needs_recovery`/durable 强化 + 协调器首轮补触发 + product `/ready` 门禁含补偿状态；BE-P2-04（runbook `server_info` 不携带 schemaHash）修正。**BE-RISK-01 接受风险保持开放**（accepted ACK 证明消息已入 EventBus、不等于业务工作已持久化——「ACCEPTED 后、loop `register()` 前 kill」窗口；首轮联调只能标记 happy path，生产封口需独立 outbox/可恢复 generation 证据 + 启动恢复重新入队机制）。设计见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-12-electron-v2-backend-post-hardening-recovery-design.md)。
->
-> **Electron v2 联调封口补强（2026-08-13）**：继续关闭完整记录恢复的两个并发边界：① `restore()` 在 get-first 后输掉 E11000 竞态时，现读回并返回 Mongo winner，`IdempotencyStore.recover()` 用 winner 刷新内存，避免保留 loser 却误报 durable；② 原“新增 key 集合”清位守卫升级为单调 recovery epoch，恢复 await 间隙即使是**同一 key** 的 `complete/reject` 写穿失败，也会保留 `needs_recovery` 到下一轮。回归覆盖 winner 读回、同 key 并发失败和再次恢复；整改报告见 `docs/review/archive/2026-08/electron-v2-integration-gap-fix-report-2026-08-13.md`。**BE-RISK-01 仍保持开放，本批未以单测替代 outbox/启动重入队的架构证据。**
->
-> **Electron v2 首次真实联调消息 ID 修复（2026-08-13，已闭环）**：联调阻断——`ToolResultMessage` 默认空 `message_id`，两条写入路径不传、append 无守卫、契约无约束 → Electron REST 历史整页校验失败（`default` 最近 50 条工具消息全空 ID）。**BE-INT-P0-01**（新写入）：模型 `message_id` 必填+拒空、两处写入补 `new_message_id()`、append 归档守卫、契约 `min_length=1`；**BE-INT-P0-02**（历史）：读路径适配器对存量空 ID 派生稳定 ID（跨 archive/快照/JSONL 一致）+ 幂等回填脚本实跑 archive 69→0 空 ID、重跑零变化；**BE-INT-P1-01**：构造拒绝/归档/REST/搜索/JSONL/回填幂等全链测试 + `test-quick` 3542 passed。问题清单见 `docs/review/2026-08-13-Windows-Electron-首次真实联调后端问题清单.md`，设计见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-13-electron-v2-first-integration-message-id-fix-design.md)，报告见 `docs/review/electron-v2-message-id-fix-report-2026-08-13.md`。待前端 `check:contract` 与真实 Electron 回归（问题清单 §7.2）验证。**BE-RISK-01 继续开放，与本批无关。**
->
-> **Electron v2 二次真实联调 WS replay 身份修复（2026-08-13，已闭环）**：二次联调发现首轮消息 ID 修复遗漏独立出口——WS `session` replay 的 tool 分支未输出 `message_id`/`timestamp`，同一工具结果经 REST（`msg_7c0c72b0…`）与 WS replay（无身份）到达前端 → 重连后真实重复消息。**BE-INT2-P0-01**：`messages_for_client()` tool 分支输出消息自身身份（复用持久/派生 ID，不新生成）+ `ClientToolMessage` 必填；**BE-INT2-P1-01**：`SessionMessageItem.message_id/timestamp` 必填非空 + 三产物重生成 + 测试门禁（含 §5.3.5/5.3.6/5.3.7 补测试，`test-quick` 3548 passed）。整改清单见 `docs/review/2026-08-13-Windows-Electron-二次真实联调后端整改清单.md`，报告见 `docs/review/electron-v2-int2-replay-identity-fix-report-2026-08-13.md`。真实 Electron 回归（清单 §7）与前端配套（Renderer 水合/replay fallback/取消码消费）由 `elysia-frontend` 验证。**BE-RISK-01 继续开放，与本批无关。**
-
-| 优先级 | 后端待办 | 当前行为与风险 | 后端完成标准（DoD） |
-|--------|----------|----------------|----------------------|
-| ~~高~~ ✅ | **Desktop 工具请求按登记的 Electron `connectionId` 精确投递** | 复审时 Bridge 已把最新连接写入 `target_connection`，但 Agent 投递回调会取通道列表中的第一个 Electron；重连交叠时可能让旧实例执行副作用，新实例却收不到请求并最终超时 | Bridge 回调携带目标连接 ID；Agent 仅匹配 `client_platform=electron && connection_id=target`；精确目标消失时立即返回 `DESKTOP_UNAVAILABLE`；覆盖回调单测和两条真实 Electron WS 交叠 service 测试。**2026-08-10 已完成** |
-| ~~高~~ ✅ | **`session` 回放携带明确 `conversationId`** | `SessionMessage` 目前只有 `messages/token_stats`；建连又先发 `session`、后发 `server_info`。Electron 重连时无法仅凭回放确认消息归属，只能额外分页查询 `/api/sessions` 的 `active`。见 `frontend_contract/ws_message.py:253`、`core/input/ws_handler.py:83` | 给 `SessionMessage` 增加必发 `conversationId`（旧客户端忽略新增字段即可）；建连与 `activate_session` 回放均填写实际目标会话；更新协议、生成 TS、契约测试与当前 golden trace；增加“活动会话切换后回放 ID/消息/token_stats 同源”测试 |
-| ~~高~~ ✅ | **历史分页返回显式 opaque cursor，并消除 `before` 双 ID 歧义** | `GET /api/sessions/{id}/messages` 的 `before` 实际只接受 Mongo `_id`（24-hex），`after` 却接受稳定 `messageId(msg_)`；响应只有 `messages/has_more/total`，前端必须从私有 `_id` 猜下一游标。现有 Electron 文档已误写成 `before={messageId}`，真实接入会 400。见 `core/input/session_routes.py:544`、`core/storage/message_repo.py:297` | 响应增加显式 `cursor/nextCursor`（opaque，不要求客户端解释）；优先让 `before` 同时兼容返回 cursor 与稳定 `messageId`，或至少在协议中严格区分；保持旧 `_id` cursor 向后兼容；覆盖非法 cursor、两页无重/无漏、倒序 before、正序 after、删除锚点等测试 |
-| ~~高~~ ✅ | **显式 `conversationId` 必须验证存在，禁止懒创建幽灵会话** | `SessionManager.resolve()` 对任意显式 ID 直接 `ensure_loaded()`；`_route_v2_text` 与 `voice.commit` 因而可能接受已删除/拼错的会话 ID，并重新构造空会话。CRUD/activate 已做存在性检查，但发消息路径没有。见 `core/memory/session_manager.py:161`、`core/input/ws_handler.py:541/704` | v2 的显式 conversation ID 在生成 messageId、写幂等表和 ACK accepted 前调用 `has_session()`；未知 ID 回 `user_message.ack rejected + SESSION_NOT_FOUND`，不得创建内存/持久化会话或增加附件 refs；缺省 ID 仍解析当前 active；文本、附件、voice.commit 均有正负测试 |
-| ~~高~~ ✅ | **固定并可验证客户端输入音频契约** | 服务端实际把所有 v2 BINARY 当作 `16kHz/mono/pcm_s16le`；VAD 每 20ms=640 bytes 处理，小于一帧视为非语音，非整帧尾部被忽略。公开协议只写“PCM”，start 帧也不带 descriptor；Electron 很容易直接发 48k Float32 或 WebM/Opus，表现为静默无字幕/乱码。见 `core/input/audio_buffer.py:1/30/175`、`core/input/voice_sessions.py` | 在协议中固定输入格式，或给三种 start 帧增加 `audio{codec,sampleRate,channels}` 并由服务端校验；不支持格式/非法 chunk 返回稳定 `CONTRACT_VALIDATION`，不能静默吞；明确 stop 尾帧策略、最大 chunk/背压；增加真实 PCM fixture 覆盖 recording/realtime/dictation 与错误格式。**注（2026-08-09）**：descriptor 去掉 `chunkDurationMs`（固定 20ms 帧，客户端无需声明）；段边界整帧对齐扩到所有模式（含 REALTIME/DICTATION）；新增 `MAX_CHUNK_BYTES`（1 MiB）校验。**注（2026-08-10，S3/S6）**：段/WAV 边界**不再 640 整帧截断**（S3——截断丢真实尾音，整段含尾部原样送 STT，VAD 检测仍按 640B 整帧扫描，`<640B` 视为空转写）；超限 chunk 在 TRANSCRIBING/PENDING（录音已 stop、在途 STT/待 commit）窗口只丢弃不发 error（S6——error 帧只在真正终止的分支发） |
-| ~~高~~ ✅（后端侧产物，跨仓 replay defer） | **发布 Electron 可消费的版本化机器契约并做跨仓 replay CI** | `frontend_contract` 是后端单源，但生成 TS 只落旧 Vue 目录；Electron 仓库手写领域 Zod，未持有 raw schema。归档 batch-7 traces 已过时（例如 `by_model`，当前为 `byModel`），双方各自测试全绿仍无法发现 wire 漂移 | 从 `frontend_contract` 生成并发布 JSON Schema/独立 TS raw contract 或可同步 artifact；产物带协议版本、后端 SHA/schema hash；生成当前 handshake/session/chat/tool/voice/cancel/fail 七类 golden frames；Electron CI 用同一 frames 做 raw schema + mapper replay；后端 CI 检查 artifact/trace 漂移，禁止归档 trace 重新成为事实源。**注（2026-08-09，D2）**：本批做**后端侧**——`contract.schema.json` + `contract.raw.ts`（transportVersion "2"/protocolVersion "2.0"/schemaHash）+ `scripts/gen_contract_frames.py` 契约源 golden frames + `--check` 漂移门禁 + `capture_ws_trace.py` 停用；**2026-08-10** 又将 cancel/fail 更新为当前契约源生成并保留旧 batch-2 快照；**跨仓 replay（改 elysia-frontend 消费）defer** 后续专项 |
-| ~~中~~ ✅ | **Dictation 使用会话内 STT profile，不修改全局活动 STT** | `dictation.start` 只有 `clientRequestId`，实际使用全局活动 STT；Electron 的 `sttProfileId` 只能先 `switch_model`，会同时影响聊天/实时语音并与其他客户端竞争。见 `frontend_contract/ws_message.py:783`、`core/input/ws_handler.py:1021` | 给 `dictation.start` 增加可选 `sttProfileId`（或稳定 model/profile 标识）；start 时解析并快照到当前 dictation session，不修改全局 `agent.stt`；profile 不存在/不可用返回稳定错误；覆盖并发连接、途中全局切换不影响已开始 dictation、stop/cancel 资源释放 |
-| ~~中~~ ✅ | **所有 Client→Server WS JSON 统一走 Pydantic 判别联合校验** | `handle_json_message()` 仍大量使用 `data.get()` 手工解析，并未对 `V2TextMessage/ToolStatusMessage/Voice*` 等执行统一 `model_validate`。错误类型可能被静默忽略，甚至在幂等 dict 等位置以 `TypeError` 断开单连接；顶层目前只捕获 `JSONDecodeError/ValidationError`。见 `core/input/ws_handler.py:298/757` | 按协议版本对完整 ClientMessage 判别联合做一次入口校验，再把模型交给 handler；拒绝 unknown type、错误枚举、错误字段类型、缺必填字段，统一返回 `ErrorMessage/ACK rejected CONTRACT_VALIDATION`；handler 不再依赖宽松 `data.get()` 默认值；补 fuzz/表驱动负面测试并保证畸形消息不关闭连接。**注（2026-08-09）**：`ClientMessage` 判别联合**不含 `TextMessage`**（type="text" 撞 discriminator）；非 text 走判别联合；顺带修 `:304` 单参 `ValidationError` 非 dict 帧断连 bug。**注（2026-08-10，P1-3）**：v2 text **完整帧 `V2TextMessage.model_validate`**（ValidationError → ACK rejected CONTRACT_VALIDATION，保留 ACK 通道；`attachments` 类型错/`clientRequestId` 非 str 等畸形字段不再抛 TypeError 断连）；`handle_ws` TEXT 加 `except Exception` 兜底 INTERNAL 不关闭连接 |
-| ~~中~~ ✅ | **协议版本协商显式拒绝不兼容版本** | 握手头只有精确字符串 `"2"` 才走 v2；`"2.0"`、未来版本或拼写错误会静默降级 v1，而下发 `server_info.protocol_version` 又是 `"2.0"`，命名容易误用。见 `core/input/ws_handler.py:129`、`frontend_contract/ws_message.py:281` | 明确区分 transport negotiation token 与展示版本；对显式但不支持的版本在升级前返回 4xx/WS close code + 稳定错误，只有缺省头才兼容 v1；协议文档给出支持集合；覆盖 `2`、`2.0`、未知版本、缺省头与 Electron platform 组合测试。**注（2026-08-09）**：支持集合 {缺省/`"1"`→v1, `"2"`→v2}（显式 `"1"` 保留合法 v1，防现网回归）；`"2.0"`/`"3"`/乱写 → 升级前 400 ProtocolError |
-| ~~中（部署门禁）~~ ✅ | **非回环生产绑定改为可配置 fail-closed 鉴权** | **2026-08-10 D6a 完成（已拍板）**：远程绑定仅认业务 token（`AGENT_ACCESS_TOKEN`），仅配 `SERVER_AUTH_TOKEN` 拒绝启动；默认 host 改回环 `127.0.0.1`；远程无完整鉴权 fail-closed（`assert_secure_bind`，`core/input/server.py`）。原问题见：默认可绑定 `0.0.0.0`，未设 token 时仅日志警告、产品 `/ws`/`/api/*`/`/uploads/*` 匿名可访问 | 增加显式开发模式或 `ALLOW_INSECURE_REMOTE`；非回环且无完整鉴权时默认拒绝启动，只有显式 opt-in 才允许；生产文档要求 HTTPS/WSS、双 token、附件签名；覆盖回环开发、非回环拒绝、显式 insecure opt-in、完整鉴权四种启动测试 |
-| ~~低→产品化前中~~ ✅ | **幂等键跨进程持久化或明确限定重试窗口** | **2026-08-11 D6c 完成 + 加固批次扩展**：claim 持久化到 Mongo（`(conversation_id, client_request_id)` 唯一约束 + `expires_at` BSON Date TTL 1h）。产品模式（非回环绑定）+ Mongo 离线 → fail-closed `STORAGE_UNAVAILABLE`（已拍板）；本地 dev → 内存降级，`server_info.features.idempotency_durable` 暴露非 durable 窗口。**加固批次（2026-08-11）**：claim 三态 `CLAIMED/ACCEPTED/REJECTED` + 所有权（`ClaimResult.acquired`，并发 loser 恒不处理）+ complete 前置 + CLAIMED 残留恢复（新鲜→`IN_PROGRESS`、过期+generation 证据→重放 accepted、过期无证据→接管）+ dev 内存权威 overlay/写穿/reconcile + 生命周期接线（健康探测/恢复/关闭、durable 初值 `repo.is_connected`）。见 `core/storage/idempotency_repo.py`、`core/input/idempotency.py`。**BE-RISK-01 残余窗口未封口**（见 2026-08-12 复核 blockquote） | 覆盖 ACK 丢失、同键同内容、同键异内容、重启后重试、过期回收、claim 后 kill、Mongo 启停三序列 |
-| ~~中（产品化门禁）~~ ✅ | **为公开 WS/REST/上传入口实现实际请求限流** | **2026-08-11 D6b 完成 + 加固批次扩展**：单进程 token-bucket 限流（已拍板，per-process 语义文档化，多实例需自建共享后端）。REST 高成本入口 429 `RATE_LIMITED` + Retry-After；WS 建连/消息 `RATE_LIMITED` + retryHint（连接存活）。key 认证主体优先、匿名回退 IP，默认不信任 `X-Forwarded-For`；内存有界 + 旧 key 清理。**加固批次（2026-08-11）**：text/voice.commit 超限走 rejected ACK（`clientRequestId` 关联 + `retryAfterMs`，立即 settle）；命令类 ErrorMessage 加可选 clientRequestId + 顶层 retryAfterMs；WS 建连 429 补 Retry-After；限流 key 仅认证成功按 `auth:<sha>` 分桶，缺失/无效 Authorization 统一 IP。见 `core/input/rate_limiter.py` | 覆盖 WS 建连与消息、REST、上传、并发突发、窗口恢复、代理头伪造、假 Token 轮换不挤占合法主体桶测试 |
-
-### 不应登记成后端缺陷的前端适配项
-
-- `generation.segment.completed.content` 是后端权威完整文本；inner voice 和 TTS 场景允许零 delta。应由 Electron Adapter/Accumulator 消费，后端不应为兼容错误前端而伪造 delta。
-- `generation.completed.conversationUsage` 的真实定义是 `{total, byModel}`；Electron 不应虚构会话累计 `input/output`。若产品以后需要累计输入/输出拆分，应另立需求扩展 tracker 与契约。
-- raw wire 使用 `type/delta/mood/generationId`，Electron 领域层使用 `event/text/emotion/responseId`，属于 Main Adapter 的正常改名职责。
-- Desktop bridge 的 `tool.request/tool.status` 安全元数据、状态机和重连交叠精确投递已实现并通过专项测试；当前缺口主要是 Electron `ToolResult` 领域接口过窄。
-
-### 建议批次顺序
-
-1. ✅ **Batch 9A（文本/历史联调阻断）**：session conversationId、历史 cursor（严格区分）、未知会话拒绝——**2026-08-09 完成**（9e96657/931c35b/2711c90）；
-2. ✅ **Batch 9B（契约工程化）**：机器契约（后端侧产物 + frames 归档，跨仓 replay defer）、统一入站校验、严格版本协商——**2026-08-09 完成**（0fac4da/d2f8178/ca74f0f）；
-3. ✅ **Batch 9C（语音联调）**：输入音频 descriptor/验证、dictation profile 隔离——**2026-08-09 完成**（778c859/d58493d）；
-4. ✅ **接入充分性复审收口**：Desktop 精确连接投递、当前 cancel/fail golden、公开文档同步——**2026-08-10 完成**；
-5. ✅ **产品化门禁**：远程鉴权 fail-closed（D6a，2026-08-10）、实际请求限流（D6b，2026-08-11）、持久化幂等（D6c，2026-08-11）——**已全部完成**；
-6. ✅ **Electron 首次真实联调后端复核整改（2026-08-11 加固批次）**：P0×2 + P1×5 + P2×3 闭环——ACK 判别联合 + 负面 golden、claim 三态/所有权/恢复、限流关联 + 认证主体分桶、clean-start 会话、探针分层、文档同步 + 联调 runbook（见上文 blockquote + hardening spec）——**已全部完成**。
-
-
-## 全项目修复计划剩余项（2026-08-10）
-
-> 源：`docs/review/archive/2026-08/full-project-review-2026-08-10.md` + 执行计划 `docs/superpowers/plans/archive/2026-08/2026-08-10-full-project-remediation-plan.md`。
-> 已执行 **23/41 Task**（全部 P0 + 全部 P1 + 约一半 P2），execution report 见 `docs/review/archive/2026-08/remediation-execution-report-2026-08-10.md`（含 review→fix 映射）。以下为**未做项**与**部分完成项**，记录以便后续继续。
->
-> 每项执行时遵循计划纪律：先加失败测试 → 最小修复 → 回归 → 独立提交；完成后再把对应 plan 复选框改 `[x]` 并追加执行记录。
-
-### A. 需要产品决策/外部依赖（不宜擅自拍板）
-
-| 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） | 决策点 |
-|--------|----------|----------------|----------------|--------|
-| ~~中（产品化门禁）~~ ✅ | **跨重启持久化幂等（D6c）** | **2026-08-11 完成（已拍板：产品 fail-closed + dev 内存降级）** | 持久化 `(conversation_id, client_request_id, content_digest, message_id, status, expires_at)` + 唯一索引；同键同内容重试返回原 ACK、同键异内容拒绝；`expires_at` 用 BSON Date 真 TTL；Mongo 不可用产品模式 fail-closed/503、dev 内存降级 + `server_info.features.idempotency_durable` 暴露 | commit 本批次（D6b `75e7aee` 后的 D6c 提交）：`core/storage/idempotency_repo.py` + `core/input/idempotency.py` + ws_handler 接线 + contract 字段 |
-| ~~中（产品化门禁）~~ ✅ | **公开入口实际请求限流（D6b）** | **2026-08-11 完成（已拍板：单进程 token-bucket，per-process 语义文档化）** | 可配置 token-bucket；key 优先认证主体、匿名回退 IP（默认不信任 X-Forwarded-For）；REST 429 / WS `RATE_LIMITED` + retry hint；limiter 内存有界、旧 key 清理 | commit `75e7aee`：`core/input/rate_limiter.py` + 中间件/WS 接线 + config |
-| ~~中~~ ✅ | **Workflow submit 立即返回且有界排队（E2，P2-07）** | **2026-08-11 完成（已拍板：方案 A——立即返回 + 后台有界 QUEUED）** | submit 先注册 mailbox 立即返回；acquire 移到后台 runner；显式 QUEUED 状态 + 队列上限（max_queue_size=5）；PAUSED 释放 slot；resume 槽满入队（resume_pending 幂等）；队列满 QUEUE_FULL 快速失败 | commit 本批次（E2）：`submit`/`_drain_queue`/`resume`/`stop`/`cancel` 改造 + 契约 `QUEUED`/`QUEUE_FULL` + debug snapshot slots/queued |
-
-### B. Workflow 独立子系统（工作量大，非 P1）
-
-| 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） |
-|--------|----------|----------------|----------------|
-| ~~中~~ ✅ | **Workflow cancel/pause 终态单调性（E3，P2-08 + M19/M20）** | **2026-08-11 完成（已拍板：强取消——取消信号 = 任务状态，`WorkflowState` 不引入独立 cancelled 字段）** | cancel() 同步置 status=CANCELLED（权威终态）+ owned.cancel() 打断 in-flight LLM/planner；executor 四 `_check_cancelled` 检查点 + 工具 asyncio.shield（已开始工具完成、副作用不打断、结果弃用）+ `AgentInfra.orphan_tools` 共享孤儿容器 + stop() 采集（等 3s 超时 cancel）；planning/_init_exec 写 RUNNING 前终态检查（终态不可逆）；CancelledError 传播链统一收尾（except 不 release、finally 唯一释放点）；terminal event 只推一次（`_terminal_pushed` 守卫）；M19 resume→pause 不销毁 task/mailbox | commit 本批次（E3）：`bb69485`（_check_cancelled+终态守卫）→ `febad1a`（强取消）→ `e137e6b`（executor 签名穿透+shield）→ `4991a85`（终态不可逆）→ `0839bdf`（CANCELLED 分支+唯一 release）→ `4fbffc7`（M19+stop 孤儿采集）→ `5aa7368`（fake-LLM 确定性套件） |
-| ~~中~~ ✅ | **Workflow 测试确定性与外部 E2E 分层（E4，P2-11 部分）** | **2026-08-11 完成（已拍板：`RUN_EXTERNAL_TESTS=1` 显式门禁 + fake-LLM 确定性基建）** | 新增 `external` marker（真实 LLM 必须同时标 `integration+external`）；cancel/pause/mailbox 首事件用 fake LLM 确定性测试；`make test-workflow-engine` 覆盖核心 unit/service；`make test-external` 单独跑；修 `coroutine was never awaited` warning | commit 本批次（E4）：`tests/helpers/fake_llm.py`（FakeLLM 对齐 `chat.completions.create` 访问面 tool_calls/content/usage + gate/calls/prompts）+ `with_deadline` 挂死防线 + `CountingLLM` 成本计数；`Module/conftest.py` external skip hook（未设 `RUN_EXTERNAL_TESTS=1` 全部 skip）；`make test-external` 显式带 env；两真实 E2E 文件补 `integration` marker；mailbox 首事件 QUEUED 确定性测试 |
-| ~~中~~ ✅ | **工具热重载原子回滚（E1，P2-06）** | **2026-08-11 完成（已拍板：锁外构造/setup → 持锁原子 swap → 锁外排空，失败保留旧实例）** | reload 后从新 module 重新 discover class；共用统一 config 流程（`_load_safety_config`）；先构造/setup 新实例、成功后原子替换四注册表 dict、等旧实例 in-flight 排空再 teardown；setup 失败保留旧工具；`_reload_lock` 仅覆盖 swap 微秒窗口；`_inflight` 按实例快照排空（超时 10s 后台延迟 teardown）；`_teardown_tasks` 独立登记不被 cancel_all 取消、shutdown 显式 gather 收尾；调用点 `/tools/reload` 解包 `tuple[bool, str]` | commit 本批次（E1）：`bffef51`（reload 测试 fixture）→ `df19275`（共用 config helper）→ `ccafe7a`（锁 + in-flight/teardown 注册表）→ `abff339`（原子替换 + 回滚 + 新 class discover）→ `f4b871b`（排空 + 超时延迟 teardown）→ `d98fb86`（execute/execute_stream 锁 + in-flight 计数）→ `02bcc9b`（shutdown 持锁 + 收尾）→ `d72b90f`（server tuple 适配）→ `2811c12`（全表行为测试） |
-
-### C. 工程化/文档（F 批次，正式 release candidate 前置）
-
-| 优先级 | 后端待办 | 当前行为与风险 | 完成标准（DoD） |
-|--------|----------|----------------|----------------|
-| ~~中~~ ✅ | **真正全量离线 CI（F1）** | `test-all` 名不副实（漏若干 `core/*/tests`、`frontend_contract/tests`、`scripts/tests`）；workflow 测试不入合并门禁 | **2026-08-11 已完成**（`1a7cd94`）：external marker 取代 `--ignore`——WorkflowEngine unit/service 入合并门禁（test-quick 3324 / test-normal 3426）；`test-all` 真全仓非 external；`make test-external` + CI external job（workflow_dispatch 受信，self-hosted + 真实凭据）；pr-gate 去 ignore + ruff 含 scripts + coroutine warnings-as-errors |
-| ~~中~~ ✅ | **依赖锁与安全扫描（F2，P2-12）** | `requirements.txt` 只有下限无 lock/hash；pytest/ruff/pyright 未完整声明；CI 复用宿主 conda env | **2026-08-11 已完成**（拍板：统一 conda）：`environment.yml`（runtime=requirements.txt + dev=requirements-dev.txt 单源）+ `environment.lock.yml` 精确锁（115 pip 包版本+hash）；`make lock-env` 重生成 / `make audit`（pip-audit + bandit）；CI pr-gate 锁漂移校验 + 安全扫描。**豁免**：PYSEC-2026-3447（setuptools 83 移除 pkg_resources，webrtcvad 依赖）、bandit 10 项已知良性（bandit.yaml 带理由）。**未来项**：迁移 uv（见下）；容器镜像/action digest 固定未做 |
-| ~~中~~ ✅ | **Backend-only setup/start（F3，P2-13）** | `setup.sh`/`start.sh` 强制装 v1 前端（无 npm 就退出）；preflight 被 `\|\| true` 吞 | **2026-08-11 已完成**（`0df5753`）：backend-only 默认（无 Node 可安装/启动）；`--with-frontend`/`--legacy-ui` 显式构建 v1 UI（npm ci）；preflight（app.py --check）失败默认非零退出 + `--skip-preflight` 显式降级；shell smoke `scripts/tests/test_backend_only_smoke.sh`（11 断言） |
-| 低 | **静态门禁扩展 + 关键入口拆分（F4，P3-01/P3-02）** | `scripts/` 未纳入 lint（17 个 ANN）；`core/monitoring/__init__.py` 无效 `IdleMonitor` export 致 pyright 1 warning；`api_routes/ws_handler` 复杂度高 | **部分完成（2026-08-11，`602c7ea`）**：scripts 纳入 Ruff/Pyright（17 ANN 清零）+ monitoring warning 清零 + coroutine 泄漏 warnings-as-errors。**剩余项已于 2026-08-14 input 拆分批次 B/C/D 收口**（spec 见 `docs/superpowers/specs/archive/2026-08/2026-08-14-input-split-batch-*`）：`register_api_routes` 随 `api_routes.py` 退役**已不存在**；`handle_json_message` 仍在（`ws_handler.py:998`，CC≈16 / 80 行），但已改为经 `_WS_HANDLERS` 注册表分发的薄壳。**残余**：仅 `handle_json_message` 可选进一步拆分（低优先，非阻塞） |
-| 低 | **文档/测试统计/Electron 交接（F5，P3-03）** | 活跃文档手写测试数 3186 vs 实际 3290+；错误码目录 40/41 不一致；contract 产物未发版 | **部分完成（2026-08-11，F5 part 1）**：`print_test_stats.py` 统计自动生成（3503）+ 错误码单源（`frontend_contract/errors.py` + `check_error_codes.py`，41 码一致）+ contract 发版记录 + Electron 变更清单。**剩余**：存储/GC/删除/TTL/restart 等运维说明更新 |
-| 低 | **Desktop golden 从 runtime 单源（E6，P2-14）** | `gen_contract_frames.py` 生成的 desktop read 参数含 `offset/limit`，真实 runtime 只支持 `path`；`--check` 只查生成器自洽 | desktop 参数 schema/risk/hash 抽成无副作用单源，runtime 与 generator 共同消费；`--check` 比对 runtime 语义等价 |
-
-### D. 部分完成项（不影响对应 review 项主结论，后续补齐）
-
-| Review 项 | 已做 | 剩余 |
-|--------|------|------|
-| P2-01 | TTL 真实生效（BSON `ttl_expires_at`）+ reflector 持久化接线 | session 列表 keyset 分页下推（repo.list_all 仍预取 200，第 201+ 条不可分页/搜索）；显式 session 过期级联清理 worker |
-| P2-02 | 搜索 query 长度/字面化、context before/after 钳制、/api/chat 队列满 429 | contract 层 content/ID/attachments 业务长度上限（附件最多 10 个）+ 附件 bounded batch 查询（一帧数千附件仍串行查 DB） |
-| P2-09 | checkpoint 空则删 + 不可序列化跳过 + 版本隔离；time_of_day 未知 reason 告警 | EventBus lifecycle epoch（旧 epoch 事件潜在重放；stop 已 cancel event task，风险低） |
-
-
-
-## 模块化评估（2026-08-01）
-
-基于 import 图分析（AST 解析全仓 28 个包、~340 py 文件、118 条包间依赖边）。总体分层健康（`core → Module` 正向为主）。**已修部分归档**：硬环拆除 + Agent 公开接口见 [docs/completed/2026-08.md](docs/completed/2026-08.md)。
-
-### 反向依赖（Module → core，分层违规，未修）
-
-| 优先级 | 位置 | 说明 |
-|--------|------|------|
-| ~~中~~ ✅ | [Module/tool/protocol.py:15](Module/tool/protocol.py#L15) | eager `from core.schema.error_type import ErrorType` — **已评估：接受**。ErrorType 是跨层类型（`core.schema.message.ToolResultMessage` + `Module.tool.ToolResult` 双侧消费），不能挪进 Module/tool（会反向拖累 schema）；core.schema 是叶子无反向依赖、无环。唯一 test 级反向边已修复：`core/schema/tests/test_message.py` 改从 `core.schema.error_type` 正典导入 |
-| ~~中~~ ✅ | [core/cognitive/delegation.py:20-21](core/cognitive/delegation.py#L20) | eager `from core.schema.message import Message` 等 — **已修**：文件迁至 `core/cognitive/delegation.py`（workflow_engine 分离 Task 9），core 引用随之合法，Module/workflow_engine 生产代码现零 core 依赖 |
-| 低 | [Module/tool/safety.py:618](Module/tool/safety.py#L618) | lazy `from core.utils import new_message_id` |
-| 低 | [Module/bench/bench.py:129-139](Module/bench/bench.py#L129) | lazy `core.config`/`core.agent`（bench 是 dev 工具，可豁免） |
-
-根因：`core.schema` 名义在 core/ 下但承担跨层共享类型职责，Module.tool/workflow_engine 引用它 = Module 层无法独立存在。评估结论：可接受（schema 本就是共享契约层、叶子节点），仅修掉 test 级反向边；若未来要求 Module 层作为独立库发布，才需将 ErrorType/Message 下移到根级共享包。
-
-### 软环（lazy import 运行时解决，无需处理）
-
-- `Module._common → Module.config → Module.llm/stt/tts → Module._common` — [preflight.py](Module/config/preflight.py) 函数内懒加载后端
-- `Module.system_prompt → core.adapter → core.memory/personality/storage → Module.system_prompt` — ✅ 已消除：`__init__.py` 的 deprecated MessageBuilder lazy import 已删除（无消费方），Module/system_prompt 生产代码现零 core 依赖
-- ✅ `core.schema._utils` 跨包导入已消除：改名 `core.schema.utils`（`now_iso` 被 7 个包共享），私有 helper `_normalize_iso_ts`/`_validate_src` 保持下划线前缀仅 schema 内部使用
-
-### 2026-08-14 复审发现（core 模块化，对照 08-01 基线）
-
-文件级 SCC 全仓扫描：**core/ 内部文件级真实 eager 硬环 = 0 个**（adapter↔memory、schema↔utils、_common↔config 均为包级聚合伪环，文件级为 DAG，运行时 import 顺序实测全通）。确凿问题集中在 Module 层边界 + 近期功能提交引入的包级反向边。审查详见会话记录。
-
-| 优先级 | 位置 | 说明 |
-|--------|------|------|
-| ~~中~~ ✅ | [Module/llm/registry.py:67](Module/llm/registry.py#L67) | lazy `from core.input.ssrf import validate_endpoint`（commit `963d1a8b`，2026-08-06 批次 8a）——**全仓唯一 Module→core 生产反向依赖**，晚于 08-02 分离基线。**已修（2026-08-14）**：`core/input/ssrf.py` 下沉 `Module/_common/ssrf.py`（零 core 依赖纯移动 + 测试随实现 + 4 处 mock 路径），Module 生产反向依赖清零 |
-| ~~中~~ ✅ | [core/storage/idempotency_repo.py:62](core/storage/idempotency_repo.py#L62) | 函数内 lazy `from core.input.idempotency import GRACE_SECONDS`（注释自陈绕环）——storage 层反向依赖 input 层。**已修（2026-08-14）**：`GRACE_SECONDS` 单源下沉 `idempotency_repo.py` 自身，input 经门面反向 import（恢复 input→storage 方向） |
-| ~~低~~ ✅ | [core/schema/adapters/message_adapter.py:21](core/schema/adapters/message_adapter.py#L21) | `from core.utils.message_id import stable_tool_message_id`（2026-08-13 消息 ID 批次 D2 引入）——闭合 schema↔utils 包级环，打破「core.schema 是叶子」文档断言。**已修（2026-08-14）**：ID 生成器迁 `core/schema/utils.py`（返回类型全为 NewType 属类型权威附属），`core/utils/message_id.py` 保留薄重导出 shim，`message_adapter` 改正典导入；`types.py` 对 utils 的 `_normalize_iso_ts` 改 lazy wrapper 打破包内环。schema 恢复叶子、零 core.utils 依赖 |
-| ~~低~~ ✅ | [core/input/session_routes.py:190-193](core/input/session_routes.py#L190) | `getattr(agent,"cognitive")` + `cognitive._generation_registry` 绕开公开 property。**已修（2026-08-14）**：改走 `agent.generation_registry` 公开 property（与 `cognitive._generation_registry` 同一对象，agent.py:897） |
-| ~~低~~ ✅ | [core/input/ws_handler.py:224,452](core/input/ws_handler.py#L224) | 输入层直调组合根私有 `agent._sync_desktop_available()`。**已修（2026-08-14）**：公开化为 `agent.sync_desktop_available()`，ws_handler 走公开接口 + noqa 清除 |
-| ~~低~~ ✅ | [core/input/tts_profile.py:51,54](core/input/tts_profile.py#L51) | `backend._resolve_voice`/`backend._voice_id` 穿透 TTSBackend 私有。**已修（2026-08-14）**：`TTSBackend.default_voice()` 公开方法（默认返回 character），MiniMax override 复用 `_resolve_voice`，tts_profile 走公开接口 |
-| ~~低~~ ✅ | [core/storage/desktop_call_repo.py](core/storage/desktop_call_repo.py#L94) | `_ACTIVE_STATES` 跨包私有导入。**已修（`5f841510`，批次 A 公共 API 收口）**：改为公开谓词 `is_active_desktop_call_state(status)`，bridge 等消费方走谓词、集合本身保持私有（比"改名公开集合"更好：判定逻辑单点） |
-| ~~低~~ ✅ | input 层内聚拆分 | 原问题：`ws_handler` 1825 行 + `api_routes` 1182 行 = input 层 35%；`server↔api_routes`/`server↔debug_routes` 懒导入绕环。**2026-08-14 批次 ABCD 全部完成**：A（errors.py 下沉解绕环）、B（ws_handler 拆分：深业务下移 ws_v2.py + `_WS_HANDLERS` 注册表分发，1825→1166 行）、C（api_routes 拆 5 域 provider/tts/upload/tools/chat，退役删除）、D（server.py 纯装配：middleware.py/health.py 下沉，759→493 行）。懒导入绕环全部消除 |
-| 低 | [core/prompt/prompt_assembler.py:30-31](core/prompt/prompt_assembler.py#L30) + [core/memory/consolidator.py:25](core/memory/consolidator.py#L25) | 包级伪环（文件级 DAG），两条边均为类型注解 + 构造注入；非近期引入。可选打磨：惰性化注解（TYPE_CHECKING）清除包级告警（`prompt_assembler` 已由 `core/adapter/` 迁至 `core/prompt/`，CORE-MOD-P1-02） |
-
-## token 统一结构（2026-07-31）遗留可接受项
-
-全链路统一 `TokenUsage` 模型的最终 review（opus）**APPROVE FOR MERGE** 后的可接受 residual，均为低优先级。详见 [docs/superpowers/specs/archive/2026-07/2026-07-31-token-usage-unified-structure-design.md](docs/superpowers/specs/archive/2026-07/2026-07-31-token-usage-unified-structure-design.md)。
-
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| 低 | **TokenLabel 显示 `cached:0`/`think:0`** | `frontend/src/components/chat/TokenLabel.vue` `v-if="round.cached_tokens != null"` 对字面 0 也显示（`0 != null` 为 true）。仅 provider 显式上报 0 才出现（Ollama 等无 details 返回 None 不显示）。如需隐藏改 `v-if="round.cached_tokens"`，但会连真实 0 一起藏 |
-| 低 | **flush_pending 部分失败可能重复插入** | `core/monitoring/token_tracker.py` flush_pending：`insert_many` 部分成功失败时保留文件，下次启动重导 → 已插入记录重复。insert_many 非事务，需按 (session_id+timestamp) 去重或建唯一索引 |
-| 低 | **role 判别行为变更** | `core/schema/adapters/message_adapter.py` `_MESSAGE_ADAPTER` 改 discriminated union 后，role 不在 {user,assistant,tool} 的 dict raise ValidationError（原静默 UserMessage）。更安全但更严格，未来加新消息类型需同步补 `Tag` |
-| 低 | **`_MESSAGE_ADAPTER` 注解不精确** | `message_adapter.py:46` 注解 `TypeAdapter[Message]` 实为 `TypeAdapter(_MessageByRole)`，cosmetic 仅阅读困惑 |
-| 低 | **debug current_turn 无前端消费者** | `frontend/src/debug/types.ts` `TokenRoundItem`/`current_turn` 已定义但 `OverviewTab.vue` 只渲染 session_total/per_model。接入调试明细 UI 时启用 |
-
-## 来自 code-review-2026-07-31 的遗留问题
-
-已修复 42/44（详情见 [docs/completed/2026-07.md](docs/completed/2026-07.md) 2026-07-31 + [docs/review/archive/2026-07/code-review-2026-07-31.md](docs/review/archive/2026-07/code-review-2026-07-31.md)）。2 项遗留：
-
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| ~~**中**~~ ✅ | ~~**M19 resume 后再次 pause 被销毁**~~ | ~~[workflow_engine.py:384-393](Module/workflow_engine/workflow_engine.py#L384)。缺 PAUSED early-return 保护，mailbox 消费者永久阻塞~~ |
-| ~~**中**~~ ✅ | ~~**M20 cancel 在规划阶段不推终态事件**~~ | ~~[lifecycle.py:157-167](Module/workflow_engine/lifecycle.py#L157) + [planning.py:143-145](Module/workflow_engine/core/sub_agent/planning.py#L143)。`cancel()` 尚无调用方接线，随任务系统接入时修复~~ |
-
-> M19/M20 **已随 E3 完成**（2026-08-11）：M19 由 E2 PAUSED early-return 修复、E3 Task 6 确定性验证（resume→pause 循环）；M20 由 E3 强取消修复——cancel() 同步置 CANCELLED + CancelledError 传播链推唯一 CANCELLED 终态事件（不再缺终态事件）。
-
-## 功能改进
-
-- **README 截图**: 添加聊天界面 / debug 面板 / 启动流程截图，让新用户第一眼就知道项目长什么样
-- **Live2D 集成**: Cubism SDK v5 需 TypeScript + npm + bundler 构建，当前仅 SDK 文件到位、默认关闭
-- **poignancy 时间衰减**: rerank 含时效衰减但 poignancy 本身不变，长期不访问的记忆应逐渐降级
-- **MiniMax SSE 真流式**: 已尝试并回退 (2026-07-10)。MiniMax SSE 每个 event 是独立可播 mp3（非增量片段），拼接导致重复，只取最后 event 又等于同步下载。待 MiniMax API 支持增量 SSE 或换方案（WebSocket）
-- **MiniMax 异步长文本合成**: `t2a_async_v2`，适合 >3000 chars。需创建任务 → 轮询状态 → 下载文件
-- **记忆导出/备份**: 支持 JSON 导出和恢复
-- **记忆统计**: 按类型/年龄/poignancy 分布统计，接入 DebugInfo 仪表板
-- **Claude 原生持久记忆**: ✅ 已启用（2026-08-01 写入首条：流式状态机验证教训，含 MEMORY.md 索引）。后续可把项目关键决策/教训持续写入
-- **MacroMemory + MacroReflector**: 每日合成日记条目。需新增 Milvus 集合 + MacroReflector 后台任务
-- **CharacterEngine mood 升级**（原 EmotionEngine 升级）: LLM `<mood>` 标签驱动已实现。生理状态模型、时间衰减曲线、混合情绪、Amygdala LLM 补充等后续 Phase 待做。
-- 唤醒词检测（openWakeWord）— 已完成实现，待办：
-  - 测试唤醒词开关：启动服务端，打开前端设置面板，点击开关确认 ON/OFF 切换正常
-  - 训练自定义唤醒词模型 (.onnx)：录制每个唤醒词 100-500 样本 → 用 openWakeWord Colab 训练 → 将 .onnx 文件导入 `model_paths`
-- **性能 profiling + 优化**:
-  - 时钟补上 TTS span（`_transition_idle` 里的 TTS 等待）
-  - 性能回归测试（bench 模块加断言，CI 可跑）
-- **角色切换**: 加载不同角色配置（名字、性格、发音人、prompt 模板），需独立 spec。涉及 CharacterConfig 重新加载、TTS voice lookup 逻辑修复（`voice` 字段当前是死代码）、CognitiveLoop 角色引用更新。`gpt_sovits_voices.yaml` 目前只有 `Elysia` 一个发音人
-- **多角色 prompt 模板**: `PromptAssembler` 通过 `SystemPromptManager` + 12 `PromptSection` 渲染，多角色时加载不同 `CharacterConfig` 即可切换 section 数据源
-- **页面加载优化**: Live2D iframe 加载 481KB JS 竞争主线程 → WS onopen 延迟 ~200ms。已加开关可关闭释放资源，开启时仍存在。方案: `loading="lazy"` / 静态 emoji 首屏 / 修复 K shader
-- **Docker 化部署**: 多阶段构建 + docker-compose 编排（agent + SenseVoice + GPT-SoVits）。数据库已完成 docker-compose.yml（MongoDB + Milvus）
-- **F2 代码块格式重新启用**: `f2_output_format.j2` 中 `<|code|>` 和 `<|markdown|>` 格式已注释。等需要代码/Markdown 渲染功能时取消注释即可启用。**注（2026-08-01）**：解析器已支持 ```` ``` ```` 围栏 + `<|code|>`/`<|markdown|>`（core/text tokenizer），LLM 主动输出代码块时即可正确分拣（不进 TTS、finalize parts）；仅需 F2 模板取消注释 + 前端代码渲染确认
-- **意图路由 + 渐进式工具披露**: 当前 16 个工具全量暴露给 LLM，每人次 ~1,643 schema tokens。大部分对话只用 2–4 个工具，~70% schema token 是浪费的。评估结论：16 个工具未到临界点，暂不做。触发条件：工具数 > 15 考虑规则分类，> 20 必须引入分类层，或累计 ≥ 3 次工具误用事件。推荐方案：关键词匹配分组（filesystem/web/memory/utility），零延迟零 token 成本，无命中则全量兜底。
-- **CharacterEngine Phase 2**（原 PersonalityEngine Phase 2）:
-  - CharacterReflector.j2 模板 ~140 行偏长，LLM 注意力可能被稀释，后续观察产出质量决定是否精简
-  - C3 情绪传染规则动态化
-  - C7 主动性动态化
-  - L4→L3 情绪汇聚统计（需 CharacterEngine 改接口）
-  - 用户话题检测触发 C9（目前只看状态存在+冷却）
-
-**前端（合并自 frontend_todo.md 归档，2026-07-30 前端审查遗留）**：
-- **迁移至 AudioWorklet**: `InputBar.vue` 仍用已废弃的 `audioCtx.createScriptProcessor()`。阻塞原因：AudioWorklet 需独立 `.js` 文件 + 复杂重构
-- **messageRouter 统一消息分发**: `useWebSocket.ts` 各 case 分支已显式类型收窄，建议进一步集中管理映射 + try/catch 边界
-- **useLocalStorage composable**: `settingsStore.ts` 5 组 localStorage watch 模式完全相同，可提取复用
-- **Vue 错误边界**: 目前无 `errorCaptured` 钩子或全局 `app.config.errorHandler`
-- **L-#13 ArchivePanel 分页参数命名**: `ArchivePanel.vue` API 契约不变，仅命名建议
-- **L-#15 硬编码颜色**: `variables.css:33` 绕过 CSS 变量，不影响功能
-
-
-## 代码清理
-
-### Batch 2 Challenger 复核留下的项（2026-09-17）
-
-独立 Challenger 对 `4203198f..e2003080` 做了对抗式复核。**已修**的三处
-（permissions 只查存在性 / `rm -rf "$GITHUB_WORKSPACE"/*` 漏检 / docstring 宣传不存在的
-`--report`）见 commit `ec71d3c1`。以下是**已知局限与接受的风险**——记在这里而不是
-默默留着，因为它们都是"判据看起来比实际强"的来源：
-
-| 优先级 | 项 | 现状与理由 |
-|--------|-----|-----------|
-| P2 | **打印守卫的"同名遮蔽"** | 守卫按「属性名归属包」近似判跨包：**在访问方包里定义一个同名 `def _x`**，就能让该名字在全仓免检。实测（在 `/tmp` 副本里）：`core/adapter/` 加一个 `def _broadcast(*a, **k): pass` 后，9 处违规塌成 1 处。这是"按名字近似"的**固有代价**（同名属性本来就会漏报，模块 docstring 已记载），本批让私有方法也进归属表后**更容易触发**（以前要凑一个同名赋值，现在一行 `def` 就够）。**未修**：修它需要真正的类型/所有权推断（或给归属表加"是否在访问方包内定义"以外的证据），属独立专项；现在的定位仍是**回归网**而非完备审计工具。 |
-| P3 | **守卫扫描面只含 `core` + `Module`** | `_ROOTS = ("core", "Module")`，故 `scripts/`、`frontend_contract/`、根级 `tests/` 里的跨包私有穿透看不见。实际存在（且已标注）的实例：`scripts/dev/seed_stage_h_pinned.py:129`、`scripts/dev/stage_h_pinned_smoke.py:87`。CLAUDE.md 的「全仓跨包守卫」措辞比实际宽——扩到全仓需先处理 `scripts/` 的一批刻意豁免。 |
-| P3 | **非字面量私有访问仍不可见** | `getattr(obj, var)` / `operator.attrgetter("_x")(obj)` / `vars(obj)["_x"]` / `obj.__getattribute__("_x")` 均 0 命中。字面量 `getattr(obj, "_x")` 与点式深读**已覆盖**。 |
-| P3 | **清空形态识别仍有长尾** | 纯字符串判定已覆盖 4 种 `$GITHUB_WORKSPACE` 写法 + 当前目录 + `find -delete`。仍漏：`find … -print0 \| xargs -0 rm -rf`、`for d in "$WS"/*; do rm -rf "$d"; done`、`git clean -ffdx`。这类"间接清空"要靠 shell 解析，属独立专项；本仓 6 处清理点全用规范 `find … -exec rm` 写法，故当前无实例。 |
-| P3 | **`if:` 守卫是"token 存在性"而非布尔求值** | `if: github.event_name == 'push' \|\| true`、`… \|\| github.event.action != ''` 会被判成受信 push-only（实际 PR 可达）。要真判需表达式求值器。 |
-| P3 | **`# noqa: F401` 无门禁检查陈旧** | RUF100 未启用，故"导入已被使用、noqa 还留着"不会被拦。F401 现在**启用**了（18 个文件带该标注，11 个是承重的），所以这 38 处标注不会误导；但陈旧 noqa 属长期债务，见上一节。 |
-
-### Batch 2.3（2026-09-17）F401 启用后的 follow-up
-
-F401 已于本批启用（`ruff.toml` 的 `select` + `"**/__init__.py"` per-file-ignore），
-生产与测试代码现为 **0 违规**。以下是**刻意不做**的项，记录以便后续：
-
-| 优先级 | 项 | 现状与理由 |
-|--------|-----|-----------|
-| P3 | **RUF100（unused noqa）未启用** | 全仓 863 处 RUF100 命中，绝大多数是 `# noqa: SLF001`——因为 **SLF001 从未在 `ruff.toml` 里启用**，那 750+ 个标注对 lint 是**惰性的**（真正执行私有穿透纪律的是 `core/tests/test_cross_package_privacy.py`，见 CLAUDE.md）。启用 RUF100 会一次报出 863 条，属独立专项；F401 相关的 38 条（`# noqa: F401`）在启用后会变成"多余指令"需清理。**注意**：RUF100 未启用意味着这些 noqa 目前不产生任何噪音，不存在"CI 看起来绿但没检查"的安全错觉——判据与豁免是自洽的。 |
-| P3 | **`scripts/print_test_stats.py` 与门禁共享弱点** | 它从不检查子进程返回码，且 `int(line.split()[0].split("/")[0])` 在 `no tests collected (M deselected)` 上会抛异常。它只是统计打印器、非门禁，故未动。 |
-| P3 | **`docs/testing.md` 的档位计数陈旧** | 该文档自称计数由脚本生成、不需手工维护，但实测 `全量 5033 vs 5932`、`unit 2798 vs 3316`、`service 2211 vs 2588`、`external 7 vs 15` 均已漂移（`integration 10` / `slow 39` 仍对）。本次改了 Makefile/CLAUDE.md 的相关表述，未逐格重算该表。 |
-| P2 | **R4 的 eager 环判据有可复现漏报** | 包节点 `X` 与其 `X.__init__` 在图里是两个节点（983 条 eager 边中 189 条指向无出边的包节点），且相对导入整类被跳过（而 ruff 恰好豁免 `__init__.py`）。审计在 /tmp 副本里造出两个**运行期真 ImportError** 的硬环，门禁均报绿。真实仓库当前 0 环，故属潜在漏报而非现役缺陷；修它需要重做 R4 的图粒度（合并 `pkg.__init__` → `pkg`、解析 `from pkg import submodule`），属独立专项——**本批刻意不动 R4**（盲目扩大 R4 会先撞伪环）。 |
-| P3 | **R6 的「条数漂移」分支无测试覆盖** | `test_r6_reports_count_drift_within_same_function` 实际走的是"未登记"文案而非"漂移"文案（该分支被 `is_real_repo` 门控，合成 fixture 走不到）。变异实测：把 `elif entry[0] != count` 改成 `elif False` 仍 20 passed。 |
-| P3 | **`_is_push_only` 对 `!=` / `contains()` 守卫保守放行** | 非 `==` 形态的守卫会让"死 job"判定看不见（`_guarded_events` 用正则只认 `==`），但保守方向是把它当 PR 可达（更严），故无安全风险——只是自建 reusable workflow 的写法会受限。 |
-| P3 | **CI 未扫描 `env:` / `with:` / `working-directory:` / `container:` 里的宿主路径** | 当前只扫 step 的 `name` + `run`。实测把 `/home/.../.env` 放进 job `env:` 可以绕过（真实 workflow 无此写法）。 |
-
-> **❗ 决策（2026-09-12）：剩余桩代码一律保留，不再作为死代码待办。**
->
-> 2026-09-12 做过一次全仓符号级引用审计（AST 扫 3,933 个生产定义 → 63 个零引用方法），
-> 结论：**「零引用」不等于「该死」**。剩余项中绝大多数是**刻意的扩展储备**（图数据库后端、
-> 基准测试、HITL 通知器、Workflow 暂停恢复、插件侧流式上报面），删掉会让「以后要做」变成
-> 「以后要重写」。本仓已有 `预留` 注释惯例，本次统一加可 grep 的标记
-> **`P3-01-RESERVED`**——后续引用审计遇到该标记即跳过，不再逐轮重新发现、重新搁置。
->
-> 判别标准（供下次审计用）：**预留** = 有明确未来用途、且有注释说明；**残留** = 已被别的实现
-> 取代（如 `LoggerFactory` 之于 `log_setup`）或注释与代码不符。本次处置的是后者。
-
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| ✅ | ~~LoggerFactory 死代码~~ **(2026-09-12 已删)** | 核实「保留参考」是误判：它不是休眠的重复实现，而是**被取代的旧设计**——`Module/logger/factory.py` 把应用日志送 **stdout**，而本仓 stdout 保留给对话流（`Module/output/console.py:31` 的流式 `print`），采纳即污染角色输出；且按 logger 名建文件（110+ 个 logger → 200+ 个 `logger_*.log`）。生产早在 `core/utils/log_setup.py` 走了另一套。整个 `Module/logger/` 包已删（含 348 行测死代码的测试）；**唯一活着的 `get_caller_logger()` 迁至 `Module/_common/registry_helpers.py`**，与既有 `inject_logger` 并列。顺带清掉 `log/` 里 15 个由该包测试产生的 0 字节残留（2026-08-04 日志审查 3.1 已点名，5 周未修） |
-| 保留 | `database/graphdb/` 不完整 | 只有 protocol.py（54 行 ABC）。`P3-01-RESERVED`——Neo4j 等图后端储备，非死代码 |
-| 保留 | `OutputManager.stream()` 未使用 | `P3-01-RESERVED`——dev 冒烟 CLI + 测试用；生产走 `core/cognitive` 逐事件输出。保留作流式输出参考实现 |
-| 保留 | `Module/bench/` 位置不当 | `P3-01-RESERVED`——手工延迟基准工具（507 行）。自注释「后续移至 tools/bench/」，依赖 core 属**已知且接受**的 R1 例外（占 allowlist 3 条中的 2 条）。迁移与否待真实需求 |
-| 保留 | **FilePart/AudioPart/VideoPart 预留代码** | `P3-01-RESERVED`——`part.py` 130 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2 |
-| 保留 | `core/hitl.py`（85 行）与 `ToolEmitter` 流式上报面 | `P3-01-RESERVED`——HITL 通知器已端到端接好、插件侧 `emit.progress/is_cancelled` 已定义，但两侧都尚未接线。**半接线状态已如实标注在代码注释里**（原先两处注释与代码不符，本次已改正），不再每轮重新发现 |
-| 保留 | `WorkflowEngine.resume()`（91 行，13 项测试） | `P3-01-RESERVED`——暂停/恢复闭环尚未接线，先备好能力与测试 |
-| 保留 | **`core/tool_runtime`（原 `core/task`）的 background/DAG/progress/checkpoint 预留** | `P3-01-RESERVED`——评估稿 §ARCH-INC-P1-01 批次 B 原计划「删除无消费者的 background/DAG/progress/checkpoint 预留」，2026-09-12 决策**作废**。`QueuedToolCallKind.BACKGROUND` / `depends_on` / `children_ids` / `run_in_background` / `progress` / checkpoint 持久化 / `dispatch_background()` / `new_background()` 全部保留 |
-| ~~低~~ ✅ | **衍生 ID 未类型化** | 2026-08-09 已修：AttachmentId/MemoryId/TaskId 立项 + 贯通（part/repo/long_term/schema/memory_reflector/task/scheduler/input）。spec/plan 见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-09-derived-id-newtype-design.md) / [plan](docs/superpowers/plans/archive/2026-08/2026-08-09-derived-id-newtype-plan.md)。已知权衡：Task.parent_id 语义混乱留待未来、scheduler:159 死代码 ignore |
-
-## Batch 3（Deletion / Simplification）登记项（2026-09-17）
-
-> Batch 3 是**纯删减批次**：只删「有 consumer proof 的 PROVEN_DEAD」，并把审计中发现的
-> **真实 bug 与仍有效的债务**登记到本表，**不在删除 commit 里偷修**。
-> 完整报告见 [`docs/review/2026-09-17-Batch3-deletion-simplification-执行记录.md`](docs/review/2026-09-17-Batch3-deletion-simplification-执行记录.md)。
-
-**F1–F17 follow-up 总表位置**：Batch 1.8 执行记录的 §「Follow-up」表
-（[docs/review/2026-09-17-Batch1.8-user-visible-terminal-semantics-执行记录.md](docs/review/2026-09-17-Batch1.8-user-visible-terminal-semantics-执行记录.md)）
-是这些项的**权威清单**——本文件此前 0 命中（Batch 3 审计 E-16 发现的登记缺口），
-此处补一个指针，不复制内容以免两处漂移。含 `WAITING_APPROVAL` live-lock /
-reminder persistence / `plan_too_large` semantics / task LLM provider H3 /
-workflow model reporter / F5 STT provider-test asymmetry / `/debug tts_ok,stt_ok`
-semantics / prompt budget cross-path / provider portability / error protocol extension。
-
-### 正确性 bug（Batch 3 审计发现）
-
-> **状态列由 Batch 3.5 复核后填写**（2026-09-17）——逐条独立复现/复核，**不凭报告标签接受**。
-> 完整证据见 [`docs/review/2026-09-17-Batch3.5-correctness-triage-执行记录.md`](docs/review/2026-09-17-Batch3.5-correctness-triage-执行记录.md)。
-
-| # | 位置 | 现象 | 状态 |
-|---|------|------|------|
-| **B3-CB-1** | `core/profile/user_identity.py::UserIdentity.pronouns` + `core/input/character_routes.py:254` | 契约允许 PUT `pronouns: null`（读契约本就是 `string \| null`），`_normalize_updates` 不过滤 None → Mongo 存 `null` → 读回 `model_validate` 抛 `ValidationError`（`pronouns: str` 不接受 None） | ✅ **FIXED**（`fb438167`，`CONFIRMED_USER_REACHABLE` / **CRITICAL**）。实测比原记录更重：**PUT 自己就 500**（读回在同一次 `update_if_revision` 内）、**省略该键**同样污染、污染后重试返回**谎报的 409**、`/ready` 因探 ping 而**保持绿**。真实 MongoDB 8 复现 + 验证。修法=域模型 1 行改 `str \| None`（**保留默认值**，故键缺失仍「她」、无需 migration，且顺带修好已污染记录） |
-| **B3-CB-2** | `core/storage/schema_drift.py:63` `EXPECTED_INDEX_OPTIONS` | 键写成**从未存在**的 `idempotency_claims`，真集合名是 `idempotency`（`idempotency_repo.py:50`） | ✅ **FIXED**（`0302566a`，`CONFIRMED_DEPLOYMENT_REACHABLE` / MEDIUM）。危害不止"少报一条"：键不存在即该集合**一个选项都不比**，退化成**"扫了、没比、报健康"**。修这个键会让一条原本绿的用例变红（其 mock 靠 `ttl_` 前缀猜 TTL），已一并改为**从声明派生**。**残留**：该表仍**无 AST 守卫**（见 follow-up N-4）→ **已补**（`1382ae43`，Batch 3.6） |
-| **B3-CB-3** | `Module/config/preflight.py`（`_check_llm_env` 的 URL 检查 + `_check_mongo_env`/`_check_milvus_env` + 两处 connectivity） | 判据是"env 变量是否被设置"，而运行期走 `resolve_base_url`（env → providers.yaml 默认值）与 `config.database.*`（CLI>env>YAML>默认） | ✅ **FIXED**（`edd67cef`，`CONFIRMED_DEPLOYMENT_REACHABLE` / HIGH）。`.env.example` 对齐的配置（只缺 `MONGODB_URI`，该行本就注释掉）修前 `10/13 failed=1` 退 1、修后 `11/13 通过`。修法=判据接到运行期**同一个** `resolve_base_url` / `config.database.*`。防反向假绿已实测：`mimo`（任何一层都无地址）**继续 FAIL** |
-| **B3-CB-4** | `scripts/clean_db.py::PROTECTED_COLLECTIONS` | docstring 自称「列在这里是给测试当回归守卫用」，常量零引用 | ❌ **FALSE_POSITIVE**（LOW，仅 docstring 措辞）。原审计把"**这个常量**有无消费者"当成了"**保护属性**有无守卫"——守卫存在且不读该常量：`core/tests/test_clean_db.py:39-49` 硬编码集合名双向断言，另两条把清单逐字面量钉死。变异模拟：两种改法各 2 条用例红。见 follow-up N-7 |
-| **B3-CB-5** | `core/tests/test_doc_counts.py` | 文档数字门禁不含根 `README.md`；正则只认粗体格式 | ✅ **ALREADY_FIXED**（`0937e85a`：根 README 已入参数化列表 + 格式统一，三份都写 46 = AST 实数 46）+"正则漏格式"子断言**是假阳性**（判据逐文件 fail-closed，匹配不到会**直接红**）。**残留窄洞**：门禁**范围硬编码三份文档**，`docs/architecture.md:372` 写「43 个 @property」用同一格式却永不被检查（见 follow-up N-5） |
-| **B3-CB-6** | `core/profile/profile_store.py:188-200` ↔ `core/storage/user_identity_repo.py:40-43` | 两份**语义不同**的白名单（store 版额外约束 `initialized` 只能置 true），两侧对未知键都**静默 `continue`** | ⏸ **KEEP AS-IS**（`CONFIRMED_BUT_CURRENTLY_UNREACHABLE` / LOW，风险 MEDIUM）。两侧**集合完全相等**；调用点穷举：store 2 个、repo 1 个、无动态派发；HTTP 入口因 `UserIdentityUpdate` `extra="forbid"` 且无 `initialized` 字段而**无法**构造分岔（实测 400）。判潜在分岔风险，非活 bug |
-| ~~B3-CB-7~~ ✅ | `core/input/upload_routes.py::_IMAGES_DIR` 模块级常量 + `test_server.py::image_app` 的 `monkeypatch.setenv` | 测试 docstring 声称"图片落盘重定向到 tmp_path"，但常量在 **import 期**固化 ⇒ 隔离**从未生效** | ✅ **ALREADY_FIXED**（`800e54da`）。Batch 3.5 用**测量**复核：真实目录 delta = **0**，且**正对照**证明同一批测试确实写了 2 个 PNG 到重定向目录（否则 delta=0 无意义）。**残留**：无回归守卫能挡住重新引入（见 follow-up N-8）→ **已补**（`6c559816`+`210e9c37`，Batch 3.6） |
-
-### Batch 3.5 新登记的 out-of-scope findings（**只记录，未修**）
-
-> 复核 B3-CB-1..7 过程中**顺带看到**、但不属于本批 7 条输入集合的缺陷。按 §35 规则
-> 记录不修。完整背景见 Batch 3.5 执行记录 §12/§17。
-
-| # | 位置 | 现象 | 为什么不在 Batch 3.5 |
-|---|---|---|---|
-| **N-1** | `core/profile/profile_store.py::health_check` + `core/input/health.py:141` | `health_check()` 返回 **True** 而 `is_available` 为 **False** ⇒ 身份已死时 `/ready` 的 `chatReady` 仍 200，而 `/api/me` 返回 503（探针契约 vs 可用性契约不一致） | 是 B3-CB-1 的**放大因素**而非同一缺陷；B3-CB-1 修好后不再自然可达。需单独判"ready 该探什么" |
-| **N-2** | `core/profile/profile_store.py::_update_local`（`setattr`） | 绕过 pydantic 校验：本地模式下 `pronouns=None` 被静默接受；`_load_from_file` 读回失败会**重新 bootstrap** ⇒ 静默数据丢失 | 本地/单测路径，非生产装配路径 |
-| **N-3** | `core/input/character_routes.py:271` | 409 的 `details.currentRevision` 读**陈旧进程内缓存** ⇒ 谎报（报 1，库实为 2），文档承诺的 CAS 恢复路径可死循环 | 独立缺陷；修它需先想清"409 该报谁" |
-| **N-4** | `core/storage/schema_drift.py:49-50` | docstring 自称 `EXPECTED_INDEX_OPTIONS` 由 AST 反向校验守护，**实测覆盖为 0**（把整张表换成垃圾仍全绿）。B3-CB-2 修的是**键**这个具体缺陷，"下次再改错键不会被发现"仍成立 | ✅ **GUARDED**（`1382ae43`，Batch 3.6）。`TestExpectedIndexOptionsPinnedToCode` 的判据取自 `core/storage/*.py` 真实 `ensure_index` 调用的 **AST**（非第二张手写表）：集合键/索引名必须存在 + 代码声明了选项的索引必须已登记（整条漏登记与写错键运行期后果相同）+ 已知缺口显式记账。变异实测六种全红：历史 typo / 任意假集合 / 索引名错拼 / 删整条 / 清空全表 / **代码侧改集合名**；改回绿 |
-| **N-5** | `core/tests/test_doc_counts.py` | 门禁范围是**硬编码三份文档**；`docs/architecture.md:372` 写「**43 个同名 `@property`**」（同一粗体格式、真值 46）**永不被检查** | B3-CB-5 的残留**窄洞**（原报告归因于正则，实为范围）；扩范围属另一件事 |
-| **N-6** | `docs/architecture/invariants.md:162` | §7 关于 `test_doc_counts` 的那行**已过期**：仍说"门禁不含根 README、README 写 39"，而这两点已被 `0937e85a` 修掉（§7 登记 `a7ae2cbf` 与修复相隔 **6 秒**，未回头更新） | 文档准确性；本批已记账 |
-| **N-7** | `scripts/clean_db.py:95` | docstring 说常量「列在这里是给测试当回归守卫用」，而真正的守卫（`core/tests/test_clean_db.py`）**不读它** | 仅措辞失实；保护属性本身已被守卫（B3-CB-4 判假阳性的原因） |
-| **N-8** | B3-CB-7 的修复**缺回归守卫** | `_images_dir()` 若被改回 import 期常量，**整套图片测试仍然全绿**（pre/post 都绿——这正是它当初能潜伏的原因）。建议加"晚设 `ELYSIA_PATH_DATA_UPLOADS_IMAGES` 后 `_images_dir()` 必须跟随"的断言 | ✅ **GUARDED**（`6c559816` + `210e9c37`，Batch 3.6）。`core/input/tests/test_upload_dir_isolation.py` 走**真实上传路径**（env → create_app → POST /api/images → 落盘）：正对照（重定向目录真的多出 1 个 PNG）+ 负证据（真实默认目录 before/after 快照相同，`None`≠`[]`，目录被创建也算变化）+ fresh 子进程（先 import 后设 env）。变异实测：退回 import 期常量 → 3 条红，失败原因即"文件落错目录"（真实目录 delta 出现该 PNG）；改回绿 |
-| **N-10** | `Module/config/preflight.py::_check_llm_env` + `Module/llm/registry.py` | `gemini/<model>` 设了 key+URL 时预检**全绿**，运行期 `LLMFactory.create` 却**无条件** `NotImplementedError`（STT 侧早有 `_STT_STUB_PROVIDERS`，LLM 侧没有） | **既有**（非本批引入）；属补"未实现 provider"冻结表 |
-| **N-11** | `core/profile/profile_store.py::connect` / `_load_from_file` | `except Exception` 吞掉一切——修前正是它把"被污染记录"变成**静默重置为 bootstrap** | 既有 fail-closed 取舍；改动需先定"装载失败该不该自杀" |
-| **N-12** | `GET /api/me` + `pronouns: ""` | 存量文档若是空串 pronouns，GET 仍 500 | **既有且不可达**（契约 `_text()` 拒空串，仓内无写入者） |
-| **N-13** | `core/storage/schema_drift.py` `EXPECTED_INDEX_OPTIONS` | **表级** AST 守卫仍缺（本批只补了 `idempotency` 的定点回归 + 改正了失实注释；把整表换成垃圾仍全绿） | ✅ **GUARDED**（`1382ae43`，Batch 3.6）——与 **N-4** 是同一条，见上表 N-4 |
-| **N-14** | `Module/config/tests/test_preflight.py` 两条弱用例 | `test_minimax_key_present_passes` 随 ambient `.env` 走两条不同代码路径（哪条都没钉住）；`test_c1_llm_url_source_is_the_runtime_default` 只测 helper | 测试加固；本批已把**造成漏报**的那条补成 PRE_FIX_RED |
-| **N-15** | `core/storage/schema_drift.py` `EXPECTED_INDEX_OPTIONS` | **覆盖缺口**（Batch 3.6 建守卫时 census 出来）：代码声明了 `unique=True` 但选项表**从未登记**的索引 4 条——`generations.generation_id_1`、`desktop_calls.call_id_1`、`idempotency.conversation_id_1_client_request_id_1`（幂等并发防线）、`character_instances.owner_user_id_1_character_id_1_canonical_1`（S3-20 的 partial 唯一索引）。后果与 B3-CB-2 同类但**只影响单条索引**："扫了、没比、报健康" | 补表会**扩大生产漂移自检的比对范围**（= 改产品语义，可能新增启动期 `option_conflicts` ERROR），超出 Batch 3.6「补守卫」范围。已在测试里 **显式记账**（`_KNOWN_UNREGISTERED_OPTION_INDEXES`，每条含解除条件；补齐后不删条目即报"陈旧登记"） |
-| **N-9** | 多处模块级 `ProjectPath...resolve()` 常量 | 与 B3-CB-7 同形（import 期求值、可被测试 env 改写）：`core/tools/vision/plugin.py:23`、`core/storage/secret_store.py:46`、`core/providers/custom_providers.py:16`、`core/utils/log_setup.py:16` 等 | 同形但**未被证明有实际损害**；不做无证据的批量改动 |
-
-### Batch 3.6（Regression Guard Completion，2026-09-18）
-
-> 输入集合**冻结**为两条已定位的 guard gap（N-4 / N-8）——都是
-> `ALREADY_FIXED_BEHAVIOR + REGRESSION_GUARD_MISSING`，**不是**新 bug。本批只补自动
-> 回归保护，**production behavior delta = 0**（唯一的生产文件改动是 `schema_drift.py`
-> 里那段"本表没有机器守卫"的失实注释）。
-> 完整证据见 [`docs/review/2026-09-18-Batch3.6-regression-guard-completion-执行记录.md`](docs/review/2026-09-18-Batch3.6-regression-guard-completion-执行记录.md)。
-
-| # | 状态 | 守卫位置 | 变异证据（红→绿，独立 worktree） |
-|---|---|---|---|
-| **N-4** | ✅ **GUARDED**（`1382ae43`） | `core/storage/tests/test_schema_drift.py::TestExpectedIndexOptionsPinnedToCode` | 历史 typo `idempotency_claims` / 任意假集合 / 索引名错拼 / 删整条 / 清空全表 / 代码侧改集合名 → 全红；改回绿 |
-| **N-8** | ✅ **GUARDED**（`6c559816`+`210e9c37`） | `core/input/tests/test_upload_dir_isolation.py` | `_images_dir()` 退回 import 期常量 → 3 条红（失败原因=文件落错目录，真实目录 delta 出现该 PNG）；改回绿 |
-
-**本批新登记（只记录，未修）**：**N-15**（选项表的 4 条 `unique` 覆盖缺口，见上表）。
-
-### 测试侧清理候选（Batch 3 审计登记，**本批未做**）
-
-| 项 | 判定 | 说明 |
-|---|---|---|
-| `core/tools/tests/mock_plugin.py`（173 行）+ `build_test_workflow_engine(use_mocks=…)` 支路 | **LIKELY_DEAD（MEDIUM）** | 7 个调用点 **7/7 显式 `use_mocks=False`**（`grep -c use_mocks=True` = 0），该支路从未执行。未达 `PROVEN_DEAD` 因为 e2e 层默认 skip、无运行时证据；且删除必须**原子**（连签名 + 7 处实参一起改）。下一批做 |
-| `Module/workflow_engine/tests/{infra,learning,safety}/__init__.py`（3 个 0 字节空包） | **LOW** | 目录内无任何测试、git 史无删除记录；留着无害（且是 pytest 包发现惯例），删了收益也近零 |
-| `MOCK_PLUGIN_MAP` | 同上（与 `use_mocks` 同一死支路） | — |
-
-### 有意保留（Batch 3 审计后仍 KEEP，附理由）
-
-| 项 | 判定 | 理由 |
-|---|---|---|
-| `AgentServer.run_repl`（0 代码消费者） | **KEEP_PUBLIC_API** | `CLAUDE.md`、`core/README.md`、`core/agent/README.md`、`agent.py` docstring、本文件共 8 处把它写成对外承诺；`--cli` 的真实入口是 `app.py::run_interactive`（**行为已分岔**：后者有 `wait_until_idle()`）。删它属架构决策，需 owner 先决定"两套 CLI driver"的去留 |
-| `CognitiveLoop` 的 `DEFAULT_CHARACTER_ID` | **KEEP_PUBLIC_API** | 被 `core/cognitive/README.md:69` 显式登记为公开常量（"供 agent 默认 binding 用"） |
-| `ToolAdapter.{resolve_llm_name, executing_now, history, capability_status}` | **REFACTOR_LATER** | adapter 上是 0 消费者（`core/debug/info.py` 读的是 `ToolManager`），但 `ToolAdapter` 是已文档化的稳定门面，且有测试对其赋值打桩（`test_auth.py:54`、`test_server.py:1177`）。批量收窄 public surface 需单独一批 + 全量回归 |
-| `ToolContext.services["_tool_names"]` | **KEEP_DYNAMIC** | 同族 `_tool_count`/`_fsm_state`/`_session_msg_count` 是活的 `ctx.get` 双端键；删哥哥留弟弟=静默降级不报错 |
-| `character/*/config.yaml` 的 `voice` / `appearance` | **KEEP_COMPAT** | 生产 0 读者，但注释与 `character/README.md` 显式登记为「占位 / 待启用」+ 未来用途明确 ⇒ 按 `P3-01-RESERVED` 判别标准属**预留**（appearance 与 voice 已补 `P3-01-RESERVED` 标记，避免下轮审计重复发现） |
-| `Module/config/preflight.py` 的三张 provider→env 表 | **REFACTOR_LATER** | 与 `providers.yaml` 的 `env_key`/`url_key` 语义重叠但**不等价**（gpt-sovits 用的是 url_key 不是 env_key）⇒ 天真 DRY 会改变行为 |
-| Mongo 的 `attachments.sha256` / `background_task_results.delivered_at` / `message_archive.metadata.incomplete` | **LIKELY_DEAD（不删）** | 三者皆 write-only，但**未连真实 Mongo 无法证明「旧记录还能读」**；按 Batch 3 规则不得判 `PROVEN_DEAD` |
-| `ConfigLoader(env_path=…)` 形参 | **LIKELY_DEAD（不删）** | 无生产调用方，但 Module 是库，无法证明仓外无调用方 |
-| `config.yaml::database.milvus_token` | **REFACTOR_LATER** | `secret=True` ⇒ loader 显式跳过 YAML（实测写 YAML 读回 `''`），**该行今天就不可能生效**；属环境/部署面，且 `docs/database-storage.md` 需同步 |
-
-## 模块化改进
-
-| 优先级 | 目标 | 说明 |
-|--------|------|------|
-| ~~低~~ ❌ | **`Module/tool/safety.py`（618 行）** | 评估结论：不拆 |
-
-## 多模态 Phase 2
-
-| 优先级 | 项目 | 说明 |
-|--------|------|------|
-| 中 | **AI → 用户图片输出** | 工具返回图片（WebFetch 截图、图片生成）+ LLM 生成图片 → OutputManager 广播 → 前端渲染。`ToolResult.images: list[MediaItem]` 已设计，需打通 CognitiveLoop → session → 前端链路 |
-| 低 | **文件支持** | `type: "file"` content part 实现（上传 + LLM context + 前端渲染） |
-| 低 | **音频/视频 Part** | `VideoPart`/`AudioPart` 已定义 dataclass，需实现全链路 |
-
-## 健壮性 & 架构
-
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| 低 | ~~`.env` 仍含真实 API Key~~ **(2026-09-11 复核降级)** | 原记为「高」不准确。实测：`.env` 被 `.gitignore` 覆盖、**从未进入 git 历史**（`git log --all -- .env` 为空）、全仓 grep 无真实密钥模式——本地文件存 key 属正常做法，无泄漏面。**残留真问题**：`.env.example` 落后于实际（缺 `AGENT_ACCESS_TOKEN`/`ATTACHMENT_SIG_SECRET`/`MIMO_API_KEY`/`MIMO_URL`/`MINIMAX_API_KEY`/`GPT_SOVITS_URL`/`SENSEVOICE_URL`/`MONGODB_URI`/`ALLOW_INSECURE_REMOTE` 共 9 键），换机器照 `setup.sh` 走会踩空 |
-| ✅ | 单 Session 多客户端共享 | 批次 3 多会话已实现：`SessionManager` 会话缓存池 + `/api/sessions` CRUD/activate；`"default"` 仅作缺省活动会话，非硬编码 |
-| ✅ | 会话管理 | `/api/sessions` 提供新建/切换/列出/历史/搜索/删除（`session_routes.py`）；WS `activate_session` 切 active + 重发回放 |
-| **高** | **无数据库迁移机制** | MongoDB 索引在 `connect()` 时 ad-hoc 创建，Milvus collection 硬编码创建。若字段/索引/维度需变更，无 upgrade path。当前迁移靠 `scripts/` 下一次性脚本（`backfill_message_ids.py`、`backfill_character_snapshots.py` 等），无常驻/可重放机制。对应架构评估 `ARCH-INC-P1-04` |
-| ✅ | ~~`memory_repo.clear_all()` 破坏性操作无安全守卫~~ **(2026-09-11 已修)** | 已加类型化确认守卫 `core/storage/destructive_guard.py`：三个 debug 批量清空端点（`/debug/api/{ltm,archive,sessions}`）现要求 `?confirm=<目标资源名>`，缺省/不符即 400；同时修掉「存储不可用却静默返回成功」（`_db is None` 此前直接 return/return 0，UI 会显示「已清空 N 条」而实际未动）。**新增待决策**：`scripts/clean_db.py` 走 `LongTermMemory()` 临时 repo 分支 → 清的是 **v1** `long_term_memory`，而生产写 **v2** `long_term_memory_v2`（stage-f `30471524` 起）——即该脚本**从不触碰真实记忆**。修它会令 `make clean-db` 从空转变为真的抹库，属破坏范围变更，未擅自改，已在代码内标注 |
-| ✅ | ~~后台协程所有权与退出收尾分散~~ **(2026-09-12 已修，`ARCH-INC-P2-03`)** | 全仓 43 个站点逐一普查后，定点修复 7 处真实缺陷：① `SessionManager.evict_if_needed` 逐出 save 的 Task 被丢弃且会话随即弹出缓存池 → 进程退出丢最近对话尾部；② `SetReminderPlugin` 提醒任务完全无落地（用户已收到「已设置提醒」却永远等不到）；③ `CharacterRuntimeRegistry` release/LRU 逐出 flush 无强引用无观察，`close_all()` 看不到已弹出的 runtime；④ `LLMAdapter.switch_model` 旧后端 close 被丢弃（只关当前后端）；⑤ dictation STT 快照 backend 的 close 无引用（独立 httpx client 泄漏）；⑥ `Agent.stop()` 不 await 被取消的回合，而 `process()` 吞掉 CancelledError 继续写终态——下一步却已关 Mongo/repo；⑦ `_process_events` 分发链异常会静默杀死 EventBus 消费者（此后 Agent 收不到任何输入）。原语 `Module/_common/task_scope.py::{AsyncTaskScope,cancel_and_drain}`；门禁 R6（裸 `create_task` 必须逐点登记所有权，按**期望条数**核对）。同时修 `ToolManager` 两处：`_tasks` key 在 `call_id` 为空时碰撞（并发子智能体互相覆盖 → 取消不到）、`shutdown()` 只 cancel 不 drain 就 teardown 插件 |
-| 低 | **依赖声明宽范围 vs 实际精确锁** | `requirements*.txt` 声明文件仍允许宽范围（pydantic/openai/torch 等无上限），但实际部署边界已由 `environment.lock.yml` 收敛（conda 30 + pip 133，全部 `==` 精确锁定，未启用逐包 hash；`make lock-env` 重生成 / `make audit` 漏洞扫描）。风险措辞：声明文件宽范围 + 锁文件精确边界，两者并存；上游 breaking change 需 `make lock-env` 重锁后验证 |
-| 低 | **未来项：依赖管理迁移 uv** | **2026-08-11 记录（F2 拍板）**：当前统一 conda（环境锁 + 可复现），暂不迁移。后续熟悉 uv 后评估迁移（uv 锁文件更轻、安装更快、CI 更干净）；迁移前提：uv lock 覆盖全部 runtime+dev 依赖 + CI 切 uv clean-room + 对比 conda 环境差异，迁移后再删 conda 锁文件 |
-| 低 | **`# type: ignore` + `Any` 类型清理** | **# type: ignore**：生产代码 32 处→已消除 9 处→剩余 23 处（二/三梯队）。测试文件 IDE 类型错误已批量修复 ~155 处（2026-07-29/30：NewType 包装、ToolAdapter 替换、type: ignore 补充）。**`Any` 类型替换**：core/ 下 63 处→已消除 ~44 处（属性声明/task/emit 签名/mailbox/_process_events）。**剩余不可消除**：`dict[str, Any]` JSON 容器（~12 处）、流式协议 `**raw_params: Any`+`AsyncIterator[Any]`（5 处）、`Coroutine[Any, Any, Any]` 通用协程（3 处）、`_embed_task: Task[Any]`（2 处）。详见 `docs/completed/2026-07.md` 2026-07-29 第一、三条 + 2026-07-30 第一条。 |
-
-## 多前端支持（2026-08-01 评估，场景 A：新前端连运行中的服务端）
-
-**评估结论：不加中间层（YAGNI）。** `core/input/` 已是传输适配层（WS `/ws` + HTTP `/api/*` + Debug `/debug/api/*`），Agent 公开接口已是服务层（ws_handler 全部走公开接口），WS 协议 UI 无关（20+ 语义事件，非 DOM 操作）——Qt 等新前端可直接连同一 `/ws`。CLI 走进程内驱动（`run_repl` 不经过网络层，两套 driver 是已接受的现状）。若做 Qt 前端，需先补齐协议契约成熟度：
-
-| 优先级 | 事项 | 说明 |
-|--------|------|------|
-| ✅ | **协议契约语言中立化** | `frontend_contract` 可执行 Pydantic 模型 → 生成 `contract.schema.json`（JSON Schema）+ `contract.raw.ts`（raw wire 快照）+ `contract.generated.ts`；零依赖，语言中立，`make check-types` 漂移门禁（CI 强制） |
-| ✅ | **协议版本化** | 协议 v2：`frontend_contract/version.py` 单源 `TRANSPORT_VERSION="2"` / `PROTOCOL_VERSION="2.0"`，握手头携带；服务端升级不静默破坏旧客户端 |
-| ✅ | **多 session / 身份** | 批次 3 多会话 + v2 显式 `conversationId`（`resolve_session` 校验存在，禁止懒创建幽灵会话） |
-| ✅ | **公开契约文档** | `docs/electron-backend-protocol-v2.md`（WS 消息 + REST + 错误码 + 错误信封）+ `docs/archive/frontend-handoff-v2/traces/`（契约源 golden frames） |
-
-> 触发条件：确定做 Qt 客户端（或任一第二前端）时再动，现仅记录评估结论。
-
-## 来自 code-review-report-2026-06-22 的遗留问题
-
-### 需独立 spec
-
-| 类别 | 数量 | 说明 |
-|------|------|------|
-| 无障碍 (a11y) | 12 | `aria-*`、颜色对比度、`:focus-visible`、键盘导航、toggle 非 button |
-| CSP/安全头 | 2 | CDN `integrity`、Content-Security-Policy |
-| ScriptProcessorNode→AudioWorklet | 1 | 麦克风管线换新 API |
-
-### 中低危（待排期）
-
-| 问题 | 文件 |
-|------|------|
-| llm_adapter close fire-and-forget | `core/adapter/llm_adapter.py:140-143` |
-| openai_tts test() 假阴性 | `tts/openai_tts.py:73` |
-| TTS 取消+HTTP 流清理交互可能泄漏 | `tts/gpt_sovits.py:134-150` |
-| 缺失测试覆盖 | DescribeImagePlugin (0)、CognitiveLoop 边界、OutputManager 错误隔离 |
-
-## 测试补充
-
-- `core/input/audio_buffer.py` (3)
-- `core/input/server.py` (4)
-- `Module/output/console.py` (1)
-- 并发压力测试 (4): 多 WS / 快速连续消息 / STT+文本同时
-- 上述覆盖率缺口中标记为"关键"和"高"的路径
-
-> 已完成的工作按月归档在 [docs/completed/](docs/completed/)。
+> 与 [backend 架构设计](docs/2026-08-29-task-system-backend-architecture-design.md)（三实体目标架构 + 分批 A~E + 待决策 TSA-P01~P10/BE-D01~D13）。
+> 暂缓期内不把普通工具调用并入 WorkflowEngine、不创建产品 TaskRecord、不动现有 wire 契约、不实现任务中心 REST/WS API。
+> 恢复激励点：需要可查询/可控/可恢复展示的任务历史时，从批次 A（公共契约 + 持久读模型）启动。→ 见 `FEAT-16` / `PD-9`。
+
+> **`core/tool_runtime` 预留能力保留（2026-09-12）**：`depends_on` / `children_ids` /
+> `run_in_background` / `progress` / checkpoint 持久化 / `dispatch_background()` /
+> `new_background()` 全部保留（评估稿 §ARCH-INC-P1-01 批次 B 的删除计划**作废**）。
+> P1-01 剩余范围收窄为命名与概念，且改名已于 2026-09-13 完成（checkpoint 反序列化兼容旧键
+> `parent_id`）。见 `core/tool_runtime/README.md`。
+
+> **剩余桩代码一律保留（2026-09-12）**：「零引用 ≠ 该死」。保留项统一带可 grep 标记
+> **`P3-01-RESERVED`**，后续引用审计遇到即跳过。判别标准：**预留** = 有明确未来用途 + 注释；
+> **残留** = 已被取代或注释与代码不符。清单见 [`docs/architecture/dead-code-review-checklist.md`](docs/architecture/dead-code-review-checklist.md) §9。
+
+> **CI / 测试分层**：`external` marker 取代 `--ignore`（F1）；`test-quick`/`test-normal` 不再跳过任何目录；
+> `real_mongo` 走容器（push-only + self-hosted）；`make test-full` 无自动执行点（见 `docs/ci.md`）。
+
+---
+
+> 历史正文（决策过程、逐批完成记录、详细证据）按 §5 索引到 `docs/review/`、`docs/completed/`
+> 与 `git show 69f2e5a9:todo.md`。**本文件只承载当前状态**，不再累积过程叙事。
