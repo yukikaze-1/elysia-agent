@@ -361,6 +361,11 @@ semantics / prompt budget cross-path / provider portability / error protocol ext
 | **N-6** | `docs/architecture/invariants.md:162` | §7 关于 `test_doc_counts` 的那行**已过期**：仍说"门禁不含根 README、README 写 39"，而这两点已被 `0937e85a` 修掉（§7 登记 `a7ae2cbf` 与修复相隔 **6 秒**，未回头更新） | 文档准确性；本批已记账 |
 | **N-7** | `scripts/clean_db.py:95` | docstring 说常量「列在这里是给测试当回归守卫用」，而真正的守卫（`core/tests/test_clean_db.py`）**不读它** | 仅措辞失实；保护属性本身已被守卫（B3-CB-4 判假阳性的原因） |
 | **N-8** | B3-CB-7 的修复**缺回归守卫** | `_images_dir()` 若被改回 import 期常量，**整套图片测试仍然全绿**（pre/post 都绿——这正是它当初能潜伏的原因）。建议加"晚设 `ELYSIA_PATH_DATA_UPLOADS_IMAGES` 后 `_images_dir()` 必须跟随"的断言 | 属补守卫，非 correctness 缺陷本身 |
+| **N-10** | `Module/config/preflight.py::_check_llm_env` + `Module/llm/registry.py` | `gemini/<model>` 设了 key+URL 时预检**全绿**，运行期 `LLMFactory.create` 却**无条件** `NotImplementedError`（STT 侧早有 `_STT_STUB_PROVIDERS`，LLM 侧没有） | **既有**（非本批引入）；属补"未实现 provider"冻结表 |
+| **N-11** | `core/profile/profile_store.py::connect` / `_load_from_file` | `except Exception` 吞掉一切——修前正是它把"被污染记录"变成**静默重置为 bootstrap** | 既有 fail-closed 取舍；改动需先定"装载失败该不该自杀" |
+| **N-12** | `GET /api/me` + `pronouns: ""` | 存量文档若是空串 pronouns，GET 仍 500 | **既有且不可达**（契约 `_text()` 拒空串，仓内无写入者） |
+| **N-13** | `core/storage/schema_drift.py` `EXPECTED_INDEX_OPTIONS` | **表级** AST 守卫仍缺（本批只补了 `idempotency` 的定点回归 + 改正了失实注释；把整表换成垃圾仍全绿） | 属门禁建设，非键名缺陷本身 |
+| **N-14** | `Module/config/tests/test_preflight.py` 两条弱用例 | `test_minimax_key_present_passes` 随 ambient `.env` 走两条不同代码路径（哪条都没钉住）；`test_c1_llm_url_source_is_the_runtime_default` 只测 helper | 测试加固；本批已把**造成漏报**的那条补成 PRE_FIX_RED |
 | **N-9** | 多处模块级 `ProjectPath...resolve()` 常量 | 与 B3-CB-7 同形（import 期求值、可被测试 env 改写）：`core/tools/vision/plugin.py:23`、`core/storage/secret_store.py:46`、`core/providers/custom_providers.py:16`、`core/utils/log_setup.py:16` 等 | 同形但**未被证明有实际损害**；不做无证据的批量改动 |
 
 ### 测试侧清理候选（Batch 3 审计登记，**本批未做**）

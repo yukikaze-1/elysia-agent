@@ -22,7 +22,9 @@
 ## 边界（刻意的）
 
 - 只覆盖 pronouns 的 write/read 对称与其相邻语义（清空 vs 缺字段）。
-- 不覆盖 `preferredAddress`/`defaultCharacterId`（同契约可空，但那是另一条 finding）。
+- **不**覆盖 `preferredAddress`/`defaultCharacterId`：它们本来就是 `str | None`，
+  null 端到端正常（实测三字段同时 PUT null → 200），**不存在**第二条同类 finding。
+  这恰好反证根因是**特定于 pronouns 的域模型不变量缺失**，而非通用 mapper 不对称。
 """
 
 from __future__ import annotations
