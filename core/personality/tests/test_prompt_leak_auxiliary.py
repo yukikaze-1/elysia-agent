@@ -3,7 +3,9 @@
 注意：
 - SpeakingStyleEdit 生产路径是 pm.render()（该模板不含 macro），不是 render_macro()。
 - 本文件在 core/personality/tests/，不依赖 core/prompt/tests/conftest 的夹具
-  （pytest conftest 目录作用域隔离），词条从 leak_lexicon 导入。
+  （pytest conftest 目录作用域隔离）；词条**内联**在本文件里，不跨目录导入词表
+  （`core/prompt/tests/leak_lexicon.py` 已随 Batch 3.2 删除——它全仓零 import，
+  原文这句"词条从 leak_lexicon 导入"与实际代码不符）。
 """
 
 import pytest
