@@ -60,7 +60,12 @@ EXPECTED_INDEX_OPTIONS: dict[str, dict[str, dict[str, object]]] = {
     "characters": {"character_id_1": {"unique": True}},
     "desktop_calls": {"ttl_expires_at_1": {"expireAfterSeconds": "DESKTOP_CALLS_TTL_SECONDS"}},
     "generations": {"ttl_expires_at_1": {"expireAfterSeconds": "GENERATIONS_TTL_SECONDS"}},
-    "idempotency_claims": {"expires_at_1": {"expireAfterSeconds": 0}},
+    # 键必须是**真实集合名** `idempotency`（`idempotency_repo.COLLECTION`）。曾误写成
+    # 从未存在的 `idempotency_claims`：`_option_mismatches` 按集合名取值，键不存在即
+    # 该集合**一个选项都不比**，而它的索引名仍在 EXPECTED_INDEXES 里被扫描——退化成
+    # "扫了、没比、报健康"（B3-CB-2）。回归守卫见
+    # `test_schema_drift.py::TestIndexOptionConflicts::test_idempotency_ttl_option_is_gauged`。
+    "idempotency": {"expires_at_1": {"expireAfterSeconds": 0}},
     "user_identity_profiles": {"user_id_1": {"unique": True}},
 }
 

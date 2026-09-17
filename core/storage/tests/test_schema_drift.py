@@ -309,13 +309,26 @@ class TestIndexOptionConflicts:
 
     @pytest.mark.asyncio
     async def test_ttl_present_matches(self):
-        """TTL 只比"有没有"，不比秒数——调大保留期属正常改动，不该报漂移。"""
+        """TTL 只比"有没有"，不比秒数——调大保留期属正常改动，不该报漂移。
+
+        模拟的**落库形态从声明派生**（`EXPECTED_INDEX_OPTIONS`）：声明为 TTL 的索引
+        就给一个 TTL。此前这里靠 `n.startswith("ttl_")` 判断，而
+        `idempotency.expires_at_1` **不以 `ttl_` 开头**——于是修正 B3-CB-2 的键之后
+        （该集合从此真的被比对），这条用例会因为 mock 自己没给 TTL 而变红：
+        测试与被测对象各持一份真相。派生式写法则对未来新增的 TTL 索引自动成立。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
         backend = MagicMock()
         backend.list_indexes = AsyncMock(side_effect=lambda coll: [
             {"name": _ID_INDEX},
             *[
                 {"name": n,
-                 **({"expireAfterSeconds": 999999} if n.startswith("ttl_") else {}),
+                 # 声明了 TTL 的索引，库里就有 TTL（秒数刻意与声明不同：
+                 # 只比"有没有"，不比秒数）
+                 **({"expireAfterSeconds": 999999}
+                    if "expireAfterSeconds"
+                    in EXPECTED_INDEX_OPTIONS.get(coll, {}).get(n, {}) else {}),
                  **({"unique": True} if n == "character_id_1" and coll == "characters" else {}),
                  **({"unique": True} if n == "attachment_id_1" and coll == "attachments" else {}),
                  **({"unique": True} if n == "instance_id_1" and coll == "character_instances" else {}),
@@ -353,6 +366,59 @@ class TestIndexOptionConflicts:
         with caplog.at_level(logging.ERROR):
             log_schema_drift_report(report)
         assert any("选项冲突" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_idempotency_ttl_option_is_gauged(self):
+        """`idempotency.expires_at_1` 的 TTL 选项必须真的被比对（B3-CB-2）。
+
+        ## 这条用例钉的是什么
+
+        `EXPECTED_INDEX_OPTIONS` 的键曾写成**从未存在**的 `idempotency_claims`
+        （真集合名是 `idempotency`，见 `idempotency_repo.COLLECTION`）。后果不是
+        "少报一条"那么轻：`_option_mismatches` 用 `expected.get(collection, {})`
+        取值，键不存在 ⇒ 该集合**一个选项都不比**，而它的索引名照样出现在
+        `EXPECTED_INDEXES` 里被扫描 —— 即"扫了、没比、报健康"。这正是 S2-B1 要
+        防的那类假保障（`option_conflicts` 的 ERROR 级解释与处置指引也一并失效）。
+
+        ## 为什么用派生式 mock 而不是照抄 `ttl_` 前缀特例
+
+        本文件既有的 fixture 靠 `n.startswith("ttl_")` 判断"库里这份索引带 TTL"，
+        而 `expires_at_1` **不以 `ttl_` 开头**。若新 fixture 照抄该特例，修好键之后
+        这条用例会因为 mock 自己没给 TTL 而变红——测试与被测对象各持一份真相。
+        故这里从 `EXPECTED_INDEX_OPTIONS`（**声明本身**）派生 mock 的落库形态：
+        声明有 TTL 的就给 TTL，唯独把 `expires_at_1` 的 TTL 摘掉来制造冲突。
+
+        变异验证：把 `schema_drift.py` 的键退回 `idempotency_claims` → 本用例红
+        （无法构造出冲突，`option_conflicts` 为空）；改回 `idempotency` → 绿。
+        """
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        declared_ttl = EXPECTED_INDEX_OPTIONS["idempotency"]["expires_at_1"]
+        assert "expireAfterSeconds" in declared_ttl, (
+            "本用例的前提是 idempotency.expires_at_1 被声明为 TTL 索引")
+
+        def _indexes(coll: str) -> list[dict]:
+            out = [{"name": _ID_INDEX}]
+            for name in EXPECTED_INDEXES[coll]:
+                want = EXPECTED_INDEX_OPTIONS.get(coll, {}).get(name, {})
+                idx: dict = {"name": name}
+                if want.get("unique"):
+                    idx["unique"] = True
+                # 只在 idempotency 的 expires_at_1 上省略 TTL —— 制造"同名不同选项"
+                if "expireAfterSeconds" in want and name != "expires_at_1":
+                    idx["expireAfterSeconds"] = 999999
+                out.append(idx)
+            return out
+
+        backend = MagicMock()
+        backend.list_indexes = AsyncMock(side_effect=_indexes)
+        report = await check_schema_drift(backend)
+
+        assert "idempotency" in report.option_conflicts, (
+            "idempotency 的索引选项未被比对——EXPECTED_INDEX_OPTIONS 的键与"
+            f"真实集合名不符。实际 option_conflicts={dict(report.option_conflicts)}")
+        assert "expires_at_1" in report.option_conflicts["idempotency"]
+        assert "选项冲突" in report.summary()
 
 
 # ══════════════════════════════════════════════════════════════════
