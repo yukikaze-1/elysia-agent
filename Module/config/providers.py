@@ -27,7 +27,7 @@ def _load() -> dict:
 def load_provider_defaults(module_name: str) -> dict:
     """返回指定模块的 provider 默认配置。
 
-    module_name: "llm" | "tts" | "stt" | "embedding" | "database"
+    module_name: "llm" | "tts" | "stt" | "embedding"
     返回: {provider_name: {base_url, env_key, ...}}
     """
     return dict(_load().get(module_name, {}))

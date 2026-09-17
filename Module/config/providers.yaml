@@ -139,9 +139,3 @@ embedding:
     base_url: ""
     url_key: "OPENAI_API_BASE"
     env_key: "OPENAI_API_KEY"
-
-database:
-  milvus:
-    base_url: ""
-  mongodb:
-    base_url: ""
