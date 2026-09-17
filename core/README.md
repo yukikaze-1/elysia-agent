@@ -40,7 +40,7 @@ CognitiveLoop (ReAct 调度 + inner_voice 状态机)
     ├── CharacterEngine (合并 EmotionEngine，关键词 → mood → expression)
     ├── MemoryConsolidator (对话 → LLM 提取 → LTM)
     ├── MemoryReflector (定期 LTM 去重)
-    ├── TaskScheduler (Worker Pool → 工具执行)
+    ├── ToolCallDispatcher (Worker Pool → 工具执行)
     └── TTSStreamManager (分句 → 合成 → 播放)
 ```
 
@@ -54,7 +54,7 @@ Agent.__init__()
   ├── CharacterEngine
   ├── PromptAssembler (12 sections)
   ├── ToolAdapter (tool plugin loading)
-  ├── TaskScheduler
+  ├── ToolCallDispatcher
   ├── IdleMonitor
   └── OutputManager
 Agent.start()
@@ -62,7 +62,7 @@ Agent.start()
   ├── Embedding preload (background, 10s timeout)
   ├── ToolAdapter.load_all()
   ├── IdleMonitor.start()
-  ├── TaskScheduler.start()
+  ├── ToolCallDispatcher.start()
   ├── EventBus loop start
   ├── TTS backend test (conditional)
   └── WorkflowEngine + DelegationPreparer（mailbox 轮询）
@@ -130,9 +130,9 @@ ReAct 调度器 + inner_voice 状态机（`loop.py`），是认知流水线的�
 
 关键方法：`start()`, `stop()`, `touch()`, `_check_proactive()`
 
-#### TaskScheduler (`task/scheduler.py`)
+#### ToolCallDispatcher (`tool_runtime/scheduler.py`)
 
-Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`dispatch_tool_calls()` 将 tool_call 列表封装为 `Task` 提交到优先队列。支持 retry（2 次，指数退避），timeout（60s），INTERRUPT 时级联 cancel（Future 双向绑定）。`_prune_loop()` 定期清理终态 task。checkpoint 持久化到 `data/scheduler_checkpoint.json`。
+Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`dispatch_tool_calls()` 将 tool_call 列表封装为 `QueuedToolCall` 提交到优先队列。支持 retry（2 次，指数退避），timeout（下限 60s，尊重插件自己声明的 `request_timeout`），INTERRUPT 时级联 cancel（Future 双向绑定）。`_prune_loop()` 定期清理终态 task。checkpoint 持久化到 `data/scheduler_checkpoint.json`（P3-01-RESERVED，无生产调用方）。
 
 关键方法：`start()`, `stop()`, `dispatch_tool_calls()`, `cancel_all()`
 
@@ -149,7 +149,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `utils/` | 通用工具：`new_message_id()` 消息 ID 生成 + `set_request_id()`/`get_request_id()` ContextVar + `log_conversation()` 对话日志 + `content_text_from_content()`/`MessageObj` 文本提取（自 core/text 迁入）。详见 [`utils/`](utils/) |
 | `debug/` | Debug 面板数据聚合包：`DebugInfo` dataclass 涵盖 FSM（含 mood）、IdleMonitor、Session、LTM、Token、Tool、Prompt/Response recorder、Consolidator（含 buffer）、MemoryReflector、Character Reflector、CharacterEngine 等所有子系统状态。`collect()` 遍历 Agent 聚合数据，前端 16 面板。`PromptRecorder`/`ResponseRecorder` 环形缓冲区（容量 20），捕获 LLM 调用完整 messages/tools/回复/inner_voice，供 debug 面板查看。详见 [`debug/`](debug/) |
 | `monitoring/token_tracker.py` | Token 消耗追踪：`record()` 记录每次 LLM 调用的 token usage，`get_session_stats()` 聚合统计。支持 MongoDB 持久化和 OutputManager 广播 |
-| `task/` | 任务子包：`task.py`（Task 数据模型：`Task` dataclass + `TaskType`/`TaskStatus` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和序列化）+ `scheduler.py`（TaskScheduler Worker Pool，N=5，dispatch_tool_calls/cancel_all/prune_loop） |
+| `tool_runtime/` | 即时工具调用运行时（ARCH-INC-P1-01 改名，原 `core/task`）：`task.py`（`QueuedToolCall` 数据模型 + `QueuedToolCallKind`/`QueuedToolCallState` 枚举 + `asyncio.Future` 双向绑定。支持 retry 和 checkpoint 序列化）+ `scheduler.py`（`ToolCallDispatcher` Worker Pool，N=5，dispatch_tool_calls/cancel_all/prune_loop） |
 | `schema/` | 共享类型包：`AgentState`、`EventData` 判别联合（5 种事件类型）、多模态 Part、`ToolCall`、`ExtractedMemory`/`CompareAction` 判别联合、`MemoryReflectorState`/`ReflectorActions`、消息、token、character/mood 状态等，含 `adapters/` 适配层。16 个 `.py` 文件（含 `__init__.py`）+ `adapters/` 适配层 |
 | `version.py` | 版本号单一事实来源：`__version__` + `get_build_sha()`/`build_server_version()`（server_info.server_version 用） |
 | `__init__.py` | 包标记，当前为空 |
@@ -170,7 +170,7 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `core/network/` | 网络运行时基础设施（`rate_limiter.py`，CORE-MOD-P2-01 从 input 迁入） | [network/README.md](network/README.md) |
 | `core/input/` | 输入层：WebSocket + HTTP server（`server.py`/`ws_handler.py`/`ws_v2.py`/`session_routes.py`/`attachment_routes.py`/`voice_sessions.py`/`audio_buffer.py`/`sticker_registry.py`/`wakeword.py`/`tts_profile.py`/`debug_routes/`） | [input/README.md](input/README.md) |
 | `core/personality/` | 性格引擎：`CharacterEngine`（4 层模型：L1 Core/L2 Self/L3 State/L4 Mood）、`CharacterReflector`（缓冲 50 对消息 → LLM 反思 → 更新 L3 State） | [personality/README.md](personality/README.md) |
-| `core/task/` | 任务子包：`task.py`（Task 数据模型 + TaskType/TaskStatus 枚举 + Future 绑定）+ `scheduler.py`（TaskScheduler Worker Pool） | [task/README.md](task/README.md) |
+| `core/tool_runtime/` | 即时工具调用运行时：`task.py`（`QueuedToolCall` + `QueuedToolCallKind`/`QueuedToolCallState` 枚举 + Future 绑定）+ `scheduler.py`（`ToolCallDispatcher` Worker Pool） | [tool_runtime/README.md](tool_runtime/README.md) |
 | `core/text/` | 文本流处理管线：`tags`（标签注册表）+ `tokenizer`（结构感知切分）+ `splitter`（分句保护）+ `parts`（TextPart 构建）+ `stream_processor`（协调器） | [text/README.md](text/README.md) |
 | `core/utils/` | 通用工具：`new_message_id()` 消息 ID 生成 + `set_request_id()`/`get_request_id()` ContextVar 请求追踪 + `log_conversation()` 对话日志 + `content_text_from_content()`/`MessageObj` 文本提取 | [utils/README.md](utils/README.md) |
 | `core/debug/` | Debug 仪表板数据层：`DebugInfo`（16 panel 聚合）+ `PromptRecorder`/`ResponseRecorder`（LLM 交互录制） | [debug/README.md](debug/README.md) |
@@ -273,7 +273,7 @@ Agent 生命周期中的关键扩展点：
 | `memory/consolidator.py` | 366 | 核心组件 |
 | `prompt/prompt_assembler.py` | 186 | 核心组件 |
 | `monitoring/idle_monitor.py` | 133 | 核心组件 |
-| `task/scheduler.py` | 510 | 核心组件 |
+| `tool_runtime/scheduler.py` | 802 | 核心组件 |
 | `config/character_config.py` | 157 | 支撑模块 |
 | `config/app_config.py` | 122 | 支撑模块 |
 | `text/` | 6 文件 (1519) | 支撑模块 |
@@ -281,7 +281,7 @@ Agent 生命周期中的关键扩展点：
 | `debug/` | 4 文件 (631) | 支撑模块 |
 | `utils/log_setup.py` | 215 | 支撑模块 |
 | `monitoring/token_tracker.py` | 218 | 支撑模块 |
-| `task/task.py` | 222 | 支撑模块 |
+| `tool_runtime/task.py` | 237 | 支撑模块 |
 | `input/debug_routes/` | 7 文件 (1075) | 支撑模块 |
 | `schema/` | 目录（16 .py + adapters/） | 支撑模块 |
 | `desktop/bridge.py` | 488 | 支撑模块 |

@@ -26,8 +26,8 @@ core/character/
 │   └── instances.py      #   实例/状态写链：reset_evolution / reconcile / 传播 / pending / busy 判定
 ├── builtin_source.py     # BuiltinCharacterSource — 从 character/{name}/config.yaml 构建内置角色
 ├── catalog.py            # CharacterCatalog — 只读内置角色目录（无 Mongo 也能列/校验）+ get_revision
-├── runtime.py            # CharacterRuntime — 单实例运行时容器（快照 + 懒 engine + memory_view/consolidator/reflector 持有 + lock/dirty）【阶段 E/F 激活】
-├── registry.py           # CharacterRuntimeRegistry — LRU 缓存 + _busy/_session_binding_index + flush_all/close_all【阶段 E 激活】
+├── runtime.py            # CharacterRuntime — 单实例运行时容器（快照 + 懒 engine + memory_view/consolidator/reflector 持有 + lock/lease 计数）【阶段 E/F 激活】
+├── registry.py           # CharacterRuntimeRegistry — LRU 缓存（受保护状态 = _busy）+ release/close_all（含 flush 任务 drain）【阶段 E 激活】
 └── tests/
     ├── test_models.py
     ├── test_builtin_source.py
@@ -78,7 +78,7 @@ core/character/
 
 ### CharacterRuntime（阶段 E 激活，[runtime.py](runtime.py)）
 
-单实例运行时容器，装载 `Definition`/`Revision`/`UserIdentity` 快照 + `CharacterRuntimeState`。**M3：engine 懒建为 per-instance**（`ensure_engine(factory)` 真绑定，非 M1/M2 占位；`bind_engine` 注入）；`snapshot_state()` 返回真实 `CharacterRuntimeState`（deep copy）；`flush()` 经 `persist_fn` 把 `runtime.state` 持久化到 `CharacterInstance.state`。持有 per-instance `Lock` + `dirty`/`stateVersion`。**状态权威：`runtime.state`**——engine 构造时传 `runtime.state`（与 runtime 共享同一引用），`_apply_mood`/`_finalize_turn` 写/读 `engine.state` 即 runtime.state（F1-b 正确语义：engine per-instance 永不换绑消除跨会话污染风险源）。
+单实例运行时容器，装载 `Definition`/`Revision`/`UserIdentity` 快照 + `CharacterRuntimeState`。**M3：engine 懒建为 per-instance**（`ensure_engine(factory)` 真绑定，非 M1/M2 占位；`bind_engine` 注入）；`snapshot_state()` 返回真实 `CharacterRuntimeState`（deep copy）；`flush()` 经 `persist_fn` 把 `runtime.state` 持久化到 `CharacterInstance.state`。持有 per-instance `Lock` + generation/破坏性变更 lease 计数（`_busy`）+ `stateVersion`。**状态权威：`runtime.state`**——engine 构造时传 `runtime.state`（与 runtime 共享同一引用），`_apply_mood`/`_finalize_turn` 写/读 `engine.state` 即 runtime.state（F1-b 正确语义：engine per-instance 永不换绑消除跨会话污染风险源）。
 
 **阶段 F（记忆 v2 隔离）**：`CharacterRuntime` 新增三持——`memory_view`（`ScopedLongTermMemory | None`）、`consolidator`（`MemoryConsolidator | None`）、`reflector`（`MemoryReflector | None`）。**已确认决策 #3**：这三个组件由 `agent._make_runtime` 在构造 runtime 时经 `for_scope()` 构造并挂入（`memory_view = self._long_term.for_scope(MemoryScope(user_id, instance_id))`；consolidator/reflector 各持 scoped view），`CharacterRuntime` 仅持有——scope 在视图创建时固定，调用点无法绕过。consolidator/reflector per-runtime 化后**无全局单例**；`_prepare_turn` 经 registry 解析当前 runtime 的组件，产品路径一律经 `_finalize_turn` 局部捕获（anti-race，首个 await 前固化，避免下一 turn 换绑导致错 scope 污染）。
 
@@ -86,13 +86,12 @@ core/character/
 
 ### CharacterRuntimeRegistry（阶段 E 激活，[registry.py](registry.py)）
 
-`get(instance_id, factory)` 按 instance_id 解析/懒建 per-instance runtime（factory 从 agent 注入，构造 instance/defn/revision/user_identity + 经 `CharacterInstanceRepository.get(instance_id)` 加载 `CharacterInstance.state`；为空时空态起步）。LRU（`max_size=32`）驱逐前检查受保护状态：
+`get(instance_id, factory)` 按 instance_id 解析/懒建 per-instance runtime（factory 从 agent 注入，构造 instance/defn/revision/user_identity + 经 `CharacterInstanceRepository.get(instance_id)` 加载 `CharacterInstance.state`；为空时空态起步）。LRU（`OrderedDict` + `move_to_end`，`max_size=32`）驱逐前检查受保护状态：
 
-- `dirty`：未 flush 不驱逐。
-- `_busy`：生成/反思/压缩中不驱逐（M3 预留）。
-- `_session_binding_index`：仍被 SessionManager 缓存池中 live session 绑定的 instance 不驱逐（`set_session_binding_index` 注入索引 + `release` 在 session 逐出后清）。
+- `_busy`：generation / 反思 / 压缩在途（含 tail lease）不驱逐；全部受保护时提前退出，不强制牺牲。由 `CharacterRuntime` 的 lease 维护（BE-STAGEH-01 起）。
+- **驱逐前必 flush**：选中者先调度 `rt.flush()` 落库（`_flush_tasks` scope 持有，`close_all()` 时 drain）——`flush()` 无条件经 `persist_fn` 落库，所以没有"未落库就丢"的窗口。**注意**这不是"dirty 则不驱逐"，而是"驱逐一定伴随落库"。
 
-另有 `mark_busy`/`invalidate`/`flush`/`flush_all`/`close_all`（关机 flush 全部走这里，A1——非单 engine）。
+另有 `mark_busy`（test-only 的绕过 lease 显式覆盖口）/`invalidate`/`release`/`close_all`（关机 flush 全部走这里，A1——非单 engine）。
 
 ### CharacterInstanceRepository（阶段 E 新增，[core/storage/character_instance_repo.py](../storage/character_instance_repo.py)）
 

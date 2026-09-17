@@ -39,7 +39,7 @@ WorkflowEngine 是独立于 CognitiveLoop 的后台任务编排引擎：LLM 通�
 | 调用方 | CognitiveLoop 直接使用 | 通过 `submit_task` 工具委派 |
 | 取消传播 | Future 双向绑定 → INTERRUPT 精准取消 | 任务级 pause/cancel/submit_approval |
 
-两者不重复：TaskScheduler 管「一个工具调用如何并发跑」，WorkflowEngine 管「一个意图如何拆成计划、校验、按 DAG 执行并闭环」。新后台编排一律走 workflow_engine。
+两者不重复：ToolCallDispatcher 管「一个工具调用如何并发跑」，WorkflowEngine 管「一个意图如何拆成计划、校验、按 DAG 执行并闭环」。新后台编排一律走 workflow_engine。
 
 ## 关键机制
 

@@ -274,25 +274,32 @@
 | `metadata` | dict | 扩展元数据 |
 | `_milvus_pk` | int \| None | Milvus 主键（insert 时记录，用于 delete） |
 
-### Task 检查点（`data/scheduler_checkpoint.json`，文件存储）
+### Task 检查点（`data/scheduler_checkpoint.json`，文件存储，`P3-01-RESERVED`）
+
+> **状态**：checkpoint 持久化属扩展储备（2026-09-12 决策保留，**无生产调用方**）。
+> 字段表以 `core/tool_runtime/task.py::QueuedToolCall.to_dict()` 为唯一权威——
+> 它是**手工维护的 dict**，不是 `dataclasses.asdict`，故下列键必须与代码逐字一致。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `id` | str | 任务 ID |
-| `type` | TaskType | `TOOL_CALL` / `BACKGROUND` |
-| `status` | TaskStatus | `PENDING` / `DISPATCHED` / `COMPLETED` / `FAILED` / `CANCELLED` |
+| `type` | QueuedToolCallKind | `"tool_call"` / `"background"` |
+| `status` | QueuedToolCallState | `"pending"` / `"dispatched"` / `"completed"` / `"failed"` / `"cancelled"` |
 | `priority` | int | 0=最高，5=默认，9=后台 |
-| `parent_id` | str \| None | 父任务 ID |
-| `depends_on` | list[str] | 依赖任务列表 |
-| `children_ids` | list[str] | 子任务列表 |
+| `request_id` | str \| None | 发起请求 ID（**旧键 `parent_id` 仅反序列化时兼容读取**） |
+| `depends_on` | list[str] | 依赖任务列表（预留） |
+| `children_ids` | list[str] | 子任务列表（预留） |
 | `payload` | dict | 任务负载 |
-| `result` | Any | 执行结果 |
 | `error` | str \| None | 错误信息 |
 | `retry_count` | int | 已重试次数 |
 | `max_retries` | int | 最大重试次数（默认 2） |
-| `progress` | float | 进度 0.0-1.0 |
+| `run_in_background` | bool | 脱离对话流标志（预留） |
+| `progress` | float | 进度 0.0-1.0（预留，生产恒 0.0） |
 | `created_at` | float | 创建时间（Unix） |
 | `updated_at` | float | 更新时间（Unix） |
+
+> **`result` 不在序列化键里**——执行结果通过 `asyncio.Future` 在进程内传递，
+> checkpoint 只保存可重放的任务描述。
 
 ---
 

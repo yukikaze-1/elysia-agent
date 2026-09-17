@@ -364,7 +364,7 @@ pytest core/tests/ -v                      # Core 测试
 pytest core/agent/tests/ -v                # Agent 生命周期
 pytest core/config/tests/ -v               # 配置 dataclass
 pytest core/monitoring/tests/ -v           # Token 监控
-pytest core/task/tests/ -v                 # Task 调度
+pytest core/tool_runtime/tests/ -v         # 即时工具调度（原 core/task，ARCH-INC-P1-01 改名）
 pytest core/tools/ -v                      # 工具插件
 pytest Module/workflow_engine/tests/unit/ -v   # WorkflowEngine 单元
 pytest Module/workflow_engine/tests/integration/ -v  # WorkflowEngine 集成

@@ -139,7 +139,7 @@
 | `runs-on` 无法静态判定时**拒答** | 表达式 `runs-on` → 违规 | 同上 | **push/backend** |
 | 无死 job（守卫引用的事件必须在 `on:` 声明过） | `_EVENT_GUARD_RE` 与 `_is_push_only` **共用同一正则** | 同上 | **push/backend** |
 
-安全模型与「为什么本仓不开放 PR」见 [`docs/ci.md`](ci.md)。
+安全模型与「为什么本仓不开放 PR」见 [`docs/ci.md`](../ci.md)。
 
 ---
 
@@ -150,15 +150,16 @@
 
 | 项 | 现状 | 风险 | 处置 |
 |---|---|---|---|
-| **T1/T2 并发攻击扫描**（`probe_t2_race.py`，20 例） | 探针在 `/tmp`，**未入库** | 并发竞态回归不会被自动发现 | 见 [todo.md](../todo.md) 的 Batch 2.3 follow-up |
+| **T1/T2 并发攻击扫描**（`probe_t2_race.py`，20 例） | 探针在 `/tmp`，**未入库** | 并发竞态回归不会被自动发现 | 见 [todo.md](../../todo.md) 的 Batch 2.3 follow-up |
 | **`make test-full`（含 slow）无自动执行点** | 只在 `nightly.yml` 手工 `workflow_dispatch` 触发 | slow 层回归只在人工注意时才发现 | 若需覆盖，须先有隔离 runner 或接受 push 成本；见 `docs/ci.md` |
 | **`external` 层（真实 LLM/DB）无自动执行点** | 同上（`nightly.yml` 的 `external` 输入） | 外部集成回归不自动发现 | 同上；**刻意 opt-in**（真实费用） |
 | ~~`external` opt-in 门禁只覆盖 `Module/`~~ | **已修**（2026-09-17）：门禁并入根 `conftest.py`，现覆盖全仓；`core/tests/test_external_optin_gate.py` 钉住范围 | 修前 `core/` 的 external 用例**未 opt-in 也真跑**（真实 DeepSeek 调用、计费） | — |
 | **`real-mongo` 层** | push 侧有 job（`ci.yml:real-mongo`） | ✅ 有覆盖 | — |
-| **私有守卫的"同名遮蔽"**（Challenger 2026-09-17 实测） | 在**访问方包内**定义一个同名 `def _x` 即可让该属性名全仓免检（9 处违规塌成 1 处）；扫描面也只含 `core`+`Module` | 守卫被当成"完备"时会漏掉真实穿透 | **接受**（属"按属性名归属近似"的固有代价，模块 docstring 已记载）；定位仍是**回归网**，见 [todo.md](../todo.md) |
+| **私有守卫的"同名遮蔽"**（Challenger 2026-09-17 实测） | 在**访问方包内**定义一个同名 `def _x` 即可让该属性名全仓免检（9 处违规塌成 1 处）；扫描面也只含 `core`+`Module` | 守卫被当成"完备"时会漏掉真实穿透 | **接受**（属"按属性名归属近似"的固有代价，模块 docstring 已记载）；定位仍是**回归网**，见 [todo.md](../../todo.md) |
 | **清空形态识别的长尾** | 规范 `find … -exec rm` 与 4 种 `$GITHUB_WORKSPACE` 写法 + 当前目录形态已覆盖；`xargs`/`for` 循环/`git clean` 未覆盖 | 间接清空写法不受三道清理子句约束 | **接受**（本仓 6 处清理点全用规范写法，无实例）；见 todo.md |
 | **`if:` 守卫是 token 存在性** | `… \|\| true` 会被判成受信 push-only | 静态判据无法判定布尔语义 | **接受**（保守方向是"当 PR 可达"，此处相反但需构造）；见 todo.md |
-| **删除 `__init__.py` 重导出的风险** F401 已豁免 `__init__.py`；重导出由 `__all__` + 直接导入覆盖 | 无自动"公开面冻结"测试（`Module/workflow_contract` 有，其余没有） | 见 todo.md |
+| **删除 `__init__.py` 重导出的风险** | F401 已豁免 `__init__.py`；重导出由 `__all__` + 直接导入覆盖；**无自动"公开面冻结"测试**（`Module/workflow_contract` 有，其余没有） | 误删重导出曾真实发生（Batch 2：`SessionId`/`asdict` → 59 模块 ImportError） | 见 todo.md |
+| **`core/tests/test_doc_counts.py` 的覆盖范围** | 该文档数字门禁**不含根 `README.md`**，且正则只认粗体 `**N 个同名 @property**` ⇒ 根 README 的「39 个 @property」（实际 46）永远抓不到；本文也未登记它 | 文档数字失真不会被自动发现 | 见 todo.md（Batch 3 登记） |
 
 ---
 
@@ -177,11 +178,11 @@
 
 | 文档 | 内容 |
 |---|---|
-| [ci.md](ci.md) | CI 权威说明：job 布局 / 信任边界 / 为什么全 self-hosted / PR 恢复清单 |
-| [testing.md](testing.md) | 测试分层体系与档位命令 |
-| [architecture.md](architecture.md) | 完整架构详解 |
-| [../CLAUDE.md](../CLAUDE.md) | 项目地图 + 各门禁的约定 |
-| [../todo.md](../todo.md) | 待办与 follow-up（含本文 §7 的承接项） |
+| [ci.md](../ci.md) | CI 权威说明：job 布局 / 信任边界 / 为什么全 self-hosted / PR 恢复清单 |
+| [testing.md](../testing.md) | 测试分层体系与档位命令 |
+| [architecture.md](../architecture.md) | 完整架构详解 |
+| [CLAUDE.md](../../CLAUDE.md) | 项目地图 + 各门禁的约定 |
+| [todo.md](../../todo.md) | 待办与 follow-up（含本文 §7 的承接项） |
 | [2026-09-16 Batch 1 执行记录](../review/2026-09-16-Batch1-correctness-durability-执行记录.md) | P1/P2/R 的来源 |
 | [2026-09-17 Batch 1.7 执行记录](../review/2026-09-17-Batch1.7-background-task-terminal-state-执行记录.md) | T1–T4 的来源 |
 | [2026-09-17 Batch 1.8 执行记录](../review/2026-09-17-Batch1.8-user-visible-terminal-semantics-执行记录.md) | U1–U5 的来源 |
