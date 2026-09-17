@@ -102,7 +102,7 @@ LLM 输出的文本可能包含动作/表情标记。不同 TTS 引擎对标记�
 | 标签 | 示例 | TTS | 显示 |
 |------|------|-----|------|
 | 停顿控制 | `<#0.5#>` `<#1#>` | 送 TTS | 隐藏 |
-| 英文语气 | `(laughs)` `(sighs)` 等 22 种 | 送 TTS | 显示 |
+| 英文语气 | `(laughs)` `(sighs)` 等——单源是 `core/text/tags.py::STAGE_EN_WORDS`（24 个条目，含 `clears throat`/`clear throat`、`lip smacking`/`lipsmacking` 两对变体） | 送 TTS | 显示 |
 | 中文舞台指示 | `(清了清嗓子)` `(愣了两秒)` | 剥离 | 单独一行 |
 
 ## Prompt TTS 感知

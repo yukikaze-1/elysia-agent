@@ -137,9 +137,15 @@ async def execute_stream(self, *, ctx, emit, params):
     yield ToolResult.ok(name=self.name, content="下载完成")
 ```
 
-- **背压控制**：`ToolEmitter._queue = asyncio.Queue(maxsize=1024)`
 - **流式截断**：到达 token 阈值自动 `aclose()` generator，强制返回截断结果
 - **进度超时**：`progress_timeout` 秒内无新 yield 视为卡死
+
+> **无背压控制**（Batch 3.4 更正）：本文件此前写「背压控制：`ToolEmitter._queue =
+> asyncio.Queue(maxsize=1024)`」——**该机制不存在**。`ToolEmitter` 只有一个
+> `_queue: Any = field(default=None)` 槽位（`protocol.py:164`），由调度器注入的队列
+> 决定行为，`maxsize` 全仓无任何一处设为 1024。真正的"慢消费者不阻塞广播"保护在
+> `Module/output/manager.py` 的发送预算（见 `test_broadcast_send_budget.py`），
+> 不在本模块。
 
 ## HITL 审批
 

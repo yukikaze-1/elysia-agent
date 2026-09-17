@@ -59,14 +59,19 @@ WorkflowEngine 实时推送:
 
 ### 数据聚合
 
-`collect(agent)` 是模块级函数，遍历 Agent 的 15+ 个属性，聚合为 `DebugInfo` dataclass：
-- FSM 状态 → `info.fsm_state` / `info.fsm_previous`
-- Cognitive → `info.current_task` / `info.latency_history`
-- Memory → `info.session_message_count` / `info.ltm_entry_count`
-- Token → `info.token_turn_total` / `info.token_session_total`
-- Scheduler → `info.scheduler_pending_tasks` / `info.scheduler_pool_size`
+`collect(agent)` 是模块级函数，遍历 Agent 的 15+ 个属性，聚合为 `DebugInfo` dataclass。
+**字段名的唯一权威是 `core/debug/info.py` 的 `DebugInfo` 定义**（本表曾列多个不存在的
+名字，Batch 3.4 按实况更正；新增字段请直接读代码，不要照抄本表）：
+
+- FSM → `info.fsm_state` / `info.fsm_previous` / `info.turn_phase` / `info.processing`
+- Memory → `info.session_messages` / `info.lt_count` / `info.lt_recent`
+- Token → `info.token_stats` / `info.pending_token_count`
+- Scheduler → `info.scheduler_pending` / `info.scheduler_running` / `info.scheduler_total` / `info.task_tree`
+- Tools → `info.currently_executing` / `info.tools` / `info.tool_history`
 - Consolidator → `info.consolidator_buffer_size` / `info.consolidator_threshold`
-- Reflectors → `info.mreflector_*` / `info.creflector_*` / `info.character_engine_*`
+- Reflectors → `info.mreflector_*`（MemoryReflector）/ `info.reflector_*`（CharacterReflector）/ `info.self_perception_history` / `info.state_history`
+- 迟延 → `info.timing_history` / `info.timing_stats`
+- 服务 → `info.milvus_ok` / `info.mongodb_ok` / `info.embedding_ok` / `info.tts_ok` / `info.stt_ok` / `info.ws_clients`
 
 ### PromptRecorder / ResponseRecorder
 
