@@ -193,6 +193,38 @@ def pytest_collection_modifyitems(config, items):
         print(message, file=sys.stderr, flush=True)
         raise pytest.UsageError(message)
 
+    # ── 第二件事：**仓库级** external 门禁（2026-09-17 Batch 2.3 补）──────────
+    #
+    # 这条门禁此前**只**写在 `Module/conftest.py` 里。pytest 的 conftest 按目录
+    # 层级生效，所以 `core/` 下的用例**根本走不到它**——于是 `core/` 里标了
+    # `external` 的用例在**没有** `RUN_EXTERNAL_TESTS=1` 时照常执行。
+    #
+    # 实测（2026-09-17）：`core/tests/test_phase1.py::TestStreamingIntegration`
+    # 的两个用例在未设该变量时 **2 passed**（真实 DeepSeek 调用、计费），
+    # 而 `pytest.ini` 把 `external` 定义为「离线门禁排除、独立 opt-in」。
+    # `Module/` 侧的同类用例则正确 skip。**同一条纪律只装在了一半的目录上**
+    # ——判据存在 ≠ 判据在范围里。
+    #
+    # 为什么并进这个 hook 而不是再写一个同名函数：pytest 会把**同名 hook 全部调用**，
+    # 但 Python 的名字绑定让后定义的那个**遮蔽**前一个——两条纪律只能活一条。
+    # （本批第一版就踩了这个坑，靠 `make test-quick` 立刻发现标记纪律不再报错。）
+    #
+    # 语义：`external` 且未显式 opt-in → skip（不是 fail）。用 `add_marker(skipif)`：
+    # collection 阶段裸 `pytest.skip()` 会中断收集。
+    # `real_mongo` 例外：它自己的开关是 `RUN_REAL_MONGO_TESTS`（走容器、不需凭据），
+    # 由该层自己的守卫把关（连不上即 fail，见 `tests/real_mongo/conftest.py`）。
+    external_ok = os.getenv("RUN_EXTERNAL_TESTS") == "1"
+    real_mongo_ok = os.getenv("RUN_REAL_MONGO_TESTS") == "1"
+    skip_external = pytest.mark.skipif(
+        True, reason="需要 RUN_EXTERNAL_TESTS=1 显式 opt-in（真实 LLM/DB E2E）")
+    for item in items:
+        if item.get_closest_marker("external") is None:
+            continue  # 精确判 marker（keyword 是超集，防误 skip）
+        if item.get_closest_marker("real_mongo") is not None and real_mongo_ok:
+            continue
+        if not external_ok:
+            item.add_marker(skip_external)
+
 
 @pytest.fixture(scope="session")
 def dotenv_bootstrap() -> dict[str, object]:
