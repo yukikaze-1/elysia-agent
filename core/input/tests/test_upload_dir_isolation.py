@@ -144,7 +144,7 @@ async def test_image_upload_writes_redirected_dir_and_leaves_real_dir_untouched(
     assert real_after == real_before, (
         f"上传写进了真实默认图片目录（调用期解析失效）：{real_dir}\n"
         f"  before={real_before!r}\n  after ={real_after!r}\n"
-        f"  （None=不存在，()=空目录；被创建也算变化）")
+        f"  （None=不存在，[]=空目录；被创建也算变化）")
 
 
 @pytest.mark.asyncio
