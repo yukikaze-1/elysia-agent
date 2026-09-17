@@ -4,7 +4,7 @@
 但边界主要靠**文档与人工 review** 维持——已治理过的反向依赖、私有接口泄漏会随功能提交
 重新出现（上一轮清理的包级反向依赖就是这样回来的）。本脚本把这几条纪律固化为自动检查。
 
-## 六条规则
+## 五条规则
 
 | 规则 | 内容 | 存量基线 | 违规后果 |
 |---|---|---|---|
@@ -12,8 +12,26 @@
 | R2 | 领域/基础设施层（`core.agent`/`storage`/`memory`/`character`/`cognitive`/`personality`）不得反向依赖 `core.input` | **0 处** | 失败 |
 | R3 | 禁止**跨包**导入下划线私有符号 | **0 处**（2026-09-11 批次 A 全部公开化） | 失败 |
 | R4 | 不得新增 **eager** import 环（运行时硬环） | **0 处** | 失败 |
-| R5 | `TYPE_CHECKING` 类型边：允许，仅报告 | — | 不阻断 |
-| R6 | 裸 `create_task`/`ensure_future` 必须逐点登记所有权 | 24 处（逐点附理由，见 `_TASK_SPAWN_ALLOWLIST`） | 失败 |
+| R6 | 裸 `create_task`/`ensure_future` 必须逐点登记所有权 | 19 个登记点 / 22 处 spawn（见 `_TASK_SPAWN_ALLOWLIST`） | 失败 |
+
+> **R5 已于 2026-09-17（Batch 2.1）删除**——它是**死规则**：`_type_only_edges()`
+> 定义了却**从未被 `main()` 调用**（全仓 grep 只命中它自己的 `def`），因此它声称的
+> "`TYPE_CHECKING` 类型边仅报告"在运行时**没有任何执行点**：不打印、不参与退出码、
+> 无任何消费者。而模块顶部的规则表与 CLAUDE.md 都把它列为一条在跑的规则——
+> 这正是本批要消灭的假门禁里最隐蔽的一种：**不是"永远绿"，而是"根本不存在却写在文档里"**
+> （连"绿"都不用装）。实测其效果：一个纯 `TYPE_CHECKING` 的 `Module → core.agent` 边，
+> 在 `make check-arch` 下**完全静默**（退出 0、无输出）。
+>
+> 处置：**整条删掉**（`_type_only_edges()` + `_Module.type_edges` 桶 + 三分表里的第三桶），
+> 而不是"降级成 `--report` 开关"。理由：`TYPE_CHECKING` 边**允许存在是本项目的既定设计**
+> （纯静态概念耦合，运行时不存在依赖），所以它本来就不该是一条门禁；而"保留一个默认关闭的
+> 报告开关"只会留下一段无消费者的代码——那正是 R5 当初退化成死规则的方式。
+> （2026-09-16 的架构审计 §S1/§733 已给出同一结论：「删除 `_type_only_edges()`
+> 并同步删 `:15`/`:50` 的表格行」，且明确**反对**默认接线——"222 行『允许』报告会
+> 训练人忽略门禁输出"。）
+>
+> 保留的是**「TYPE_CHECKING 不参与任何规则」这条语义**：`_collect_imports()` 现在直接
+> 跳过 `if TYPE_CHECKING:` 块——判据仍在，只是不再有那桶无人读的数据。
 
 `frontend_contract/` 的零依赖（不 import `core/`、`Module/`）由 R1 的同一条实现顺带覆盖
 （见 `_DISCIPLINE_ZERO_DEP`），因为 `CLAUDE.md` 已把它写成硬约定却无门禁。
@@ -47,7 +65,7 @@
 | R2 领域层→input | eager + lazy | 同上 |
 | R3 跨包私有符号 | eager + lazy | 懒导入私有符号仍是私有接口泄漏 |
 | R4 eager 环 | **仅 eager** | 函数内懒导入正是本项目**刻意**打断环的手段（见下） |
-| R5 类型边 | 仅 type | 允许，单独报告概念耦合 |
+| TYPE_CHECKING 类型边 | 不参与任何规则 | 允许（既定设计）；`--report` 可见，**不是门禁** |
 
 这条区分是必须的，两个方向都踩过：
 
@@ -217,7 +235,6 @@ class _Module:
     name: str
     eager: list[tuple[str, list[str]]] = field(default_factory=list)
     lazy: list[tuple[str, list[str]]] = field(default_factory=list)
-    type_edges: list[tuple[str, list[str]]] = field(default_factory=list)
     task_spawns: Counter[str] = field(default_factory=Counter)
     """R6：本文件按「限定名」计数的裸后台任务创建点（见 _collect_task_spawns）。
 
@@ -253,23 +270,30 @@ def _is_production(path: Path) -> bool:
 
 def _collect_imports(
     tree: ast.Module,
-) -> tuple[list[tuple[str, list[str]]], list[tuple[str, list[str]]], list[tuple[str, list[str]]]]:
-    """返回 (eager, lazy, type_edges) 三桶。
+) -> tuple[list[tuple[str, list[str]]], list[tuple[str, list[str]]]]:
+    """返回 (eager, lazy) 两桶。
 
     eager：模块体 / 类体 / 模块级 if|try 内的 import——导入时真正执行。
     lazy：函数体内的 import——不在导入时执行（本项目刻意用它打断环）。
-    type_edges：`if TYPE_CHECKING:` 内的 import。
+
+    **`if TYPE_CHECKING:` 内的 import 整个跳过**（既不入 eager 也不入 lazy）。
+    这就是"类型边不参与任何规则"的实现方式——本项目**刻意允许**类型边存在
+    （纯静态概念耦合，运行时不存在依赖），故不检测、不报告。
+    历史：这里原本还有第三桶 `type_edges` 供"R5 仅报告"使用，但 `main()` 从未
+    调用报告函数 ⇒ 该桶无任何消费者、纯死代码。2026-09-17（Batch 2.1）连同
+    `_type_only_edges()` 一并删除——见模块 docstring 的 R5 说明。
     """
     eager: list[tuple[str, list[str]]] = []
     lazy: list[tuple[str, list[str]]] = []
-    type_edges: list[tuple[str, list[str]]] = []
 
     def walk(body: list[ast.stmt], tc: bool, in_func: bool) -> None:
         for node in body:
             if isinstance(node, ast.ImportFrom):
                 if node.level or not node.module:
                     continue  # 相对导入由 ruff TID252 负责
-                bucket = type_edges if tc else (lazy if in_func else eager)
+                if tc:
+                    continue  # TYPE_CHECKING 类型边：刻意不检测
+                bucket = lazy if in_func else eager
                 bucket.append((node.module, [a.name for a in node.names]))
             elif isinstance(node, ast.Import):
                 if not tc:
@@ -295,7 +319,7 @@ def _collect_imports(
                     walk(handler.body, tc, in_func)
 
     walk(tree.body, False, False)
-    return eager, lazy, type_edges
+    return eager, lazy
 
 
 def _collect_task_spawns(tree: ast.Module) -> Counter[str]:
@@ -355,11 +379,11 @@ def _scan(root: Path) -> tuple[list[_Module], set[str]]:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except SyntaxError as e:  # pragma: no cover - 语法错误应由 lint 先拦
                 raise SystemExit(f"解析失败 {path}: {e}") from e
-            eager, lazy, type_edges = _collect_imports(tree)
+            eager, lazy = _collect_imports(tree)
             modules.append(
                 _Module(
                     path, _module_name(path.relative_to(root)),
-                    eager, lazy, type_edges,
+                    eager, lazy,
                     task_spawns=_collect_task_spawns(tree),
                 )
             )
@@ -544,20 +568,6 @@ def check_repository(root: Path | None = None) -> list[Violation]:
                 ))
 
     return violations
-
-
-def _type_only_edges(root: Path | None = None) -> list[str]:
-    """R5：列出 TYPE_CHECKING 类型边（仅报告，不阻断）。"""
-    root = root or _ROOT
-    modules, known = _scan(root)
-    out: list[str] = []
-    for mod in modules:
-        rel = _rel(mod.path) if root == _ROOT else str(mod.path)
-        for target, _names in mod.type_edges:
-            if _resolve(target, known):
-                if _sub_pkg(target) != _sub_pkg(mod.name):
-                    out.append(f"  [R5] {rel} ⇢ {target}（类型边，允许）")
-    return out
 
 
 def main(argv: list[str] | None = None) -> int:

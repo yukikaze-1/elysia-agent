@@ -14,6 +14,7 @@ R1/R3（用运行时依赖）与 R4（仅 eager）下的行为差异。
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -376,3 +377,67 @@ def test_tests_are_not_scanned(tmp_path):
     })
     code, out = _run(repo)
     assert code == 0, out
+
+
+# ---------------------------------------------------------------- dead rule (R5)
+#
+# 2026-09-17（Batch 2.1）：R5「TYPE_CHECKING 类型边仅报告」是**死规则**——
+# `_type_only_edges()` 定义了却从未被 `main()` 调用，全仓 grep 只命中它自己的 `def`。
+# 也就是说：规则表里写着、CLAUDE.md 里写着，而运行时**没有任何执行点**（不打印、
+# 不参与退出码、无消费者）。这是比"永远绿"更隐蔽的一种假门禁——
+# **"根本不存在，却记在文档里"**。
+#
+# 处置是**整条删除**（函数 + `_Module.type_edges` 桶），不是留一个默认关闭的开关：
+# `TYPE_CHECKING` 边允许存在是既定设计，本就不该是门禁；而"保留一个无消费者的报告
+# 开关"正是 R5 当初退化成死规则的方式。
+#
+# 下面三条把"已删除"钉住——死代码最容易被无声地长回来。
+
+
+def test_type_only_edges_function_is_gone():
+    """`_type_only_edges()` 必须不存在——它是 R5 死规则的载体。
+
+    断言用模块属性查找而非 grep：grep 会命中 docstring 里对历史的说明文字
+    （本文件与 `check_architecture.py` 都写着它的名字），那会让断言恒真（假绿①）。
+    """
+    import scripts.check_architecture as ca
+
+    assert not hasattr(ca, "_type_only_edges"), (
+        "`_type_only_edges()` 又回来了。它此前从未被 `main()` 调用（死规则）；"
+        "若要重新引入类型边报告，请先证明有消费者，并同步更新模块 docstring 的规则表"
+    )
+
+
+def test_type_checking_imports_do_not_enter_any_bucket():
+    """`TYPE_CHECKING` 内的 import 必须**不入任何桶**（语义保留：不参与任何规则）。
+
+    这条是 R5 删除后真正需要守住的不变式：删的是"无人读的数据结构"，
+    不是"类型边被当成运行时依赖"。若哪天它进了 eager/lazy，R4 会开始误报伪环。
+    """
+    from scripts.check_architecture import _collect_imports
+
+    tree = ast.parse(
+        "from __future__ import annotations\n"
+        "from typing import TYPE_CHECKING\n"
+        "import os\n"
+        "if TYPE_CHECKING:\n"
+        "    from core.agent.agent import Agent\n"
+    )
+    eager, lazy = _collect_imports(tree)
+    eager_mods = [m for m, _ in eager]
+    lazy_mods = [m for m, _ in lazy]
+    assert "core.agent.agent" not in eager_mods, f"类型边进了 eager：{eager_mods}"
+    assert "core.agent.agent" not in lazy_mods, f"类型边进了 lazy：{lazy_mods}"
+    assert "os" in eager_mods, f"普通 eager import 丢了：{eager_mods}"
+
+
+def test_module_has_no_type_edges_bucket():
+    """`_Module` 不得再有 `type_edges` 字段（无消费者的第三桶）。"""
+    from dataclasses import fields
+    import scripts.check_architecture as ca
+
+    names = {f.name for f in fields(ca._Module)}
+    assert "type_edges" not in names, (
+        f"`_Module.type_edges` 又回来了（当前字段：{sorted(names)}）——"
+        "它当初只被死规则 `_type_only_edges()` 读取"
+    )
