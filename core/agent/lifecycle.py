@@ -181,8 +181,6 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _turns: AsyncTaskScope            # ARCH-INC-P2-03：每回合认知任务
         _mongo_ok: bool
         _milvus_ok: bool
-        _mongo_available: bool
-        _milvus_available: bool
         # 由 Agent 定义的跨 mixin 方法
         _process_events: Callable[[], Coroutine[Any, Any, None]]
         _register_background_task: Callable[[str, Any, str, IsoTimestamp], None]

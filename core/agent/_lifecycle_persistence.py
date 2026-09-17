@@ -63,8 +63,6 @@ class _LifecyclePersistence:
         _default_binding: dict
         _mongo_ok: bool
         _milvus_ok: bool
-        _mongo_available: bool
-        _milvus_available: bool
         _token_repo: TokenRepository
         _session_repo: SessionRepository
         _attachment_repo: AttachmentRepository | None
@@ -510,10 +508,6 @@ class _LifecyclePersistence:
                         await asyncio.wait_for(probe(), timeout=3.0))
                 except Exception:
                     results[name] = False
-
-            self._mongo_available = bool(
-                results.get("session") and results.get("message"))
-            self._milvus_available = bool(results.get("ltm"))
 
             # 恢复触发：False→True 边界（既有）∪ 依赖自报需补偿（BE-P1-07：首轮
             # prev={} 无边界可依，按依赖补偿状态补触发；durable 已强化——无关成功
