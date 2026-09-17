@@ -138,27 +138,84 @@ _WS_WIPE_FIND_DELETE_RE = re.compile(
 # 匹配成功（如 `rm -rf ./*` 用 `\.` 只吃掉 `.`），随后 `(?![\w.*/-])` 看到 `/`
 # 而失败，且**不会回头重试更长的候选**——整条命令就此漏检（实测：
 # `rm -rf ./*`、`rm -rf "$WS"/*`、`rm -rf "${GITHUB_WORKSPACE}"/*` 三条全 miss）。
-_WS_ROOT_TOKEN = (
-    r"(?:\./\*|\.|\*|\./|\$WS|\"\$WS\"|\$\{GITHUB_WORKSPACE\}|\"\$\{GITHUB_WORKSPACE\}\")"
-)
-# `rm …` 的目标里出现工作区根 token 即算清空。
+# ── 「清空 workspace 根」的 rm 形态识别 ──────────────────────────────────────
 #
-# 三点刻意设计（每一处都被实测假红/漏报教过）：
-#  ① **不加行尾锚点**：`rm -rf "$WS"/.* "$WS"/*`（连点文件一起删的常见写法）第一个
-#     token 后面跟的是空格 + 第二个目标，锚点会让它整条漏掉——而它比单目标更彻底。
-#  ② **候选按长到短排列**（见 `_WS_ROOT_TOKEN`）：否则 `./*` 会被 `\.` 抢先匹配，
-#     随后断言看到 `/` 而失败，且不会回头重试更长的候选。
-#  ③ **断言只禁"后面跟着一个名字"**：`(?![\w-]|/\.?[\w-])`。
-#     子路径（`"$WS"/static/assets`）要排除——那是删构建产物，不是清空工作区；
-#     但 `/` 本身**不能**禁，因为 `"$WS"/*`、`"$WS"/.*`、`"$WS"/` 都是工作区根的
-#     直接内容，禁了它们会漏报（实测漏 3 条）。
-#     第一版写成可选后缀组 `(?:/\*|…)?` + `(?![\w.*-])`，有个回溯洞：可选组可以整体
-#     不匹配，于是 `"$WS"/static/assets` 里的 `"$WS"` 单独成立、断言看到的 `/`
-#     又不在 `[\w.*-]` 里 ⇒ 删子目录被误判成清空（实测 2 条假红）。
-_WS_WIPE_RM_RE = re.compile(
-    r"\brm\s+(?:(?:-[A-Za-z]+|--)\s+)*"
-    + _WS_ROOT_TOKEN +
-    r"(?![\w-]|/\.?[\w-])")
+# 2026-09-17（Batch 2.2 + Challenger 复核）：这里经历过**四轮**修正，每一轮都被
+# 实测教过一遍。记下来，避免下次又走回正则里：
+#
+#  ① 可变 token + 负向断言：可选后缀组可整体不匹配 ⇒ `"$WS"/static/assets` 被误判
+#     成清空（假红）；把 `/` 放进断言后又漏掉 `"$WS"/*`（漏检）。
+#  ② 候选按长到短 + 复杂断言：仍靠断言"猜边界"，脆弱难读；且 alternation 会
+#     **回溯到更短的候选**——`(?:\./\*|\./|\.)` 在 `rm -rf ./*.log` 上先用 `\./\*`
+#     失败、回退用 `\./` 成功 ⇒ 删日志被误判成清空（假红）。
+#  ③ 完整目标枚举 + 断言：能过用例，但断言仍在承担"区分根与子路径"的语义。
+#  ④ **纯字符串判定**（现在这版）：不再用正则描述"边界"，而是把 `rm` 的每个
+#     **目标实参**切出来，与一组**写死的合法写法**逐一比对。可读、可加、
+#     假红/漏检都能被参数化用例直接钉住——正则的边界语义不再参与。
+#
+# 为什么值得这么改：这三道清理子句（两道守卫 + fail-closed）**全部**以
+# `_wipes_workspace_root()` 为唯一入口。认不出一个字符差异的写法，
+# 等于那三道对它是关闭的——所以"识别面"本身就是安全属性。
+
+# 工作区根的**字面写法**（含通配后缀）——`rm` 的目标必须**恰好**命中其一。
+_WS_ROOT_TARGETS = frozenset({
+    # 变量形式（`$WS` 是本仓清理样板里的局部变量，`GITHUB_WORKSPACE` 是 CI 提供的）
+    "$WS", '"$WS"', "'$WS'",
+    "${WS}", '"${WS}"', "'${WS}'",
+    "${GITHUB_WORKSPACE}", '"${GITHUB_WORKSPACE}"', "'${GITHUB_WORKSPACE}'",
+    "$GITHUB_WORKSPACE", '"$GITHUB_WORKSPACE"', "'$GITHUB_WORKSPACE'",
+    # `${WS:?...}` / `${GITHUB_WORKSPACE:?...}`（带"未设置即失败"的写法也能被清空）
+    "${WS:?}", '"${WS:?}"', "${GITHUB_WORKSPACE:?}", '"${GITHUB_WORKSPACE:?}"',
+})
+# 允许的**直接内容**后缀：`/*`、`/.*`（连点文件）、`/`。刻意不含任意路径，
+# 那样会把 `"$WS"/static/assets`（删构建产物）也算成清空 ⇒ 假红。
+_WS_ROOT_SUFFIXES = ("", "/*", "/.*", "/")
+
+# 当前目录形态：只认 `.` / `./` / `./*` 三种**完整目标**。
+_WS_DOT_TARGETS = frozenset({".", "./", "./*", "./.*", "*", ".[!.]*"})
+
+# `rm` 的目标实参切分：匹配 `rm` 及其选项，捕获后续所有非选项实参。
+_RM_INVOCATION_RE = re.compile(r"\brm\s+((?:(?:-[A-Za-z]+|--)\s+)*)(.*)")
+
+
+def _rm_targets(text: str) -> list[list[str]]:
+    """把每一条 `rm` 调用的目标实参切出来（返回每条调用的目标列表）。
+
+    刻意做得**笨**：按空白切分、去掉选项与引号外的干扰。判据不依赖 shell 语义，
+    只依赖"目标字符串长什么样"——这正是我们要比对的东西。
+    """
+    out: list[list[str]] = []
+    for line in text.splitlines():
+        for m in _RM_INVOCATION_RE.finditer(line):
+            rest = m.group(2)
+            args = rest.replace("\\\n", " ").split()
+            # 只把**真选项**（`-x` / `--x` / 裸 `--`）滤掉；裸 `*`、`-` 之外的
+            # 单字符不是选项——`*` 恰恰是最常见的清空目标之一。
+            targets = [a for a in args
+                       if not (a.startswith("-") and len(a) > 1)]
+            if targets:
+                out.append(targets)
+    return out
+
+
+def _is_root_target(target: str) -> bool:
+    """单个 `rm` 目标是否指向工作区根（或其直接内容）。"""
+    if target in _WS_DOT_TARGETS:
+        return True
+    for base in _WS_ROOT_TARGETS:
+        for suffix in _WS_ROOT_SUFFIXES:
+            if target == base + suffix:
+                return True
+    # `${WS:?<msg>}` 这类带消息的写法：按前缀匹配到 `}` 为止再套后缀
+    m = re.fullmatch(r"(?:\"|')?\$\{(?:WS|GITHUB_WORKSPACE):\?[^}]*\}(?:\"|')?(.*)", target)
+    if m and m.group(1) in _WS_ROOT_SUFFIXES:
+        return True
+    return False
+
+
+def _rm_wipes_workspace_root(text: str) -> bool:
+    """`rm` 调用里是否有目标指向工作区根。"""
+    return any(_is_root_target(t) for targets in _rm_targets(text) for t in targets)
 
 _WS_GUARD_MARKERS = (
     ("${GITHUB_WORKSPACE:?", "未设置即失败（`${GITHUB_WORKSPACE:?…}`）"),
@@ -294,7 +351,7 @@ def _wipes_workspace_root(text: str) -> bool:
     return (
         _WS_WIPE_FIND_MARKER in text
         or bool(_WS_WIPE_FIND_DELETE_RE.search(text))
-        or bool(_WS_WIPE_RM_RE.search(text))
+        or _rm_wipes_workspace_root(text)
     )
 
 
@@ -333,6 +390,54 @@ def _check_self_hosted_cleanup(job_name: str, steps: list[dict[str, Any]]) -> li
     return violations
 
 
+def _check_permissions(data: dict[str, Any], violations: list[str]) -> None:
+    """workflow 顶层 `permissions:` 必须存在**且确实是只读**。
+
+    2026-09-17（Batch 2.2）加的是"**存在性**"判据；随后 Challenger 复核指出
+    它把 `permissions: write-all` 放行了——而规则自己的提示语写着
+    「本仓 job 只需读代码，请显式声明 `contents: read`」，commit 标题也写着
+    "pin least privilege"。**判据比声称的弱，就是假绿**：一个写了 `write-all`
+    的 workflow 会拿到"已声明 permissions"的绿灯，而它比不写更危险
+    （不写只继承仓库默认，写 `write-all` 是**显式**要求全写）。
+
+    故这里把判据补到与声称一致：
+    - 缺失 / 显式 `null` → 违规（继承仓库默认，不可判定）；
+    - 顶层 `write-all` → 违规（显式全写，与"只读"直接矛盾）；
+    - 值必须是 mapping，且**每个** scope 的值都在只读白名单内
+      （`read` / `none`）；出现 `write` / `write-all` → 违规。
+
+    刻意**不**要求恰好等于 `{contents: read}`：有些 workflow 未来可能需要
+    `pull-requests: read` 之类——只读是本仓的纪律，具体 scope 集合不是。
+    """
+    perms = data.get("permissions")
+    if "permissions" not in data or perms is None:
+        violations.append(
+            "workflow 顶层缺少 `permissions:` 块——会继承仓库默认（可能是 read/write），"
+            "静态判据无从成立。本仓 job 只需读代码，请显式声明 `permissions:` + `contents: read`")
+        return
+    if isinstance(perms, str):
+        if perms == "read-all":
+            return          # 显式全读，符合"只读"纪律
+        violations.append(
+            f"workflow 顶层 `permissions: {perms}` 不是只读——本仓 job 只需读代码，"
+            "`write-all` 比不写更危险（那是**显式**要求全写）。请改为 `contents: read`")
+        return
+    if not isinstance(perms, dict):
+        violations.append(
+            f"workflow 顶层 `permissions:` 形态无法静态判定（{type(perms).__name__}）"
+            "——按本门禁一贯纪律：无法判定时**拒答**，不默认它安全")
+        return
+    writable = sorted(
+        scope for scope, value in perms.items()
+        if isinstance(value, str) and value not in ("read", "none"))
+    if writable:
+        violations.append(
+            f"workflow 顶层 `permissions:` 授予了写权限：{writable}——"
+            "本仓 job 只需读代码（凭据来自宿主 `.env`，不来自 `GITHUB_TOKEN`；"
+            "而 token 会嵌进 git fetch URL 并落进 workspace 的 `.git/config`）。"
+            "请改为 `read`/`none`")
+
+
 def check_workflow_file(path: str | Path) -> list[str]:
     """检查一个 workflow 文件的 PR 信任边界，返回违规列表（空 = 通过）。
 
@@ -353,10 +458,7 @@ def check_workflow_file(path: str | Path) -> list[str]:
     # radius。ci.yml 早就为此写了注释与块，但另外两个 workflow 一直没跟上——
     # 这正是「同一条纪律只装在改动过的那个文件上」。故改成**门禁强制**，
     # 新增 workflow 忘记声明会直接红。
-    if (data or {}).get("permissions") is None:
-        violations.append(
-            "workflow 顶层缺少 `permissions:` 块——会继承仓库默认（可能是 read/write）。"
-            "本仓 job 只需读代码，请显式声明 `permissions:` + `contents: read`")
+    _check_permissions(data or {}, violations)
     # 可复用 workflow（`on: workflow_call`）里 `github.event_name` 取自**调用方**，
     # 所以它的 job 用 `if: github.event_name == 'push'` 是正当写法、不是死守卫。
     # 不豁免的话，本仓加第一个 reusable workflow 就会让 CI 假红。

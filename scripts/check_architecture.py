@@ -53,7 +53,7 @@
 
 ## eager / lazy / TYPE_CHECKING 的三分（关键）
 
-同一个 import 在**不同规则**下的意义不同，因此分三桶统计：
+同一个 import 在**不同规则**下的意义不同，因此分开统计（TYPE_CHECKING 不入桶）：
 
 - **eager**：模块体、**类体**、模块级 `if`/`try` 内的 import——**导入时真正执行**；
 - **lazy**：`def` / `async def` **函数体内**的 import——不在导入时执行；
@@ -65,7 +65,7 @@
 | R2 领域层→input | eager + lazy | 同上 |
 | R3 跨包私有符号 | eager + lazy | 懒导入私有符号仍是私有接口泄漏 |
 | R4 eager 环 | **仅 eager** | 函数内懒导入正是本项目**刻意**打断环的手段（见下） |
-| TYPE_CHECKING 类型边 | 不参与任何规则 | 允许（既定设计）；`--report` 可见，**不是门禁** |
+| TYPE_CHECKING 类型边 | **不入任何桶**（`_collect_imports` 直接跳过） | 允许（既定设计）；本脚本**不检测也不报告**它 |
 
 这条区分是必须的，两个方向都踩过：
 

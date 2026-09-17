@@ -762,17 +762,25 @@ class TestRealRepoWorkflows:
 class TestWorkspaceWipeRecognition:
     """哪些命令算"清空 workspace 根"——判据的正反两面。"""
 
+    # 2026-09-17 追加（Challenger 复核）：`$GITHUB_WORKSPACE` 的**裸变量**写法此前漏检
+    # ——只认 `${GITHUB_WORKSPACE}` 与 `"${GITHUB_WORKSPACE}"` 两种。认不出一个字符
+    # 差异的写法 = 三道清理子句对它全关，所以这几种写法必须逐个钉住。
     _POSITIVE = (
         'find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',   # 规范写法
         'rm -rf "$WS"/*',                                            # 最像真实写法的
         'rm -rf $WS/*',
+        'rm -rf $WS',
         'rm -rf "${GITHUB_WORKSPACE}"/*',
+        'rm -rf "$GITHUB_WORKSPACE"/*',       # ← Challenger 发现的漏检形态
+        'rm -rf $GITHUB_WORKSPACE/*',         # ← 同上（裸变量）
+        'rm -rf "$GITHUB_WORKSPACE"',
+        'rm -rf "${WS:?}"/*',                 # 带"未设置即失败"的写法
         'rm -rf "$WS"/.* "$WS"/*',                                   # 连点文件一起删
         'rm -rf "$WS"/',
-        'rm -rf "$WS"',
         'rm -rf ./*',
         'rm -rf *',
         'rm -rf ./ ./.git',
+        'rm -rf .',
         'find "$WS" -mindepth 1 -maxdepth 1 -delete',
         'find "$WS" -mindepth 1 -delete',
     )
@@ -781,8 +789,11 @@ class TestWorkspaceWipeRecognition:
         'rm -rf node_modules',                 # 目标不是工作区根
         'rm -rf "$WS"/static/assets',          # 子路径：删构建产物，不是清空根
         'rm -rf ${GITHUB_WORKSPACE}/frontend/node_modules',
+        'rm -rf "$GITHUB_WORKSPACE"/frontend/node_modules',
         'rm -rf frontend/node_modules',
         'rm -rf /tmp/scratch',
+        'rm -rf ./*.log',                      # ← 删日志，不是清空（Challenger 假红）
+        'rm -rf ./.cache',                     # ← 同上
         'npm ci && npm run build',
         'git reset --hard',
     )
@@ -1003,3 +1014,73 @@ class TestEventGuardSpellingEquivalence:
         )
         violations = check_workflow_file(_write(tmp_path, yaml_text))
         assert any("self-hosted" in v for v in violations), violations
+
+
+# ══════════════════════════════════════════════════════════════════
+# permissions 必须是"只读"，不只是"存在"（2026-09-17 Challenger 复核补）
+# ══════════════════════════════════════════════════════════════════
+#
+# Batch 2.2 加的判据只查**存在性**，于是 `permissions: write-all` 照样绿——而规则
+# 自己的提示语写着「请显式声明 `contents: read`」、commit 标题写着 "pin least
+# privilege"。**判据比声称的弱就是假绿**：`write-all` 比不写更危险（不写只继承
+# 仓库默认，写 `write-all` 是**显式**要求全写）。
+#
+# 取值口径见 GitHub 文档：scope 只接受 `read` / `write`，没有 `none`
+# （要"不给"就整个省略该 scope——空映射 `{}` 即全部 none）。
+
+
+class TestPermissionsLeastPrivilege:
+    """`permissions:` 必须真的是只读。"""
+
+    _HEAD = (
+        "name: CI\n"
+        "on:\n"
+        "  push: {branches: [main]}\n"
+        "%s"
+        "jobs:\n"
+        "  backend:\n"
+        "    name: Backend\n"
+        "    if: github.event_name == 'push'\n"
+        "    runs-on: self-hosted\n"
+        "    steps:\n"
+        "      - run: echo hi\n"
+    )
+
+    def _check(self, tmp_path, perms: str):
+        return check_workflow_file(_write(tmp_path, self._HEAD % perms))
+
+    @pytest.mark.parametrize("perms,label", [
+        ("permissions: write-all\n", "显式全写"),
+        ("permissions:\n  contents: write\n", "单 scope 写"),
+        ("permissions:\n  contents: read\n  issues: write\n", "混合"),
+        ("permissions:\n", "显式 null（不可判定 → 拒答）"),
+    ])
+    def test_writable_permissions_are_rejected(self, tmp_path, perms, label):
+        violations = self._check(tmp_path, perms)
+        assert violations, f"{label}（{perms.strip()!r}）未被判违规——判据比声称的弱"
+
+    @pytest.mark.parametrize("perms,label", [
+        ("permissions:\n  contents: read\n", "标准只读"),
+        ("permissions: read-all\n", "显式全读"),
+        ("permissions: {}\n", "空映射（全部 none）"),
+        ("permissions:\n  contents: read\n  pull-requests: read\n", "多 scope 只读"),
+    ])
+    def test_readonly_permissions_are_accepted(self, tmp_path, perms, label):
+        assert self._check(tmp_path, perms) == [], (
+            f"{label}（{perms.strip()!r}）被误判——会逼人写更差的东西")
+
+    def test_missing_permissions_is_rejected(self, tmp_path):
+        assert self._check(tmp_path, ""), "缺失 permissions 未被判违规"
+
+    def test_real_workflows_declare_readonly_permissions(self):
+        """真实仓库的 3 个 workflow 不只声明了 `permissions`，而且是只读的。"""
+        root = Path(__file__).resolve().parents[2]
+        for path in sorted((root / ".github" / "workflows").glob("*.yml")):
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            perms = data.get("permissions")
+            assert perms is not None, f"{path.name} 缺 permissions"
+            if isinstance(perms, str):
+                assert perms == "read-all", f"{path.name}: permissions={perms}"
+            else:
+                bad = {k: v for k, v in perms.items() if v == "write"}
+                assert not bad, f"{path.name} 授予了写权限：{bad}"

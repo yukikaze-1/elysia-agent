@@ -441,3 +441,46 @@ def test_module_has_no_type_edges_bucket():
         f"`_Module.type_edges` 又回来了（当前字段：{sorted(names)}）——"
         "它当初只被死规则 `_type_only_edges()` 读取"
     )
+
+
+def test_docstring_does_not_advertise_nonexistent_flags():
+    """脚本 docstring 不得提到 argparse 里没有的开关。
+
+    存在理由（2026-09-17 Challenger 复核发现）：删掉 R5 死规则的**同一次提交**
+    在 docstring 的规则表里写下「`--report` 可见，**不是门禁**」——而
+    `--report` 这个开关**从来不存在**（argparse 只有 `--list/--json/--root`），
+    且同批的 CLAUDE.md 明确写着"刻意不留 `--report` 之类的默认关闭开关"。
+    **刚拆掉一个"文档里存在、代码里没有"的假门禁，就在原地造了一个同类的假开关。**
+
+    判据：从 `--help` 实际输出里取所有长选项，逐一对 docstring 里出现的
+    ``--xxx`` 做存在性检查。取**实际输出**而非读 `add_argument` 源码，
+    是为了让判据跟着运行期事实走。
+    """
+    import re
+    import subprocess
+
+    help_proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        capture_output=True, text=True, timeout=60,
+    )
+    real_flags = set(re.findall(r"--[a-z][a-z-]*", help_proc.stdout))
+    assert real_flags, f"没能从 --help 解析出任何开关：{help_proc.stdout!r}"
+
+    doc = SCRIPT.read_text(encoding="utf-8")
+    mentioned = set(re.findall(r"(?<![\w-])--[a-z][a-z-]*", doc))
+    # 允许"否定语境"里的提及：本文件确实需要解释**为什么刻意不做**某个开关
+    # （如 `--report` 的取舍）。逐行判断，凡该行含否定词就不算"宣传"。
+    negations = ("不", "没", "勿", "避免", "刻意", "拒绝", "删除", "而非", "替代")
+    advertised: set[str] = set()
+    for line in doc.splitlines():
+        if any(n in line for n in negations):
+            continue
+        advertised |= set(re.findall(r"(?<![\w-])--[a-z][a-z-]*", line))
+    # 只检查 argparse 风格的长选项；排除 shell 命令里出现的 `--` 参数
+    unknown = sorted(f for f in advertised - real_flags
+                     if f not in ("--all-refs", "--no-capture-output"))
+    assert unknown == [], (
+        f"docstring 提到了不存在的开关：{unknown}\n"
+        f"实际存在的：{sorted(real_flags)}\n"
+        "「文档说它有、代码里没有」正是本批删掉 R5 的理由——不要让同类问题回来。"
+    )
