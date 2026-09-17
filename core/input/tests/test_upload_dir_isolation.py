@@ -37,6 +37,14 @@ import pytest
 
 from paths import ProjectPath
 
+# ⚠️ 被测模块在**收集期**（本模块 import 时）就被加载——这不是风格选择，是守卫的前提。
+# `_images_dir()` 的旧实现是模块级常量，在 **import 那一刻**定格目录。只有"先 import、
+# 后设 env"的时序，本文件的用例才能确定地抓住它；若把 import 挪进 fixture/测试体
+# （那时 env 已设好），旧实现会被冻到 tmp 上、守卫退化成假绿（pytest 收集顺序敏感）。
+# 见 `test_guard_precondition_module_imported_at_collection_time`。
+from core.input import upload_routes  # noqa: E402
+from core.input.server import create_app  # noqa: E402
+
 pytestmark = pytest.mark.service
 
 _ENV_IMAGES = "ELYSIA_PATH_DATA_UPLOADS_IMAGES"
@@ -62,11 +70,9 @@ def _snapshot(directory: Path) -> list[str] | None:
 def _make_images_app(monkeypatch, tmp_path) -> tuple[Path, object]:
     """最小图片上传 app（与 `test_server.py::TestImageUpload.image_app` 同款）。
 
-    ⚠️ env 覆盖在**函数体内**设置——即 import（模块已加载）之后，正是旧实现失效的时序。
-    同时把 desktop 目录也重定向，避免 `create_app` 的静态挂载在 tmp 之外建目录。
+    ⚠️ env 覆盖在**函数体内**设置——即 import（模块已在收集期加载）之后，正是旧实现
+    失效的时序。同时把 desktop 目录也重定向，避免 `create_app` 的静态挂载在 tmp 之外建目录。
     """
-    from core.input.server import create_app
-
     redirected = tmp_path / "redirected" / "images"
     monkeypatch.setenv(_ENV_IMAGES, str(redirected))
     monkeypatch.setenv(_ENV_DESKTOP, str(tmp_path / "redirected" / "desktop"))
@@ -79,6 +85,21 @@ def _make_images_app(monkeypatch, tmp_path) -> tuple[Path, object]:
     agent.output = MagicMock()
     agent.bus = MagicMock()
     return redirected, create_app(agent, serve_static=False)
+
+
+def test_guard_precondition_module_imported_at_collection_time():
+    """守卫前提自检：被测模块必须在**任何 fixture 之前**（收集期）已加载。
+
+    旧实现（模块级常量）在 import 那一刻定格目录。删掉本文件顶部的
+    `from core.input import upload_routes`、把 import 挪进 fixture，会让旧实现冻到
+    tmp 上、上面两条用例退化成假绿——这条把前提变成**可执行的**。
+
+    诚实边界：在 `core/input/__init__.py` 目前连带 import server 的情况下，即便删掉
+    顶部 import，本断言仍可能因包初始化而通过；真正不依赖任何外部 import 行为的证据
+    是 fresh 子进程用例（那里 import 与设 env 的顺序由脚本显式控制）。
+    """
+    assert "core.input.upload_routes" in sys.modules, (
+        "采集期未加载 core.input.upload_routes——守卫的时序前提被破坏了")
 
 
 async def _post_png(app) -> tuple[int, str]:
@@ -133,7 +154,7 @@ async def test_images_dir_follows_runtime_env_not_import_time(monkeypatch, tmp_p
     上一条用例证明端到端行为；这条把"哪一层坏了"钉死——它绿而上面红 = handler 没走
     `_images_dir()`；它红 = 函数本身退回 import 期固化。**单独它不算守卫**（§14）。
     """
-    from core.input.upload_routes import _images_dir
+    _images_dir = upload_routes._images_dir
 
     first = tmp_path / "one" / "images"
     second = tmp_path / "two" / "images"
