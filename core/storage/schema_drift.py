@@ -46,8 +46,15 @@ _ID_INDEX = "_id_"
 
 #: 索引**选项**声明（S2-B1）：`{collection: {index_name: {option: value}}}`。
 #: 只登记"选项有意义"的索引——不在表里的按"不比选项"处理（默认非唯一、无 TTL）。
-#: 表由 `core/storage/tests/test_schema_drift.py` 的 AST 反向校验守护（与
-#: `EXPECTED_INDEXES` 同一机制），故不会静默过期。
+#:
+#: ⚠️ **本表目前没有机器守卫**（勿照抄 `EXPECTED_INDEXES` 的说法）。`EXPECTED_INDEXES`
+#: 有 `test_schema_drift.py::_derive_expected_from_code` 的 AST 反向校验；那个校验
+#: 只提取索引**名字**，从不看 `ensure_index` 的 kwargs，也从不读本表 —— 实测把本表
+#: 整个换成 `{}` 或垃圾，`TestExpectedIndexesPinnedToCode` 仍全绿。
+#: 后果：键写错（如曾把 `idempotency` 误写成从未存在的 `idempotency_claims`）会让
+#: 该集合**一个选项都不比**，退化成"扫了、没比、报健康"（B3-CB-2）。
+#: 现有守卫只有一条：`TestIndexOptionConflicts::test_idempotency_ttl_option_is_gauged`
+#: 针对 `idempotency` 的**定点**回归；表级的 AST 守卫仍待补（见 todo.md follow-up N-4）。
 EXPECTED_INDEX_OPTIONS: dict[str, dict[str, dict[str, object]]] = {
     "attachments": {"attachment_id_1": {"unique": True}},
     "background_task_results": {

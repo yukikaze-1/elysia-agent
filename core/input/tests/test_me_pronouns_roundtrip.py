@@ -213,3 +213,40 @@ async def test_missing_pronouns_key_in_legacy_doc_keeps_bootstrap_default(aiohtt
     resp = await client.get("/api/me")
     assert resp.status == 200, await resp.text()
     assert (await resp.json())["pronouns"] == "她"
+
+
+# ── 本地（无 repo）路径：同一条缺陷也在这里，且修法顺带覆盖 ──
+
+
+def test_local_store_accepts_null_pronouns_and_survives_reload(tmp_path):
+    """本地模式（无 repo，JSON 文件）也必须能存 null 并在"重启"后读回。
+
+    这条是 Challenger 补的覆盖缺口：`_update_local` 用 `setattr` 写值（pydantic 的
+    `validate_assignment` 没开 ⇒ **绕过校验**），所以修前它**静默接受** `None`、
+    把 `"pronouns": null` 写进 JSON；下一个进程 `_load_from_file` 的
+    `model_validate` 抛错被 `except` 吞掉 → `get()` 返回 None → `bootstrap()`
+    **静默重置**回「她」/revision 1。即本地模式是**静默数据丢失**，
+    比权威路径的 500 更隐蔽。域模型改可空后这条路径一并修好，但此前**无测试**。
+    """
+    import json
+
+    from core.profile.profile_store import UserIdentityStore
+
+    path = tmp_path / "profile.json"
+    store = UserIdentityStore(storage_path=str(path))
+    store.bootstrap("妖梦")
+
+    import asyncio
+    updated = asyncio.run(store.update_if_revision(1, {"pronouns": None}))
+    assert updated is not None
+    assert updated.pronouns is None
+    assert updated.revision == 2
+    # 落盘形态确实是 null（而不是被悄悄改写/丢弃）
+    assert json.loads(path.read_text("utf-8"))["pronouns"] is None
+
+    # 「重启」：新 store 只从文件读回——修前这里会静默重置成「她」/revision 1
+    reloaded = UserIdentityStore(storage_path=str(path))
+    got = reloaded.get()
+    assert got is not None, "本地档案读回失败（静默重置为 bootstrap）"
+    assert got.pronouns is None
+    assert got.revision == 2, "revision 被静默重置回 1 —— 用户改动丢失"
