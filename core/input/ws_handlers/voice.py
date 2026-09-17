@@ -24,7 +24,6 @@ from pydantic import ValidationError
 from core.input._common import _find_channel
 from core.input.voice_sessions import VoiceSessionError, VoiceSessionManager
 from core.input.ws_v2 import _handle_voice_commit
-from frontend_contract import ErrorMessage
 from frontend_contract.ws_message import AudioInputDescriptor
 
 

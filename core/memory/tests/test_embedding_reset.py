@@ -9,7 +9,7 @@
 `cancel()`（打断在途加载）与 `reset()`（作废状态）是两件事——本文件锁住后者。
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -101,7 +101,6 @@ async def test_hot_restart_reloads_instead_of_reusing_closed_backend():
 
     用 `_try_load_sync` 计数证明"又试了一次"——原先 `_backend` 非 None 会直接短路。
     """
-    from core.memory.embedding_provider import EmbeddingProvider
     from core.memory.long_term import LongTermMemory
 
     ltm = LongTermMemory(repo=_FakeRepo())

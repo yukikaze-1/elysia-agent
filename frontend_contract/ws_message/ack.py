@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 
-from frontend_contract.base import ContractModel, TsNull
-from pydantic import ConfigDict, Discriminator, Field, model_validator
+from frontend_contract.base import ContractModel
+from pydantic import Discriminator, Field
 from typing import Annotated, Any, Literal, Optional, Union
 from frontend_contract.ws_message._types import AcceptedUserAckMessage, RejectedUserAckMessage
 

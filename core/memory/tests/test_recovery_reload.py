@@ -12,7 +12,6 @@ CR-06：`load()` 命中文档时整体替换内存、从不与离线期 pending 
 **三处同时消失**。
 """
 
-import json
 
 import pytest
 

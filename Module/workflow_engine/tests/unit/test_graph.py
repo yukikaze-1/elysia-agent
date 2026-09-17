@@ -97,7 +97,6 @@ def test_from_plan_duplicate_node_id():
     from Module.workflow_contract import NodeId as NID
     from Module.workflow_engine.schema import (
         DAGNode,
-        OutputContract,
     )
     plan = Plan(
         dag=DAG(

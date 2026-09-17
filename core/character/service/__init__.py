@@ -25,8 +25,28 @@
 等按名显式导入）与历史上顺带泄漏的 stdlib/typing/契约名。`from core.character.service
 import X` 的每一个 X 都不变。
 
-刻意**不**定义 `__all__`：拆分前也没有，因此 `from core.character.service import
-_summary`（显式导入）与 `import *` 的可见性语义都与拆分前一致。
+### 关于 `__all__`（2026-09-17 Batch 2.3 变更）
+
+拆分时**刻意不定义** `__all__`，理由是「拆分前也没有，因此显式导入与 `import *`
+的可见性语义都与拆分前一致」。该理由在 Batch 2.3 启用 F401 后被重新评估并**部分
+推翻**——现在补上了 `__all__`，取舍如下：
+
+- **不变的是**：`from core.character.service import X` 的每一个 X **依旧可用**
+  （实测：全仓外部显式导入的 16 个名字全部在 `__all__` 里）。`__all__` 只影响
+  `import *`，不影响显式导入。
+- **变的是**：`import *` 不再带出 `base64` / `hashlib` / `json` / `uuid` 这些
+  **历史上顺带泄漏的 stdlib 名**。它们不是这个包的 API，只是拆分前模块级 import
+  的副产物；`import *` 面上少掉它们，正是把"偶然可见"收敛成"声明可见"。
+  本仓没有任何地方对这个包用 `import *`（`Module/workflow_contract` 是唯一被
+  `import *` 消费的包，且它一直有 `__all__`）。
+- **为什么必须做**：F401 会把这些"导入了却没人用"的名字标成 unused import。
+  不区分「有意重导出」与「真没用」的话，判据就会逼人删掉真正的公开面
+  （`SessionId` / `asdict` 两处已实测被误删并导致 ImportError）。
+  显式 `__all__` 是让判据能区分两者的**标准机制**，也是本仓既有惯例
+  （`core/network`、`core/status`、`Module/workflow_contract` 等 20+ 处都在用）。
+
+私有名仍逐个重导出（见上），故 `_summary`（`scripts/dev/seed_stage_h_pinned.py`
+按名导入）保持可用；`__all__` 里只列它一个私有名，因为它是唯一有外部消费者的。
 """
 
 from __future__ import annotations
@@ -142,3 +162,36 @@ class CharacterService(
     CharacterServiceBase,
 ):
     """角色 CRUD、分页、版本 CAS 与安全 preview/reset 编排。"""
+
+# 冻结的公共面：显式 `__all__`（理由见上方「关于 __all__」）。
+# 内容 = 全仓有显式导入的名字，逐名核对过；新增公开名请一并加进来。
+
+# 冻结的公共面：显式 `__all__`（2026-09-17 Batch 2.3）。
+# 内容 = 全仓有显式导入的名字 ∪ 被外部按名导入的子模块——逐名核对过；
+# 新增公开名请一并加进来（F401 靠它区分「有意重导出」与「真没用」）。
+
+# 冻结的公共面：显式 `__all__`（2026-09-17 Batch 2.3）。
+# 内容 = 全仓有显式导入的名字（含被按名导入的子模块）——逐名核对过；
+# 新增公开名请一并加进来（F401 靠它区分「有意重导出」与「真没用」）。
+
+# 冻结的公共面：显式 `__all__`（2026-09-17 Batch 2.3）。
+# 内容 = 全仓有显式导入的名字（含被按名导入的子模块）——逐名核对过；
+# 新增公开名请一并加进来（F401 靠它区分「有意重导出」与「真没用」）。
+__all__ = [
+    "BUILTIN_FALLBACK_CHARACTER_ID",
+    "CharacterArchivedError",
+    "CharacterBusyError",
+    "CharacterImmutableError",
+    "CharacterInstanceNotFoundError",
+    "CharacterNotFoundError",
+    "CharacterPreviewUnavailableError",
+    "CharacterQueryError",
+    "CharacterService",
+    "CharacterStateConflictError",
+    "CharacterStorageUnavailableError",
+    "CharacterTooLargeError",
+    "CharacterValidationError",
+    "RESET_FIELDS",
+    "RevisionConflictError",
+    "_summary",
+]

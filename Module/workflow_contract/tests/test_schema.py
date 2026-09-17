@@ -7,7 +7,6 @@ from Module.workflow_contract import (
     AgentInfra,
     ConstraintConfig,
     DelegationContext,
-    DelegationResult,
     DelegationStatus,
     HITLData,
     SessionId,

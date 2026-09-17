@@ -1,6 +1,6 @@
 """core/schema/types.py 测试。"""
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime
 from pydantic import BaseModel, ValidationError
 from core.schema import IsoTimestamp, now_iso, SessionId, MessageId, ToolCallId, GenerationId, SegmentId, RequestId
 

@@ -12,7 +12,7 @@ VAD 路径此前一个都没有：**同一风险在两条语音路径上不对�
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 

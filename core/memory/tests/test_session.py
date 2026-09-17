@@ -378,7 +378,6 @@ async def test_character_binding_roundtrip_mock_mongo():
 @pytest.mark.asyncio
 async def test_character_binding_roundtrip_jsonl(tmp_path):
     """character_binding 经 JSONL save/load 往返（Mongo 离线 fallback 路径）。"""
-    import json
     binding = {"instanceId": "chi_legacy_def", "characterId": "legacy"}
     expected = {"instance_id": "chi_legacy_def", "character_id": "legacy"}
     pending = os.path.join(str(tmp_path), "session_cb.json")

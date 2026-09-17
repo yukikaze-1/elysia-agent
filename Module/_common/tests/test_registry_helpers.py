@@ -1,6 +1,5 @@
 """resolve_api_key / resolve_base_url / inject_logger 单元测试。"""
 import logging
-import os
 
 import pytest
 

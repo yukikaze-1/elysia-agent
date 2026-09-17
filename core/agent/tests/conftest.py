@@ -1,6 +1,5 @@
 """agent/ 测试共享 fixtures。"""
 
-import asyncio
 from collections import deque
 from unittest.mock import MagicMock, AsyncMock
 import pytest

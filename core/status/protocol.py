@@ -7,7 +7,6 @@ CognitiveLoop 通过 agent.phases 驱动状态转换。
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable

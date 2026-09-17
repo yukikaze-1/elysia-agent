@@ -8,7 +8,6 @@
 - 权威装载成功后 GET 200 返回 Mongo 中的档案。
 """
 
-from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp import web

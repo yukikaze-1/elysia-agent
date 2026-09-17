@@ -129,7 +129,6 @@ class _Smoke:
 
 async def _profile_scenarios(smoke: _Smoke, agent: Any, client: TestClient) -> None:
     """Profile 与模型切换（spec §5.2）：列表不回显密钥 / test 成功+失败 / save-delete / PROFILE_IN_USE。"""
-    from frontend_contract import rest
 
     resp = await client.get("/api/providers")
     data = await resp.json()

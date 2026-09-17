@@ -1,74 +1,58 @@
 """WebSocket handler —— WS 生命周期、消息路由、打断、转写。"""
 
 import asyncio
-import hashlib
 import json
 import logging
-import time
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web, WSMsgType
 from pydantic import TypeAdapter, ValidationError
 
-from core.memory.session_manager import SessionBusyError, SessionNotFoundError
 from core.schema.event import InterruptData, UserInputData
 from core.schema.message import ClientMessageDict
-from core.schema.part import AudioPart, FilePart, ImagePart, StickerPart, TextPart, VideoPart
-from core.schema.utils import now_iso
-from core.schema.types import AttachmentId, SessionId
-from core.storage.attachment_repo import StorageUnavailableError
 from Module.output import WebSocketChannel
 from core.input.audio_buffer import AudioBuffer
 from core.input._common import _find_channel, _send_ack
 from core.services.capabilities import build_capabilities
-from core.input.ws_v2 import _handle_voice_commit, _route_v2_text
 from core.input.ws_handlers import _WS_HANDLERS
 from core.input.ws_handlers.context import WsRequestContext
 # re-export（评估 §5 批次 D 第 4 条「旧 import re-export」）：这些符号已迁入
 # core/input/ws_handlers/{chat,session}.py，但既有测试与同包模块仍从本模块导入，
 # 故在此保留导出以维持兼容。新增代码请直接从领域模块导入。
 from core.input.ws_handlers.chat import do_interrupt
-from core.input.ws_handlers.session import _handle_activate_session
 from core.input.ws_handlers.voice import (  # noqa: F401 — re-export 兼容层
     _is_v2,
     _send_voice_error,
     _voice_descriptor,
     _voice_stt_gate,
 )
-from core.storage.idempotency import (
-    GRACE_SECONDS,
-    IN_PROGRESS_RETRY_AFTER_MS,
-    IdempotencyEntry,
-    get_store,
-)
 from core.network.rate_limiter import RateLimiter, rate_key_for_request
-from core.input.sticker_registry import get as get_sticker
-from core.input.voice_sessions import VoiceSessionError, VoiceSessionManager
-from core.storage.idempotency_repo import STATUS_ACCEPTED, STATUS_REJECTED
+# 重导出（2026-09-17 Batch 2.3 恢复）：`_handle_activate_session` 由
+# `core.input.ws_handlers.session` 拥有，但 `core/input/tests/test_request_id.py`
+# 按 `from core.input.ws_handler import _handle_activate_session` 取用。
+# F401 清理曾删掉它 → ImportError。显式别名表态「有意重导出」。
+from core.input.ws_handlers.session import (
+    _handle_activate_session as _handle_activate_session,
+)
+from core.input.voice_sessions import VoiceSessionManager
 from core.utils import get_request_id, set_request_id
 from frontend_contract import (
-    AcceptedUserAckMessage,
     AckError,
     CommandMessage,
     ErrorMessage,
     ExpressionMessage,
-    RejectedUserAckMessage,
     SessionMessage,
     SessionMessageItem,
-    ServiceModeResultMessage,
-    SetTtsVoiceResultMessage,
-    SwitchModelResultMessage,
     TokenStats,
     TranscriptionMessage,
     WakeMessage,
 )
 from frontend_contract.ws_message import (
-    AudioInputDescriptor, ClientMessage, V2TextMessage,
+    ClientMessage,
 )
 from frontend_contract.version import TRANSPORT_VERSION
-from core.input.tts_profile import _active_tts_profile
 
 if TYPE_CHECKING:
     from core.agent import Agent

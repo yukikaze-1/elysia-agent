@@ -4,7 +4,6 @@ import dataclasses
 import os
 from typing import Dict, List, Optional, Union
 import tempfile
-from pathlib import Path
 
 import pytest
 import yaml
@@ -818,7 +817,6 @@ class TestOptionalContainerValidation:
     def test_wrong_container_type_is_reported_not_crashed(self, tmp_path):
         """类型不符要报 `ConfigTypeError`，而不是把 TypeError 冒到启动路径上。"""
         from Module.config.errors import ConfigTypeError
-        from Module.config.loader import ConfigLoader
 
         @dataclasses.dataclass
         class _Cfg:

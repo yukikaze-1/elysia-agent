@@ -39,7 +39,7 @@ from enum import StrEnum
 from core.text.parts import BlockRef
 from core.text.parts import rebuild_public_text
 from core.text.splitter import SpeechSplitter
-from core.text.tags import META_TAGS, PAUSE_RE, is_emoji_only
+from core.text.tags import META_TAGS
 from core.text.tokenizer import Token, TokenKind, StreamTokenizer
 
 logger = logging.getLogger(__name__)

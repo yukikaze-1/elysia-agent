@@ -31,7 +31,6 @@ from Module.workflow_engine.schema import (
     NodeStatus,
     Plan,
     TokenComponentType,
-    OutputContract,
 )
 
 pytestmark = pytest.mark.unit

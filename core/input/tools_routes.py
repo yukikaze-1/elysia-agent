@@ -9,9 +9,6 @@ from typing import Any
 from aiohttp import web
 from paths import ProjectPath
 
-from core.desktop.bridge import DesktopToolBridge
-from core.storage.desktop_call_repo import DesktopCallRepository
-from core.utils import new_attachment_id
 from frontend_contract import rest as rest_contract
 from core.input._common import _tool_error
 
@@ -209,7 +206,7 @@ async def desktop_upload_handler(request: web.Request) -> web.Response:
 
 
 from aiohttp.multipart import BodyPartReader
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, cast
 from frontend_contract.rest import RepoCallStatus
 import os
 

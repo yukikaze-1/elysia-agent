@@ -14,7 +14,6 @@ from Module.tool.protocol import (
     ToolPlugin,
     ToolResult,
 )
-from Module.tool.safety import SafetyPipeline
 
 pytestmark = pytest.mark.unit
 

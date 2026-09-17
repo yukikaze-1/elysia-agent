@@ -14,7 +14,6 @@ import pytest
 
 import core.tools.vision.plugin as vision
 from core.tools.vision.plugin import (
-    CACHE_MAX_ENTRIES,
     CACHE_TTL_SECONDS,
     _load_cache,
     _save_cache,

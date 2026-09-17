@@ -1,7 +1,6 @@
 """stable_tool_message_id 派生测试（D1，marker=unit）。"""
 import pytest
 
-from core.schema.types import MessageId
 from core.schema.utils import new_message_id, stable_tool_message_id
 
 

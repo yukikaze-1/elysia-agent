@@ -7,7 +7,6 @@ WorkflowMailbox 事件类型（WorkflowEvent/WorkflowEventType）已随契约层
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
 
 from pydantic import BaseModel, Field
 

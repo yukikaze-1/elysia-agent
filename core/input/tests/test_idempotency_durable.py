@@ -25,7 +25,6 @@ from core.storage.idempotency import (
     get_store,
     reset_store,
 )
-from core.network.rate_limiter import RateLimiter
 from core.input.voice_sessions import VoiceSessionError
 from core.storage.idempotency_repo import (
     COLLECTION,
@@ -1641,7 +1640,6 @@ class TestRetryableRejectionIsNotTerminal:
     @pytest.mark.asyncio
     async def test_queue_full_rejection_stays_retryable(self, fresh_store):
         """QUEUE_FULL（retryable）→ 不落终态；同键重试必须能被**重新处理**。"""
-        import core.input.ws_v2 as _m
         from core.input.tests.test_voice_ws import FakeWs
         from core.input.tests.test_v2_ws import _FakeV2Agent, _text_msg
         from core.input.ws_handler import handle_json_message
@@ -1686,7 +1684,6 @@ class TestRetryableRejectionIsNotTerminal:
     @pytest.mark.asyncio
     async def test_contract_validation_rejection_is_terminal(self, fresh_store):
         """对照：非重试的终态拒绝仍要落库（同键重试重放原拒绝，逐字一致）。"""
-        import core.input.ws_v2 as _m
         from core.input.tests.test_voice_ws import FakeWs
         from core.input.tests.test_v2_ws import _FakeV2Agent, _text_msg
         from core.input.ws_handler import handle_json_message

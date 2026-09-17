@@ -107,7 +107,7 @@ def test_depends_on_reserved():
 
 def test_can_retry_requires_non_terminal_status():
     """can_retry() 应对终态任务返回 False。"""
-    from core.tool_runtime import QueuedToolCall, QueuedToolCallKind, QueuedToolCallState
+    from core.tool_runtime import QueuedToolCall, QueuedToolCallState
 
     # COMPLETED 且还有重试次数 —— 应仍返回 False
     t = QueuedToolCall.new_tool_call(request_id="p1", tool_name="echo", arguments={})

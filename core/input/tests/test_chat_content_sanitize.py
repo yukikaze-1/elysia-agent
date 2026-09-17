@@ -10,7 +10,6 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
-from aiohttp import web
 
 from core.agent import RunState
 from core.input.server import create_app

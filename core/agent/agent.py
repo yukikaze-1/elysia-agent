@@ -43,10 +43,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
-import os
 from collections.abc import Mapping
-from dataclasses import asdict
 import logging
 from typing import Any, TYPE_CHECKING, Awaitable, Callable
 
@@ -72,9 +69,9 @@ from core.agent.server import AgentServer
 from core.cognitive.loop import DEFAULT_INSTANCE_ID
 
 from core.config import AppConfig
-from core.monitoring.event_bus import EventBus, EventPriority, EventType
+from core.monitoring.event_bus import EventBus, EventType
 from core.status.agent_fsm import AgentFSM, AgentState
-from core.utils import set_request_id, get_request_id
+from core.utils import set_request_id
 from core.config import CharacterConfig
 from core.memory.session_manager import SessionManager
 from core.memory.long_term import LongTermMemory
@@ -107,7 +104,6 @@ from core.storage.user_identity_repo import UserIdentityRepository
 from core.schema.event import (
     InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
 )
-from Module.embedding import EmbeddingFactory
 from core.tool_runtime import ToolCallDispatcher
 from core.storage.session_repo import SessionRepository
 from core.storage.background_task_repo import BackgroundTaskResultRepository

@@ -1,5 +1,4 @@
 """D5：空响应兜底——v2 发 segment.completed 非 message 帧（spec §3.5）。"""
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

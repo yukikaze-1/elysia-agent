@@ -81,3 +81,72 @@ from .internal import (
 #   WorkflowEvent/WorkflowEventType/Tool（同左）
 # RBACLevel 已归位 Module/tool/capability.py（Task 8）——契约层 HITLData 延迟引用
 # UserProfile 已归位 core/cognitive/user_profile.py（Task 8）——CognitiveLoop 拥有
+
+# 公开面逐名声明（2026-09-17 Batch 2.3）：本包是「单一装配点」，re-export 是
+# **有意**的公开 API。显式 `__all__` 让它从「碰巧没被用到」变成「声明导出」——
+# 这正是 F401 判据要求的区分（否则只能靠 noqa 糊过去）。
+
+# 冻结的公共面：显式 `__all__`（2026-09-17 Batch 2.3，理由见该批次记录）。
+# 内容 = 全仓有显式导入的名字，逐名核对过。
+
+# 冻结的公共面：显式 `__all__`（2026-09-17 Batch 2.3）。
+# 内容 = 全仓有显式导入的名字 ∪ 被外部按名导入的子模块——逐名核对过；
+# 新增公开名请一并加进来（F401 靠它区分「有意重导出」与「真没用」）。
+
+# 冻结的公共面：显式 `__all__`（2026-09-17 Batch 2.3）。
+# 内容 = 全仓有显式导入的名字（含被按名导入的子模块）——逐名核对过；
+# 新增公开名请一并加进来（F401 靠它区分「有意重导出」与「真没用」）。
+
+# 冻结的公共面：显式 `__all__`（2026-09-17 Batch 2.3）。
+# 内容 = 全仓有显式导入的名字（含被按名导入的子模块）——逐名核对过；
+# 新增公开名请一并加进来（F401 靠它区分「有意重导出」与「真没用」）。
+__all__ = [
+    "AgentInfo",
+    "AgentList",
+    "AgentStatus",
+    "AgentType",
+    "Artifact",
+    "ArtifactId",
+    "BusinessStatus",
+    "DAG",
+    "DAGNode",
+    "DAGNodeInfo",
+    "DAGPatch",
+    "DAGPatchType",
+    "DBTNode",
+    "DBTNodeType",
+    "EvaluatorAction",
+    "ExecutionMode",
+    "ExecutionPhase",
+    "ExecutionState",
+    "ExecutionStatus",
+    "ExperienceRecord",
+    "NodeErrorCode",
+    "NodeResult",
+    "NodeResultEvaluation",
+    "NodeState",
+    "NodeStatus",
+    "OrchestratorResult",
+    "OrchestratorRunStatus",
+    "OutputContract",
+    "Plan",
+    "ResumeError",
+    "ResumeErrorCode",
+    "TokenComponent",
+    "TokenComponentType",
+    "TokenPeriod",
+    "TokenStats",
+    "TokenUsage",
+    "ValidationAction",
+    "ValidationIssue",
+    "ValidationIssueType",
+    "ValidationResult",
+    "WorkflowCheckpoint",
+    "WorkflowDAG",
+    "WorkflowErrorCode",
+    "WorkflowProgress",
+    "WorkflowResult",
+    "WorkflowState",
+    "WorkflowSummary",
+    "now_iso",
+]

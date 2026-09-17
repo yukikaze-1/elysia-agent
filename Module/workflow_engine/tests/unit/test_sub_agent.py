@@ -26,7 +26,6 @@ from Module.workflow_contract import (
     DelegationContext,
     NodeId,
     SessionId,
-    WorkflowConstraints,
     WorkflowEventType,
     WorkflowId,
     WorkflowStatus,

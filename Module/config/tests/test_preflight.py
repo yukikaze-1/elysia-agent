@@ -1,6 +1,5 @@
 """preflight 模块单元测试。不依赖真实 API/服务。"""
 
-import os
 import sys
 from unittest.mock import MagicMock
 

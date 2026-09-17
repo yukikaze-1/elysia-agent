@@ -44,7 +44,7 @@ class TestCharacterStateChangedMessage:
 
     def test_is_server_message_member(self):
         from typing import get_args, get_origin
-        from typing import Annotated, Union
+        from typing import Union
         origin = get_origin(ServerMessage)
         inner = get_args(ServerMessage)[0]
         members = get_args(inner) if get_origin(inner) is Union else [inner]

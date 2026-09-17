@@ -10,7 +10,6 @@
   未知 callId → 404；非 target 连接 → 403；终态 call → 拒绝（403，防伪附件）。
 """
 
-import os
 
 import pytest
 from aiohttp import FormData

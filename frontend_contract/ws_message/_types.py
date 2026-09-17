@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from enum import Enum, StrEnum
 from frontend_contract.base import ContractModel, TsNull
-from frontend_contract.rest import CharacterBindingSnapshot, CharacterPublicStateView, ConversationUsage, FinishReason
-from pydantic import ConfigDict, Discriminator, Field, model_validator
+from frontend_contract.rest import CharacterBindingSnapshot
+from pydantic import ConfigDict, Field
 from typing import Annotated, Any, Literal, Optional, Union
 
 

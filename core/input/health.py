@@ -8,16 +8,14 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Any, Awaitable, Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 from aiohttp import web
 
-from core.input.errors import _protocol_error_response
 from core.version import build_server_version, get_build_sha
 
 if TYPE_CHECKING:
     from core.agent import Agent
-    from core.config import AppConfig
     from core.storage.idempotency_repo import IdempotencyRepository
 
 logger = logging.getLogger(__name__)

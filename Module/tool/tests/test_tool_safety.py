@@ -1,6 +1,5 @@
 """安全函数单元测试 — _resolve_sandbox_path, _validate_path。"""
 import pytest
-from pathlib import Path
 
 pytestmark = pytest.mark.unit
 from Module.tool.safety import (
@@ -315,7 +314,6 @@ class TestLogRedaction:
 
     def test_validation_error_format_no_input(self, caplog):
         """safety 的 validation 错误格式化不含 invalid input。"""
-        import logging
         from pydantic import BaseModel, Field
 
         class M(BaseModel):

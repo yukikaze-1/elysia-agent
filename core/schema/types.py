@@ -4,7 +4,10 @@ from typing import Annotated, NewType
 
 from pydantic import BeforeValidator
 
-from Module.workflow_contract.schema import SessionId
+# SessionId 由契约层拥有、core 侧**重导出**——它不在本文件里被使用，但它就是
+# `core.schema.SessionId` 这个公开名字的来源（下一行的注释即原设计意图）。
+# 显式 noqa 而不是删掉：删了会让 59 个模块 ImportError（Batch 2.3 实测过）。
+from Module.workflow_contract.schema import SessionId  # noqa: F401 — core 侧公开重导出
 
 
 def _normalize_iso_ts(v: str | float) -> str:

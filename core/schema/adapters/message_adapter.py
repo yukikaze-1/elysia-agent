@@ -9,13 +9,11 @@
 """
 
 import logging
-import re as _re
 from typing import Annotated, Any, Union
 
 from pydantic import Discriminator, Tag, TypeAdapter, ValidationError
 
-from core.schema.adapters import attachment_resolver as _attachment_resolver
-from core.schema.part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart, ImageMime
+from core.schema.part import Part, TextPart, ImagePart, FilePart, AudioPart, VideoPart
 from core.schema.message import Message, AssistantMessage, ToolResultMessage, UserMessage
 from core.schema.utils import stable_tool_message_id
 

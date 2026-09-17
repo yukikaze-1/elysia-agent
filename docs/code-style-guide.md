@@ -127,6 +127,25 @@ def coerce(cls, value: object) -> "MemoryType":               # 存储/构造边
 
 - **禁相对导入**：一律绝对导入（ruff TID252；`__init__.py` 重导出与 `__main__.py` 豁免）。
 - **参数类型注解**：生产代码函数参数必须类型注解（ruff ANN001/002/003；测试文件豁免——pytest fixture 动态类型惯例）。
+- **unused import（F401，2026-09-17 Batch 2.3 启用）**：除 `__init__.py` 外**一律禁止**。
+  - 为什么此前是缺口：`[lint] select` 里从来没有 `F401`，于是 `make lint` 完全看不见
+    unused import——全仓 476 处（生产 198 / 测试 140 / `__init__.py` 137 / `__main__.py` 1）。
+    「有 lint」与「lint 覆盖这一类」是两件事，这条缺口属于后者。
+  - 处置是**先分类再动手**，不是一刀切删除：生产 198 处 + 测试 140 处**删除**（现为 0）；
+    `__init__.py` 137 处**保留**（经逐项核对全是有意重导出），由
+    `ruff.toml` 的 `"**/__init__.py" = ["TID252", "F401"]` 豁免。
+  - **为什么 `__init__.py` 必须豁免而不是删**：`ruff --fix` 在首轮就误删了两处真重导出
+    （`core/schema/types.py` 的 `SessionId`、`core/debug/info.py` 的 `asdict`），
+    实测导致 59 个模块 ImportError。ruff 对 `__init__.py` 里的 `from x import y`
+    默认当作重导出不报，只在「同名冗余 / `__all__` 之外且未使用」等情形才报——
+    对**刻意逐名重导出**的装配点（如 `core/character/service/__init__.py`，
+    其 docstring 明确拒绝 `__all__`）它无从区分，故整体豁免。
+  - **跨模块重导出**（不在 `__init__.py` 里）用**显式别名**表态，不要靠 noqa：
+    `from core.utils.server_guard import warn_if_unsecured as warn_if_unsecured`。
+    实测 `core/input/server.py`、`core/personality/engine.py`、
+    `core/input/ws_handler.py` 三处有这种形态（消费方是测试），F401 清理曾把它们
+    删掉 → 15 条用例 ImportError。别名本身就是「我有意重导出」的语义。
+  - 本批目标是「**新增代码不继续扩大债务**」，不是「全仓 0 警告」。
 - **契约单源**：`frontend_contract` 是可执行契约唯一权威 → `gen_ts` → `contract.generated.ts`；改契约必须跑 `make check-types`。
 - **注释/README 用中文**（中英混合——中文嵌英文技术术语可接受）。
 - **架构规则**：frontend_contract / workflow_contract 是零依赖叶子；core → frontend_contract 单向依赖合法。

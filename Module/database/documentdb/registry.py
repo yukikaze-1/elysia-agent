@@ -1,7 +1,7 @@
 import dataclasses
 from typing import TYPE_CHECKING, Any
 
-from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
+from Module._common.registry_helpers import resolve_base_url, inject_logger
 from Module.database.documentdb.mongodb import MongoDBBackend
 
 if TYPE_CHECKING:

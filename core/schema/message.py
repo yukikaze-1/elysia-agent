@@ -6,7 +6,7 @@ role 字段 frozen，构造时自动填值。
 """
 
 from enum import StrEnum
-from typing import Literal, NotRequired, Sequence, TypedDict, Union
+from typing import Literal, Sequence, TypedDict, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 

@@ -26,7 +26,6 @@ from Module.workflow_contract import (
     WorkflowStatus,
 )
 from Module.workflow_engine.schema import (
-    AgentInfo,
     AgentList,
     AgentStatus,
     AgentType,
@@ -40,8 +39,6 @@ from Module.workflow_engine.schema import (
     TokenComponent,
     TokenComponentType,
     TokenPeriod,
-    TokenStats,
-    TokenUsage,
     now_iso,
 )
 from Module.workflow_engine.mailbox import WorkflowMailbox, push_mailbox_event
@@ -1468,7 +1465,6 @@ class TestM19AndOrphans:
 
         M19：resume 后再次 pause 不得销毁 task/mailbox——消费者必须持续可消费事件。
         """
-        from Module.workflow_contract import AgentInfra
 
         engine = WorkflowEngine(infra=MagicMock(), hitl_notifier=MagicMock(), max_sub_agents=1)
         await engine.start()

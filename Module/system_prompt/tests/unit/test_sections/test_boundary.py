@@ -1,7 +1,6 @@
 """Section 边界条件和错误路径单元测试。"""
 import asyncio
-import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from Module.system_prompt.sections.emotion import EmotionSection
@@ -13,7 +12,7 @@ from Module.system_prompt.sections.personality import PersonalitySection
 from Module.system_prompt.sections.relationship import RelationshipSection
 from Module.system_prompt.sections.proactive import ProactiveSection
 from Module.system_prompt.sections.conflict_rules import ConflictRulesSection
-from Module.system_prompt.sections.speaking_style import SpeakingStyleSection, C6_L1_DEFAULT
+from Module.system_prompt.sections.speaking_style import SpeakingStyleSection
 from Module.system_prompt.sections.output_format import OutputFormatSection
 from Module.system_prompt.sections.tts_markup import TTSMarkupSection
 from core.memory.session import SessionMemory

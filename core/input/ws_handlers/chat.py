@@ -8,7 +8,6 @@ ARCH-INC-P2-01（批次 D）领域化拆分：原 22 个 dispatcher 聚合在 `w
 import logging
 from typing import TYPE_CHECKING, Any
 
-from aiohttp import web
 
 from Module.output import WebSocketChannel
 
@@ -22,10 +21,7 @@ logger = logging.getLogger("core.input.ws_handler")
 from pydantic import ValidationError
 
 from core.input._common import _send_ack
-from core.input.audio_buffer import AudioBuffer
-from core.input.voice_sessions import VoiceSessionManager
 from core.input.ws_v2 import _route_v2_text
-from core.network.rate_limiter import RateLimiter
 from core.schema.event import InterruptData
 from frontend_contract.ws_message import V2TextMessage
 

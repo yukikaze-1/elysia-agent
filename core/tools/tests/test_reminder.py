@@ -1,7 +1,6 @@
 """SetReminderPlugin 单元测试。"""
 
 import pytest
-from unittest.mock import AsyncMock, patch
 
 from Module.tool.protocol import ToolContext
 from core.tools.reminder.plugin import SetReminderPlugin, ReminderParams

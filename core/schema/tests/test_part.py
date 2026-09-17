@@ -3,8 +3,7 @@
 import pytest
 from pydantic import ValidationError
 from core.schema.part import (
-    PartType, ImageMime, ImageDetail, FileMime, AudioMime, VideoMime,
-    TextPart, ImagePart, FilePart, AudioPart, VideoPart,
+    PartType, ImageMime, ImageDetail, FileMime, TextPart, ImagePart, FilePart, AudioPart, VideoPart,
 )
 
 

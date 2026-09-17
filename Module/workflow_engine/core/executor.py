@@ -15,7 +15,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from Module.workflow_contract import NodeId, SessionId, WorkflowId, WorkflowStatus
+from Module.workflow_contract import NodeId, SessionId, WorkflowId
 from Module.tool.tool_descriptor import Tool
 from Module.workflow_engine.cancel import check_cancelled
 from Module.workflow_engine.schema import (

@@ -1,5 +1,5 @@
 """make_config_test_classes 单元测试。"""
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pytest
 

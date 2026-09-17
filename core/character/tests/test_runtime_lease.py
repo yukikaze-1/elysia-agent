@@ -5,7 +5,6 @@
 本文件锁定 lease 的原子语义——判定与登记必须同处一把同步锁内完成。
 """
 
-from types import SimpleNamespace
 
 import pytest
 

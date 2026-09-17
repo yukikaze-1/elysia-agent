@@ -7,7 +7,6 @@ Priority 2: USER_INPUT, SYSTEM_TICK — 常规 I/O
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any
 
 from core.schema import EventPriority, EventType  # noqa: F401
 from core.schema.event import EventData  # noqa: F401

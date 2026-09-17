@@ -13,7 +13,6 @@ Mongo 离线（repo.get raise StorageUnavailableError）→ 503 STORAGE_UNAVAILA
 """
 
 import logging
-import time
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -21,7 +20,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 if TYPE_CHECKING:
-    from core.agent import Agent
+    pass
 
 from paths import ProjectPath
 from core.application import (

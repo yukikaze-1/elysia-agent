@@ -1,17 +1,46 @@
-# ruff 配置 — TID252（禁相对导入）+ ANN（参数类型注解门禁）。
-# 强制绝对导入风格；生产代码强制参数类型注解。
-# 豁免 __init__.py（重导出惯用法）与 __main__.py（python -m 入口）；
-# 测试文件豁免 ANN（pytest fixture 动态类型惯例，仅强制生产代码注解）。
-# 其余规则（isort/排序等）暂不启用，见 docs/import-style.md。
+# ruff 配置 — TID252（禁相对导入）+ ANN（参数类型注解门禁）+ F401（unused import）。
+#
+# ## F401：为什么现在才启用，以及为什么"生产代码 = 0"是硬判据（2026-09-17 Batch 2.3）
+#
+# F401 此前**从未**进入 select，于是 `make lint` 完全看不见 unused import：
+# 全仓 476 处（生产 198 / 测试 140 / `__init__.py` 137 / `__main__.py` 1）。
+# 门禁声明与实际覆盖面之间的这段缺口，就是"看起来有 lint、其实漏一整类"的假绿。
+#
+# 启用前先做了**分类**（不是一刀切删除——那正是本批明确禁止的动作）：
+#
+# | 类别 | 数量 | 处置 |
+# |---|---|---|
+# | 生产代码（非 `__init__`）真 unused | 198 | **删除**（ruff --fix），生产代码 F401 现为 0 |
+# | 测试文件真 unused | 140 | **删除**（ruff --fix） |
+# | `__init__.py` 重导出 | 137 | **保留**——见下 |
+#
+# `__init__.py` 的 137 处经逐项核对**全部是有意的重导出**，不是 unused import：
+# 删掉它们会让 `from core.schema import X` 这类公开路径直接 ImportError。
+# 这不是推测——`ruff --fix` 在首轮就**误删过两处**（`core/schema/types.py` 的
+# `SessionId`、`core/debug/info.py` 的 `asdict`），实测导致 59 个模块 ImportError。
+# 所以这两处现在带显式 `# noqa: F401 — <理由>`，其余 `__init__.py` 用下面的
+# per-file-ignore 豁免。
+#
+# 判据的区分机制：ruff 对 `__init__.py` 里的 `from x import y` **默认当作重导出**
+# （不报 F401）；只有「同名冗余」「`__all__` 之外且未被使用」等情形才报。
+# 对 `core/character/service/__init__.py` 这种**刻意逐名重导出（含私有名与 stdlib
+# 泄漏名）、且 docstring 明确拒绝 `__all__`** 的装配点，ruff 无从区分，
+# 故整体豁免——它的公开面由 `__all__`（新增）+ 逐名重导出共同声明，
+# 真实性由既有的 `test_public_surface` 类测试与直接 import 覆盖。
+#
+# **本批不追求"全仓 0 警告"**，目标是「新增代码不继续扩大债务」：
+# 除 `__init__.py` 外，现在任何新增的 unused import 都会被 `make lint` 拦下。
 
 [lint]
-select = ["TID252", "ANN001", "ANN002", "ANN003"]
+select = ["TID252", "ANN001", "ANN002", "ANN003", "F401"]
 
 [lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 
 [lint.per-file-ignores]
-"**/__init__.py" = ["TID252"]
+# `__init__.py`：相对导入（重导出惯用法）+ F401（见文件头「F401」一节——
+# 137 处经核对全是有意重导出，删了会断公开 API）。
+"**/__init__.py" = ["TID252", "F401"]
 "**/__main__.py" = ["TID252"]
 "**/tests/**" = ["ANN001", "ANN002", "ANN003"]
 "**/conftest.py" = ["ANN001", "ANN002", "ANN003"]

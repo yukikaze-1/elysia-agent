@@ -26,7 +26,6 @@ class TestCustomSSRFGuard:
 
     def test_builtin_provider_skips_guard(self):
         """内置 provider（openai）跳过守卫——内网 base_url 也能创建（守卫仅 custom）。"""
-        from Module._common.ssrf import SSRFError
 
         backend = LLMFactory.create(
             "openai/gpt-5", base_url="http://169.254.169.254/", api_key="sk-test"

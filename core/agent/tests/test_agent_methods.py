@@ -6,7 +6,7 @@
 
 from collections import deque
 import unittest.mock as mock
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock
 import pytest
 from core.agent.agent import Agent
 from core.adapter.llm_adapter import LLMAdapter

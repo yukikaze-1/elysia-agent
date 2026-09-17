@@ -6,7 +6,6 @@ ARCH-INC-P2-01（批次 D）领域化拆分；详见 `chat.py` 模块说明。
 import logging
 from typing import Any
 
-from aiohttp import web
 
 from Module.output import WebSocketChannel
 from core.input.ws_handlers.context import WsRequestContext

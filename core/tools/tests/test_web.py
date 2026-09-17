@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from Module.tool.protocol import ToolContext, ToolResult, ErrorType
+from Module.tool.protocol import ToolContext
 
 from core.tools.tests._failure_helpers import assert_failed
 

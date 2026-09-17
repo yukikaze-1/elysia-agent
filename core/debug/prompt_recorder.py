@@ -1,7 +1,7 @@
 # core/prompt_recorder.py — LLM Prompt 记录器
 """LLM Prompt 记录器 — 内存环形缓冲区，捕获每次 LLM 调用的完整 messages 数组。"""
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from core.schema.types import IsoTimestamp

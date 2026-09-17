@@ -263,6 +263,21 @@
 
 ## 代码清理
 
+### Batch 2.3（2026-09-17）F401 启用后的 follow-up
+
+F401 已于本批启用（`ruff.toml` 的 `select` + `"**/__init__.py"` per-file-ignore），
+生产与测试代码现为 **0 违规**。以下是**刻意不做**的项，记录以便后续：
+
+| 优先级 | 项 | 现状与理由 |
+|--------|-----|-----------|
+| P3 | **RUF100（unused noqa）未启用** | 全仓 863 处 RUF100 命中，绝大多数是 `# noqa: SLF001`——因为 **SLF001 从未在 `ruff.toml` 里启用**，那 750+ 个标注对 lint 是**惰性的**（真正执行私有穿透纪律的是 `core/tests/test_cross_package_privacy.py`，见 CLAUDE.md）。启用 RUF100 会一次报出 863 条，属独立专项；F401 相关的 38 条（`# noqa: F401`）在启用后会变成"多余指令"需清理。**注意**：RUF100 未启用意味着这些 noqa 目前不产生任何噪音，不存在"CI 看起来绿但没检查"的安全错觉——判据与豁免是自洽的。 |
+| P3 | **`scripts/print_test_stats.py` 与门禁共享弱点** | 它从不检查子进程返回码，且 `int(line.split()[0].split("/")[0])` 在 `no tests collected (M deselected)` 上会抛异常。它只是统计打印器、非门禁，故未动。 |
+| P3 | **`docs/testing.md` 的档位计数陈旧** | 该文档自称计数由脚本生成、不需手工维护，但实测 `全量 5033 vs 5932`、`unit 2798 vs 3316`、`service 2211 vs 2588`、`external 7 vs 15` 均已漂移（`integration 10` / `slow 39` 仍对）。本次改了 Makefile/CLAUDE.md 的相关表述，未逐格重算该表。 |
+| P2 | **R4 的 eager 环判据有可复现漏报** | 包节点 `X` 与其 `X.__init__` 在图里是两个节点（983 条 eager 边中 189 条指向无出边的包节点），且相对导入整类被跳过（而 ruff 恰好豁免 `__init__.py`）。审计在 /tmp 副本里造出两个**运行期真 ImportError** 的硬环，门禁均报绿。真实仓库当前 0 环，故属潜在漏报而非现役缺陷；修它需要重做 R4 的图粒度（合并 `pkg.__init__` → `pkg`、解析 `from pkg import submodule`），属独立专项——**本批刻意不动 R4**（盲目扩大 R4 会先撞伪环）。 |
+| P3 | **R6 的「条数漂移」分支无测试覆盖** | `test_r6_reports_count_drift_within_same_function` 实际走的是"未登记"文案而非"漂移"文案（该分支被 `is_real_repo` 门控，合成 fixture 走不到）。变异实测：把 `elif entry[0] != count` 改成 `elif False` 仍 20 passed。 |
+| P3 | **`_is_push_only` 对 `!=` / `contains()` 守卫保守放行** | 非 `==` 形态的守卫会让"死 job"判定看不见（`_guarded_events` 用正则只认 `==`），但保守方向是把它当 PR 可达（更严），故无安全风险——只是自建 reusable workflow 的写法会受限。 |
+| P3 | **CI 未扫描 `env:` / `with:` / `working-directory:` / `container:` 里的宿主路径** | 当前只扫 step 的 `name` + `run`。实测把 `/home/.../.env` 放进 job `env:` 可以绕过（真实 workflow 无此写法）。 |
+
 > **❗ 决策（2026-09-12）：剩余桩代码一律保留，不再作为死代码待办。**
 >
 > 2026-09-12 做过一次全仓符号级引用审计（AST 扫 3,933 个生产定义 → 63 个零引用方法），

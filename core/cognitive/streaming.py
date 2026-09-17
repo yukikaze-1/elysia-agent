@@ -7,7 +7,6 @@ CORE-MOD-P1-04：自 core/cognitive/loop.py 抽出。包含
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING

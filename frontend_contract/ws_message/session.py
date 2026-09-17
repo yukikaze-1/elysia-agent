@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from frontend_contract.base import ContractModel, TsNull
 from frontend_contract.version import PROTOCOL_VERSION
-from pydantic import ConfigDict, Discriminator, Field, model_validator
-from typing import Annotated, Any, Literal, Optional, Union
+from pydantic import Field
+from typing import Annotated, Any, Literal, Optional
 from frontend_contract.ws_message._types import ServerInfoFeatures, ServiceCapability, ServiceName, SessionMessageItem, TokenStats
 
 

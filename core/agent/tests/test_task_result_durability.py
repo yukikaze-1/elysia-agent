@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -514,7 +514,6 @@ class TestTerminalWalWiring:
 
     @pytest.mark.asyncio
     async def test_terminal_push_writes_wal_synchronously(self, tmp_path):
-        from core.agent.agent import Agent
         from core.storage.task_result_wal import TaskResultWAL
 
         wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
@@ -533,7 +532,6 @@ class TestTerminalWalWiring:
 
     @pytest.mark.asyncio
     async def test_non_terminal_push_leaves_wal_untouched(self, tmp_path):
-        from core.agent.agent import Agent
         from core.storage.task_result_wal import TaskResultWAL
 
         wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))
@@ -548,7 +546,6 @@ class TestTerminalWalWiring:
 
     @pytest.mark.asyncio
     async def test_duplicate_terminal_not_written_twice(self, tmp_path):
-        from core.agent.agent import Agent
         from core.storage.task_result_wal import TaskResultWAL
 
         wal = TaskResultWAL(str(tmp_path / "wal.jsonl"))

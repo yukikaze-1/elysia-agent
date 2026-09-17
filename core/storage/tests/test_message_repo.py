@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from core.storage.message_repo import MessageRepository
-from core.schema.message import UserMessage, AssistantMessage, MessageId
+from core.schema.message import UserMessage, MessageId
 from core.schema.part import TextPart
 from core.schema.types import SessionId
 

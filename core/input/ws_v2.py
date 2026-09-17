@@ -33,7 +33,6 @@ from frontend_contract import V2TextMessage
 
 if TYPE_CHECKING:
     from core.agent import Agent
-    from core.input.audio_buffer import AudioBuffer
     from core.input.voice_sessions import VoiceSessionManager
     from core.memory.session import SessionMemory
 

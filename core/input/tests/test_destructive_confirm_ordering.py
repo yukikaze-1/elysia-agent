@@ -14,7 +14,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aiohttp import web
 
 from core.agent import RunState
 from core.input.server import create_app

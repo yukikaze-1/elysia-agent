@@ -8,7 +8,6 @@ Prefix Continuation:
 
 import asyncio
 import logging
-import time
 from typing import Any, AsyncIterator, Callable
 
 import httpx

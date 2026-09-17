@@ -20,7 +20,7 @@ from Module.workflow_contract import (
 from Module.tool.tool_descriptor import Tool
 
 from Module.workflow_engine.schema.types import ArtifactId, IsoTimestamp, NodeErrorCode, NodeStatus, WorkflowErrorCode, now_iso
-from Module.workflow_engine.schema.output import TokenComponentType, TokenComponent
+from Module.workflow_engine.schema.output import TokenComponent
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

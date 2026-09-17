@@ -8,7 +8,6 @@ v2 显式非 active / 图文交替不残留 / 失败后再发图绑定仍正确 
 """
 
 import asyncio
-import json
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -24,8 +23,6 @@ from core.cognitive.timing import TimingClock
 from core.cognitive.loop import DEFAULT_INSTANCE_ID
 from core.storage.generation_repo import GenerationRepository
 from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
-from core.schema.message import UserMessage
-from core.schema.types import MessageId
 from core.character.registry import CharacterRuntimeRegistry
 from core.character.runtime import CharacterRuntime
 from core.character.instance import CharacterInstance

@@ -5,11 +5,9 @@ import pytest
 from frontend_contract import (
     AudioCancelMessage, AudioCancelledMessage, AudioMessage, AudioStartMessage,
     DictationCancelledMessage, DictationFinalMessage, DictationPartialMessage,
-    DictationStartMessage, DictationStopMessage, DictationCancelMessage,
-    ServerInfoFeatures, ServerMessage, VoiceCommitMessage, VoiceDiscardMessage,
-    VoiceRecordStartMessage, VoiceRecordStopMessage, VoiceSessionAckMessage,
+    ServerInfoFeatures, ServerMessage, VoiceCommitMessage, VoiceSessionAckMessage,
     VoiceSessionEndedMessage, VoiceSessionPartialMessage, VoiceSessionStartedMessage,
-    VoiceSessionStartMessage, VoiceSessionStopMessage, VoiceSessionTurnMessage,
+    VoiceSessionTurnMessage,
     VoiceTranscriptMessage,
 )
 

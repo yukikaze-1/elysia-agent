@@ -1,6 +1,5 @@
 """测试 paths.py — 项目路径统一管理。"""
 
-import os
 import pytest
 from pathlib import Path
 

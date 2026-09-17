@@ -4,13 +4,11 @@
 """
 
 import logging
-from typing import Any
 
 from aiohttp import web
 
 from core.input.tts_profile import _active_tts_profile, _backend_default_voice
 from frontend_contract import rest as rest_contract
-from core.input._common import _tool_error
 
 logger = logging.getLogger(__name__)
 

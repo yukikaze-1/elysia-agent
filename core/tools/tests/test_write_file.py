@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from Module.tool.protocol import ToolContext, ToolResult, ErrorType
+from Module.tool.protocol import ToolContext
 from Module.tool.safety import SafetyProfile
 
 from core.tools.filesystem.plugin import WriteFilePlugin, WriteFileParams

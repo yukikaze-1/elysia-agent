@@ -1,7 +1,6 @@
 """集成测试：启动最小测试服务器验证 AudioBuffer 和 WS 路由。运行: python -m core.input"""
 
 import os
-import sys
 
 from Module._common.main_runner import run_module_main
 from .audio_buffer import AudioBuffer, pcm_to_wav

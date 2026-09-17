@@ -16,7 +16,6 @@ A/B 实测：默认压缩 → 1002；客户端 `perMessageDeflate:false` → 100
 
 from __future__ import annotations
 
-import aiohttp
 import pytest
 from aiohttp import web
 

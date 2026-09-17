@@ -6,10 +6,10 @@
 from __future__ import annotations
 
 
-from frontend_contract.base import ContractModel, TsNull
-from frontend_contract.rest import CharacterBindingSnapshot, CharacterPublicStateView, ConversationUsage, FinishReason
-from pydantic import ConfigDict, Discriminator, Field, model_validator
-from typing import Annotated, Any, Literal, Optional, Union
+from frontend_contract.base import ContractModel
+from frontend_contract.rest import ConversationUsage, FinishReason
+from pydantic import Field, model_validator
+from typing import Any, Literal, Optional
 from frontend_contract.ws_message._types import MessageChannel, SegmentKind, TokenUsage, _require_complete_character_identity
 
 

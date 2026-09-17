@@ -22,9 +22,7 @@ from core.input.ws_handlers.context import WsRequestContext
 # `core.input.ws_handler` 配置，拆包不应改变运维可观测性）
 logger = logging.getLogger("core.input.ws_handler")
 from core.input._common import _find_channel
-from core.memory.session_manager import SessionBusyError
 from core.input.tts_profile import _active_tts_profile
-from core.schema.types import SessionId
 from frontend_contract import (
     ErrorMessage,
     ServiceModeResultMessage,

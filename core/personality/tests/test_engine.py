@@ -2,7 +2,7 @@
 import asyncio
 import time
 from core.schema.utils import now_iso
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 from core.personality import CharacterEngine
 from core.adapter.llm_adapter import ThoughtResult

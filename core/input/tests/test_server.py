@@ -6,13 +6,11 @@ Run: python -m pytest core/input/tests/test_server.py -v --asyncio-mode=auto
 import asyncio
 import json
 import os
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web, WSMsgType
-from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from core.agent import RunState
 from Module.stt.protocol import STTBackend
@@ -59,7 +57,6 @@ def _fake_deepseek_key(monkeypatch):
     （污染同进程后续全部测试），且取值依赖进程历史（冷进程 → `"test"`，热进程 →
     开发者真实 key）。改 autouse + monkeypatch，且**无条件**覆盖（见下）——Batch 1.5 全局状态审计。
     """
-    import os
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
 
@@ -433,7 +430,6 @@ class TestWebSocketHandler:
         from core.providers import custom_providers as cp
         from Module._common.ssrf import _SSRFTransport
         from core.input.server import create_app
-        import json as _json
 
         agent = _make_agent()
         await agent.start()
@@ -1369,7 +1365,6 @@ class TestImageUpload:
         img_dir.mkdir(parents=True, exist_ok=True)
         (img_dir / "x.png").write_bytes(_PNG_HEADER + b"\x00" * 20)
 
-        from aiohttp import FormData
         from aiohttp.test_utils import TestClient, TestServer
         client = TestClient(TestServer(app))
         await client.start_server()

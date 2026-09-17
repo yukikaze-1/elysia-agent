@@ -15,7 +15,6 @@ L3→L2 压缩在其中触发：state_history 新增 >= 5 条 OR 距上次 > 7 �
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from paths import ProjectPath
@@ -29,7 +28,14 @@ from core.personality.protocol import (
     C1Data, C6Data, C9Data, CharacterReflectorProtocol,
 )
 from core.schema.compression import CompressionTrigger
-from core.personality._utils import _schedule, _extract_tag  # _extract_tag 保持向后兼容
+# `_extract_tag` 服务端已不再直接调用（迁到 emotion.py），但原注释写着
+# 「保持向后兼容」，且 `core/cognitive/tests/test_mood_engine.py` 按
+# `from core.personality.engine import _extract_tag` 取用。
+# F401 清理曾删掉它（注释留着、名字没了）→ ImportError。用显式别名表态。
+from core.personality._utils import (  # noqa: F401 — 兼容重导出，见上
+    _extract_tag,
+    _schedule,
+)
 from core.schema.utils import now_iso
 if TYPE_CHECKING:
     from core.adapter.llm_adapter import LLMAdapter

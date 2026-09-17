@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Annotated, Literal, NewType
+from typing import Annotated, NewType
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BeforeValidator
 
 
 # ── 时间戳工具 ────────────────────────────────────────────────────────

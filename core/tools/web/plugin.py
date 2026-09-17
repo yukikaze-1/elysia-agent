@@ -1,11 +1,9 @@
 """网络工具插件 — 网页搜索和抓取。"""
 
-import asyncio
 import logging
 import os
 import re
 from html.parser import HTMLParser
-from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field

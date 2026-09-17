@@ -40,7 +40,6 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any

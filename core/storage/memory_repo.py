@@ -8,7 +8,7 @@ from core.storage.base import Repository, StorageUnavailableError
 from core.storage.destructive_guard import require_confirm
 
 if TYPE_CHECKING:
-    from core.memory.long_term import MemoryEntry
+    pass
 
 logger = logging.getLogger(__name__)
 COLLECTION = "long_term_memory"

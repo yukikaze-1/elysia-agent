@@ -23,7 +23,6 @@ from core.memory.session_manager import SessionBusyError
 
 if TYPE_CHECKING:
     from core.memory.session import SessionMemory
-    from core.schema.types import SessionId
 
 logger = logging.getLogger(__name__)
 

@@ -106,7 +106,7 @@ class TestMemoryRepositoryClearGuard:
 
     def test_confirm_token_shared_by_v1_and_v2(self):
         """v1/v2 共用同一令牌——客户端无需猜服务端装配了哪个 repo。"""
-        from core.storage.memory_repo import CONFIRM_TOKEN, MemoryRepository
+        from core.storage.memory_repo import MemoryRepository
         from core.storage.memory_repo_v2 import MemoryRepositoryV2
 
         assert MemoryRepository.CONFIRM_TOKEN == MemoryRepositoryV2.CONFIRM_TOKEN == "ltm"

@@ -3,7 +3,6 @@
 import json
 
 import pytest
-import pytest_asyncio
 
 from frontend_contract.rest import ProtocolError
 
@@ -147,7 +146,6 @@ class TestAuthMiddleware:
     @pytest.mark.asyncio
     async def test_uploads_valid_token_passes_static(self, make_auth_app, aiohttp_client, tmp_path, monkeypatch):
         """有 token 环境：/uploads/* 带有效 token → 静态服务（文件不存在则 404 而非 401）。"""
-        import os
         monkeypatch.setenv("ELYSIA_PATH_DATA_UPLOADS", str(tmp_path))
         app = make_auth_app(access_token="secret")
         client = await aiohttp_client(app)

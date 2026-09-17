@@ -20,7 +20,6 @@ def _fake_deepseek_key(monkeypatch):
     永不还原（污染同进程后续全部测试），且取值依赖进程历史（冷进程 → `"test"`，
     热进程 → 开发者真实 key）。改 autouse + monkeypatch，且**无条件**覆盖（见下）——Batch 1.5 全局状态审计。
     """
-    import os
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
 

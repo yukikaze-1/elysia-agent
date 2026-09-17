@@ -5,7 +5,6 @@
 - /api/providers/test 两 level 并集 → ProviderTestResult{ok, latency_ms, error?, detail?}
 - /api/messages 错误带 error 键、成功省略 → MessagesResponse{...error?}
 """
-from typing import Any
 
 import pytest
 
@@ -15,7 +14,6 @@ from frontend_contract.rest import (
     ApiOk,
     ConversationUsage,
     CustomProvider,
-    DesktopCallStatus,
     FinishReason,
     GenerationListResponse,
     GenerationStatus,

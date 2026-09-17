@@ -29,7 +29,6 @@ def _fake_deepseek_key(monkeypatch):
     历史（冷进程 → `"test"`，热进程 → 开发者真实 key）。改 autouse + monkeypatch
     （缺失才设，用例结束还原）——Batch 1.5 全局状态审计。
     """
-    import os
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
 

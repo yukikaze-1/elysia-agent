@@ -1,7 +1,6 @@
 """时间工具插件 — 获取当前时间（支持时区和格式）。"""
 
 from datetime import datetime, timezone, timedelta, tzinfo
-from typing import Any
 
 try:
     import zoneinfo as _zoneinfo

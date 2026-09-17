@@ -10,7 +10,10 @@ from __future__ import annotations
 import logging
 import os
 import time
-from dataclasses import dataclass, field, asdict
+# asdict 在本文件里未被直接调用，但它是 `core.debug` 的公开导出之一
+# （`core/debug/__init__.py` 的 __all__ 收它，`core/input/debug_routes/overview.py`
+# 直接 `from core.debug.info import collect, asdict`）。显式 noqa 而不是删掉。
+from dataclasses import dataclass, field, asdict  # noqa: F401 — 由 core.debug 重导出
 from typing import TYPE_CHECKING
 
 import psutil

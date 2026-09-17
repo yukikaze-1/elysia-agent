@@ -2,7 +2,7 @@ import dataclasses
 import os
 from typing import TYPE_CHECKING, Any
 
-from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
+from Module._common.registry_helpers import resolve_base_url, inject_logger
 from Module.database.vectordb.milvus import MilvusBackend
 
 if TYPE_CHECKING:

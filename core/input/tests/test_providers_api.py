@@ -8,7 +8,6 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 from aiohttp import WSMsgType  # noqa: F401  (保持与 test_server 一致导入风格)
 
-from core.input.server import create_app
 
 
 def _make_app_agent():

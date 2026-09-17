@@ -16,9 +16,8 @@ import yaml
 
 from Module._common.task_scope import cancellation_is_external
 from Module.output.manager import OutputManager
-from Module.tool.capability import Capability
 from Module.tool.protocol import (
-    ErrorType, PluginContext, ToolContext, ToolDefinition, ToolEmitter, ToolExecutor, ToolPlugin, ToolResult, to_llm_name,
+    ErrorType, PluginContext, ToolContext, ToolDefinition, ToolEmitter, ToolPlugin, ToolResult, to_llm_name,
 )
 from Module.tool.safety import SafetyPipeline
 

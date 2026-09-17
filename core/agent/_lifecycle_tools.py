@@ -6,11 +6,8 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
-from core.monitoring.event_bus import EventBus, EventPriority, EventType
-from core.status.agent_fsm import AgentFSM, AgentState
-from core.schema.event import (
-    InterruptData, UserInputData, TaskResultData, StateChangeData, SystemTickData,
-)
+from core.monitoring.event_bus import EventBus
+from core.status.agent_fsm import AgentFSM
 from Module._common.task_scope import AsyncTaskScope, cancel_and_drain
 # 运行时导入：cast(WebSocketChannel, target) 的实参类型名须在运行时解析
 # （Module.output 不依赖 core，无环）
@@ -22,7 +19,6 @@ if TYPE_CHECKING:
     from core.config import AppConfig
     from core.memory.session import SessionMemory
     from core.monitoring.token_tracker import TokenTracker
-    from Module.tts.protocol import TTSBackend
     from core.status import AgentStatus, CognitivePhaseController
     from core.adapter.tool_adapter import ToolAdapter
     from core.monitoring.idle_monitor import IdleMonitor

@@ -17,7 +17,6 @@ from core.character.draft import CharacterDraft
 from core.character.service import (
     CharacterArchivedError,
     CharacterBusyError,
-    CharacterError,
     CharacterImmutableError,
     CharacterInstanceNotFoundError,
     CharacterNotFoundError,

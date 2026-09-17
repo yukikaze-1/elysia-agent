@@ -4,22 +4,24 @@
 文本与 STT 结果路由到 agent 的 EventBus。
 """
 
-import asyncio
 import hmac
-import json
 import logging
-import uuid
-from pathlib import Path
-from typing import Any, Awaitable, Callable, TYPE_CHECKING
+from typing import Awaitable, Callable, TYPE_CHECKING
+
+# 重导出（2026-09-17 Batch 2.3 恢复）：本模块是组装点，`assert_secure_bind` /
+# `is_loopback_host` / `warn_if_unsecured` 由 `core.utils.server_guard` 拥有，
+# 但消费方（`core/input/tests/test_auth.py`）按 `from core.input.server import X`
+# 取用。F401 清理曾把它们当 unused import 删掉 → ImportError（实测 15 条用例红）。
+# 用显式别名 `X as X` 表态「这是有意重导出」，而非 noqa——别名本身就是语义。
+from core.utils.server_guard import (
+    assert_secure_bind as assert_secure_bind,
+    is_loopback_host as is_loopback_host,
+    warn_if_unsecured as warn_if_unsecured,
+)
 
 from aiohttp import web
 
 from core.agent import Agent
-from core.utils.server_guard import (
-    assert_secure_bind,
-    is_loopback_host,
-    warn_if_unsecured,
-)
 
 from core.input.ws_handler import handle_ws, resolve_protocol_version
 from core.input.provider_routes import register_provider_routes

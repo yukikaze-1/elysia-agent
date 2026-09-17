@@ -5,7 +5,6 @@ Run: python -m pytest core/test_phase3.py -v --asyncio-mode=auto
 
 import asyncio
 import functools
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -22,7 +21,7 @@ from core.adapter.tool_call_parser import merge_stream_tool_calls, normalize_too
 from core.schema.tool import ToolCall, ToolCallFunction
 from core.schema.types import ToolCallId
 from core.status.agent_fsm import AgentFSM, AgentState
-from core.monitoring.event_bus import EventBus, EventType, EventPriority
+from core.monitoring.event_bus import EventBus, EventPriority
 from core.schema.event import StateChangeData
 from core.adapter.llm_adapter import LLMAdapter
 from core.tests.fake_llm import FakeLLMBackend
@@ -158,7 +157,7 @@ class TestCognitiveLoopMethods:
     @pytest.fixture
     def loop(self):
         """为所有依赖创建带 mock 的最小 CognitiveLoop。"""
-        from Module.output import OutputManager, ChannelCapability
+        from Module.output import OutputManager
         from core.prompt.prompt_assembler import PromptAssembler
         from core.adapter import ToolAdapter
         from core.memory.session import SessionMemory
@@ -331,7 +330,6 @@ class TestCognitiveLoopTTS:
         from core.monitoring.event_bus import EventBus
         from core.status.agent_fsm import AgentFSM
         from Module.output import OutputManager
-        from core.prompt.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
         from core.adapter import ToolAdapter
         from core.adapter.llm_adapter import LLMAdapter
@@ -385,7 +383,7 @@ class TestCognitiveLoopTTS:
     async def test_multi_tool_round(self, loop):
         """CognitiveLoop 正确处理工具调用与循环。"""
         import json
-        from Module.tool import PluginContext, ToolContext
+        from Module.tool import PluginContext
         from Module.tool.protocol import ToolPlugin
         from Module.tool.safety import SafetyProfile
         from pydantic import BaseModel, Field
@@ -442,7 +440,6 @@ class TestCognitiveLoopSync:
         from core.monitoring.event_bus import EventBus
         from core.status.agent_fsm import AgentFSM
         from Module.output import OutputManager
-        from core.prompt.prompt_assembler import PromptAssembler
         from core.memory.session import SessionMemory
         from core.adapter import ToolAdapter
         from core.adapter.llm_adapter import LLMAdapter
@@ -1058,7 +1055,7 @@ class TestConsoleChannelDedup:
         msg.to_dict.return_value = {"role": "assistant", "content": "hello", "inner_voice": "thinking..."}
 
         # 通过 send 直接使用 on_message
-        from Module.output import OutputManager, ChannelCapability
+        from Module.output import OutputManager
         mgr = OutputManager()
         mgr.add_channel(ch)
         await mgr.send(msg)
@@ -1880,7 +1877,6 @@ class TestWakeUpMessage:
         from core.status.agent_fsm import AgentFSM
         from Module.output import OutputManager
         from core.monitoring.event_bus import EventBus
-        from core.memory.session import SessionMemory
         loop = CognitiveLoop(
             llm=MagicMock(), fsm=AgentFSM(), event_bus=EventBus(),
             output=OutputManager(), prompt=MagicMock(),
@@ -1905,7 +1901,6 @@ class TestWakeUpMessage:
 
 if __name__ == "__main__":
     async def run_all():
-        import sys
         test_classes = [
             TestMergeStreamToolCalls, TestNormalizeToolCalls,
             TestFSMEdges, TestEventBusEdges,

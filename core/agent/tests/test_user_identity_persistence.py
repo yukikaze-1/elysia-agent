@@ -13,9 +13,7 @@
 > 真实构造。直接注入本就与防线解耦，无需关掉它。
 """
 
-import asyncio
-import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 

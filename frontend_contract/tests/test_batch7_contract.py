@@ -7,8 +7,7 @@ from frontend_contract.rest import (
 )
 from frontend_contract.ws_message import (
     AttachmentRef, ContentPart, ErrorMessage, ServerInfoFeatures,
-    ServerInfoMessage, V2TextMessage, FilePart, AudioPart, VideoPart,
-    StickerPart, ImagePart,
+    ServerInfoMessage, V2TextMessage, ImagePart,
 )
 
 pytestmark = pytest.mark.unit

@@ -1,10 +1,9 @@
 # core/character/tests/test_service.py
 """CharacterService 测试（marker=service，用内存假后端）。"""
 import pytest
-import pytest_asyncio
 
 from core.character.service import (
-    CharacterService, CharacterNotFoundError, CharacterImmutableError,
+    CharacterService, CharacterImmutableError,
     RevisionConflictError, CharacterValidationError,
 )
 from core.character.draft import CharacterDraft

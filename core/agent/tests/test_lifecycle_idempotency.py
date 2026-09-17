@@ -13,10 +13,8 @@ Run: python -m pytest core/agent/tests/test_lifecycle_idempotency.py -v --asynci
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Callable
-from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

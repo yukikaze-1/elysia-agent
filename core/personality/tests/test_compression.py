@@ -269,7 +269,6 @@ class TestEvolutionChainCompleteness:
 
     def _engine(self, *, version_repo="ok", c6="ok"):
         """构造能走到"链尾"的 engine（LLM/模板都打桩）。"""
-        from core.personality.engine import CharacterEngine
         from core.schema.character import CharacterState
 
         state = CharacterState(session_id="test-sid")

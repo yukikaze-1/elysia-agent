@@ -8,9 +8,7 @@ stdout 仅保留给对话输出。
 import contextvars
 import logging
 import logging.handlers
-import os
 import sys
-from pathlib import Path
 
 from paths import ProjectPath
 

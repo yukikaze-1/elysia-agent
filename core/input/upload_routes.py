@@ -4,7 +4,6 @@
 """
 
 import logging
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,7 +18,6 @@ from core.storage.attachment_repo import STATUS_ACTIVE, StorageUnavailableError
 from core.utils import new_attachment_id
 from frontend_contract import rest as rest_contract
 from frontend_contract.rest import UploadKind
-from core.input._common import _tool_error
 
 logger = logging.getLogger(__name__)
 
@@ -435,7 +433,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, cast
 from core.schema.types import AttachmentId
 
 # kind 白名单单源（D3-B 枚举派生）：值集合（wire str 成员判断，跨 3.11/3.12 无差异）。

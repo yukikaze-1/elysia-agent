@@ -45,8 +45,6 @@ async def test_handler_exception_does_not_kill_consumer():
     agent._handle_system_tick = _ok                     # noqa: SLF001
 
     from core.schema.event import InterruptData, SystemTickData
-    from core.status.agent_fsm import AgentState
-    from core.schema.types import RequestId
     try:
         # 直接驱动分发边界：第一个必炸，第二个必须仍然被处理
         for data in (InterruptData(source="test"),

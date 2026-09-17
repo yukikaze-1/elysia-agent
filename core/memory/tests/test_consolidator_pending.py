@@ -31,7 +31,6 @@ from core.memory.consolidator_pending import (
     get_store,
     reset_store,
 )
-from core.schema.memory import ExtractedMemory
 
 pytestmark = pytest.mark.service
 

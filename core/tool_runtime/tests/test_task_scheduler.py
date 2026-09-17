@@ -2,11 +2,10 @@
 
 import asyncio
 import functools
-import json
 import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, Field

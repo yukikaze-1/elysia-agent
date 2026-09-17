@@ -2,7 +2,6 @@
 
 import base64
 import logging
-import re
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 

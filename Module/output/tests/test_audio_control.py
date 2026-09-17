@@ -2,7 +2,7 @@
 import base64
 import pytest
 
-from Module.output import OutputManager, WebSocketChannel
+from Module.output import WebSocketChannel
 
 pytestmark = pytest.mark.unit
 

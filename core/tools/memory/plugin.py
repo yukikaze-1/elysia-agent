@@ -1,7 +1,6 @@
 """记忆工具插件 — 搜索和保存长期记忆。"""
 
 import logging
-from typing import Any
 
 from pydantic import BaseModel, Field
 from Module._common.error_type import ErrorType

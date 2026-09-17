@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from typing import TYPE_CHECKING
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
 from core.character.definition import CharacterDefinition

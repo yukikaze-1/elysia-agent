@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 from core.memory.consolidator import (
     MemoryConsolidator, _get_extraction_prompt, _get_compare_prompt,
 )
-from core.memory.memory_reflector import MemoryReflector, REFLECTOR_PROMPT_PATH
+from core.memory.memory_reflector import REFLECTOR_PROMPT_PATH
 
 pytestmark = pytest.mark.service
 

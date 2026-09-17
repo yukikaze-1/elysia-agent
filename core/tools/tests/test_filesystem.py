@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from Module.tool.protocol import ToolContext, ToolResult, ErrorType
+from Module.tool.protocol import ToolContext
 
 from core.tools.filesystem.plugin import (
     _format_size,

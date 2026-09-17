@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 import pytest
 
@@ -41,7 +40,7 @@ class TestEvictionSaveOwnership:
 
     @pytest.mark.asyncio
     async def test_evicted_save_is_awaitable_on_drain(self):
-        from core.memory.session_manager import DEFAULT_SESSION, SessionManager
+        from core.memory.session_manager import SessionManager
 
         saved: list[str] = []
         release = asyncio.Event()
