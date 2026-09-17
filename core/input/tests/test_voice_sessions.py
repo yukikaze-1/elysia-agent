@@ -1,13 +1,14 @@
 """VoiceSessionManager 状态机测试——三模式隔离 + 边界（spec §3.3/§4/§5/§7）。"""
 import asyncio
 import struct
+import time
 from unittest.mock import patch
 
 import pytest
 
 from core.input.voice_sessions import (
     VoiceSessionError, VoiceSessionManager, VoiceMode,
-    MAX_RECORDING_BYTES, MAX_CHUNK_BYTES,
+    MAX_RECORDING_BYTES, MAX_CHUNK_BYTES, VOICE_SESSION_IDLE_TIMEOUT,
 )
 
 pytestmark = pytest.mark.unit
@@ -255,6 +256,36 @@ async def test_close_cleans_active_session():
     assert mgr.has_active_session() is True
 
 
+class _FrozenClock:
+    """只提供 `monotonic()` 的时钟替身——用来模拟"开机未满 idle 超时"的机器。"""
+
+    def __init__(self, now: float) -> None:
+        self._now = now
+
+    def monotonic(self) -> float:
+        return self._now
+
+
+def _expire_idle_timeout(mgr, *, clock=time):
+    """把 `mgr` 的 last-audio 时间戳设成"比 idle 超时**更早 1 秒**"。
+
+    **必须相对当前时钟计算，不能写死 0。** `time.monotonic()` 在 Linux 上是
+    CLOCK_MONOTONIC ≈ **开机以来的秒数**，因此 `_last_audio_at = 0` 隐含了
+    「机器 uptime > VOICE_SESSION_IDLE_TIMEOUT」这个与业务毫无关系的前提，而
+    业务语义只是「最后一次音频早于 idle 超时」。
+
+    2026-09-17 的 CI 红就是这个前提被打破：机器 03:29:25 引导，该用例 03:32:47
+    执行，uptime 仅 202 秒 ⇒ `time.monotonic() - 0` 最大 202，**恒不大于 300**
+    ⇒ idle 判据永远为假、等不到 ended ⇒ 确定性失败（与 CPU/网络/用例顺序无关）。
+    只在 `clock=time` 且本机 uptime ≤ 300s 时可复现，所以本地长期看不见。
+
+    Args:
+        mgr: VoiceSessionManager 实例。
+        clock: 提供 `monotonic()` 的时钟；注入替身即可模拟"刚开机"。
+    """
+    mgr._last_audio_at = clock.monotonic() - VOICE_SESSION_IDLE_TIMEOUT - 1
+
+
 @pytest.mark.asyncio
 async def test_idle_timeout_emits_ended():
     """300s idle 超时 → ended{timeout} 必须发出（teardown 不自取消当前任务，review NEW-1）。"""
@@ -264,7 +295,7 @@ async def test_idle_timeout_emits_ended():
     try:
         mgr, emitted, _ = make_manager()
         await mgr.start_realtime("vs_1", None)
-        mgr._last_audio_at = 0  # 远古 → 首轮检查即超时（time.monotonic() - 0 >> 300）
+        _expire_idle_timeout(mgr)   # 相对时钟：与系统 uptime 无关
         await asyncio.sleep(0.1)
         ends = [e for e in emitted if e.get("type") == "voice_session.ended"]
         assert ends and ends[-1]["reason"] == "timeout"
@@ -272,6 +303,41 @@ async def test_idle_timeout_emits_ended():
         await mgr.close()
     finally:
         vs.IDLE_CHECK_INTERVAL = original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("uptime", [0.0, 5.0, 120.0, 299.9])
+async def test_idle_timeout_fires_on_fresh_boot(uptime):
+    """**boot-age independence**：`time.monotonic() < VOICE_SESSION_IDLE_TIMEOUT`
+    时 idle 超时仍必须触发。
+
+    这是 2026-09-17 CI 红的回归钉。原先测试写 `mgr._last_audio_at = 0`，把
+    「最后一次音频早于超时」错误地表达成了「机器 uptime 大于超时」；Linux 的
+    `time.monotonic()` ≈ 开机秒数，于是机器开机不足 300 秒时判据
+
+        time.monotonic() - 0 > VOICE_SESSION_IDLE_TIMEOUT
+
+    恒为假，用例确定性失败。本用例把 `voice_sessions` 看到的时钟**冻结在"刚开机"
+    的小值**上（0 / 5 / 120 / 299.9 秒），并用**相对该时钟**的方式设置
+    last-audio——两者相差仍是 `timeout + 1` 秒，所以超时必须照常触发。
+
+    若有人把 `_expire_idle_timeout` 改回写死 0，本参数化用例会立刻变红。
+    """
+    import core.input.voice_sessions as vs
+    clock = _FrozenClock(uptime)
+    with patch("core.input.voice_sessions.time", clock), \
+            patch.object(vs, "IDLE_CHECK_INTERVAL", 0.01):
+        mgr, emitted, _ = make_manager()
+        await mgr.start_realtime("vs_1", None)
+        _expire_idle_timeout(mgr, clock=clock)
+        await asyncio.sleep(0.1)
+        ends = [e for e in emitted if e.get("type") == "voice_session.ended"]
+        assert ends and ends[-1]["reason"] == "timeout", (
+            f"uptime={uptime}s（< 超时 {VOICE_SESSION_IDLE_TIMEOUT}s）时 idle 超时"
+            f"必须照常触发；实际 ended 事件: {ends}"
+        )
+        assert mgr.has_active_session() is False
+        await mgr.close()
 
 
 @pytest.mark.asyncio
