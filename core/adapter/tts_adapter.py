@@ -244,6 +244,30 @@ class TTSStreamManager:
         self._tasks = [t for t in self._tasks if not t.done()]
         self._task_by_sid = {s: t for s, t in self._task_by_sid.items() if not t.done()}
 
+    async def _broadcast_text_delta(self, text: str, *, stream_id: int | None = None) -> None:
+        """广播一段 TTS 附带的文本（emoji / 句首舞台指示 / 句子正文）。
+
+        **为什么这里必须走 `OutputManager._broadcast`（唯一的私有穿透点）**：
+        `_broadcast(method, *args, capability=...)` 是 OutputManager 的**通用转发布口**，
+        而 `OutputManager` 的公开面（`text_delta` / `inner_voice` / `segment_*`）全部要求
+        一个 `GenerationContext`——它们承担 generation 生命周期契约（id 分配、段落开闭）。
+        TTS 这三类文本按设计**不属于任何 generation**，且要带 `stream_id`（播放 ID，与
+        generation 无关的 TTS 侧标识），语义上无法用公开面表达。
+
+        2026-09-17 之前这里在 8 个调用点各写一遍 `self._output._broadcast(...)`——
+        同一处穿透被复制 8 份，且**全部未标注**（当时的守卫只收私有**字段**、不收私有
+        **方法**，所以 8 处都躲过了检查，属「判据写错」型假绿）。现在收成这一个
+        带理由的豁免点：跨包私有穿透从 8 处降到 1 处，且这一处是显式表态的。
+
+        长期方向是给 `OutputManager` 补一个不含 generation 上下文的公开文本发射口
+        （例如 `text_delta_unbound(text, *, stream_id=...)`），届时本豁免点随之删除。
+        """
+        await self._output._broadcast(  # noqa: SLF001 — 见本方法 docstring 的理由
+            "on_text_delta", text,
+            capability=ChannelCapability.TEXT_DELTA,
+            stream_id=stream_id,
+        )
+
     async def flush_emojis(self) -> None:
         """发送所有还未排出的 emoji（最后一句 TTS 之后的）。
 
@@ -252,10 +276,7 @@ class TTSStreamManager:
         """
         for seq in sorted(self._pending_emojis):
             for e in self._pending_emojis[seq]:
-                await self._output._broadcast(
-                    "on_text_delta", e,
-                    capability=ChannelCapability.TEXT_DELTA,
-                )
+                await self._broadcast_text_delta(e)
                 await self._output.send("")
         self._pending_emojis.clear()
 
@@ -425,11 +446,7 @@ class TTSStreamManager:
             # 路径——不在此兜底会丢句子文本（违反"TTS 关闭不丢句"不变式）。
             if getattr(asyncio.current_task(), "flush_on_cancel", False):
                 try:
-                    await self._output._broadcast(
-                        "on_text_delta", display_text,
-                        capability=ChannelCapability.TEXT_DELTA,
-                        stream_id=sid,
-                    )
+                    await self._broadcast_text_delta(display_text, stream_id=sid)
                     await self._output.send("")
                 except Exception:
                     pass
@@ -483,27 +500,15 @@ class TTSStreamManager:
             )
             # 先发排在本句之前的 emoji
             for e in self._pending_emojis.pop(sid - 1, []):
-                await self._output._broadcast(
-                    "on_text_delta", e,
-                    capability=ChannelCapability.TEXT_DELTA,
-                    stream_id=sid,
-                )
+                await self._broadcast_text_delta(e, stream_id=sid)
                 await self._output.send("")
             # 句首舞台指示单独一行
             if action_text:
-                await self._output._broadcast(
-                    "on_text_delta", action_text,
-                    capability=ChannelCapability.TEXT_DELTA,
-                    stream_id=sid,
-                )
+                await self._broadcast_text_delta(action_text, stream_id=sid)
                 await self._output.send("")
             # 发本句文字
             text_broadcast = True  # 文本已广播，禁用取消时不再自刷（防双播）
-            await self._output._broadcast(
-                "on_text_delta", display_text,
-                capability=ChannelCapability.TEXT_DELTA,
-                stream_id=sid,
-            )
+            await self._broadcast_text_delta(display_text, stream_id=sid)
             await self._output.send("")
             # BE-063：句开始播放（stream_id = playback ID）+ WAV 元数据
             fmt = self._tts.stream_format if self._tts else "wav"
@@ -520,11 +525,7 @@ class TTSStreamManager:
             self._audio_forwarding.discard(sid)
             # 发排在本句之后的 emoji
             for e in self._pending_emojis.pop(sid, []):
-                await self._output._broadcast(
-                    "on_text_delta", e,
-                    capability=ChannelCapability.TEXT_DELTA,
-                    stream_id=sid,
-                )
+                await self._broadcast_text_delta(e, stream_id=sid)
                 await self._output.send("")
         except asyncio.CancelledError:
             # 禁用兜底：per-task flush_on_cancel 时自刷排队未播文本（须读
@@ -534,11 +535,7 @@ class TTSStreamManager:
                 getattr(asyncio.current_task(), "flush_on_cancel", False)
                 and not text_broadcast
             ):
-                await self._output._broadcast(
-                    "on_text_delta", display_text,
-                    capability=ChannelCapability.TEXT_DELTA,
-                    stream_id=sid,
-                )
+                await self._broadcast_text_delta(display_text, stream_id=sid)
                 await self._output.send("")
             # BE-063：已开始转发的句被取消 → 补 audio_cancelled（前端清理孤儿 chunk）
             if sid in self._audio_forwarding:
@@ -551,11 +548,7 @@ class TTSStreamManager:
             )
             # TTS 失败兜底: 至少把文字发出去
             try:
-                await self._output._broadcast(
-                    "on_text_delta", display_text,
-                    capability=ChannelCapability.TEXT_DELTA,
-                    stream_id=sid,
-                )
+                await self._broadcast_text_delta(display_text, stream_id=sid)
                 await self._output.send("")
             except Exception:
                 pass

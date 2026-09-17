@@ -240,7 +240,11 @@ class CognitiveStreaming:
             if not tts_active:
                 await self._output.text_delta(text, ctx)
         elif not tts_active:
-            await self._output._broadcast(
+            # 无 generation 上下文的 v1 纯文本广播：与 tts_adapter 的 TTS 附带文本同因——
+            # OutputManager 的公开面（text_delta 等）都要求 GenerationContext，此处按设计
+            # 没有上下文，只能用通用转发口。裸奔过 2026-09-17 的守卫修复（当时守卫只收
+            # 私有字段、不收私有方法），故在此显式标注并写明理由。
+            await self._output._broadcast(  # noqa: SLF001 — 见上：无 ctx 的 v1 文本广播
                 "on_text_delta", text,
                 capability=ChannelCapability.TEXT_DELTA,
             )
