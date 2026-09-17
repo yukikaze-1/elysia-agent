@@ -87,10 +87,11 @@ async def image_upload_handler(request: web.Request) -> web.Response:
                     error="图片内容与扩展名不符（已拒绝）").wire_dict(),
                 status=415)
 
-        _os.makedirs(str(_IMAGES_DIR), exist_ok=True)
+        images_dir = _images_dir()
+        _os.makedirs(str(images_dir), exist_ok=True)
         # D5/P2-03：服务端生成安全文件名（扩展名由白名单派生，不信任用户输入）
         saved_name = f"{_uuid.uuid4().hex[:12]}{ext}"
-        saved_path = _IMAGES_DIR / saved_name
+        saved_path = images_dir / saved_name
         saved_path.write_bytes(data)
 
         url = f"/uploads/images/{saved_name}"
@@ -494,7 +495,17 @@ def _sign_url(secret: str, attachment_id: str) -> tuple[str, int]:
     """
     return AttachmentSigningService(sig_secret=secret).sign(attachment_id)
 
-_IMAGES_DIR = ProjectPath.DATA_UPLOADS_IMAGES.resolve()
+def _images_dir() -> Path:
+    """图片上传落盘目录（**每次调用现解析**）。
+
+    为什么不是模块级常量：`ProjectPath.resolve()` 读 `ELYSIA_PATH_DATA_UPLOADS_IMAGES`，
+    而测试必须能在运行期把它重定向到 `tmp_path`。模块级常量在 import 期就把值固化了，
+    运行期 `monkeypatch.setenv` 对它**完全无效**——测试以为隔离了，实际写进真实
+    `data/uploads/images/`（实测：单跑 test_server.py 的图片用例落盘 +1）。
+    与 `Module/system_prompt` 的"render-local"同一条纪律：**能被测试改写的输入，
+    不能在 import 期求值**。
+    """
+    return ProjectPath.DATA_UPLOADS_IMAGES.resolve()
 
 
 def register_upload_routes(app: web.Application) -> None:
