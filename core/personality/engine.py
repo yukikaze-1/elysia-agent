@@ -46,8 +46,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# AwarenessTrigger 配置
-AWARENESS_COOLDOWN_SECONDS = 3600  # 同一主题冷却 1 小时，避免频繁输出"我变了"
+# AwarenessTrigger 配置（冷却时长常量的唯一来源是 core/personality/awareness.py
+# 的 AWARENESS_JUDGMENT_COOLDOWN——那里才是 C9 判定的执行点）
 AWARENESS_MAX_HISTORY = 10         # state_history 保留条数
 
 # C1Data / C9Data / C6Data 定义在 core/personality/protocol.py（接口层），
