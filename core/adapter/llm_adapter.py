@@ -29,10 +29,6 @@ class ThoughtResult:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
 
-    @property
-    def has_tool_calls(self) -> bool:
-        return bool(self.tool_calls)
-
 
 class LLMAdapter:
     """统一的 LLM 接口，支持工具调用。"""
@@ -89,18 +85,6 @@ class LLMAdapter:
                 )
 
         return ThoughtResult(text=response)
-
-    async def think_stream(self, messages: list[dict]) -> AsyncIterator[str]:
-        """从 LLM 流式获取 token。仅用于最终回答输出（不支持工具调用）。
-
-        Args:
-            messages: LLM 对话消息列表。
-
-        Returns:
-            AsyncIterator[str]: 流式文本 token 迭代器。
-        """
-        async for token in self._backend.chat_stream(messages):
-            yield token
 
     async def stream_think(
         self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any

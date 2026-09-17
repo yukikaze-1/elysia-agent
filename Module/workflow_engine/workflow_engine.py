@@ -45,7 +45,6 @@ from Module.workflow_engine.schema import (
 from Module.workflow_engine.core.sub_agent import SubAgent
 
 if TYPE_CHECKING:
-    from Module.workflow_engine.core.execution import ExecutionState
     from Module.workflow_contract import AgentInfra
     from Module.workflow_contract import HITLNotifier
 
@@ -804,27 +803,6 @@ class WorkflowEngine:
         只统计活跃任务（_tasks dict 中的），已清理的任务不可查询。
         """
         return query.get_token_stats(self._tasks, period)
-
-    # ── 内部辅助 ───────────────────────────────────────────────────────────
-
-    async def _collect_tools_used(
-        self,
-        sub_agent: SubAgent,
-        exec_state: "ExecutionState | None",
-    ) -> list[str]:
-        """从执行状态 + ArtifactStore 收集实际被调用的工具名。
-
-        遍历已完成节点的 artifact_refs → ArtifactStore.get() →
-        读取 metadata.tool_name，生成真实的工具审计列表。
-
-        Args:
-            sub_agent: SubAgent 实例。
-            exec_state: 执行状态对象，None 时返回空列表。
-
-        Returns:
-            list[str]: 实际被调用的工具名列表（去重）。
-        """
-        return await query.collect_tools_used(sub_agent, exec_state)
 
     # ── 内部方法 ─────────────────────────────────────────────────────────
 
