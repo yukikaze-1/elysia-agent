@@ -40,8 +40,14 @@ def _stated_counts(text: str) -> list[int]:
     return [int(m) for m in re.findall(r"\*\*(\d+) 个同名 `@property`\*\*", text)]
 
 
-@pytest.mark.parametrize("doc", ["CLAUDE.md", "core/README.md"])
+@pytest.mark.parametrize("doc", ["CLAUDE.md", "core/README.md", "README.md"])
 def test_property_count_matches_code(doc: str):
+    """三份文档里的「N 个同名 @property」都必须等于代码里的真实计数。
+
+    `README.md`（根）由 Batch 3 加入：它此前也写着一个 @property 数字，但因为不在
+    本参数化列表里、且格式不是本守卫认的粗体形态，所以**长期无人核对**
+    （曾写 39，实际 46）。加进来 + 统一格式后，同一个断言就把它也钉住了。
+    """
     actual = _count_properties()
     stated = _stated_counts((_ROOT / doc).read_text(encoding="utf-8"))
     assert stated, f"{doc} 里找不到「N 个同名 @property」的声明——守卫失效"
