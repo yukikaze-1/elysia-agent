@@ -115,11 +115,6 @@ class ConsolidatorPendingStore:
         """当前有待整合缓冲的 instance key 列表。"""
         return list(self._entries.keys())
 
-    def drop(self, key: str) -> None:
-        """移除某 instance 的条目并落盘。"""
-        if self._entries.pop(key, None) is not None:
-            self.save()
-
 
 # 模块级单例（进程内；path 变化时自动重建——测试用 ELYSIA_PATH_* 覆盖可隔离）
 _store: ConsolidatorPendingStore | None = None

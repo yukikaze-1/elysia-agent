@@ -35,14 +35,6 @@ async def _dispatch_wake_toggle(
         ctx.audio_buf.set_wake_enabled(enabled)
         logger.debug("唤醒词开关: %s", "开启" if enabled else "关闭")
 
-def _conn_id(channel: WebSocketChannel | None) -> str:
-    """本连接的稳定身份（v2 握手分配 conn_<hex>；v1/无连接为 ""）。
-
-    CR-13：透传到工具安全管道，使 HITL 审批只认发起连接。
-    """
-    conn_id = getattr(channel, "connection_id", None)
-    return conn_id if isinstance(conn_id, str) else ""
-
 
 async def _dispatch_text(
     ctx: WsRequestContext, data: dict, msg: Any,
