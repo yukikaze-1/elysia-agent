@@ -314,8 +314,56 @@ F401 已于本批启用（`ruff.toml` 的 `select` + `"**/__init__.py"` per-file
 | 保留 | **FilePart/AudioPart/VideoPart 预留代码** | `P3-01-RESERVED`——`part.py` 130 行 + `message_adapter.py` 3 个 helper + `Part` union。`message_adapter.py:188` 注释明确 Phase 2 |
 | 保留 | `core/hitl.py`（85 行）与 `ToolEmitter` 流式上报面 | `P3-01-RESERVED`——HITL 通知器已端到端接好、插件侧 `emit.progress/is_cancelled` 已定义，但两侧都尚未接线。**半接线状态已如实标注在代码注释里**（原先两处注释与代码不符，本次已改正），不再每轮重新发现 |
 | 保留 | `WorkflowEngine.resume()`（91 行，13 项测试） | `P3-01-RESERVED`——暂停/恢复闭环尚未接线，先备好能力与测试 |
-| 保留 | **`core/task` 的 background/DAG/progress/checkpoint 预留** | `P3-01-RESERVED`——评估稿 §ARCH-INC-P1-01 批次 B 原计划「删除无消费者的 background/DAG/progress/checkpoint 预留」，2026-09-12 决策**作废**。`TaskType.BACKGROUND` / `depends_on` / `children_ids` / `run_in_background` / `progress` / checkpoint 持久化 / `dispatch_background()` / `new_background()` 全部保留 |
+| 保留 | **`core/tool_runtime`（原 `core/task`）的 background/DAG/progress/checkpoint 预留** | `P3-01-RESERVED`——评估稿 §ARCH-INC-P1-01 批次 B 原计划「删除无消费者的 background/DAG/progress/checkpoint 预留」，2026-09-12 决策**作废**。`QueuedToolCallKind.BACKGROUND` / `depends_on` / `children_ids` / `run_in_background` / `progress` / checkpoint 持久化 / `dispatch_background()` / `new_background()` 全部保留 |
 | ~~低~~ ✅ | **衍生 ID 未类型化** | 2026-08-09 已修：AttachmentId/MemoryId/TaskId 立项 + 贯通（part/repo/long_term/schema/memory_reflector/task/scheduler/input）。spec/plan 见 [spec](docs/superpowers/specs/archive/2026-08/2026-08-09-derived-id-newtype-design.md) / [plan](docs/superpowers/plans/archive/2026-08/2026-08-09-derived-id-newtype-plan.md)。已知权衡：Task.parent_id 语义混乱留待未来、scheduler:159 死代码 ignore |
+
+## Batch 3（Deletion / Simplification）登记项（2026-09-17）
+
+> Batch 3 是**纯删减批次**：只删「有 consumer proof 的 PROVEN_DEAD」，并把审计中发现的
+> **真实 bug 与仍有效的债务**登记到本表，**不在删除 commit 里偷修**。
+> 完整报告见 [`docs/review/2026-09-17-Batch3-deletion-simplification-执行记录.md`](docs/review/2026-09-17-Batch3-deletion-simplification-执行记录.md)。
+
+**F1–F17 follow-up 总表位置**：Batch 1.8 执行记录的 §「Follow-up」表
+（[docs/review/2026-09-17-Batch1.8-user-visible-terminal-semantics-执行记录.md](docs/review/2026-09-17-Batch1.8-user-visible-terminal-semantics-执行记录.md)）
+是这些项的**权威清单**——本文件此前 0 命中（Batch 3 审计 E-16 发现的登记缺口），
+此处补一个指针，不复制内容以免两处漂移。含 `WAITING_APPROVAL` live-lock /
+reminder persistence / `plan_too_large` semantics / task LLM provider H3 /
+workflow model reporter / F5 STT provider-test asymmetry / `/debug tts_ok,stt_ok`
+semantics / prompt budget cross-path / provider portability / error protocol extension。
+
+### 正确性 bug（Batch 3 审计发现，**未修**）
+
+| # | 位置 | 现象 | 影响 |
+|---|------|------|------|
+| **B3-CB-1** | `core/profile/user_identity.py::UserIdentity.pronouns` + `core/input/character_routes.py:252` | 契约允许 PUT `pronouns: null`，`_normalize_updates` 不过滤 None → Mongo 存 `null` → 读回 `model_validate` 抛 `ValidationError`（`pronouns: str` 不接受 None）。**已独立复现**（两个兄弟字段 `preferredAddress`/`defaultCharacterId` 为 None 时正常） | 此后每次 `get()` 都抛 ⇒ `/api/me`、preview、会话创建、generation 全 500（`character_routes.py:265-269` 只捕 `StorageUnavailableError`）。修法：`_normalize_updates` 丢弃 None 或字段改 `str \| None` |
+| **B3-CB-2** | `core/storage/schema_drift.py:63` `EXPECTED_INDEX_OPTIONS` | 键写成**从未存在**的 `idempotency_claims`，真集合名是 `idempotency`（`idempotency_repo.py:50`） | S2-B1 的「同名索引选项不符」检查对该集合**永远不生效**；该表无任何 AST 守卫（实测 `core/storage/tests` 498 passed 仍全绿）。另 4 个 unique/TTL 索引未登记 |
+| **B3-CB-3** | `Module/config/preflight.py:133-142`（及 `_check_mongo_env`/`_check_milvus_env`） | 用 `os.getenv("DEEPSEEK_URL")` 判 FAIL，而运行期 `resolve_base_url()` 会回退 `providers.yaml::llm.deepseek.base_url`。实测：只设 `DEEPSEEK_API_KEY` → preflight `failed=1`，而同进程 `LLMFactory.create(...)._client.base_url == https://api.deepseek.com`（完全可用）。数据库两项同理（只看 env，忽略 `config.yaml::database.*` 与默认值） | `app.py --check` 退 1 ⇒ `scripts/start.sh` **拒绝启动一个本来可用的配置** |
+| **B3-CB-4** | `scripts/clean_db.py::PROTECTED_COLLECTIONS` | docstring 自称「列在这里是给测试当回归守卫用」，但 `scripts/tests/` **没有** clean_db 测试，常量零引用 | 「用户身份不可删」这条保护**没有机器守卫** |
+| **B3-CB-5** | `core/tests/test_doc_counts.py` | 文档数字门禁**不含根 `README.md`**，且正则只认粗体 `**N 个同名 @property**` ⇒ 根 README 的「39 个 @property」（实际 46）永远抓不到；该守卫在 `docs/architecture/invariants.md` 中 0 登记（现已登记进 §7） | 文档数字失真不会被自动发现。修法：扩范围 + 登记，而不是每轮手改数字 |
+| **B3-CB-6** | `core/profile/profile_store.py:189-200` ↔ `core/storage/user_identity_repo.py:40` | 两份**语义不同**的白名单（store 版额外约束 `initialized` 只能置 true），两侧对未知键都**静默 `continue`** | 静默丢更新；两份会分岔 |
+| ~~B3-CB-7~~ ✅ | `core/input/upload_routes.py::_IMAGES_DIR` 模块级常量 + `test_server.py::image_app` 的 `monkeypatch.setenv` | 测试 docstring 声称"图片落盘重定向到 tmp_path"，但常量在 **import 期**固化 ⇒ 隔离**从未生效**。实测单跑图片用例真实目录 `441 → 442` | **已修（`ebf6ba4d`）**：改为 `_images_dir()` 调用期解析；修复后 delta=0。累积的 442 个测试残留 PNG 已清理。纪律：**能被测试改写的输入不能在 import 期求值** |
+
+### 测试侧清理候选（Batch 3 审计登记，**本批未做**）
+
+| 项 | 判定 | 说明 |
+|---|---|---|
+| `core/tools/tests/mock_plugin.py`（173 行）+ `build_test_workflow_engine(use_mocks=…)` 支路 | **LIKELY_DEAD（MEDIUM）** | 7 个调用点 **7/7 显式 `use_mocks=False`**（`grep -c use_mocks=True` = 0），该支路从未执行。未达 `PROVEN_DEAD` 因为 e2e 层默认 skip、无运行时证据；且删除必须**原子**（连签名 + 7 处实参一起改）。下一批做 |
+| `Module/workflow_engine/tests/{infra,learning,safety}/__init__.py`（3 个 0 字节空包） | **LOW** | 目录内无任何测试、git 史无删除记录；留着无害（且是 pytest 包发现惯例），删了收益也近零 |
+| `MOCK_PLUGIN_MAP` | 同上（与 `use_mocks` 同一死支路） | — |
+
+### 有意保留（Batch 3 审计后仍 KEEP，附理由）
+
+| 项 | 判定 | 理由 |
+|---|---|---|
+| `AgentServer.run_repl`（0 代码消费者） | **KEEP_PUBLIC_API** | `CLAUDE.md`、`core/README.md`、`core/agent/README.md`、`agent.py` docstring、本文件共 8 处把它写成对外承诺；`--cli` 的真实入口是 `app.py::run_interactive`（**行为已分岔**：后者有 `wait_until_idle()`）。删它属架构决策，需 owner 先决定"两套 CLI driver"的去留 |
+| `CognitiveLoop` 的 `DEFAULT_CHARACTER_ID` | **KEEP_PUBLIC_API** | 被 `core/cognitive/README.md:69` 显式登记为公开常量（"供 agent 默认 binding 用"） |
+| `ToolAdapter.{resolve_llm_name, executing_now, history, capability_status}` | **REFACTOR_LATER** | adapter 上是 0 消费者（`core/debug/info.py` 读的是 `ToolManager`），但 `ToolAdapter` 是已文档化的稳定门面，且有测试对其赋值打桩（`test_auth.py:54`、`test_server.py:1177`）。批量收窄 public surface 需单独一批 + 全量回归 |
+| `ToolContext.services["_tool_names"]` | **KEEP_DYNAMIC** | 同族 `_tool_count`/`_fsm_state`/`_session_msg_count` 是活的 `ctx.get` 双端键；删哥哥留弟弟=静默降级不报错 |
+| `character/*/config.yaml` 的 `voice` / `appearance` | **KEEP_COMPAT** | 生产 0 读者，但注释与 `character/README.md` 显式登记为「占位 / 待启用」+ 未来用途明确 ⇒ 按 `P3-01-RESERVED` 判别标准属**预留**（appearance 与 voice 已补 `P3-01-RESERVED` 标记，避免下轮审计重复发现） |
+| `Module/config/preflight.py` 的三张 provider→env 表 | **REFACTOR_LATER** | 与 `providers.yaml` 的 `env_key`/`url_key` 语义重叠但**不等价**（gpt-sovits 用的是 url_key 不是 env_key）⇒ 天真 DRY 会改变行为 |
+| Mongo 的 `attachments.sha256` / `background_task_results.delivered_at` / `message_archive.metadata.incomplete` | **LIKELY_DEAD（不删）** | 三者皆 write-only，但**未连真实 Mongo 无法证明「旧记录还能读」**；按 Batch 3 规则不得判 `PROVEN_DEAD` |
+| `ConfigLoader(env_path=…)` 形参 | **LIKELY_DEAD（不删）** | 无生产调用方，但 Module 是库，无法证明仓外无调用方 |
+| `config.yaml::database.milvus_token` | **REFACTOR_LATER** | `secret=True` ⇒ loader 显式跳过 YAML（实测写 YAML 读回 `''`），**该行今天就不可能生效**；属环境/部署面，且 `docs/database-storage.md` 需同步 |
 
 ## 模块化改进
 
