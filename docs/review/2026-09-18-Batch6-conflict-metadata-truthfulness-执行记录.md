@@ -23,7 +23,7 @@
 | **public API changed?** | **否**。409 信封字段集逐字不变（`code`/`message`/`retryable`/`requestId`/`error`/`details`/`retryAfterMs`）；`details.currentRevision` 类型不变（int），只在**权威现值未知**时按协议既有的"可带"语义**缺省**。`make check-types` / `make check-contract` / golden frames 无漂移 |
 | **persistence changed?** | **否**。无集合/索引/字段变更、无 migration、无新索引 |
 | **migration?** | **否**（沿用 ARCH-INC-P1-04：本批不需要任何 schema 变更） |
-| **real CI?** | 见 §18.8（push 后核验） |
+| **real CI?** | ⏳ **待 owner push 后核验**（本机无 GitHub 凭据）。三个 job 的**等价本地命令**已各自跑绿：backend 12 道门禁 + 6068 passed、real-mongo 15 passed、frontend `npm run build` 成功；见 §18.8 |
 | 修复规模 | **5 个生产文件**（profile/user_identity、storage/repo、profile/store、input/route、character/instances），行为改动 = 冲突结果表示 + 冲突点回读 + HTTP 投影 + 2 处消费方适配 |
 | 回归网 | 新增 **26** 条（路由层 19 + 真库层 3 + repository 3 + store 1）；其中 **14 条 PRE_FIX_RED**（原 HEAD 11 + 真库 3），另有 **3 条**是第一版修复的弱点守卫（对 `616e4993` 红），其余为守卫 |
 | Mutation | 主 Agent M1–M4 **4/4 被杀**；Challenger 侧 9 个变异 **9/9 被杀**（存活 0），见 §13 |
@@ -490,7 +490,20 @@ core/profile core/storage core/input core/character core/agent
 
 ### 18.8 Real CI
 
-见 §18 补记（push 后核验 Backend / Real MongoDB / Frontend 等 required jobs）。
+**状态：待 owner push 后核验**（本机无 GitHub 凭据：私有仓、无 `gh`、无
+`~/.git-credentials`、无 SSH key、env 无 token；`git push origin main` 报
+`could not read Username for 'https://github.com'`。owner 选择自行 push）。
+
+为降低"push 后才发现红"的风险，本机按 **CI 三个 job 的等价命令**各跑了一遍：
+
+| CI job | 等价本地命令 | 结果 |
+|---|---|---|
+| `backend`（静态门禁 + 离线套件） | `make lint` / `pyright` / `check-types` / `check-arch` / `check-timeouts` / `check-contract` / `check-debug-auth` / `check-ci-isolation` / `check-secrets` / `check-test-sets` / `check-compose` / `check-env-lock` + `make test-normal` | 12 道门禁全绿 + **6068 passed** |
+| `real-mongo` | `make test-real-mongo` | **15 passed** |
+| `frontend`（`vue-tsc --noEmit` + `vite build`） | `cd frontend && npm run build` | ✅ 构建成功（本批未改前端文件；构建后 `git status` 仍干净） |
+
+真实 Actions 结论以 owner push 后的 run 为准；**本批的 §76 完成标准中，唯独
+"真实 CI 全绿"这一条尚未由我独立见证**（其余全部有本地可复现证据）。
 
 ---
 
