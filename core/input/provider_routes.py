@@ -238,7 +238,19 @@ def _resolve_test_model(
     provider: str,
     model: str,
 ) -> tuple[tuple[str, str], web.Response | None]:
-    """provider/model 缺省回退：均缺省用当前配置模型，仅 provider 缺省取 custom。"""
+    """provider/model 缺省回退：均缺省用**运行期在跑的那个**模型，仅 provider 缺省取 custom。
+
+    "运行期在跑的那个"是三个子系统统一的权威（F6）：
+
+    * `llm` → `agent.llm.model`（适配器持有的后端，热切换后即新值）；
+    * `stt` → `agent.stt.model`（STTBackend.model 派生自 provider_name + `_model`）；
+    * `tts` → `agent.tts.model`。
+
+    后端**未连接**（None，或自述模型为空）才回退 `config.<svc>.model`（配置默认值）。
+    修前 STT 分支直接读 `agent.config.stt.model`，而 `switch_stt` 成功时**有意不改写
+    config**（config 是"默认"，`ServiceState` 是"当前"）⇒ 热切换后端点测的是
+    bootstrap 模型，与实际在跑的后端无关。不要把这里改回"config 权威"。
+    """
     if not provider and not model:
         agent = request.app.get("agent")
         if agent is None:
@@ -246,11 +258,10 @@ def _resolve_test_model(
                 rest_contract.ApiFail(error="agent 未注入").wire_dict(), status=500)
         if service == "llm":
             model_id = agent.llm.model
-        elif service == "tts":
-            tts = agent.tts
-            model_id = tts.model if tts is not None else agent.config.tts.model
+        elif service == "stt":
+            model_id = _runtime_model_or_default(agent.stt, agent.config.stt.model)
         else:
-            model_id = agent.config.stt.model
+            model_id = _runtime_model_or_default(agent.tts, agent.config.tts.model)
         try:
             provider, model = model_id.split("/", 1)
         except ValueError:
@@ -259,6 +270,12 @@ def _resolve_test_model(
     elif not provider:
         provider = "custom"
     return (provider, model), None
+
+
+def _runtime_model_or_default(backend: Any, default_model: str) -> str:
+    """运行期句柄自述的模型；句柄不存在（未连接）或自述为空时回退配置默认值。"""
+    runtime_model = getattr(backend, "model", "") or ""
+    return runtime_model or default_model
 
 
 def _create_test_backend(
