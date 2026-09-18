@@ -96,7 +96,14 @@ async def test_get_me_returns_authoritative_profile_after_load(aiohttp_client):
 
 @pytest.mark.asyncio
 async def test_put_me_rejects_stale_revision(aiohttp_client):
-    """CAS 冲突仍返回 409 + currentRevision（不因 fail-closed 改动而回退）。"""
+    """CAS 冲突仍返回 409 + currentRevision（不因 fail-closed 改动而回退）。
+
+    ⚠️ **本用例不构成冲突元数据真值的守卫**（Batch 6 Challenger F-4 实测）：它用**单个
+    store**——winner 就是它自己，冲突前缓存已被 winner 刷新成 2，于是 A/B/C 三种错误
+    实现（回显 expected / 读缓存 / `expected+1`）下它都绿。真值守卫在
+    `test_me_conflict_metadata_authority.py`（两个独立 writer）；这里只钉"冲突仍报 409
+    且带着 currentRevision 字段"这一条契约形状。
+    """
     db = FakeDocumentDBBackend()
     repo = UserIdentityRepository(db=db)
     await repo.connect()

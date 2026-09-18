@@ -78,6 +78,11 @@ class UserIdentityUpdateOutcome:
 
     @property
     def applied(self) -> bool:
-        """本次 CAS 是否真的写入了（False = 冲突，按 `current_revision` 报告现状）。"""
+        """本次 CAS 是否**已应用且写后身份可读回**（False = 冲突，按 `current_revision` 报告现状）。
+
+        "已应用但读不回"**不是**本类型可表达的状态：那种情况 repository 直接抛
+        `StorageUnavailableError`（→503）。因此 `applied is False` 始终等价于
+        "CAS 未命中"，不存在"写成功了却被报成冲突"的取值。
+        """
         return self.identity is not None
 

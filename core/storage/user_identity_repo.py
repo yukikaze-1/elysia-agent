@@ -171,6 +171,18 @@ class UserIdentityRepository(Repository):
         抛 `StorageUnavailableError`（由调用方 fail-closed 成 503），**绝不**回退成
         缓存值或 `expected + 1`。记录不存在（外部删除）→ `current_revision=None`
         （"不知道"），不伪造。
+
+        **三种"读不到/读不准"各有去处（Batch 6 Challenger J-1/J-2/J-4）**：
+        - 记录不存在 → `current_revision=None`（409 省略该字段，客户端 GET 重取）；
+        - 记录存在但**无法解码**成域对象（外部写入者把字段写坏）→
+          `StorageUnavailableError`（503）：这是"权威存储此刻不能服务"，与
+          `connect()` 对同一状态的判定同类；**不得**让它以裸 `ValidationError`
+          冒泡成 500（那是 fail-crash，不是 fail-closed）；
+        - 解码值**等于** `expected_revision` → 报"未知"（None）：CAS 在 BSON 比较域
+          里明确未命中，而解码后却与 expected 相等，只可能是存的值类型/形态与域模型
+          不一致（如 `revision` 存成字符串 `"1"` 或缺字段走默认值）。上报它会让客户端
+          拿着与 expected 相同的值无限重试（N-3 的死循环换个门回来），且违反
+          「不得回显客户端提交的 expected revision」（CM2 字面）。
         """
         if self._db is None:
             raise StorageUnavailableError("UserIdentityRepository 未连接")
@@ -195,9 +207,35 @@ class UserIdentityRepository(Repository):
             # CAS 未命中：**当场**回读权威现值（唯一权威 = Mongo 文档 revision）。
             # 未命中既可能是 revision 过期，也可能是文档已不存在——两者都经同一次
             # 回读区分：读不到 ⇒ None = 未知（§31：不把 not-found 伪装成有值的冲突）。
-            fresh = await self.get(user_id)
-            return UserIdentityUpdateOutcome(
-                current_revision=None if fresh is None else fresh.revision)
-        identity = await self.get(user_id)
+            fresh = await self._read_authoritative(user_id)
+            current = None if fresh is None else fresh.revision
+            if current == expected_revision:
+                logger.warning(
+                    "用户身份冲突回读值与 expectedRevision 相同（%s）——库中形态与域模型"
+                    "不一致，按「未知」上报而不是回显客户端期望值", expected_revision)
+                current = None
+            return UserIdentityUpdateOutcome(current_revision=current)
+        identity = await self._read_authoritative(user_id)
+        if identity is None:
+            # CAS **已应用**（modified_count > 0）但写后读不回：不能把它报成"冲突"
+            # （那会让客户端以为写入失败而重放），也不能报 200（拿不出身份）——
+            # 归入"权威存储此刻不能服务"，fail-closed 成 503（Challenger J-4）。
+            raise StorageUnavailableError("用户身份 CAS 已应用但写后回读为空")
         return UserIdentityUpdateOutcome(identity=identity)
+
+    async def _read_authoritative(self, user_id: str) -> UserIdentity | None:
+        """权威回读（冲突/写后两条路径共用）：解码失败 → `StorageUnavailableError`。
+
+        为什么在 repo 边界把 `ValidationError` 转成存储错误：库里存在一条**读不出域
+        对象**的记录时，"存储现在不能服务"是准确的描述（`UserIdentityStore.connect()`
+        对同一状态也是这么判定的：装载失败 ⇒ 身份不可用）。让它以裸 pydantic 异常冒泡
+        会穿透路由的 `except StorageUnavailableError`，变成 500 INTERNAL ——
+        Batch 6 Challenger J-2 实测的 fail-crash 回归（修前该状态是 409）。
+        """
+        try:
+            return await self.get(user_id)
+        except StorageUnavailableError:
+            raise
+        except Exception as exc:
+            raise StorageUnavailableError("用户身份权威记录无法解码") from exc
 

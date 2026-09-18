@@ -54,11 +54,39 @@ class _ReadFailAfterSeedDB(FakeDocumentDBBackend):
         return await super().find(collection, filter_expr, **kwargs)
 
 
+class _VanishAfterUpdateDB(FakeDocumentDBBackend):
+    """CAS 应用成功后让读回为空：模拟「写已落库、写后回读读不到」（Challenger J-4）。
+
+    `update_one` 仍走真实语义（filter/`$set`/modified_count），只在写成功之后把
+    `find` 置空——即"外部删除者恰好插在 CAS 与回读之间"。
+    """
+
+    vanished: bool = False
+
+    async def update_one(self, collection: str, filter_expr: dict, update: dict,
+                         upsert: bool = False) -> int:
+        modified = await super().update_one(collection, filter_expr, update, upsert)
+        if modified > 0:
+            self.vanished = True
+        return modified
+
+    async def find(self, collection: str, filter_expr: dict, **kwargs: Any) -> list[dict]:
+        if self.vanished:
+            return []
+        return await super().find(collection, filter_expr, **kwargs)
+
+
 class _SharedMongo:
     """两个后端对象共享同一份集合 = 两个独立 writer 打同一个权威库。"""
 
-    def __init__(self, *, fail_a_read: bool = False) -> None:
-        db_cls = _ReadFailAfterSeedDB if fail_a_read else FakeDocumentDBBackend
+    def __init__(self, *, fail_a_read: bool = False,
+                 vanish_after_update: bool = False) -> None:
+        if vanish_after_update:
+            db_cls: type[FakeDocumentDBBackend] = _VanishAfterUpdateDB
+        elif fail_a_read:
+            db_cls = _ReadFailAfterSeedDB
+        else:
+            db_cls = FakeDocumentDBBackend
         self.db_a: FakeDocumentDBBackend = db_cls()
         self.db_b = FakeDocumentDBBackend()
         # 独立对象、共享数据（对齐「两条连接同一个 Mongo」，而非共享同一个后端句柄）
@@ -101,9 +129,11 @@ async def _put(client: Any, expected_revision: int,
 
 
 async def _two_writer_setup(
-        *, fail_a_read: bool = False) -> tuple[_SharedMongo, UserIdentityStore,
-                                               UserIdentityStore]:
-    shared = _SharedMongo(fail_a_read=fail_a_read)
+        *, fail_a_read: bool = False,
+        vanish_after_update: bool = False) -> tuple[_SharedMongo, UserIdentityStore,
+                                                   UserIdentityStore]:
+    shared = _SharedMongo(fail_a_read=fail_a_read,
+                          vanish_after_update=vanish_after_update)
     store_a, store_b = await shared.stores()
     return shared, store_a, store_b
 
@@ -356,3 +386,68 @@ async def test_cmt_missing_expected_revision_is_validation_error(aiohttp_client)
 
     assert resp.status == 400
     assert shared.authoritative_revision == 1
+
+
+# ── 权威回读本身不可信时的三条出路（Challenger J-1 / J-2 / J-4）──
+
+
+@pytest.mark.asyncio
+async def test_cmt_cas_applied_but_unreadable_is_not_a_conflict(aiohttp_client):
+    """**Challenger J-4**：CAS 已应用、写后回读为空 → 503，绝不报成"冲突"。
+
+    报 409 等于告诉客户端"你的写入没生效"，与库里的事实相反（写其实落了库）；
+    报 200 又拿不出身份。唯一诚实的出路是"权威存储此刻不能服务"（503，可重试）。
+    """
+    shared = _SharedMongo(vanish_after_update=True)
+    store_a, _store_b = await shared.stores()
+
+    client = await aiohttp_client(_app(store_a))
+    status, body = await _put(client, expected_revision=1, display_name="A 的 payload")
+
+    assert status == 503, f"写入已生效却报 {status}：{body}"
+    assert body["code"] == "STORAGE_UNAVAILABLE"
+    assert body["retryable"] is True
+    assert body["code"] != "USER_PROFILE_REVISION_CONFLICT"
+    # 关键对照：**写确实落库了**（revision 1→2、payload 是这次的），
+    # 所以 409「expectedRevision 已过期」会是彻底的谎报
+    doc = shared.db_a.collections[COLLECTION][0]
+    assert doc["revision"] == 2 and doc["display_name"] == "A 的 payload"
+
+
+@pytest.mark.asyncio
+async def test_cmt_undecodable_authority_fails_closed_503_not_500(aiohttp_client):
+    """**Challenger J-2**：权威文档被外部写坏 → 503（fail-closed），不是裸 500。
+
+    修前（本批第一版）这条路径让 `_from_doc` 的 `ValidationError` 逃出
+    `except StorageUnavailableError`，被中间件兜成 500 INTERNAL —— fail-crash。
+    """
+    shared, store_a, _store_b = await _two_writer_setup()
+    # 外部写入者把 revision 写成不合域模型的值（Mongo 无 schema 校验）
+    shared.db_a.collections[COLLECTION][0]["revision"] = 0
+
+    client = await aiohttp_client(_app(store_a))
+    status, body = await _put(client, expected_revision=1)
+
+    assert status == 503, f"解码失败必须 fail-closed，实际 {status} / {body}"
+    assert body["code"] == "STORAGE_UNAVAILABLE"
+    assert "currentRevision" not in body["details"]
+
+
+@pytest.mark.asyncio
+async def test_cmt_decoded_revision_equal_to_expected_reports_unknown(aiohttp_client):
+    """**Challenger J-1**：库里的 revision 类型与域模型不一致时不得回显 expected。
+
+    外部写入者把 `revision` 存成字符串 `"1"`：CAS 的 BSON 等值比较未命中（int≠str），
+    而解码后是 1 —— 正好等于客户端提交的 expected。上报它 = 客户端拿同一个值无限重试
+    （N-3 的死循环换门回来），且违反「不得回显请求里的 expected revision」（CM2）。
+    正确出路：承认不知道（省略该字段）。
+    """
+    shared, store_a, _store_b = await _two_writer_setup()
+    shared.db_a.collections[COLLECTION][0]["revision"] = "1"   # 类型被写坏
+
+    client = await aiohttp_client(_app(store_a))
+    status, body = await _put(client, expected_revision=1)
+
+    assert status == 409
+    assert "currentRevision" not in body["details"], (
+        f"不得回显 expected（1），实际 {body['details'].get('currentRevision')!r}")
