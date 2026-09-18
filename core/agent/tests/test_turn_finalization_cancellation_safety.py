@@ -413,7 +413,12 @@ async def test_shutdown_second_cancel_keeps_shutdown_bounded(monkeypatch):
 
     断言三件事同时成立：①停机仍在既有预算 + settle 预算内结束；
     ②相位离开活跃区（旧回合达到稳定终态）；③生命周期轴是 STOPPED，
-    pending 不会因为收口广播的 IDLE 而启动新回合。
+    **不再产生任何新回合**。
+
+    ③ 的判据刻意是**回合派发轴**（`rec.names.count("thinking")` 与在途任务句柄），
+    不是 `pending_messages`——后者由 `Agent.stop()` 在入口**同步清空**，且
+    `_SHUTDOWN_STEPS[0]` 就是 `stop_event_task`（IDLE 广播在停机期间根本不会被消费），
+    所以"pending 为空"这条断言即使把收口整个换成 no-op 也照样成立（Challenger J3）。
     """
     _install_fake_llm(monkeypatch)
     a = Agent(config=AppConfig())
@@ -437,6 +442,9 @@ async def test_shutdown_second_cancel_keeps_shutdown_bounded(monkeypatch):
         elapsed = time.monotonic() - started_at
         mark_gate.open()
         await _drain_task(turn)
+        # 停机后再放几拍，给"如果真有新回合"留出被观察到的机会
+        for _ in range(50):
+            await asyncio.sleep(0)
 
         assert elapsed < 2 * (_DRAIN_BUDGET_S + 1.0), (
             f"停机失去了上界：elapsed={elapsed:.2f}s（预算 {_DRAIN_BUDGET_S}s + settle 1.0s）")
@@ -445,7 +453,12 @@ async def test_shutdown_second_cancel_keeps_shutdown_bounded(monkeypatch):
             "停机后相位仍留在活跃区（无主状态，只有下一次 start() 能救）：" + rec.diagnose())
         assert a.status.is_completely_idle, rec.diagnose()
         assert turn.cancelled() is True, rec.diagnose()
-        assert not a.pending_messages, "停机期间 pending 不得残留（也不得启动新回合）"
+        # ③ 回合派发轴：停机期间**零**新回合（不是"pending 恰好为空"）
+        assert rec.names == ["thinking", "interrupted", "idle"], (
+            "停机期间产生了新的回合生命周期：" + rec.diagnose())
+        assert a._cognitive.current_task is None, (  # noqa: SLF001
+            "停机后仍有在途回合句柄：" + rec.diagnose())
+        assert not a.pending_messages, "停机期间 pending 不得残留"
         assert await a.process_message("停机窗口内的消息") is False, (
             "停机语义被破坏：生命周期轴应当拒收")
     finally:

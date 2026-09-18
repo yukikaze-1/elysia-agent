@@ -418,8 +418,10 @@ async def test_second_cancel_during_turn_cancelled_frame_settles(harness_factory
 async def test_second_cancel_during_registry_mark_settles(harness_factory):
     """C2 落在 `generation_registry.mark`（KB-25 的命名挂起点；Mongo await 无上界）。
 
-    PRE_FIX_RED：修复前相位停在 THINKING，且库里那条 generation 永远停在 running
-    （register 已成功、mark 被取消）——runtime 与 persisted 两处真相同时坏掉。
+    PRE_FIX_RED：修复前相位停在 THINKING。本用例**只**证明 runtime 终态（相位/锁/任务）；
+    第二发取消恰好落在 `mark` 上时，那次 `mark` **已被取消**（`marked` 里能看到它被调用过，
+    但写没写进库由真库延迟决定）——persisted 终态是 best-effort，见 §17/§18 与
+    `tests/real_mongo/test_real_finalization_cancellation.py`。
     """
     registry = _GateRegistry()
     h = harness_factory(generation_registry=registry)
@@ -761,12 +763,57 @@ async def test_ordinary_exception_in_cleanup_still_settles_state(harness_factory
 
 
 @pytest.mark.asyncio
+async def test_terminal_settle_does_not_duplicate_idle_when_phase_already_forced(harness_factory):
+    """`finally` 里的 `if state != IDLE` 守卫：相位已被别的写入者强制成 IDLE 时**不得**再广播 IDLE。
+
+    这是 §50（duplicate terminal event）的可执行判据，也是 Challenger B11 的 J/M5 指出的
+    "未被覆盖的那一行"：删掉该守卫后，正常路径的 15 条用例**全都仍然绿**
+    （legal path 上 `INTERRUPTED → IDLE` 永远是"需要"的那一次转换）。只有
+    "期间已有别的写入者把相位推成 IDLE"（这里用订阅者在 `interrupted` 通知里病态地
+    `fsm.reset()` 模拟）才能把这一行区分出来：没有守卫 ⇒ 收口会**再发一次** `bus.post(IDLE)`。
+
+    语义边界（如实钉住）：这种情况下 IDLE **广播**由那个强制 IDLE 的写入者负责——
+    `AgentFSM.reset()` 按设计不发事件（`agent_fsm.py`），所以本路径上收口不再补发，
+    避免重复 terminal event；**后置条件仍成立**（相位确实是 IDLE、锁会释放、任务会落定）。
+    """
+
+    h = harness_factory(generation_registry=_GateRegistry())
+    forced = asyncio.Event()
+
+    async def _forcing_listener(name: str) -> None:
+        if name == "interrupted" and not forced.is_set():
+            forced.set()
+            h.fsm.reset()          # 病态订阅者：在通知里强推 IDLE
+
+    h.loop.status.on_change(_forcing_listener)  # noqa: SLF001
+
+    task = await h.start_turn()
+    assert h.loop.cancel_current(source="button") is True  # noqa: SLF001
+    await h.settle(task)
+
+    assert forced.is_set(), "用例前提不成立：强制 IDLE 的订阅者没有被调用"
+    assert h.fsm.state is AgentState.IDLE, h.diagnose()
+    assert h.bus_recorder.states == ["thinking", "interrupted"], (
+        "相位已被强制成 IDLE，收口又广播了一次 terminal event：" + h.diagnose())
+    assert h.loop.process_lock.locked() is False, h.diagnose()  # noqa: SLF001
+    assert task.cancelled() is False, (
+        "本例只有**一发**取消（无第二发）⇒ 由 canonical owner 消费，任务正常结束：" + h.diagnose())
+
+
+@pytest.mark.asyncio
 async def test_handle_interrupt_is_idempotent(harness_factory):
     """`handle_interrupt()` 重复调用必须是无副作用的 no-op（§24/§25 idempotency）。
+
+    覆盖范围**明确限定**为"收口已完成（相位 IDLE）后再调用一次"这一形态——
+    生产里它由 `_handle_interrupt` 的 `finally` 与 `handle_interrupt` 自身的
+    `finally` 叠加触发（取消落在 `_notify("interrupted")` 时内层先落 IDLE）。
 
     PRE_FIX_RED：修复前第二次调用会走 `IDLE → INTERRUPTED`（转换表里的**非法边**）
     抛 `ValueError`。修复后它是 IDEMPOTENT 的 terminal operation，且**不重复广播**
     terminal event（§50）。
+
+    **不声称**"任意入口状态下都幂等"：并发（两个 owner 同时进入）不在本判据内——
+    它由 `_process_lock` 排除（见 `docs/architecture/invariants.md` §4.4）。
     """
     h = harness_factory(generation_registry=_GateRegistry())
     await h.loop.phases.enter_thinking()  # noqa: SLF001
