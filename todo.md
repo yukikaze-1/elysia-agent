@@ -41,6 +41,7 @@
 | **KB-2** | LLM 有时不输出 `<mood>`（回退关键词），deepseek-v4-flash 结构化输出不稳定 | USER | LOW | E3 | **OPEN** | prompt 小修 |
 | **KB-4** | VAD 易被环境音触发（aggressiveness / 降噪） | USER | LOW | E3 | **OPEN** | 调参 |
 | **KB-10** | TTS 取消 + HTTP 流清理交互可能泄漏（`Module/tts/gpt_sovits.py`，2026-06-22 记录） | INTERNAL | LOW | E1 | **OPEN** | 零散 |
+| **KB-11** | **Batch 6 Challenger F-1**：`CharacterService._retarget_default_character` 的重试循环用 `user_identity_store.get()`（**缓存**）取 revision，而冲突路径刻意不刷缓存 ⇒ 权威模式下并发改档案时 3 轮重放同一个 expected、必然 `RevisionConflictError`（实测 observed = `[(1, False, 2)]*3`，fail-closed 无数据损坏，但归档默认角色会假失败）。本批新带的 `outcome.current_revision` 在这条路径**无消费者** | INTERNAL | LOW | E2(6) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 零散（改角色归档写链） |
 | **F17** | 可选节点失败时任务仍报 `COMPLETED`（文案同时含「已完成」与失败列表）——引擎终态定义问题 | INTERNAL | MEDIUM | E1 | **OPEN** → `PD-6` | 需语义决策 |
 | **F3** | `plan_too_large` 语义重构（需新枚举值 ⇒ 触契约可达性门禁） | INTERNAL | LOW | E1 | **OPEN** → `PD-5` | 需契约决策 |
 
@@ -67,6 +68,7 @@
 | **OBS-3** | `Module/tts/openai_tts.py::test()` 曾记「假阴性」；当前实现已走 `make_test_method(_health_check)`（GET /health <400）⇒ **疑已消解，需一次定点复核**才能关闭 | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定点复核 |
 | **OBS-4** | Batch 1.6 §12#6 的遗留（`consolidator` + `Cannot send a request, as the client has been closed`）在 HEAD 上**定位不到**：`consolidator.py` 无 `close`、`_apply_service_state` 已在 `core/agent/_lifecycle_services.py:158` ⇒ 记录本身疑似错位，需一次定性复核 | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定点复核 |
 | **OBS-5** | Batch 1.6 §12#2 后半：把 stt/tts 的 `model`/`enabled` 补进 `/debug/api`（需跑 `make gen-types`）——F7 只覆盖了**标志语义**，字段补齐这半没被任何条目跟踪 | ADMIN | LOW | E1 | **OPEN** | 零散 |
+| **OBS-6** | **Batch 6 Challenger J-3**：外部删除权威身份档后（缓存仍热）`PUT /api/me` 连报 409「expectedRevision 已过期」而记录**根本不存在**（`details` 为空、无恢复线索），同状态 `GET /api/me` 仍 200 + 陈旧 revision —— 错误码在撒谎 + 恢复路径未闭环。属 E1 freshness 同族（需要"存在性"判定与 404/409 的契约决策），Batch 6 只做到"不伪造 revision" | USER | LOW | E2(6) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 与 E1 同批 |
 
 ### 1.4 Deployment / Config truthfulness
 
@@ -122,6 +124,7 @@
 | **GR-2** | **N-14**：`Module/config/tests/test_preflight.py` 两条弱用例（`test_minimax_key_present_passes` 随 ambient `.env` 走两条路径；`test_c1_*` 只测 helper） | LOW | E1 | **OPEN** |
 | **GR-3** | **N-15**：`EXPECTED_INDEX_OPTIONS` 有 **4 条 `unique` 未登记**（`generations.generation_id_1`/`desktop_calls.call_id_1`/`idempotency.conversation_id_1_client_request_id_1`/`character_instances.owner_user_id_1_character_id_1_canonical_1`）⇒ 这 4 条索引的选项**不被比对**。**Challenger 复核后降级**：`check_schema_drift` 从不 raise、冲突只 `logger.error`（"只报告不处置"就是实现本身）⇒ 补登记是**低风险机械收尾**，不是产品决策（`PD-3` 降为形式确认） | LOW | E2+E1 | **OPEN**（机械收尾：补 4 条 + 删 4 条记账） |
 | **GR-24** | **同表的新盲点（Challenger 发现）**：`_option_mismatches` **不比对 `partialFilterExpression`** ⇒ `character_instances.owner_user_id_1_character_id_1_canonical_1` 这类**部分唯一索引**只能"半登记"：库里是**普通唯一**索引（同样 `unique:true`）时**不报冲突**，而 `create_index(partialFilterExpression=…)` 必抛 ⇒ 仓储 `_db` 永久 None。GR-3 的解除条件（"确认线上该索引确为 unique"）**不足以**关闭它 | MEDIUM | E2 | **OPEN**（需独立的"部分索引"登记语义） |
+| **GR-25** | **Batch 6 Challenger F-2/F-4**（测试鉴别力）：① `core/character/tests/test_archive_consistency.py::_ConflictOnceStore` 是**无 repo 的本地模式**（缓存即权威），它覆盖的"冲突后重试成功"在**权威模式**不可复现 ⇒ 该路径 fake-green；② `core/input/tests/test_me_identity_failclosed.py::test_put_me_rejects_stale_revision` 用**单个 store**（winner 即自己 ⇒ 缓存已刷新），在"回显 expected / 读缓存 / `expected+1`"三种错误实现下**全绿**，对冲突元数据真值零鉴别力（已在文件内就地标注，真值守卫移到 `test_me_conflict_metadata_authority.py`） | LOW | E2 | **OPEN**（测试保真度；②已标注，①待补权威模式用例） |
 | **GR-4** | R4 eager 环判据**可复现漏报**（包节点 `X` 与 `X.__init__` 分裂；相对导入整类跳过）——真实仓库当前 0 环 | MEDIUM | E2 | **OPEN**（独立专项） |
 | **GR-5** | 私有穿透守卫的**同名遮蔽**（访问方包内 `def _x` 即让该名字全仓免检）——按属性名近似的固有代价 | MEDIUM | E2 | **KEEP_AS_IS**（定位是回归网，非完备审计） |
 | **GR-6** | 守卫扫描面不含 `scripts/`、`frontend_contract/` | LOW | E1 | **OPEN** |

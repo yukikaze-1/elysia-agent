@@ -18,16 +18,16 @@
 | 问题 | 结论 |
 |---|---|
 | **N-3 confirmed?** | ✅ **CONFIRMED_USER_REACHABLE**（E3）。修前实测（两个独立 store/repo 实例 + 真实 HTTP 路由）：A/B 都读 R1 → B 写成功 → 权威库 R2 → A 携带 `expectedRevision=1` → **409 `details.currentRevision = 1`**（应为 2）。真 Mongo 层同样复现（`assert 1 == 2`） |
-| **fixed?** | ✅ **FIXED** —— `616e4993`。409 的 `currentRevision` 现在由 repository 在**冲突产生点**回读权威库并携带上来，HTTP 层只做投影 |
+| **fixed?** | ✅ **FIXED** —— `616e4993`（主修）+ `07110e8f`（Challenger 三处弱点加固）。409 的 `currentRevision` 现在由 repository 在**冲突产生点**回读权威库并携带上来，HTTP 层只做投影 |
 | **authoritative revision owner?** | **权威持久化文档的 `revision` 字段**（`user_identity_profiles.revision`，经 `UserIdentityRepository.get()` 读取）。request / 进程内缓存 / `expected + 1` **都不是**权威 |
 | **public API changed?** | **否**。409 信封字段集逐字不变（`code`/`message`/`retryable`/`requestId`/`error`/`details`/`retryAfterMs`）；`details.currentRevision` 类型不变（int），只在**权威现值未知**时按协议既有的"可带"语义**缺省**。`make check-types` / `make check-contract` / golden frames 无漂移 |
 | **persistence changed?** | **否**。无集合/索引/字段变更、无 migration、无新索引 |
 | **migration?** | **否**（沿用 ARCH-INC-P1-04：本批不需要任何 schema 变更） |
 | **real CI?** | 见 §18.8（push 后核验） |
-| 修复规模 | **5 个生产文件**（profile/store/repo/route/consumer），行为改动 = 1 处冲突表示 + 1 处回读 + 1 处投影 + 2 处消费方适配 |
-| 回归网 | 新增 **23** 条（路由层 16 + 真库层 3 + repository 3 + store 1）；其中 **11 条 PRE_FIX_RED**（8 路由 + 3 真库），其余为守卫 |
-| Mutation | M1（request revision）/ M2（cache revision）/ M3（`expected + 1`）/ M4（冲突后静默重试）——**四条全部被杀**，见 §13 |
-| Challenger | 独立子代理 + 独立 worktree，A–K 十一个攻击 + 强制突变，见 §12 |
+| 修复规模 | **5 个生产文件**（profile/user_identity、storage/repo、profile/store、input/route、character/instances），行为改动 = 冲突结果表示 + 冲突点回读 + HTTP 投影 + 2 处消费方适配 |
+| 回归网 | 新增 **26** 条（路由层 19 + 真库层 3 + repository 3 + store 1）；其中 **14 条 PRE_FIX_RED**（原 HEAD 11 + 真库 3），另有 **3 条**是第一版修复的弱点守卫（对 `616e4993` 红），其余为守卫 |
+| Mutation | 主 Agent M1–M4 **4/4 被杀**；Challenger 侧 9 个变异 **9/9 被杀**（存活 0），见 §13 |
+| Challenger | 独立子代理 + 独立 worktree，A–K 十一个攻击 + 9 个变异：**3 处弱点命中并当场修**（J-1/J-2/J-4）、**4 处登记不修**（J-3/F-1/F-2/F-4）、1 处时序假警报（F-3）、3 处确认（无遗漏消费者 / 竞态语义诚实 / fake 不比 Mongo 强），见 §12 |
 
 **一句话**：这个 bug 不是"取错了变量"，而是**冲突表示把真相丢了**——`update_if_revision`
 在 CAS 未命中时返回裸 `None`，把「冲突了吗」和「现在到第几版」压成一个布尔，
@@ -188,7 +188,17 @@ class UserIdentityUpdateOutcome:
     def applied(self) -> bool: return self.identity is not None
 ```
 
-### 6.2 why minimal
+### 6.2 加固（`07110e8f`，Challenger 命中后）
+
+| 弱点 | 加固 |
+|---|---|
+| 冲突回读**解码失败**（外部写坏文档）⇒ `ValidationError` 逃出 `_call` ⇒ 500 | 新增 `_read_authoritative()`：解码失败 → `StorageUnavailableError`（503），与 `connect()` 对同一状态的判定同类 |
+| CAS **已应用**但写后回读为空 ⇒ 旧代码返回 `identity=None` ⇒ 路由报 409（与"已落库"相反） | 该状态改为抛 `StorageUnavailableError`（503，可重试）；`applied` 的 docstring 与实现一致（该类型不再能表达"已应用但读不回"） |
+| 回读解码值 **== expected**（库里的 revision 类型/形态与域模型不一致）⇒ 回显客户端期望值、无限重试 | 自相矛盾的回读值按「未知」上报（省略字段）+ warning 日志 |
+
+三条各有 PRE_FIX_RED 守卫（对 `616e4993` 实测 3 failed）。
+
+### 6.3 why minimal
 
 - **一处新增判据**（repository 冲突分支回读）+ **一处投影替换**（route）+ **一处类型替换**；
 - 不新建 service/framework（§9）：没有 `ConflictManager`、没有 `RevisionConflictService`、
@@ -243,11 +253,20 @@ class UserIdentityUpdateOutcome:
 | E1（外部写入者改库 → 热缓存陈旧 → `GET` 可陈旧 / `PUT` 可能持续 409） | **仍 OPEN，不在本批**（§16/§58）。本批只保证"一旦 409 已发生，metadata 必须真实" |
 | 冲突后的回读是否构成 freshness 机制？ | **不**。它只在冲突路径发生一次，且不写回缓存（§59） |
 
+### 9.1 客户端消费面（§40 / §41）
+
+| 问题 | 答案 |
+|---|---|
+| 仓内谁读 `details.currentRevision`（profile 409）？ | **0 个**。`grep -rn "USER_PROFILE_REVISION_CONFLICT\|currentRevision" frontend/src` 只命中 `contract.generated.ts` 里 **character** 域的 `CharacterSummary.currentRevision`；Vue 前端从不 `PUT /api/me` |
+| 谁是该字段的真实消费者？ | **外部 Electron 客户端**（`docs/electron-backend-protocol-v2.md` §9.1 + `2026-08-30-character-prompt-customization-backend-architecture-design.md` 的「PUT 必传并与 currentRevision 一致，否则 409」恢复流程）。§9.1 本次同步改述为"权威库现值 / 未知时缺省" |
+| 没人消费 ⇒ 影响等级下调？ | **不**（§41 明文）。谎报会让一个**按协议重试**的客户端永远用陈旧 revision 重放（每次都被同一个假值弹回）；这是 contract truthfulness 缺陷，不因仓内无消费者而消失 |
+| 409 后客户端下一步怎么恢复？ | 用 `currentRevision` 重新构造 PUT（`retryAfterMs=100`）。修前这条路**不可能收敛**（服务端每次都报同一个陈旧值）；修后拿到的就是权威现值（除非该字段缺省 ⇒ 应改为 GET 重新取档案） |
+
 ---
 
 ## 10. Regression Tests
 
-### 10.1 PRE_FIX_RED（11 条）
+### 10.1 PRE_FIX_RED（14 条）
 
 | # | 用例 | 层 | 修前判据 |
 |---|---|---|---|
@@ -261,6 +280,17 @@ class UserIdentityUpdateOutcome:
 | 9 | `test_real_conflict_reports_authoritative_revision` | **E3 真库 + 真路由** | `assert 1 == 2` |
 | 10 | `test_real_multiple_writes_never_expected_plus_one` | **E3** | `assert 1 == 3` |
 | 11 | `test_real_cross_process_writer_is_the_reported_authority` | **E3 跨进程** | `assert 1 == 2` |
+
+对原 HEAD（`c9f926c0`）实测：路由层 **11 failed / 8 passed**（上表 1–8 + 下表 12–14），
+真库层 **3 failed**。
+
+**第二轮（对第一版修复 `616e4993` 的 3 条弱点守卫，Challenger 命中）**：
+
+| # | 用例 | 修前（@616e4993）判据 |
+|---|---|---|
+| 12 | `test_cmt_cas_applied_but_unreadable_is_not_a_conflict` | `assert 409 == 503`（写已落库却报冲突） |
+| 13 | `test_cmt_undecodable_authority_fails_closed_503_not_500` | `assert 500 == 503`（fail-crash） |
+| 14 | `test_cmt_decoded_revision_equal_to_expected_reports_unknown` | `'currentRevision' not in {'currentRevision': 1}`（回显 expected） |
 
 ### 10.2 ALREADY_GREEN_GUARD（修前即绿，**不算**修复证据）
 
@@ -300,13 +330,56 @@ fake 与真驱动跑的是**同一段**冲突代码；fake 的 `update_one` 只�
 > 独立子代理 + 独立 worktree（`/tmp/b6-challenger`，detach 于 `616e4993`），
 > 攻击清单 A–K（request-local 假真相 / cache-local 假真相 / `+1` 假设 / 静默重试 /
 > 回读失败回退 / 冲突后竞态语义 / fake 强于 Mongo / 反复冲突粘性 / 漏掉的消费方 /
-> 契约与 fail-closed 洞 / 副作用与并发保护），并要求逐条给原始输出。
+> 契约与 fail-closed 洞 / 副作用与并发保护），逐条要求原始输出。
+> 报告：`/tmp/b6-challenger/CHALLENGER_REPORT.md`；执行探针 9 条全绿（每条弱点都被跑实）。
 
-（§12 结论表在收到子代理报告后补齐；主 Agent 自己的 M1–M4 见 §13。）
+### 12.1 变异（Challenger 侧，9 个 **全部被杀**）
+
+| 变异 | 结果 |
+|---|---|
+| A `expectedRevision`（request 假真相） | 8 failed |
+| B `store.get().revision`（旧代码） | 7 failed |
+| C `expected + 1` | 3 failed（CMT-3 杀的；CMT-1/2 杀不掉 `+1` 是设计事实） |
+| D1 route 层静默重试重写 | 8 failed（含 **CMT-4**） |
+| D2 store 层刷新缓存 + 重写 | 8 failed（含 **CMT-4**） |
+| D3 删 CAS filter（last-write-wins） | 10 failed |
+| E1 回读失败回退陈旧缓存 | 1 failed（503 那条守卫） |
+| H 粘住首次冲突值 | 6 failed |
+| K-refresh 冲突后只刷缓存 | 2 failed（order-perturbation） |
+
+**"修复型变异存活 = 守卫是假的"这一最坏情形未发生。**
+
+### 12.2 分类结论
+
+| # | 发现 | 分类 | 处置 |
+|---|---|---|---|
+| J-4 | `applied` 契约自相矛盾：CAS 已应用（`modified_count>0`、库里确实写入）但写后回读被吞 ⇒ 旧代码返回 `identity=None` ⇒ 路由报 **409**，客户端以为写入没生效 | **fix weakness（真实）** | ✅ **当场修**（`07110e8f`）：该状态改为抛 `StorageUnavailableError`（503），`applied` 语义与实现一致；PRE_FIX_RED 守卫 `test_cmt_cas_applied_but_unreadable_is_not_a_conflict`（对 `616e4993` 红：`assert 409 == 503`） |
+| J-2 | 权威文档被外部写坏（`revision: 0`）时，冲突回读的 `ValidationError` 逃出 `_call` → **500 INTERNAL**（修前同状态是 409）= fail-crash 而非 fail-closed | **fix weakness（真实，回归）** | ✅ **当场修**（`07110e8f`）：新增 `_read_authoritative()` 把解码失败转成 `StorageUnavailableError`（与 `connect()` 对同一状态的判定同类）；守卫 `test_cmt_undecodable_authority_fails_closed_503_not_500`（对 `616e4993` 红：`assert 500 == 503`） |
+| J-1 | 库里 `revision` 类型与域模型不一致（字符串 `"1"`/缺字段）⇒ CAS 未命中而解码值 == 客户端 expected ⇒ 409 **回显 expected**，客户端无限重试（N-3 死循环换门回来），且违反 CMT-2 字面 | **fix weakness（真实）** | ✅ **当场修**（`07110e8f`）：自相矛盾的回读值按「未知」上报（省略字段）+ warning；守卫 `test_cmt_decoded_revision_equal_to_expected_reports_unknown`（对 `616e4993` 红：`assert 'currentRevision' not in {'currentRevision': 1}`） |
+| J-3 | 外部删除权威档 + 缓存热：PUT 连续 409「expectedRevision 已过期」（记录根本不存在、`details` 空无恢复线索），同状态 GET 仍 200 + 陈旧值 | **new out-of-scope**（E1 同族） | 登记 `OBS-6`，不修（`GET`/`PUT` 的存在性判定与 404/409 契约是独立决策） |
+| F-1 | `_retarget_default_character` 重试循环读**缓存**取 revision，冲突不刷缓存 ⇒ 权威模式并发改档案时必然耗尽重试、归档假失败 | **new out-of-scope** | 登记 `KB-11`，不修（角色归档写链，§0 禁止扩本批） |
+| F-2 | `test_archive_consistency.py::_ConflictOnceStore` 是**本地模式**（无 repo）替身 ⇒ 它覆盖的"冲突后重试成功"在权威模式不可复现（fake-green） | **new out-of-scope（测试保真度）** | 登记 `GR-25` |
+| F-3 | 协议文档引用的 `invariants.md §3.3` 在 `616e4993` 处不存在（悬空引用） | **refuted（时序假警报）** | 该引用与 §3.3 分属两个 commit；`22f7c130` 落地后引用即解析（Challenger 工作在 `616e4993`，看不到后一个 commit） |
+| F-4 | `test_me_identity_failclosed.py::test_put_me_rejects_stale_revision`（单 store）在三种错误实现下全绿 = 惰性守卫 | **fake-green（既有测试债）** | 就地标注"这不是真值守卫"（`07110e8f`），并登记 `GR-25` |
+| — | Attack I（遗漏消费者）：生产调用点恰好 **2** 个，均正确投影；全仓 AST 扫描 truthiness 命中 1 处（`return outcome`，无害），`outcome is not None` 型 0 处 | **confirmed（无遗漏）** | — |
+| — | Attack F（竞态语义）：探针在 CAS 未命中与回读之间插入第三方提交 → 409 上报 response-time 值 3（winner 是 2），与书面语义一致；**无断言依赖"winner 的 revision"** | **confirmed** | 仅 2 处注释措辞偏强，已在 §5 再次明确 |
+| — | Attack G（fake 强于 Mongo）：fake 与真驱动同为 `modified_count` 语义，回读在 repo 内两路共用同一段代码，新测试无 fake-only 断言 | **confirmed** | 真库一致性由本批 `make test-real-mongo`（15 passed）另行覆盖 |
+| — | Attack K（副作用）：冲突路径实测 1 次 CAS（filter 完整保留）+ 1 次回读 + **0** 次额外写，权威文档逐字节不变、缓存不刷新 | **confirmed** | 与 `test_cmt4` / M4 一致 |
+
+**Challenger 的基线噪声**：其全量 quick 跑出 1 条环境相关失败
+（`Module/config/tests/test_preflight.py::test_minimax_key_present_passes`，既有的 GR-2 弱用例），
+`git diff 616e4993^ 616e4993 -- Module/` 为空 ⇒ 与本 fix 无关；主 Agent 在本机
+（同一 conda env、无 ambient `MINIMAX_API_KEY`）跑 `make test-quick` **6065 passed** 全绿。
+
+**一句话**：主病真治好（我方 4/4 + Challenger 9/9 变异死亡）；Challenger 的价值在于
+攻击**新代码自己的死角**——"回读值本身可信吗""结果类型是否又丢了一次真相"，
+三条命中已当场修 + 补 PRE_FIX_RED 守卫，其余四条按 §0 登记不修。
 
 ---
 
-## 13. Mutation Evidence（主 Agent，worktree `/tmp/b6-mut` @ `616e4993`）
+## 13. Mutation Evidence
+
+### 13.1 主 Agent（worktree `/tmp/b6-mut` @ `616e4993`）
 
 每条变异都是**源码级**改动 + 跑新回归网 + `git checkout` 还原。
 
@@ -319,6 +392,16 @@ fake 与真驱动跑的是**同一段**冲突代码；fake 的 `update_one` 只�
 
 M1/M2/M3 覆盖了 §51 要求的"旧错误判据"；M4 证明"失败 writer 不改变 winner"这条不是
 空话（变异后 cmt4 立刻红）。
+
+### 13.2 Challenger（worktree `/tmp/b6-challenger` @ `616e4993`）
+
+9 个变异（含 D 族三种"静默重试/删 filter"、E1 回退、H 粘性、K-refresh）
+**全部被杀，存活 0** —— 明细见 §12.1。
+
+### 13.3 第二轮 N-1/N-2/N-3 守卫（对第一版修复的弱点）
+
+Challenger 命中的三条弱点（§12.2 的 J-1/J-2/J-4）各自补了守卫，并**对 `616e4993`
+实测为红**（3 failed）：写入已生效不得报冲突 / 解码失败必须 503 / 不得回显 expected。
 
 ---
 
@@ -345,7 +428,11 @@ authoritative 文档结构（`user_identity_profiles`）逐字段不变。
 | hash | message |
 |---|---|
 | `616e4993` | `fix(profile): report authoritative revision on update conflict`（生产修复 + PRE_FIX_RED 测试同 commit，§65） |
-| （见 §16 补记） | `docs(architecture): record conflict metadata truth invariant` |
+| `22f7c130` | `docs(architecture): record conflict metadata truth invariant`（不变量 CM1–CM5 + 执行记录 + todo/协议文档） |
+| `07110e8f` | `fix(profile): harden conflict read-back against unreadable authority`（Challenger J-1/J-2/J-4 加固 + 3 条 PRE_FIX_RED 守卫） |
+
+生产代码改动集中在 5 个文件；`616e4993` 与 `07110e8f` 是同一条 finding（N-3）的
+"主修 + 攻击后加固"，`22f7c130` 是长期不变量文档。**没有**为了凑粒度拆得更碎（§64）。
 
 ## 17. Worktree Verification（§66）
 
@@ -360,11 +447,11 @@ authoritative 文档结构（`user_identity_profiles`）逐字段不变。
 ### 18.1 Targeted
 
 ```
-core/input/tests/test_me_conflict_metadata_authority.py        16 passed
+core/input/tests/test_me_conflict_metadata_authority.py        19 passed
 core/storage/tests/test_user_identity_repo.py                  （含 3 条新增）
 core/profile/tests/test_profile_store.py                       （含 1 条新增）
-core/profile core/storage core/input core/character core/agent core/cognitive
-                                                               2300 passed
+core/profile core/storage core/input core/character core/agent
+                                                               2040 passed
 ```
 
 ### 18.2 Order perturbation（§53）
@@ -379,20 +466,20 @@ core/profile core/storage core/input core/character core/agent core/cognitive
 `subprocess.run([sys.executable, "-c", ...])` 的**全新解释器**写入，父进程 store 从未
 见过它 ⇒ 409 的 2 只可能来自权威回读。
 
-### 18.4 Quick / Normal
+### 18.4 Quick / Normal（`07110e8f` 之后，最终态）
 
 | 档位 | 结果 |
 |---|---|
-| `make test-quick` | 见 §18 补记 |
-| `make test-normal` | **6059 passed, 2 skipped, 1 xfailed**（76.5s） |
+| `make test-quick` | **6068 passed, 2 skipped, 1 xfailed**（77.2s） |
+| `make test-normal` | **6068 passed, 2 skipped, 1 xfailed**（77.4s） |
 
 ### 18.5 Full
 
-见 §18 补记。
+`make test-full` → **6100 passed, 27 skipped, 1 xfailed**（441.8s）。
 
 ### 18.6 Real mongo
 
-`make test-real-mongo` → **15 passed**（6110 deselected）。
+`make test-real-mongo` → **15 passed**（6113 deselected）。
 
 ### 18.7 Static gates
 
@@ -435,7 +522,16 @@ Truthfulness Backlog §3 的 N-3 行标记已修。其余 canonical 条目**一�
 
 ## 22. New Findings（只记录，不修）
 
-见 §22 补记（Challenger 与主 Agent 在攻击过程中发现、但按 §0/§70 不扩本批的项）。
+按 §0/§70 登记进 `todo.md`（新 ID，不改动任何其它条目的状态）：
+
+| ID | 内容 | 来源 | 为什么不修 |
+|---|---|---|---|
+| **OBS-6** | 外部删除权威身份档 + 缓存热：`PUT /api/me` 连报 409「expectedRevision 已过期」（记录根本不存在、`details` 无恢复线索），同状态 `GET /api/me` 仍 200 + 陈旧值 | Challenger J-3 | E1 freshness 同族；"记录是否存在"的判定与 404/409 的映射是**独立契约决策**（本批只做到"不伪造 revision"） |
+| **KB-11** | `_retarget_default_character` 的重试循环读**缓存**取 revision，而冲突路径刻意不刷缓存 ⇒ 权威模式下并发改档案时 3 轮重放同一 expected、必然 `RevisionConflictError`（归档默认角色假失败）。本批新带的 `outcome.current_revision` 在这条路径无消费者 | Challenger F-1 | 角色归档写链，§0 明确禁止扩本批；fail-closed 无数据损坏 |
+| **GR-25** | ① `test_archive_consistency.py::_ConflictOnceStore` 是本地模式替身 ⇒ "冲突后重试成功"在权威模式不可复现（fake-green）；② `test_me_identity_failclosed.py` 的单 store 409 用例对冲突元数据真值零鉴别力（三种错误实现下全绿） | Challenger F-2/F-4 | 测试保真度债；②已就地标注并把真值守卫指向本批新文件，①待补权威模式用例 |
+
+**已当场修、不进 backlog 的**（属本批新代码自身的弱点，§42 的 Challenger 轮次正是为此）：
+J-4（写成功被报成冲突）、J-2（fail-crash 500）、J-1（回显 expected 的死循环）——见 §12.2 与 §6.2。
 
 ## 23. Follow-up
 
