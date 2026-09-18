@@ -221,3 +221,51 @@ class TestEndpointBuildsTheRuntimeTarget:
         assert seen == ["sensevoice/runtime-model"], (
             f"端点建的后端是 {seen}，而运行期在跑 {agent.stt.model}"
         )
+
+
+# ---- F6-6（§63 顺序扰动）：切换顺序不改变"probe 跟运行期"这个结论 -------------
+
+
+class TestProbeTargetIsOrderInsensitive:
+    """single / A→B / B→A / 交错（含失败切换）四种顺序下结论必须一致。"""
+
+    @pytest.mark.service
+    @pytest.mark.asyncio
+    async def test_single_a_then_b_then_back_to_a(self):
+        agent = _make_agent()
+        agent.config.stt.model = "sensevoice/config-model"
+
+        with patch("Module.stt.registry.STTFactory.create",
+                   side_effect=lambda model_id, **kw: _FakeSTT(model_id.split("/", 1)[1])):
+            await agent.switch_stt("sensevoice/A")
+            assert agent.stt.model == "sensevoice/A"
+            assert _probe_target(agent, "stt") == "sensevoice/A"
+
+            await agent.switch_stt("sensevoice/B")
+            assert agent.stt.model == "sensevoice/B"
+            assert _probe_target(agent, "stt") == "sensevoice/B"
+
+            # B→A：反向同样成立（不是"只会跟最后一个不同的值"）
+            await agent.switch_stt("sensevoice/A")
+            assert _probe_target(agent, "stt") == "sensevoice/A"
+
+    @pytest.mark.service
+    @pytest.mark.asyncio
+    async def test_failed_switch_between_successful_ones_does_not_shift_target(self):
+        """交错失败不得让 probe 目标漂回 config，也不得漂到失败的那个模型。"""
+        agent = _make_agent()
+        agent.config.stt.model = "sensevoice/config-model"
+
+        with patch("Module.stt.registry.STTFactory.create",
+                   side_effect=lambda model_id, **kw: _FakeSTT(model_id.split("/", 1)[1])):
+            await agent.switch_stt("sensevoice/A")
+
+        with patch("Module.stt.registry.STTFactory.create",
+                   side_effect=RuntimeError("建不出来")):
+            assert (await agent.switch_stt("sensevoice/broken")).get("ok") is False
+
+        assert _probe_target(agent, "stt") == "sensevoice/A", (
+            "失败切换后 probe 目标漂移——运行期仍跑 A，报告必须说 A"
+        )
+        # 与"可用性"面同源：句柄仍在 ⇒ 可用（F7 的同一权威）
+        assert agent.stt is not None and agent.stt_ok is True
