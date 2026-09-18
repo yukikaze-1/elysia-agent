@@ -72,7 +72,8 @@
 
 来源：[2026-09-17 Batch 1.6 执行记录](../review/2026-09-17-Batch1.6-runtime-authority-lifecycle-执行记录.md)、
 [2026-09-16 Batch 1 执行记录](../review/2026-09-16-Batch1-correctness-durability-执行记录.md) §4、
-[2026-09-18 Batch 4 执行记录](../review/2026-09-18-Batch4-runtime-health-truthfulness-执行记录.md)。
+[2026-09-18 Batch 4 执行记录](../review/2026-09-18-Batch4-runtime-health-truthfulness-执行记录.md)、
+[2026-09-18 Batch 5 执行记录](../review/2026-09-18-Batch5-provider-capability-truthfulness-执行记录.md)。
 
 | ID | Invariant | Test | Gate | CI |
 |---|---|---|---|---|
@@ -156,6 +157,50 @@
    `self._db is not None`（真布尔），故这是**有意的保守方向**而非缺陷——宁可拒绝
    一个无法确认的"可用"，也不让替身属性冒充健康（守卫：
    `test_ready_503_when_availability_is_truthy_but_not_bool`）。
+
+### 3.2 Provider capability truth（PC）
+
+来源：[2026-09-18 Batch 5 执行记录](../review/2026-09-18-Batch5-provider-capability-truthfulness-执行记录.md)。
+canonical finding：**N-10**（预检说可用、运行期必 `NotImplementedError`）、
+**F6**（provider test 测的不是跑的那个）、**F7**（`/debug` 的 `*_ok` 两个权威）。
+
+**五层必须分开，不得互相冒充**（一个 provider 配置能走多远）：
+
+| 层 | 问题 | 权威 |
+|---|---|---|
+| `CONFIGURED` | 配置/env 里有这么一条吗 | `config.<svc>.model` / `providers.yaml` |
+| `RESOLVED` | 最终 provider/model 解析成什么 | 各 Module registry 的 `provider/model` 解析（含 custom 参数解析） |
+| `INSTANTIATED` | 后端对象建出来了吗 | `agent.llm` / `agent.stt` / `agent.tts`（运行期句柄） |
+| `SUPPORTED` | **本仓这份代码**实现了该 capability 吗 | 各 registry 的 `is_implemented()`（与 `create()` 守卫同常量） |
+| `REACHABLE` | 远端此刻真的可用吗 | 只有 `--full` / `POST /api/providers/test` 能回答（需要网络） |
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **PC1** | **报告的能力必须对应运行期真正在跑的那个 provider/model**：provider test 的缺省目标解析到 `agent.<svc>.model`（后端未连接才回退 config 默认值），不得测 bootstrap 配置 | `core/input/tests/test_provider_test_target_authority.py`（8 例，含真实 `switch_stt` A→B 与端到端端点） | `make test-normal` | **push/backend** |
+| **PC2** | **实例化受 capability 门控**：`providers.yaml` 里声明但本仓未实现的 provider，构造期即 `NotImplementedError`；`is_implemented()` 与工厂守卫读**同一常量**，且两条装配路径还各有一道 1s 连通性探测才挂载 ⇒ "句柄存在 ⇒ 实现支持"。（依据是**工厂守卫 + 挂载期探测**，**不是** ABC——ABC 只保证方法存在，不保证有实现；Challenger 2026-09-18 实测一个把抽象方法实现成 `raise NotImplementedError` 的 `STTBackend` 子类照样能实例化） | `Module/config/tests/test_preflight_provider_capability.py::TestRuntimeFactAnchor`、`core/agent/tests/test_service_availability_truthfulness.py::TestInstantiatedImpliesImplemented`（遍历 providers.yaml） | `make test-normal` | **push/backend** |
+| **PC3** | **静态预检 network-free**：`--check` 只判「配置 + resolver + capability 静态有效性」；"实现支持但服务离线"仍 PASS，连通性归 `--full` / provider test | `Module/config/tests/test_preflight_provider_capability.py::TestStaticCheckStaysNetworkFree`（含 socket 哨兵） | `make test-normal` | **push/backend** |
+| **PC4** | **`/debug` 与 capabilities 是纯投影**：只报运行期已知状态，**不得**为了"更真实"主动探活（昂贵/有副作用/可能计费/拖慢端点） | `core/agent/tests/test_service_availability_truthfulness.py::TestAvailabilityReportingNeverProbes` | `make test-normal` | **push/backend** |
+| **PC5** | **一个上报事实一个权威**：`/debug` 的 `tts_ok`/`stt_ok`、capabilities 的 `available`、provider test 的目标全部由**运行期句柄**得出，不允许第二份缓存标志 | 同上 `TestAvailabilityHasOneAuthority`（失败热切换后三面同答案）、`TestNoHandleMeansNotAvailable` | `make test-normal` | **push/backend** |
+| **PC6** | **unsupported 不得先报成功**：未实现的 provider 在预检/`--full`/下拉里都不得报 usable（LLM FAIL、STT WARN、`--full` 不再 `[PASS] 跳过`），且不得伪装成凭据或连通性错误 | `Module/config/tests/test_preflight_provider_capability.py`（N10-1/N10-5）、`core/input/tests/test_provider_registry.py::test_unimplemented_provider_excluded_even_with_models` | `make test-normal` | **push/backend** |
+
+**`*_ok` 的语义（PC4/PC5 的落地口径）**：
+
+```text
+*_ok = 运行期句柄存在
+     = runtime usable by construction
+     ≠ 远端 provider 此刻可达
+```
+
+允许这样定义，是因为**构造期已经把 capability 门住了**（PC2：未实现的 provider 建不出来，
+STT/TTS 后端又都是 `ABC`），也因为 `capabilities.services.*.available`（下发给前端的
+产品契约）本来就用的这个判据。**没有**任何进程内状态能回答"远端此刻可达"——
+`/ready` 的教训（§3.1）是"不要拿代理量冒充可用"，而这里的边界是
+"不要拿一次网络探测冒充进程状态"。
+
+**范围纪律（不泛化）**：本条只覆盖 LLM/STT/TTS 三个 provider 子系统的
+「配置 → 解析 → 实例化 → capability → 上报」这一条链，不把 embedding / vectordb /
+documentdb 拉进来（它们有同形的 `NotImplementedError` 守卫，但当前没有"上报假绿"的
+报告面），也不建立通用的 ProviderCapability 框架。
 
 ---
 
@@ -257,6 +302,8 @@
 | [architecture.md](../architecture.md) | 完整架构详解 |
 | [CLAUDE.md](../../CLAUDE.md) | 项目地图 + 各门禁的约定 |
 | [todo.md](../../todo.md) | 待办与 follow-up（含本文 §7 的承接项） |
+| [2026-09-18 Batch 4 执行记录](../review/2026-09-18-Batch4-runtime-health-truthfulness-执行记录.md) | R5/R6 的来源 |
+| [2026-09-18 Batch 5 执行记录](../review/2026-09-18-Batch5-provider-capability-truthfulness-执行记录.md) | PC1–PC6 的来源（N-10 / F6 / F7） |
 | [2026-09-16 Batch 1 执行记录](../review/2026-09-16-Batch1-correctness-durability-执行记录.md) | P1/P2/R 的来源 |
 | [2026-09-17 Batch 1.7 执行记录](../review/2026-09-17-Batch1.7-background-task-terminal-state-执行记录.md) | T1–T4 的来源 |
 | [2026-09-17 Batch 1.8 执行记录](../review/2026-09-17-Batch1.8-user-visible-terminal-semantics-执行记录.md) | U1–U5 的来源 |

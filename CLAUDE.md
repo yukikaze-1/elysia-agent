@@ -304,8 +304,8 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 
 | Module | Purpose | Backends |
 |--------|---------|----------|
-| `Module.llm` | LLM chat/streaming | `deepseek`, `openai`, `ollama`, `mimo`, `gemini`, `custom` |
-| `Module.stt` | Speech-to-text | `sensevoice`, `custom` |
+| `Module.llm` | LLM chat/streaming | `deepseek`, `openai`, `ollama`, `mimo`, `gemini`*、`custom`（* `gemini` 已注册但 `NotImplementedError`；权威 = 各 registry 的 `_UNIMPLEMENTED_PROVIDERS`，预检/下拉都问它） |
+| `Module.stt` | Speech-to-text | `sensevoice`, `custom`（`openai`/`deepgram` 已注册但 `NotImplementedError`，同上） |
 | `Module.tts` | Text-to-speech | `gpt-sovits`, `minimax`, `custom` |
 | `Module.embedding` | Text vectorization | `huggingface`, `openai` |
 | `Module.output` | Multi-channel output | `ConsoleChannel`, `WebSocketChannel` |

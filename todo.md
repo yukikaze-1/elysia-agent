@@ -51,9 +51,9 @@
 | **N-1** | 同上（readiness 假绿） | DEPLOYMENT | HIGH | E1+E3+**E2/E3(4)** | **GUARDED** `82b80e2e` | ✅ Batch 4 |
 | **N-11** | 同上（吞异常 ⇒ 不可观测） | DEPLOYMENT | MEDIUM | E1+**E2(4)** | **GUARDED** `fc648e20` | ✅ Batch 4 |
 | **N-3** | 同上（409 谎报 revision） | USER | MEDIUM | E1 | **OPEN** | Batch 4-C |
-| **N-10** | `gemini/<model>` 预检全绿，运行期 `LLMFactory.create` 无条件 `NotImplementedError`（LLM 侧无 stub 冻结表，STT 侧有 `_STT_STUB_PROVIDERS`） | DEPLOYMENT | MEDIUM | E3(3.5)+E1(HEAD) | **OPEN** `TRUTHFULNESS` | **Batch 4-B** |
-| **F6** | `/api/providers/test` 的 **STT 缺省模型读 config**，而 llm/tts 读 runtime ⇒ 测的不是跑的那个 | ADMIN | MEDIUM | E1 | **OPEN** `TRUTHFULNESS` | **Batch 4-B** |
-| **F7** | `/debug` 的 `tts_ok = agent.tts is not None`（存在性），而 `stt_ok` 是真实连通标志 ⇒ 面板混用两种语义 | ADMIN | LOW | E1 | **OPEN** `TRUTHFULNESS` | **Batch 4-B** |
+| **N-10** | ~~`gemini/<model>` 预检全绿，运行期 `LLMFactory.create` 无条件 `NotImplementedError`（LLM 侧无 stub 冻结表，STT 侧有 `_STT_STUB_PROVIDERS`）~~ | DEPLOYMENT | MEDIUM | E3(3.5)+E1(HEAD)+**E2(5)** | **GUARDED** `c70312de` | ✅ Batch 5 |
+| **F6** | ~~`/api/providers/test` 的 **STT 缺省模型读 config**，而 llm/tts 读 runtime ⇒ 测的不是跑的那个~~ | ADMIN | MEDIUM | E1+**E2(5)** | **GUARDED** `7ef3202b` | ✅ Batch 5 |
+| **F7** | ~~`/debug` 的 `tts_ok = agent.tts is not None`（存在性），而 `stt_ok` 是真实连通标志 ⇒ 面板混用两种语义~~ —— **两种语义已收敛到运行期句柄**；"存在性冒充可用"那半经复核**不成立**（构造期 capability 门控 + capabilities `available` 本就用同一判据）→ `FALSE_POSITIVE` | ADMIN | LOW | E1+**E2(5)** | **GUARDED** `87cc7e38`（混用语义）+ **`FALSE_POSITIVE`**（存在性半） | ✅ Batch 5 |
 | **F5** | workflow 模型 reporter 缺（debug 只报主模型 `llm_model`，不报 task/workflow 用的模型） | ADMIN | LOW | E1 | **OPEN** | Batch 4-B 可选 |
 | **OBS-1** | 间歇性 xdist worker 死亡（8 轮 soak 中 1 次，且那轮被并发改动污染） | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定向 soak |
 | **OBS-2** | `context_window` 六家 provider 数值为**估算值**（只影响 prompt 截断时机，不影响正确性） | DEPLOYMENT | LOW | E1 | **OPEN**（校准） | 零散 |
@@ -72,7 +72,7 @@
 
 | ID | 标题 | Reach | Sev | Ev | Status | 候选批次 |
 |---|---|---|---|---|---|---|
-| **N-10** | 见 §1.3（provider 能力假绿） | DEPLOYMENT | MEDIUM | E3 | **OPEN** | **Batch 4-B** |
+| **N-10** | 见 §1.3（provider 能力假绿） | DEPLOYMENT | MEDIUM | E3 | **GUARDED** `c70312de` | ✅ Batch 5 |
 | **DEP-2** | **无数据库迁移机制**：新增集合/索引由 `ensure_index` 自动覆盖，但**删/改已有索引**只能人工 `drop_index`（`ARCH-INC-P1-04` 明确不做框架） | DEPLOYMENT | MEDIUM | E1 | **KEEP_AS_IS**（发生频率低、影响单集合） | 触发式 |
 | **DEP-3** | `scripts/clean_db.py` 清的是 **v1** `long_term_memory`，而生产写 **v2** ⇒ 该脚本从不触碰真实记忆；修它 = 破坏范围变更 | ADMIN | MEDIUM | E1 | **PRODUCT_DECISION_REQUIRED**（`PD-7`） | 需决策 |
 | **DEP-4** | S2-H9 的**写侧**长度上限未做（owner 选的是运行期截历史 + 定预算） | DEPLOYMENT | LOW | E1 | **PRODUCT_DECISION_REQUIRED**（`PD-11`） | 需决策 |
@@ -81,6 +81,9 @@
 | **SEC-1** | **CR-01**：真实 DeepSeek key 仍在公开 remote 历史里且**有效**（owner 裁定暂不处理；最低成本止血=只轮换 ≈10 分钟） | DEPLOYMENT | HIGH | E3 | **KEEP_AS_IS**（owner-deferred） | owner 决定 |
 | **SEC-2** | bandit **Low 19 项**已知基线（B603/B607 17 + B112 2）；门禁判据是 Medium+ 为 0 | INTERNAL | LOW | E3 | **KEEP_AS_IS** | — |
 | **P2-02r** | 契约层业务长度上限（content/ID/attachments ≤10）+ 附件 bounded batch 查询未做 | INTERNAL | LOW | E1 | **OPEN** | 零散 |
+| **DEP-7** | **`sensevoice` 假 WARN**：合法无-key 本地 provider，预检报 `[WARN] sensevoice 没有可用地址 — STT ('sensevoice') 将不可用`，而 `STTFactory.create` **成功**——真默认值在代码里（`Module/stt/sensevoice.py::DEFAULT_BASE_URL`，由 registry 兜底分支应用），`_provider_url_note` 只查 env + providers.yaml（`base_url` 是空串）。WARN 不抬红 ⇒ 假文案而非假拒。修法同 S2-H7 对 gpt-sovits 做过的（把内置默认写进 providers.yaml） | DEPLOYMENT | LOW | E2(5 Challenger) | **OPEN** `TRUTHFULNESS` | 零散 |
+| **DEP-8** | **model 级能力假绿**：`tts.model = "gpt-sovits/<不存在的音色>"` 时 `--check` 报 `[PASS] TTS 可用`，而 `Agent._start_tts()` 对该 `ValueError` **fail-fast** ⇒ 预检绿 + 启动崩（与 N-10 同形，在 **model 轴**）。修它需要 model 级解析 API（`is_implemented` 刻意是 provider 级） | DEPLOYMENT | LOW | E2(5 Challenger) | **OPEN** `TRUTHFULNESS` | 零散 |
+| **DEP-9** | **缺 SDK 时 preflight 裸崩**：`run()` 在缺 `openai` 的机器上以裸 `ImportError` 结束、无 `结果:` 汇总（`_check_embedding_model` → `Module.embedding` → `openai_compat`）。`_check_pip_deps` 会打印 `[FAIL] 缺失 pip 包: openai` 但 `run()` 不提前结束。本批已保证**自己新增的** import 不增加崩溃点（fail-open + 用例），残留点未修 | DEPLOYMENT | LOW | E2(5 Challenger) | **OPEN** | 零散 |
 
 ### 1.5 Persistence / Recovery
 
@@ -211,9 +214,9 @@
 | 进程健康 | **N-11** | ~~静默成功（只 warning）~~ | 装载/读取失败被吞，无处可查 | DEPLOYMENT | MEDIUM |
 | ~~进程健康~~ | ~~**N-11**~~ | ✅ **已修（Batch 4 `fc648e20`）**：失败由 `UserIdentityStore` 持有（`is_available` + `last_error`），成功恢复即消解 | 同上（+ `tests/real_mongo/test_real_identity_readiness.py` 真库旁证） | — | — |
 | API 元数据 | **N-3** | `details.currentRevision = 1` | 权威库已是 2（进程内缓存） | USER | MEDIUM |
-| provider 能力 | **N-10** | preflight `[PASS]` | 运行期 `NotImplementedError`（gemini） | DEPLOYMENT | MEDIUM |
-| provider 探测 | **F6** | `/api/providers/test` 测 config 里的模型 | 运行时用的是另一个（STT） | ADMIN | MEDIUM |
-| 面板标志 | **F7** | `tts_ok: true` | 仅表示对象非空，不代表可用 | ADMIN | LOW |
+| ~~provider 能力~~ | ~~**N-10**~~ | ✅ **已修（Batch 5 `c70312de`）**：capability 真相收敛到各 registry 的 `_UNIMPLEMENTED_PROVIDERS`（`is_implemented()` 与 `create()` 守卫同常量），preflight/`--full`/`/api/providers` 一律问它 | 守卫 `Module/config/tests/test_preflight_provider_capability.py`（15）+ `core/input/tests/test_provider_registry.py`（修前 10 红） | — | — |
+| ~~provider 探测~~ | ~~**F6**~~ | ✅ **已修（Batch 5 `7ef3202b`）**：缺省目标读运行期句柄 `agent.stt.model`（未连接才回退 config） | 守卫 `core/input/tests/test_provider_test_target_authority.py`（8，含真实 `switch_stt` A→B；修前 5 红） | — | — |
+| ~~面板标志~~ | ~~**F7**~~ | ✅ **已修（Batch 5 `87cc7e38`）**：`Agent.stt_ok` 改为派生属性（`_stt is not None`），与 capabilities/`/debug` 同源；粘性槽位 `_stt_ok` 已删。**"对象非空不代表可用"经复核不成立**（实例化受 capability 门控；`available` 的既有判据就是这个） | 守卫 `core/agent/tests/test_service_availability_truthfulness.py`（8；修前 2 红） | — | — |
 | 门禁 | **N-15** | “13 个集合无漂移” | 4 条 `unique` 从未参与比对 | DEPLOYMENT | MEDIUM |
 | 门禁（已修） | N-4/N-8 | — | Batch 3.6 已 GUARDED，且守卫本身又被 Challenger 补强 | — | — |
 
