@@ -8,13 +8,17 @@
 本文件把 F7 拆成两半，分别给证据：
 
 **(A) 「存在性冒充可用」——不成立（重分类，非缺陷）。**
-`agent.<svc> is not None` 在本仓**就是** capability 是否落实的判据：
-`LLMFactory` / `STTFactory` 对未实现的 provider 在**构造期**就 `NotImplementedError`
-（`_UNIMPLEMENTED_PROVIDERS`），STT/TTS 后端又都是 `ABC`——抽象方法没实现根本实例化不出来。
-所以"对象存在"⇒"实现支持该 capability"是结构性成立的，不是巧合。
+`agent.<svc> is not None` 在本仓**就是** capability 是否落实的判据，依据是两条可核查
+的事实：① 句柄只能由 `Factory.create` 造出，而工厂对 `_UNIMPLEMENTED_PROVIDERS` 里的
+provider 在建连期就 `NotImplementedError`（该常量与 `is_implemented()` 同源）；
+② 两条装配路径都**先过 1s 连通性探测再挂载**。
 `capabilities.services.*.available`（下发给前端的**产品契约**）用的也正是这个判据
 （`core/services/capabilities.py`）。判据固化见本文件
 `TestInstantiatedImpliesImplemented`。
+
+⚠️ **不要把理由写成"后端都是 ABC"**——ABC 只保证方法**存在**，不保证方法**有实现**：
+把抽象方法实现成 `raise NotImplementedError` 的子类照样能实例化（Challenger
+2026-09-18 用 `STTBackend` 实测）。这是本文件初稿写错、复核后修正的一处过度声明。
 
 **(B) 「两种语义混用」——成立（真缺陷）。**
 `agent.stt_ok` 读的是一个**粘性标志** `_stt_ok`：`switch_stt` 失败时置 False
@@ -31,7 +35,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -241,6 +245,25 @@ class TestInstantiatedImpliesImplemented:
         assert LLMFactory.is_implemented("gemini") is False
         assert STTFactory.is_implemented("openai") is False
         assert TTSFactory.is_implemented("gpt-sovits") is True
+
+    @pytest.mark.service
+    @pytest.mark.asyncio
+    async def test_mount_paths_require_a_passing_live_probe(self):
+        """第二条依据：句柄不是"建出来就挂"，而是**先过 1s 连通性探测**才挂载。
+
+        这正是"句柄存在 ⇒ 可用"在下游成立的原因：一个建得出但连不上的后端不会
+        进槽位（因此不会让 `stt_ok`/`tts_ok`/capabilities 报可用）。
+        """
+        agent = _make_agent()
+        unreachable = _FakeSTT("dead")
+        unreachable.test = AsyncMock(return_value={"ok": False, "error": "服务不可用"})  # type: ignore[method-assign]
+
+        with patch("Module.stt.registry.STTFactory.create", return_value=unreachable):
+            result = await agent.switch_stt("sensevoice/dead")
+
+        assert result.get("ok") is False, result
+        assert agent.stt is None, "探测失败的后端被挂进了运行期槽位——可用性判据失去依据"
+        assert agent.stt_ok is False
 
     @pytest.mark.service
     def test_every_instantiable_provider_declares_its_capability(self):

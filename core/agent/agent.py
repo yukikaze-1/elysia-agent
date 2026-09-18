@@ -1441,9 +1441,21 @@ class Agent(AgentLifecycle, AgentServer):
         派生之后，本属性与 `capabilities.services.stt.available`（下发给前端的同一
         事实）、`/debug` 的 `stt_ok` **同源**，三者不可能互相矛盾（PCT-5）。
 
-        "可用"的语义是**按构造即可用**（runtime usable by construction）：
-        `STTFactory` 对未实现的 provider 在建连期就拒绝，后端又都是 ABC（抽象方法
-        没实现根本实例化不出来），故"句柄存在"⇒"实现支持该 capability"。
+        "可用"的语义是**按构造即可用**（runtime usable by construction）。
+        这个等价关系由两条**可核查的事实**支撑，**不是**由 ABC 支撑：
+
+        1. 句柄只能由 `STTFactory.create` 造出（生产装配只有
+           `core/agent/server.py` 的 bootstrap/`switch_stt` 两处），而工厂对
+           `_UNIMPLEMENTED_PROVIDERS` 里的 provider 在**建连期**就
+           `NotImplementedError`；该常量与 `STTFactory.is_implemented()` 同源，
+           被 `TestInstantiatedImpliesImplemented` 逐一钉住。
+        2. 两条装配路径都**先过 1s 连通性探测再挂载**（`backend.test()` 不 ok 就不装）。
+
+        ⚠️ **不要**把理由写成"后端都是 ABC，抽象方法没实现就实例化不出来"——
+        ABC 只保证**方法存在**，不保证**方法有实现**：一个把抽象方法实现成
+        `raise NotImplementedError` 的子类照样能实例化（Challenger 2026-09-18 实测
+        `STTBackend` 如此）。ABC 不构成这条不变量的依据。
+
         它**不**承诺远端此刻可达——那需要网络探测，属 `--full` / provider test，
         不是进程内状态读取（PCT-4/§26）。
         """
