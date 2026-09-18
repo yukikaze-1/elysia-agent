@@ -396,6 +396,80 @@ FSM 永久停在 **SPEAKING**——回合仍持有 `_process_lock` ⇒ 新用户
 不加 SPEAKING watchdog / 超时复位、不新增第二个 generation 计数器、不引入说话生命周期协调器。
 超时只会把"永久卡死"换成"提前离开 SPEAKING 而音频仍在播"——那违反 SP4 与 SPEAKING 的语义。
 
+### 4.3 Thinking 生命周期与取消边界（TH）
+
+来源：[2026-09-18 Batch 10 执行记录](../review/2026-09-18-Batch10-thinking-state-cancellation-recovery-执行记录.md)。
+缺陷形状（canonical backlog **KB-22**）：`CognitiveLoop.process()` 在 `_prepare_turn()`
+**之前**就取得回合锁（`async with self._process_lock`），但取消边界（`except
+asyncio.CancelledError → _handle_interrupt()`）原本只覆盖 `_think_loop` 那一段。而
+`_prepare_turn` 在 `await self.phases.enter_thinking()`（FSM 已是 THINKING）**之后**
+还有一个真挂起点——`await self._generation_registry.register(...)`（Mongo upsert），
+它只被 `except Exception` 包着，而 Python 3.8+ 起 `asyncio.CancelledError` 是
+**`BaseException`**（实测 `__mro__ = (CancelledError, BaseException, object)`），
+外层 `try` 又只 `except (CharacterBusyError, StorageUnavailableError)`。
+
+于是落在该窗口的取消**一路逃出 `process()`**：`async with` 退出时**释放锁**，
+canonical 收口 `_handle_interrupt()`（唯一做 `THINKING → INTERRUPTED → IDLE` 的地方）
+永不执行 ⇒ FSM 永久停在 **THINKING**。`status.is_accepting_input` 恒假 ⇒ 之后**每一条**
+用户消息都走 `process_message` 的排队分支、被 ACK `accepted` 后进 `_pending_messages`，
+而 pending 只在 `STATE_CHANGE → IDLE` 出队（那个事件再也不会来）⇒ 进程活着、EventBus
+活着、消息能进队列，但**没有任何回合再启动**——用户感知为 Agent **永久失聪**。
+仓内唯一恢复点是 `Agent.start()` 的 `fsm.reset()`（`core/agent/lifecycle.py:204`）。
+
+**THINKING 的语义**（本批核对，未重新定义）：回合**已被接受、正在做本回合的准备工作与
+认知工作**（选项 C）——`enter_thinking()` 在 generation 建档与 prompt 组装**之前**，
+把会话解析/身份快照/角色 runtime 换绑都算在内。它是"本回合已开始"的对外声明，
+所以**不**把它挪到 prepare 的尾部（见下方"明确不做"）。
+
+**ownership 判据**（本批的核心决定）：收口只在"**本回合**确实已经开始"时执行，判据是
+`_generation_ctx`——它在 `enter_thinking()` **之前**建立、在 `_prepare_turn` 入口清空，
+且 `_prepare_turn` 全程在 `_process_lock` 之内（不可能混入第二个回合的 ctx）。
+**明确不用** `fsm.state == THINKING`：那分不清"我的 THINKING"与"别人的 THINKING"，
+也分不清"本回合还没开始、相位上留着上一回合的 `IDLE_BACKGROUND_TASK`"。
+ctx 赋值与 `enter_thinking()` 的 FSM transition 之间**没有 await**，因此"ctx 非 None"
+与"FSM 已经/即将是 THINKING"**严格等价**——即使某个 `on_change` 订阅者在
+`enter_thinking()` 的 `_notify` 上挂起（`on_change` 是公开订阅点，
+签名就是 `Callable[[str], Awaitable[None]]`），判据也不会误判。这条由
+`test_cancel_inside_enter_thinking_notify_still_recovers` 钉住（Challenger A3b）。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **TH1** | 每次进入 THINKING 都有**turn-scoped 的终态 owner**（含 prepare 窗口）：接受/失败/取消/打断/被取代都必须有明确责任方把它推离 THINKING | `core/agent/tests/test_thinking_cancel_recovery.py`（4 例，真 `Agent.start()`/`process_message`/EventBus/INTERRUPT）；`core/cognitive/tests/test_thinking_cancellation.py`（8 例，真 `process()` → 真 `AgentFSM.transition`） | `make test-quick` / `test-normal` | **push/backend** |
+| **TH2** | 本回合开始之后的取消**或普通异常**都**不能**留下"state == THINKING 且本回合已无存活 owner"：收口必须走 canonical 路径（`THINKING → INTERRUPTED → IDLE`），**不得**用 `finally: set_idle()` 之类的补丁（`THINKING → IDLE` 在 `VALID_TRANSITIONS` 里是**非法边**） | `test_thinking_cancellation.py::test_cancel_after_thinking_entry_recovers_via_canonical_interrupt`（PRE_FIX_RED，断言状态序列 `["THINKING","INTERRUPTED","IDLE"]`）、`::test_cancel_during_error_recovery_is_also_covered`（PRE_FIX_RED，取消落在异常收口自身）、`::test_generic_exception_after_turn_started_still_recovers`（PRE_FIX_RED，普通异常同样有 owner）、`::test_cancel_inside_enter_thinking_notify_still_recovers`（PRE_FIX_RED，判据对挂起的 `on_change` 订阅者免疫）、`test_thinking_cancel_recovery.py::test_cancelled_thinking_turn_recovers_and_next_message_is_processed`（PRE_FIX_RED） | 同上 | **push/backend** |
+| **TH3** | 旧回合的 cleanup **不能**覆盖新回合：A 的收口与 B 的 `enter_thinking()` 之间由 `_process_lock` 串行化——B 进不来，A 也不会迟到 | `test_thinking_cancellation.py::test_old_turn_cleanup_cannot_overwrite_newer_turn`、`::test_cleanup_scoped_by_ownership_not_by_fsm_value`（用 FSM 取值当 ownership proof 的实现会红） | 同上 | **push/backend** |
+| **TH4** | FSM 真相 / 回合任务所有权 / `_process_lock` 所有权三者一致：取消后不得出现"锁已释放 + 无存活 owner + 仍是 THINKING"，也不得让停机语义被"复活成可接受输入的 IDLE"破坏 | `test_thinking_cancel_recovery.py::test_stop_during_thinking_window_does_not_strand_the_agent`（PRE_FIX_RED：断言相位不留在 THINKING、`run_state == STOPPED`、停机窗口拒收新消息）、`test_thinking_cancellation.py::test_cancel_before_thinking_entry_is_safe`、`::test_pre_thinking_cancel_preserves_other_turn_background_phase` | 同上 | **push/backend** |
+
+> **TH4 的成立条件（必须一起读）**：TH4 在"收口能在停机 drain 预算（3s）内走完"时成立。
+> 若收口自身被**第二发** `task.cancel()` 打断（`AsyncTaskScope.drain` 超时后的直接取消，
+> 绕过 `cancel_current()`），相位会停在 THINKING/INTERRUPTED 而 `run_state == STOPPED`——
+> Challenger 已用"`mark` 卡住 > 3s"确定性复现（`stop elapsed=3.00s fsm=thinking
+> run_state=STOPPED`）。那是 **KB-23 同族**（第二发取消打断收口链），本批按 scope 不修。
+| **TH5** | 相位忙时被 ACK 接受的消息（pending）在恢复后必须**经既有 drain 机制**重新获得处理权（`STATE_CHANGE → IDLE` → `_handle_state_change` 出队），不新增调度器/轮询 | `test_thinking_cancel_recovery.py::test_message_queued_during_recovery_window_is_processed`（PRE_FIX_RED，生产取消源 = 模型热切换） | 同上 | **push/backend** |
+
+**明确不做**（本批的取舍，避免"看起来更稳"的假修复）：不把 `enter_thinking()` 挪到
+prepare 尾部（会改变 UI/打断/观测时机，而根因是取消边界不是入口时机）；不写
+`finally: set_idle()`（A 的迟到收口会打掉 B）；不新增 `_thinking_epoch` / 第二套
+生命周期计数器（现有 `_generation_ctx` + `_process_lock` 已足够）；不加 watchdog /
+超时复位 / `asyncio.shield` 包整个 `process()`（那会破坏用户打断）；不改 FSM 转换表、
+不改 EventBus 优先级、不改 pending 出队机制。
+
+**已知边界（本批登记，未修）**：
+
+- **第二发取消打断收口链**（KB-25，KB-23 同族）：收口是一条长 await 链
+  （`turn_cancelled → mark → cancel_desktop → typing → _notify → sleep(0.05) → …`），
+  任何一发**直接** `task.cancel()` 都能把它打断，留下 THINKING **或** INTERRUPTED。
+  生产实例是停机 `_turns.drain(timeout=3.0)` 超时后的取消（Challenger E2/F1/F2/F2b 实测）。
+  公开 API `cancel_current()` 的第二发是 one-shot、无害（F3）。
+- **入口之前的取消**（O1）：本回合已 ACK 的消息静默结束（没有任何 `generation.failed` 终态）。
+  相位不受影响，故不属于 KB-22。
+- **`_prepare_turn` 的回合级写入不回滚**（O3）：取消传播时（入口之前）`_session` /
+  `_prompt` / tool_context / `_tts_mgr.reset_for_turn` / `_clock` 的写入保留；`_clock`
+  会残留成非 None（消费者都有"本回合会重设"的前提，当前无害）。
+- **`IDLE 已广播 / 锁未释放`窗口**（O2）：若收口/回合在 post IDLE 之后继续挂起（例如某个
+  会挂起的 `on_change("idle")` 订阅者），pending 出队 spawn 的回合会卡在锁上，而
+  "下一条消息"可能把它当作在途回合取消掉 ⇒ 已 ACK 的排队消息被丢弃且顺序被抢。
+  需要"有订阅者挂起"这一前提（仓内今日没有），生产形态还要求收口后仍持锁挂起。
+
 ---
 
 ## 5. 架构与静态面
