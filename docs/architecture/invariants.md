@@ -439,11 +439,13 @@ ctx 赋值与 `enter_thinking()` 的 FSM transition 之间**没有 await**，因
 | **TH3** | 旧回合的 cleanup **不能**覆盖新回合：A 的收口与 B 的 `enter_thinking()` 之间由 `_process_lock` 串行化——B 进不来，A 也不会迟到 | `test_thinking_cancellation.py::test_old_turn_cleanup_cannot_overwrite_newer_turn`、`::test_cleanup_scoped_by_ownership_not_by_fsm_value`（用 FSM 取值当 ownership proof 的实现会红） | 同上 | **push/backend** |
 | **TH4** | FSM 真相 / 回合任务所有权 / `_process_lock` 所有权三者一致：取消后不得出现"锁已释放 + 无存活 owner + 仍是 THINKING"，也不得让停机语义被"复活成可接受输入的 IDLE"破坏 | `test_thinking_cancel_recovery.py::test_stop_during_thinking_window_does_not_strand_the_agent`（PRE_FIX_RED：断言相位不留在 THINKING、`run_state == STOPPED`、停机窗口拒收新消息）、`test_thinking_cancellation.py::test_cancel_before_thinking_entry_is_safe`、`::test_pre_thinking_cancel_preserves_other_turn_background_phase` | 同上 | **push/backend** |
 
-> **TH4 的成立条件（必须一起读）**：TH4 在"收口能在停机 drain 预算（3s）内走完"时成立。
-> 若收口自身被**第二发** `task.cancel()` 打断（`AsyncTaskScope.drain` 超时后的直接取消，
-> 绕过 `cancel_current()`），相位会停在 THINKING/INTERRUPTED 而 `run_state == STOPPED`——
-> Challenger 已用"`mark` 卡住 > 3s"确定性复现（`stop elapsed=3.00s fsm=thinking
-> run_state=STOPPED`）。那是 **KB-23 同族**（第二发取消打断收口链），本批按 scope 不修。
+> **TH4 的成立条件（历史，Batch 11 已闭合）**：TH4 曾附带一条限定——"收口能在停机 drain
+> 预算（3s）内走完时才成立"。若收口自身被**第二发** `task.cancel()`
+> （`AsyncTaskScope.drain` 超时后的直接取消，绕过 `cancel_current()`）打断，相位会停在
+> THINKING/INTERRUPTED 而 `run_state == STOPPED`（Challenger 用"`mark` 卡住 > 3s"
+> 确定性复现：`stop elapsed=3.00s fsm=thinking run_state=STOPPED`）。
+> **该限定已由 Batch 11（§4.4 CF1–CF6）解除**：终态收口现在对重复取消免疫，
+> TH4 不再有前置条件。
 | **TH5** | 相位忙时被 ACK 接受的消息（pending）在恢复后必须**经既有 drain 机制**重新获得处理权（`STATE_CHANGE → IDLE` → `_handle_state_change` 出队），不新增调度器/轮询 | `test_thinking_cancel_recovery.py::test_message_queued_during_recovery_window_is_processed`（PRE_FIX_RED，生产取消源 = 模型热切换） | 同上 | **push/backend** |
 
 **明确不做**（本批的取舍，避免"看起来更稳"的假修复）：不把 `enter_thinking()` 挪到
@@ -455,11 +457,6 @@ prepare 尾部（会改变 UI/打断/观测时机，而根因是取消边界不�
 
 **已知边界（本批登记，未修）**：
 
-- **第二发取消打断收口链**（KB-25，KB-23 同族）：收口是一条长 await 链
-  （`turn_cancelled → mark → cancel_desktop → typing → _notify → sleep(0.05) → …`），
-  任何一发**直接** `task.cancel()` 都能把它打断，留下 THINKING **或** INTERRUPTED。
-  生产实例是停机 `_turns.drain(timeout=3.0)` 超时后的取消（Challenger E2/F1/F2/F2b 实测）。
-  公开 API `cancel_current()` 的第二发是 one-shot、无害（F3）。
 - **入口之前的取消**（O1）：本回合已 ACK 的消息静默结束（没有任何 `generation.failed` 终态）。
   相位不受影响，故不属于 KB-22。
 - **`_prepare_turn` 的回合级写入不回滚**（O3）：取消传播时（入口之前）`_session` /
@@ -469,6 +466,121 @@ prepare 尾部（会改变 UI/打断/观测时机，而根因是取消边界不�
   会挂起的 `on_change("idle")` 订阅者），pending 出队 spawn 的回合会卡在锁上，而
   "下一条消息"可能把它当作在途回合取消掉 ⇒ 已 ACK 的排队消息被丢弃且顺序被抢。
   需要"有订阅者挂起"这一前提（仓内今日没有），生产形态还要求收口后仍持锁挂起。
+
+> **原"第二发取消打断收口链"边界（KB-25 / KB-23）已由 Batch 11 修复**，见 §4.4。
+
+### 4.4 取消安全的回合收口（CF）
+
+来源：[2026-09-18 Batch 11 执行记录](../review/2026-09-18-Batch11-cancellation-safe-turn-finalization-执行记录.md)。
+缺陷形状（canonical backlog **KB-25**，与 **KB-23** 同 root）：一个回合的终态收口是一条
+**长 await 链**——
+
+```text
+process() 捕获取消/异常
+  → _handle_interrupt() / _handle_turn_exception()
+      → output.turn_cancelled(...)         ← await（出站帧，~5s 上界）
+      → generation_registry.mark(...)      ← await（Mongo upsert，**无上界**）
+      → _cancel_desktop_calls()            ← await（桥 RPC，**无上界**）
+      → output.typing(False)               ← await
+      → FSMBackedPhaseController.handle_interrupt()
+          → fsm.transition(INTERRUPTED) + bus.post   ← 同步
+          → _notify("interrupted")                    ← await
+          → asyncio.sleep(0.05)                       ← await（UI 可观测延迟）
+          → fsm.transition(IDLE) + bus.post(IDLE)     ← ★ 逻辑终态 ★ 同步
+          → _notify("idle")                           ← await
+```
+
+`asyncio.CancelledError` 是 `BaseException`（实测 `__mro__ = (CancelledError,
+BaseException, object)`），既不被沿途的 `except Exception` 接住，也**不被兄弟 `except`
+子句接住**（在 `except` 块里抛出的异常只由外层 handler 处理）。于是：
+
+- **第二发** `task.cancel()`（生产唯一形态 = `Agent.stop()` 第 3 步
+  `_turns.drain(timeout=3.0)` 预算耗尽后的直接 `task.cancel()`，
+  `Module/_common/task_scope.py:277`；`cancel_current()` 本身是 one-shot，**不可能**发第二发）
+  只要落在上面任何一个 await 上，CancelledError 就穿过收口链逃出 `process()`；
+- 同理，**第一发**取消落在 `_handle_turn_exception` 的 await 上（think 路径的
+  `except Exception` 分支不在任何取消边界内）也照样逃出。
+
+后果是同一个：`_process_lock` 由 `async with` 释放、回合任务以 cancelled 结束，
+而相位**留在 THINKING 或 INTERRUPTED**——`status.is_accepting_input` 恒假 ⇒ 之后每条
+消息都被 ACK `accepted` 后进 `_pending_messages`，而 pending 只在 `STATE_CHANGE → IDLE`
+出队（那个事件再也不会来）⇒ **永久失聪**；仓内唯一恢复点是 `Agent.start()` 的
+`fsm.reset()`（`core/agent/lifecycle.py:204`）。
+
+**修复的形状（owner-side，不 shield 整块）**：把收口显式劈成两段——
+**逻辑终态**（同步、无 await：`transition(IDLE)` + `bus.post(STATE_CHANGE IDLE)`）
+与 **best-effort 资源清理**（可取消）。前者放进 `finally`：
+
+- `FSMBackedPhaseController.handle_interrupt()`：`_notify("interrupted")` +
+  `sleep(0.05)` 包进 `try`，IDLE 落位/广播/通知放进 `finally`；并且对 `IDLE` 早退
+  （幂等，同时避开 `IDLE → INTERRUPTED` 这条**非法边**）；
+- `CognitiveLoop._handle_interrupt()`：best-effort 段包进 `try`，
+  `await self.phases.handle_interrupt()` 放进 `finally`；
+- `CognitiveLoop._handle_turn_exception()`：分类 + `turn_failed` + `mark` 包进 `try`，
+  `await self._handle_interrupt()` 放进 `finally`。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **CF1** | 一旦某个回合已开始**终态收口**，后续重复取消（`task.cancel()` 再发任意多发）**不能**阻止它达到稳定、逻辑一致的 terminal lifecycle state | `core/cognitive/tests/test_cancellation_safe_finalization.py`（16 例：**7 例**逐 await 注入第二发——`turn_cancelled` / `mark` / `desktop.pending_calls` / `typing(False)` / `_notify("interrupted")` / `sleep(0.05)` + 三连发；另 9 例是异常收口、普通异常清理、幂等与 5 条 ALREADY_GREEN 守卫）、`core/agent/tests/test_turn_finalization_cancellation_safety.py`（5 例，真 Agent + 真 WS 停止按钮 + 真 `_turns.drain`） | `make test-quick` / `test-normal` | **push/backend** |
+| **CF2** | **runtime terminal truth 先于 ownership 释放**：不得出现"锁已释放 / 回合任务已结束，而 FSM 仍宣称 active（THINKING/EXECUTING/SPEAKING/INTERRUPTED）" | 同上的每一条都断言完整状态序列 `["THINKING","INTERRUPTED","IDLE"]`（不重不漏）+ `process_lock.locked() is False` | 同上 | **push/backend** |
+| **CF3** | 为完成逻辑终态而做的保护**不得吞掉** caller 的取消意图：terminal obligations 完成后取消仍须传播/可观察 | `test_second_cancel_*` 全部断言 `task.cancelled() is True`（第二发取消**不是无效的**）；`test_second_cancel_after_terminal_transition_keeps_terminal_state` 划出临界区右边界 | 同上 | **push/backend** |
+| **CF4** | **best-effort 外部清理不得阻塞核心生命周期终态**：TTS/desktop/出站帧/Mongo 清理卡住或抛普通异常，FSM 仍必须落到 IDLE | `test_ordinary_exception_in_cleanup_still_settles_state`（`typing(False)` 抛 RuntimeError，PRE_FIX_RED）、`test_second_cancel_during_desktop_cleanup_settles`（清理被放弃是允许的，相位不许被带走） | 同上 | **push/backend** |
+| **CF5** | 收口仍然是 **turn-scoped** 的：旧回合的第二发收口**不得**影响新回合（不 IDLE 新回合、不 mark 新 generation、不与 B 的 `enter_thinking` 交错） | `test_old_turn_finalization_does_not_interleave_with_new_turn`（断言 A 的 `interrupted/idle` 严格早于 B 的 `thinking`）、`test_pending_message_is_processed_after_second_cancel` | 同上 | **push/backend** |
+| **CF6** | 为收口做的保护**不得让停机失去上界**，也不得让停机期间**产生新的回合生命周期** | `core/agent/tests/test_turn_finalization_cancellation_safety.py::test_shutdown_second_cancel_keeps_shutdown_bounded`（真实 `Agent.stop()` + 真实 3s drain 预算 + `mark` 卡住 ⇒ elapsed 有界、相位离场、`run_state == STOPPED`、回合派发轴 `["thinking","interrupted","idle"]` 无第二个回合、`_current_task is None`） | 同上 | **push/backend** |
+
+**权威归属（一句话）**：第一次取消之后，**逻辑终态归被取消的那次 `CognitiveLoop.process()`
+调用**（持 `_process_lock` 者）；它必须在释放锁之前把相位推到 IDLE。相位写入的**唯一**
+owner 仍是 `FSMBackedPhaseController`；`_handle_interrupt` 只是流程编排。
+
+**分类（两类 cleanup）**：
+
+| 收口步骤 | 类别 | 第二发取消可以打断吗 |
+|---|---|---|
+| `fsm.transition(INTERRUPTED)` + `bus.post` | **MUST_COMPLETE**（逻辑终态第一段） | ❌ 同步，不可打断 |
+| `fsm.transition(IDLE)` + `bus.post(IDLE)` | **MUST_COMPLETE**（逻辑终态；pending drain 的唯一触发点） | ❌ 放在 `finally` 的同步段 |
+| `_notify("interrupted")` / `sleep(0.05)` / `_notify("idle")` | observability（best-effort） | ✅ 可打断；打断后 IDLE 仍由 `finally` 落位 |
+| `output.turn_cancelled` 帧 / `generation_registry.mark` / `_cancel_desktop_calls` / `_tts_mgr.cancel_all` / `output.typing(False)` | **BEST_EFFORT / CANCELLABLE** | ✅ 可打断/可放弃（`_handle_interrupt` 的 `finally` 仍会补做逻辑终态） |
+
+**明确不做**（避免"看起来更稳"的假修复）：不 `asyncio.shield` 整个 `_handle_interrupt`
+或 `process()`（会让清理逃出 `_process_lock`，破坏 CF5/TH3；shield 的 inner task 无人
+await 时还会变成 detached 清理任务）；不做 retry-until-clean；不引入
+`uncancel()`（全仓零使用）也不把 `Task.cancelling()` 变成业务 authority（它在全仓仅
+用于 `Module/_common/task_scope.py::cancellation_is_external` 这一个判据）；不改 FSM
+转换表、不新增状态、不加 watchdog / 超时复位 / 第二套生命周期 epoch；不把资源清理重排
+到逻辑终态**之前**（会改变 wire 帧顺序与 50ms INTERRUPTED 可观测窗口）。
+
+**已知边界（本批登记，未修）**：
+
+- **persisted 终态是 best-effort**：若第二发取消落在 `generation_registry.mark` **之前**
+  （例如落在 `output.turn_cancelled` 上），那条 generation 行会停在 `running`。按
+  §17/§18 的优先级（runtime truth 优先于 persisted truth）这是**允许**的，且有既有兜底：
+  启动期 `GenerationRegistry.mark_stale_interrupted(cutoff)`
+  （`core/agent/_lifecycle_persistence.py:173/575`）把它扫成 `interrupted`。
+  真库旁证：`tests/real_mongo/test_real_finalization_cancellation.py`（`make test-real-mongo`，
+  **push/real-mongo**）。
+- **被放弃的资源清理**：第二发取消若恰好落在 `_cancel_desktop_calls()` 上，在途 desktop
+  调用可能不被逐条 `cancel_call`（由 `DesktopCallRepository.mark_stale_expired` 启动期
+  兜底）；TTS 任务同理可能留到下一次 `cancel_all()`/停机。这些都属于 BEST_EFFORT
+  资源清理，不构成 CF1/CF2 违反。
+- **`handle_interrupt()` 的 `_notify` 是顺序 best-effort**：逻辑终态走的是 `finally`，
+  但 `_notify("interrupted")` 若被某个订阅者永久阻塞，`finally` 也进不去；而 `_notify("idle")`
+  若在迭代中途被取消，**其后**的订阅者收不到通知（`_notify` 逐个 `await`，
+  `CancelledError` 不是 `Exception`，不会被逐订阅者的 `except Exception` 吞掉）。
+  仓内唯一 `on_change` 注册者是 `wait_until_idle`（同步 `event.set()`，其生产调用点只有
+  `Module/bench/bench.py`，且自带超时），故当前不可达；与 TH 的 O2 边界同源
+  （Challenger B11 的 C 项）。
+- **"必然落到 IDLE"是机制保证，但以 `transition`/`bus.post`/`_notify` 不抛为条件**：
+  `finally` 体内任一步抛异常都会**顶替**正在传播的 `CancelledError`（任务以 failed 而非
+  cancelled 收场），且 `handle_interrupt` 的 `try` 起点在 `transition(INTERRUPTED)` +
+  `bus.post(INTERRUPTED)` **之后**。当前实现下这两步都不会抛（`transition(IDLE)` 是合法边、
+  `bus.post` 是**无界队列**的 `put_nowait`、`_notify` 逐订阅者吞 `Exception`），故不可达；
+  但**将来在 `finally` 里新增任何可能抛异常的语句时必须重新评估**（Challenger B11 的 H 项）。
+- **幂等的口径限于"IDLE 入口"**：`handle_interrupt()` 的守卫是
+  `state == IDLE → return`，因此"收口完成后再调一次"是无副作用 no-op；
+  但两个**并发** owner 同时进入时（第二个进来时相位已是 INTERRUPTED）会重复广播
+  `interrupted`（`transition` 同相位 no-op、`bus.post` 照发）。当前唯一调用者是持
+  `_process_lock` 的回合任务 ⇒ 不可达；若将来引入第二个调用者（IdleMonitor / Agent 层打断），
+  必须先把判据从"IDLE 早退"升级为"完整 terminal 状态判据"。
 
 ---
 
