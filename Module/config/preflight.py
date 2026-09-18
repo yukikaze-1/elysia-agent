@@ -66,24 +66,52 @@ def _parse_provider(model_id: str) -> str:
     return model_id.split("/")[0] if "/" in model_id else model_id
 
 
-def _llm_provider_implemented(provider: str) -> bool:
-    """问运行期权威：本仓实现了该 LLM provider 吗。
+def _is_declared_provider(module: str, provider: str) -> bool:
+    """该 provider 是否声明在 `providers.yaml::<module>`（= registry 的世界）。"""
+    from Module.config.providers import load_provider_defaults
+
+    return provider in load_provider_defaults(module)
+
+
+def _query_is_implemented(module: str, provider: str) -> bool:
+    """问运行期权威：本仓实现了该 provider 吗（`"llm"` / `"stt"` / `"tts"`）。
 
     只查 registry 的 capability 元数据，**不建连、不发网络请求**（PCT-3：静态预检
-    network-free）。`Module.llm` 会拉起 openai SDK，故 `run()` 把 `_check_pip_deps()`
-    排在 `_check_llm_env()` 之前——缺包时由它给出可读的 [FAIL]，
-    而不是让这里抛裸 ImportError。
+    network-free）。
+
+    **SDK 缺失时 fail-open（返回 True）**：`Module.llm` 会拉起 openai SDK，而预检要能
+    在"依赖都不齐"的机器上跑完并**给出可读的失败原因**，不能以裸 ImportError 崩掉
+    （那会让 `app.py --check` 打一段 traceback，运维读不到"到底缺什么"）。
+    缺包这件事本身由 `_check_pip_deps` 负责判 FAIL（`openai` 在 `_CRITICAL_PACKAGES`
+    里），所以总判定**不会**因此变成假绿——只是 capability 这一项此时答不了，
+    而"答不了"不等于"未实现"（与未知 provider 的 fail-open 同口径）。
     """
-    from Module.llm import LLMFactory
+    try:
+        if module == "llm":
+            from Module.llm import LLMFactory as factory
+        elif module == "stt":
+            from Module.stt import STTFactory as factory
+        else:
+            from Module.tts import TTSFactory as factory
+    except ImportError:
+        return True
 
-    return LLMFactory.is_implemented(provider)
+    return factory.is_implemented(provider)
 
 
-def _stt_provider_implemented(provider: str) -> bool:
-    """问运行期权威：本仓实现了该 STT provider 吗（同 `_llm_provider_implemented`）。"""
-    from Module.stt import STTFactory
+def _capability_verdict(module: str, provider: str) -> str:
+    """capability 三态结论：`"unknown"` / `"unimplemented"` / `"ok"`。
 
-    return STTFactory.is_implemented(provider)
+    **为什么先判 `unknown`**：判据必须只依赖 registry（`providers.yaml` +
+    `_UNIMPLEMENTED_PROVIDERS`），**不能**依赖本模块手抄的 `_*_PROVIDER_ENV` 表。
+    Challenger 实测过反面：把一个 provider 只登记进 registry 的
+    `_UNIMPLEMENTED_PROVIDERS`、忘了改 env 表，旧顺序会先命中"未知 provider"分支
+    early-return，于是 N-10 的假绿原样回来。所以能力判据排在 env 表**之前**，
+    而"未声明"（`providers.yaml` 里没有）才走 fail-open 的未知分支。
+    """
+    if not _is_declared_provider(module, provider):
+        return "unknown"
+    return "ok" if _query_is_implemented(module, provider) else "unimplemented"
 
 
 def _fail(msg: str) -> None:
@@ -179,20 +207,25 @@ def _check_llm_env(config: Any) -> None:
     if provider == "ollama":
         _pass("LLM env ok (ollama 无需 API key)")
         return
-    key = _LLM_PROVIDER_ENV.get(provider)
-    if key is None:
-        # 未知 provider：**保持 fail-open**（WARN 不 FAIL）。它在 providers.yaml 里
-        # 有没有实现由 registry 决定，本模块不猜；缺 metadata ≠ 未实现。
-        _warn(f"未知 LLM provider: {provider}")
-        return
-
-    if not _llm_provider_implemented(provider):
+    verdict = _capability_verdict("llm", provider)
+    if verdict == "unimplemented":
         _fail(
             f"LLM provider '{provider}' 在本仓尚未实现 — "
             f"运行期 LLMFactory.create('{model_id}') 会抛 NotImplementedError，"
             f"进程将在启动期失败。请改用已实现的 provider，"
             f"或先在 Module/llm/ 里补上实现"
         )
+        return
+    if verdict == "unknown":
+        # 未声明在 providers.yaml 的 provider：**保持 fail-open**（WARN 不 FAIL）。
+        # 缺 metadata ≠ 未实现（§41/§42），本模块不猜。
+        _warn(f"未知 LLM provider: {provider}")
+        return
+
+    key = _LLM_PROVIDER_ENV.get(provider)
+    if key is None:
+        # 已声明但本模块没有它的凭据 env 映射：仍 fail-open，但文案要说准
+        _warn(f"LLM provider '{provider}' 未登记凭据 env — 跳过凭据检查")
         return
 
     val = os.getenv(key, "")
@@ -344,8 +377,14 @@ def _check_tts_env(config: Any) -> None:
         _pass("TTS 未启用，跳过 env 检查")
         return
     provider = _parse_provider(config.tts.model)
-    key = _TTS_PROVIDER_ENV.get(provider)
-    if key is None:
+    verdict = _capability_verdict("tts", provider)
+    if verdict == "unimplemented":
+        # 与 LLM/STT 同一形状：报告层**必须**问 registry，否则一个登记在
+        # `_UNIMPLEMENTED_PROVIDERS` 里的占位 provider 会被报成"[PASS] TTS 可用"，
+        # 直到 `--full` 才以一个"连通异常"暴露（capability 缺口伪装成网络问题，§79）。
+        _warn(f"TTS provider '{provider}' 暂未实现（factory 会抛出 NotImplementedError）")
+        return
+    if verdict == "unknown":
         _warn(f"未知 TTS provider: {provider}")
         return
     _judge_optional_provider(provider, "tts", "TTS")
@@ -362,12 +401,12 @@ def _check_stt_env(config: Any) -> None:
         _pass("STT 未启用，跳过 env 检查")
         return
     provider = _parse_provider(config.stt.model)
-    key = _STT_PROVIDER_ENV.get(provider)
-    if key is None:
-        _warn(f"未知 STT provider: {provider}")
-        return
-    if not _stt_provider_implemented(provider):
+    verdict = _capability_verdict("stt", provider)
+    if verdict == "unimplemented":
         _warn(f"STT provider '{provider}' 暂未实现（factory 会抛出 NotImplementedError）")
+        return
+    if verdict == "unknown":
+        _warn(f"未知 STT provider: {provider}")
         return
     _judge_optional_provider(provider, "stt", "STT")
 
@@ -424,10 +463,16 @@ async def _check_llm_connectivity(config: Any) -> None:
         _pass("LLM ollama 为本地服务，跳过连通性检查")
         return
 
-    if not _llm_provider_implemented(provider):
-        # capability 缺失 ≠ 连通性问题（§79）。这里不再去 `LLMFactory.create` 撞一次
-        # NotImplementedError 再把它报成"连通异常"——那会让读日志的人去查网络，
-        # 而真正的原因（本仓没实现）已在 `_check_llm_env` 判 FAIL。
+    # capability 缺失 ≠ 连通性问题（§79）。这里不再去 `LLMFactory.create` 撞一次
+    # NotImplementedError 再把它报成"连通异常"——那会让读日志的人去查网络，
+    # 而真正的原因（本仓没实现）已在 `_check_llm_env` 判 FAIL。
+    # "未知"与"未实现"也必须分开报：同一次运行里两处各说一个类别，
+    # 读者无法判断该去改 env 还是该去补实现。
+    verdict = _capability_verdict("llm", provider)
+    if verdict == "unknown":
+        _warn(f"未知 LLM provider '{provider}'，跳过连通性检查")
+        return
+    if verdict == "unimplemented":
         _warn(f"LLM provider '{provider}' 未实现，跳过连通性检查")
         return
 
@@ -450,6 +495,16 @@ async def _check_tts_connectivity(config: Any) -> None:
         _pass("TTS 未启用，跳过连通性检查")
         return
 
+    provider = _parse_provider(config.tts.model)
+    verdict = _capability_verdict("tts", provider)
+    if verdict == "unknown":
+        _warn(f"未知 TTS provider '{provider}'，跳过连通性检查")
+        return
+    if verdict == "unimplemented":
+        # 与 LLM/STT 同形：不实现 ≠ 连不通，不得把它报成"连通异常"
+        _warn(f"TTS provider '{provider}' 未实现，无法探活")
+        return
+
     try:
         from Module.tts import TTSFactory
         backend = TTSFactory.create(config.tts.model)
@@ -470,7 +525,11 @@ async def _check_stt_connectivity(config: Any) -> None:
         return
 
     provider = _parse_provider(config.stt.model)
-    if not _stt_provider_implemented(provider):
+    verdict = _capability_verdict("stt", provider)
+    if verdict == "unknown":
+        _warn(f"未知 STT provider '{provider}'，跳过连通性检查")
+        return
+    if verdict == "unimplemented":
         # §34：unsupported 不得被"跳过"并报成成功。STT 是可选子系统，判 WARN
         # （与 `_check_stt_env` 同级别），不上 FAIL——否则 --full 会拒绝一个
         # 合法跑纯文本模式的部署。
@@ -546,11 +605,8 @@ def run(config: Any, full: bool = False) -> bool:
     # Phase 1: 必须通过
     _check_python()
     _check_dotenv()
-    # pip 依赖排在 provider 检查之前：`_check_llm_env` 会 import Module.llm（拉起 openai
-    # SDK），缺包时应当由 `_check_pip_deps` 给出可读的 [FAIL]（"缺失 pip 包: openai"），
-    # 而不是让静态检查抛裸 ImportError。
-    _check_pip_deps()
     _check_llm_env(config)
+    _check_pip_deps()
     _check_character_file(config)
     _check_embedding_model()
     _check_mongo_env(config)

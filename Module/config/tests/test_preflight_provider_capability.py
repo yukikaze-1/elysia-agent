@@ -50,6 +50,9 @@ def _cfg(service: str, model_id: str) -> MagicMock:
     if service == "stt":
         cfg.stt.enabled = True
         cfg.stt.model = model_id
+    elif service == "tts":
+        cfg.tts.enabled = True
+        cfg.tts.model = model_id
     return cfg
 
 
@@ -135,6 +138,34 @@ class TestRuntimeFactAnchor:
         assert not hasattr(pf, "_LLM_STUB_PROVIDERS"), (
             "preflight 又自建了 LLM 未实现 provider 表——capability 真相必须只有 registry 一处"
         )
+
+    def test_missing_sdk_does_not_crash_static_check(self, monkeypatch, capsys):
+        """capability 查询拉起 openai SDK——依赖不齐时预检**不得**以裸 ImportError 崩掉。
+
+        预检要在"什么都没装"的机器上跑完并说清缺什么（`_check_pip_deps` 判 FAIL）。
+        查询本身答不了时 fail-open（同未知 provider 口径），总判定由依赖检查兜住。
+        """
+        import builtins
+        import sys as _sys
+
+        real_import = builtins.__import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "openai" or name.startswith("openai."):
+                raise ImportError("No module named 'openai'")
+            return real_import(name, *args, **kwargs)
+
+        # 清掉已缓存的模块，让 `from Module.llm import LLMFactory` 真的走到 __import__
+        for mod in [k for k in list(_sys.modules)
+                    if k.startswith("openai") or k.startswith("Module.llm")]:
+            monkeypatch.delitem(_sys.modules, mod, raising=False)
+        monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+        m = _fresh_preflight()
+        m._check_llm_env(_cfg("llm", "gemini/gemini-1.5-pro"))   # 不得抛
+        m._check_stt_env(_cfg("stt", "openai/whisper-1"))        # 不得抛
+        out = _out(capsys)
+        assert "[FAIL]" in out or "[PASS]" in out or "[WARN]" in out, out
 
 
 # ---- N10-3：已实现 provider 不得被误拒 ---------------------------------------
@@ -257,7 +288,6 @@ class TestFullProbeDoesNotPassUnsupported:
 
 # ---- N10-6（§56）：跨面一致性——预检判据 == registry 判据 ---------------------
 
-
 class TestCrossSurfaceCapabilityConsistency:
     """预检声明的 capability 必须与 registry 的 capability 同源。
 
@@ -308,3 +338,91 @@ class TestCrossSurfaceCapabilityConsistency:
                 f"但预检 reported_usable={reported_usable}\n{captured}"
             )
         assert checked >= 3, f"覆盖的 provider 太少（{checked}），测试可能没生效"
+
+
+# ---- N10-7（Challenger F2/F3 补的守卫）：判据不得依赖第二张手抄表 ---------------
+
+
+class TestCapabilityGateDoesNotDependOnTheEnvTable:
+    """capability 判据必须只依赖 registry，**不能**依赖本模块手抄的 `_*_PROVIDER_ENV`。
+
+    Challenger 实测过的反面（修前会原样复现 N-10）：把一个 provider 只登记进
+    registry 的 `_UNIMPLEMENTED_PROVIDERS`、忘了改 env 表 —— 旧顺序先命中
+    "未知 provider" 分支 early-return，于是预检又变绿了。
+    """
+
+    def test_llm_unimplemented_provider_absent_from_env_table_still_fails(
+        self, monkeypatch, capsys
+    ):
+        monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+        monkeypatch.setenv("GEMINI_URL", "https://generativelanguage.googleapis.com")
+
+        m = _fresh_preflight()
+        monkeypatch.delitem(m._LLM_PROVIDER_ENV, "gemini", raising=False)  # 模拟漂移
+
+        m._check_llm_env(_cfg("llm", "gemini/gemini-1.5-pro"))
+        out = _out(capsys)
+
+        assert m._COUNTS.failed >= 1, (
+            "env 表里没有它，capability 判据就完全没跑——N-10 的假绿原样回来。"
+            f"输出：\n{out}"
+        )
+        assert "未实现" in out
+
+    def test_stt_unimplemented_provider_absent_from_env_table_still_warns(
+        self, monkeypatch, capsys
+    ):
+        m = _fresh_preflight()
+        monkeypatch.delitem(m._STT_PROVIDER_ENV, "openai", raising=False)
+
+        m._check_stt_env(_cfg("stt", "openai/whisper-1"))
+        out = _out(capsys)
+
+        assert "未实现" in out, f"同 LLM：判据退化成'未知 provider'，缺口无人报。输出：\n{out}"
+
+    def test_tts_report_layer_asks_the_registry(self, monkeypatch, capsys):
+        """TTS 报告层必须问 `is_implemented`——否则登记的占位 provider 会被报成
+        "[PASS] TTS 可用"，直到 `--full` 才以一个"连通异常"暴露（Capability 缺口
+        伪装成网络问题，§79）。当前集合为空，用 monkeypatch 模拟"登记了占位"。"""
+        from Module.tts import registry as tts_registry
+
+        monkeypatch.setattr(tts_registry, "_UNIMPLEMENTED_PROVIDERS",
+                            frozenset({"gpt-sovits"}), raising=True)
+        m = _fresh_preflight()
+        m._check_tts_env(_cfg("tts", "gpt-sovits/default"))
+        out = _out(capsys)
+
+        assert "[PASS]" not in out, f"占位 TTS provider 被报成可用：\n{out}"
+        assert "未实现" in out, out
+
+    def test_tts_full_probe_does_not_mislabel_unimplemented_as_connectivity(
+        self, monkeypatch, capsys
+    ):
+        import asyncio
+
+        from Module.tts import registry as tts_registry
+
+        monkeypatch.setattr(tts_registry, "_UNIMPLEMENTED_PROVIDERS",
+                            frozenset({"gpt-sovits"}), raising=True)
+        m = _fresh_preflight()
+        asyncio.run(m._check_tts_connectivity(_cfg("tts", "gpt-sovits/default")))
+        out = _out(capsys)
+
+        assert "[PASS]" not in out, out
+        assert "连通异常" not in out, f"能力缺口被报成网络问题：\n{out}"
+        assert "未实现" in out, out
+
+    def test_unknown_and_unimplemented_are_reported_as_different_categories(
+        self, monkeypatch, capsys
+    ):
+        """同一次运行里，"未知 provider" 与 "未实现 provider" 不得互相冒充（§79）。"""
+        import asyncio
+
+        m = _fresh_preflight()
+        m._check_llm_env(_cfg("llm", "nope/x"))
+        static_out = _out(capsys)
+        asyncio.run(m._check_llm_connectivity(_cfg("llm", "nope/x")))
+        full_out = _out(capsys)
+
+        assert "未知" in static_out and "未实现" not in static_out, static_out
+        assert "未知" in full_out and "未实现" not in full_out, full_out
