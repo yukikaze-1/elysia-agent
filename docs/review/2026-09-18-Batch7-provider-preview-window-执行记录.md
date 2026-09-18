@@ -83,9 +83,35 @@ core/cognitive/loop.py:793-802    prompt_budget = budget_from_context_window(
 | 内置 elysia + 703 CJK 字 | 8192 | **8305 > 8192** | 200，reply 15 字（prompt 被 provider 截断） | **200** |
 | 裸 `/api/chat`（本仓代码之外）1000 字 | — | 1005 | 200，`prompt_eval_count=1029` | — |
 
-Challenger 独立测得（同一 provider）：`/v1` 估 20814 → `prompt_tokens=4096`；
-`num_ctx=8192` 时估 8814 → `prompt_eval=8192` —— 即 **ollama 侧行为是"按 num_ctx 截断"
-而非报错**，且 **默认 num_ctx（4096）低于 `providers.yaml` 声明的 8192**（→ KB-13）。
+### 2.5 E3 补充复测（主 Agent 独立于 Challenger，同一 provider）
+
+探针：`tmp/batch7/ollama_probe_now.py` + `tmp/batch7/ollama_default_ctx.py`（均在本机新进程内跑，
+`httpx(trust_env=False)` 直连 `127.0.0.1:11434`，或走项目自己的 `LLMAdapter`）。
+
+| # | 请求 | 观测 | 说明 |
+|---|---|---|---|
+| 1 | 项目 `LLMAdapter`（**预览实际走的路径**）1000 CJK 字，无 `max_tokens` | 200；provider `input_tokens=1029`（仓内 estimator=1005，**低 2.4%**） | estimator 对纯 CJK 是可靠的保守近似 |
+| 2 | 同上 9000 字 | 200，reply 3513 字；**provider usage 全 0** | 异常（provider 未给计数），未追；见 §24 KB-12 |
+| 3 | native `/api/chat` 6000 字，**不传 `num_ctx`** | 200，`prompt_eval_count=**4096**` | **默认服务窗口 = 4096**（声明是 8192）← KB-13 的关键数，主 Agent 亲测 |
+| 4 | native `/api/chat` 6000 字，显式 `num_ctx=4096` | 200，`prompt_eval_count=4096` | **超窗 = 截断，绝不报错** |
+| 5 | native `/api/chat` 9000 字，显式 `num_ctx=8192` | 200，`prompt_eval_count=8192` | 同上，第二个截面 |
+| 6 | native `/api/chat` 6000 字，显式 `num_ctx=8192` | 200，`prompt_eval_count=6029` | **对照成立**：未超窗时不截断 |
+| 7 | native `/api/chat` 3000 字，显式 `num_ctx=8192` | 200，`prompt_eval_count=3029` | 同上 |
+| 8 | 裸 `/v1/chat/completions` 500 字 | 200，`prompt_tokens=529` | OpenAI 兼容端点小请求可用 |
+| 9 | 裸 `/v1/chat/completions` 3000 / 8000 / 20000 字 | **ReadTimeout**（多次） | 见下"局限" |
+
+**结论（三个截面一致）**：ollama 0.24.0 在超窗时**截断并返回 200**，从不 400；因此
+F8 原始登记里的 "provider 400" 在**该 provider 上复现不出来**，属"强制窗口"类 provider
+的行为。同时 **声明窗口 8192 ≠ 实际默认服务窗口 4096**（第 3 行，主 Agent 亲测；
+Challenger 亦独立测得同一数值）。
+
+**局限（必须说清）**：
+1. 本机裸 httpx 的 `/v1/chat/completions` 在 ≥3000 字时**稳定 ReadTimeout**，
+   故 Challenger 报的 `/v1 prompt_tokens=4096` **主 Agent 未独立复现**；改用 native
+   端点的显式 `num_ctx` 截面（第 4/5 行）得到同向且更强的结论。
+2. 第 2 行那个 "usage 全 0" 未诊断——它既是 KB-12"改用 provider tokenizer"的现实障碍
+   （provider 有时不给计数），也说明 provider usage 不能当唯一权威。
+3. E3 属本地旁证，**不进 CI**（本机 ollama 不在任何测试档位内）。
 
 因此 F8 的**真实用户可见症状**分两类，本批两条都处理：
 - **强制窗口类 provider**（严格 OpenAI 风格 / 云端）：超窗 → provider 400 → 路由折成

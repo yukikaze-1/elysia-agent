@@ -44,7 +44,7 @@
 | **KB-11** | **Batch 6 Challenger F-1**：`CharacterService._retarget_default_character` 的重试循环用 `user_identity_store.get()`（**缓存**）取 revision，而冲突路径刻意不刷缓存 ⇒ 权威模式下并发改档案时 3 轮重放同一个 expected、必然 `RevisionConflictError`（实测 observed = `[(1, False, 2)]*3`，fail-closed 无数据损坏，但归档默认角色会假失败）。本批新带的 `outcome.current_revision` 在这条路径**无消费者** | INTERNAL | LOW | E2(6) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 零散（改角色归档写链） |
 | **F17** | 可选节点失败时任务仍报 `COMPLETED`（文案同时含「已完成」与失败列表）——引擎终态定义问题 | INTERNAL | MEDIUM | E1 | **OPEN** → `PD-6` | 需语义决策 |
 | **F3** | `plan_too_large` 语义重构（需新枚举值 ⇒ 触契约可达性门禁） | INTERNAL | LOW | E1 | **OPEN** → `PD-5` | 需契约决策 |
-| **KB-12** | **Batch 7 Challenger W1/W2**（预览本地窗口判定的误差带）：`estimate_tokens` 是字符启发式，**对 CJK 偏高、对 JSON/代码偏低** —— 实测 est 8329 vs qwen 真值 7921（偏高 ⇒ 可能**误拒**一个勉强装得下的预览）、est 7302 vs 真值 12212（偏低 ⇒ 在强制窗口 provider 上仍可能 400 → 503）。修它需要真 tokenizer（§15/§16 明示不在 Batch 7 范围），且该 estimator 是 chat 与预览的共享底座 | USER | LOW | E2(7) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 需 tokenizer 决策 |
+| **KB-12** | **Batch 7 Challenger W1/W2**（预览本地窗口判定的误差带）：`estimate_tokens` 是字符启发式，**对 CJK 偏高、对 JSON/代码偏低** —— 实测 est 8329 vs qwen 真值 7921（偏高 ⇒ 可能**误拒**一个勉强装得下的预览）、est 7302 vs 真值 12212（偏低 ⇒ 在强制窗口 provider 上仍可能 400 → 503）。修它需要真 tokenizer（§15/§16 明示不在 Batch 7 范围），且该 estimator 是 chat 与预览的共享底座；**另一条实测约束**：本机 ollama 0.24.0 在某次 9000 字请求上返回了 **usage 全 0**（回复却正常）⇒ provider 侧计数并非总可得，不能当唯一权威 | USER | LOW | E2(7) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 需 tokenizer 决策 |
 
 ### 1.3 Runtime / Observability（TRUTHFULNESS 主表，见 §3）
 
@@ -59,7 +59,7 @@
 | **F5** | workflow 模型 reporter 缺（debug 只报主模型 `llm_model`，不报 task/workflow 用的模型） | ADMIN | LOW | E1 | **OPEN** | Batch 4-B 可选 |
 | **OBS-1** | 间歇性 xdist worker 死亡（8 轮 soak 中 1 次，且那轮被并发改动污染） | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定向 soak |
 | **OBS-2** | `context_window` 六家 provider 数值为**估算值**（只影响 prompt 截断时机，不影响正确性） | DEPLOYMENT | LOW | E1 | **OPEN**（校准） | 零散 |
-| **KB-13** | **Batch 7 Challenger W3 + 主 Agent E3**：`providers.yaml::llm.ollama.context_window = 8192` 与实测 ollama 0.24.0 默认 `num_ctx = 4096` **不一致**，且 ollama **超窗时静默截断并返回 200**（不报 400）⇒「装得下声明窗口」是**必要非充分**条件；影响 chat 与预览**两者**（人设被悄悄削掉）。同时解释了 F8 原始登记里「provider 400」为何在本地 ollama 上复现不出来。**注**：本条反驳 `OBS-2` 括号里的「不影响正确性」 | DEPLOYMENT | MEDIUM | E3(7) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` `TRUTHFULNESS` | owner 决策（改它会全局改 chat 截断时机） |
+| **KB-13** | **Batch 7 Challenger W3 + 主 Agent E3**：`providers.yaml::llm.ollama.context_window = 8192` 与实测 ollama 0.24.0 默认 `num_ctx = 4096` **不一致**（主 Agent 亲测：6000 字不传 `num_ctx` → `prompt_eval_count=4096`，HTTP 200；显式 4096→4096、显式 8192 的 9000 字→8192，三截面全 200），且 ollama **超窗时静默截断并返回 200**（不报 400）⇒「装得下声明窗口」是**必要非充分**条件；影响 chat 与预览**两者**（人设被悄悄削掉）。同时解释了 F8 原始登记里「provider 400」为何在本地 ollama 上复现不出来。**注**：本条反驳 `OBS-2` 括号里的「不影响正确性」 | DEPLOYMENT | MEDIUM | E3(7) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` `TRUTHFULNESS` | owner 决策（改它会全局改 chat 截断时机） |
 | **F18r** | Mongo 补投对坏文档：永久 `delivered=False` + 每次启动告警，**无人工清理入口** | ADMIN | LOW | E1 | **OPEN** | 零散 |
 | **N-6** | `docs/architecture/invariants.md` §7 关于 `test_doc_counts` 的那行已过期 | INTERNAL | LOW | E1 | **OPEN**（文档） | 顺手 |
 | **N-7** | `scripts/clean_db.py` docstring 说常量「给测试当守卫用」，实际守卫不读它 | INTERNAL | LOW | E1 | **OPEN**（文档） | 顺手 |
