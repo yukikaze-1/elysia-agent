@@ -46,6 +46,66 @@
 `Module/system_prompt/sections/authored.py` 的**递归转义**（见 CLAUDE.md
 「system prompt 变量转义」）。后者有 AST 守卫防二次转义。
 
+### 1.1 Preview window contract（PW）
+
+来源：[2026-09-18 Batch 7 执行记录](../review/2026-09-18-Batch7-provider-preview-window-执行记录.md)。
+缺陷形状（canonical backlog **F8**）：prompt 预算（S2-H9，`076ebee8`）只接进了
+**chat** 组装路径（`core/cognitive/loop.py::_build_turn_prompt`）；**预览**是第二条
+组装路径（`core/character/preview.py`，比预算机制早 6 天落地），从未迁移 ⇒
+`system + userMessage` 原样发出，小窗口 provider 上超窗 → provider 侧失败 →
+路由把它折成 503 `CHARACTER_PREVIEW_FAILED`（**retryable，是谎报**：重试不会让它
+消失）。
+
+> **Provider preview requests must respect the resolved model's effective context window.**
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **PW1** | 预览请求**必须装得下 resolved runtime model 的声明窗口**（估算输入 < 有效窗口）；裁剪沿用 chat 的同一实现与同一常量，不新增预览专用默认值 | `core/input/tests/test_character_preview_window.py::test_preview_fits_small_window_when_trimming_suffices`、`::test_builtin_character_preview_records_window_margin` | `make test-quick` / `test-normal` | **push/backend** |
+| **PW2** | 窗口/预算权威 = **resolved runtime model**（`LLMAdapter.model` → `LLMFactory.context_window`）；不得读 `config.yaml`/bootstrap 模型，也不得新建第二份 contextWindow 表 | `::test_preview_budget_follows_resolved_model_not_config`、`::test_preview_undeclared_window_keeps_compat_policy` | 同上 | **push/backend** |
+| **PW3** | **能裁进窗口的预览必须能预览**：本地拒绝的阈值是**窗口**而非预算（预算含 25% 输出余量，保护节自身就可能超过它） | `::test_preview_boundary_sends_when_fits_and_validates_when_not`、`::test_small_window_model_can_preview_a_small_request` | 同上 | **push/backend** |
+| **PW4** | 估算输入**占满或超过**窗口（`>=`，含"装得下但无输出余量"）→ **本地**拒绝（400 `CHARACTER_VALIDATION`，非重试）且**零 provider 请求**；不得发送已知必失败的请求、不得自动缩预算重试 | `::test_preview_impossible_input_fails_locally_without_provider_call`、`::test_preview_boundary_sends_when_fits_and_validates_when_not` | 同上 | **push/backend** |
+| **PW5** | **大窗口行为不回归**；未声明窗口的第三方 provider 维持既有兼容 fail-open（与预算同源的保守默认，不是"无限大"、也不是 0） | `::test_preview_large_window_provider_unchanged`、`::test_preview_undeclared_window_keeps_compat_policy` | 同上 | **push/backend** |
+| **PW6** | 预览预算**不改变正常生成策略**：回退规则只有一份（`Module.system_prompt.budget.effective_context_window`）；**现有配置下 chat 路径逐字不变** | `core/prompt/tests/test_prompt_budget.py::TestEstimation::test_effective_window_is_the_shared_fallback`、`::test_budget_uses_headroom_and_default` | 同上 | **push/backend** |
+
+**为什么拒绝用 400 而不是 503**：产品契约（Stage H §4.5）把 503
+`CHARACTER_PREVIEW_FAILED` 定义为"provider/运行时**暂时**不可用"。裁完仍占满窗口是
+**确定性**的输入问题（改角色档案或换模型才可解），用可重试的 503 报它等于重复
+F8 的原始错误——把真相换成"稍后重试"。400 `CHARACTER_VALIDATION` 是既有错误码，
+**不新增契约字段**。
+
+**PW6 的精确边界**：`effective_context_window(None/0/负数)` 一律回退保守默认
+（32768）。对 `0` 与 `None` 这与旧行为一致；对**负数**，旧式
+`context_window or DEFAULT` 会把它当"已声明"并算出退化预算（`max(1, -5*0.75)=1`），
+现在改为回退默认值。仓内**没有任何配置声明 0/负数**（`providers.yaml` 六家均为正数，
+`LLMFactory.context_window` 对 falsy 已归 None）⇒ 该分支不可达，属 hardening。
+
+**为什么预览不设 output cap**：chat 与预览**都不**设 `max_tokens`（provider 默认），
+输出余量由 `CONTEXT_HEADROOM_RATIO`（0.75）预留；仓库没有 model 级 output cap
+metadata，本批不新造（"限制输入长度和输出 token" 那句设计稿从未落成契约字段，
+属独立产品决策）。
+
+## 已知边界（accepted risk，全部有测试钉住行为）
+
+1. **保护节压过预算**：8K 级窗口上 *保护节*（F1/F2/F3/C1/C2/C6/C7）自身就可能超过
+   25% 输出余量 ⇒ 预览只保证"输入 < 窗口"，不保证"输入 ≤ 预算"。不是静默降级：
+   `SystemPromptManager.render` 会 warning 报出保护节规模，`build_messages` 会
+   warning 报出"裁尽历史后仍超预算"。
+2. **判据是启发式估算，不是 provider tokenizer**：`estimate_tokens` 按 CJK 1 字
+   1 token、其余 4 字符 1 token。它对 CJK 偏高（实测 est 8329 vs qwen 真值 7921，
+   ~5%），对 JSON/代码偏低（实测 est 7302 vs 真值 12212，约 0.6×）⇒ 本地判定有
+   **双向误差带**：可能误拒一个勉强装得下的预览，也可能漏放一个在**强制窗口**的
+   provider 上必 400 的请求。修它需要真 tokenizer（`§15/§16` 明确不在本批范围），
+   已登记 `KB-12`。
+3. **声明窗口 ≠ 服务窗口**：`providers.yaml` 的 `context_window` 是**手写估算值**
+   （`ollama` 声明 8192，实测 ollama 0.24.0 默认 `num_ctx` = 4096，且**超窗时静默
+   截断并返回 200**，不报 400）⇒ "装得下声明窗口"是必要条件而非充分条件。属既有
+   条目 `OBS-2` 的家族，Batch 7 用真实 provider 补了证据，见 `KB-13`；改它会全局
+   改变 chat 的截断时机，**不在本批范围**。
+4. **窗口小于保护节下界**：若 `context_window` ≤ 保护节规模（实测 ~2.1K 起），
+   任何预览都会被本地拒绝（PPW-3 在该区间退化为"明确拒绝"而非"永不 400"）。
+   这是诚实的结果：不具备可预览性时应报"内容超窗"，而不是发一个必然被截断/拒绝的
+   请求。
+
 ---
 
 ## 2. Background Task（T）

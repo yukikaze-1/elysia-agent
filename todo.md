@@ -26,7 +26,7 @@
 > `AR-*` 架构债、`GR-*` 门禁/测试债、`FEAT-*` 未来功能。这些 ID 是**本批为原先无 ID 的条目首次分配**；
 > 已有 ID（`N-*`/`F*`/`B3-*`/`CR-*`/`P2-*`/`S2-*`/`M19/M20`）一律保留，编号漂移见 §2。
 
-### 1.2 Correctness（13 行：9 条 USER/DEPLOYMENT 可达 + 4 条 INTERNAL 侧）
+### 1.2 Correctness（14 行：10 条 USER/DEPLOYMENT 可达 + 4 条 INTERNAL 侧）
 
 | ID | 标题 | Reach | Sev | Ev | Status | 候选批次 |
 |---|---|---|---|---|---|---|
@@ -34,7 +34,7 @@
 | **N-11** | ~~`ProfileStore.connect` / `_load_from_file` 吞掉一切异常（N-1 的上游：失败不可观测）~~ | DEPLOYMENT | MEDIUM | E1+E3(3.5)+**E2(4)** | **GUARDED** `fc648e20` | ✅ Batch 4 |
 | **N-3** | ~~409 `details.currentRevision` 读进程内陈旧缓存 ⇒ 谎报，文档承诺的 CAS 恢复路径可死循环~~ —— 冲突现值改由 repository 在冲突点回读权威库并随结果携带（`UserIdentityUpdateOutcome.current_revision`），route 只投影；未知则省略该字段 | USER | MEDIUM | E1+**E2+E3(6)** | **GUARDED** `616e4993` `TRUTHFULNESS` | ✅ Batch 6 |
 | **KB-6** | TTS 密集短句（5+）时 `wait_all()` 无超时 ⇒ FSM 卡 `SPEAKING`（已用 read timeout 120s→30s 缓解，根因未复现） | USER | MEDIUM | E1+E0 | **INSUFFICIENT_EVIDENCE** | 需先复现 |
-| **F8** | prompt 预算 cross-path：`core/character/preview.py` 调 `build_messages` **不传** `prompt_budget_tokens`（chat 路径传） ⇒ 预览路径可超 context → provider 400。**实测（Challenger）：内置角色预览 system prompt ≈9283 est tokens，ollama 窗口 8192/预算 6144 ⇒ 小窗口 provider 上 100% 复现** | USER | MEDIUM | E1+E2 | **OPEN** | 独立小批（不在 4-A/B/C 内） |
+| **F8** | ~~prompt 预算 cross-path：`core/character/preview.py` 调 `build_messages` **不传** `prompt_budget_tokens`（chat 路径传） ⇒ 预览路径可超 context → provider 400~~ —— 预览改用 canonical 预算（**resolved runtime model** 的声明窗口 × 同一常量）；裁完仍装不下 → **本地** 400 `CHARACTER_VALIDATION`（非重试、**零 provider 请求**），不再把确定性的输入问题谎报成可重试的 503。**频率主张修正（Batch 7 现测）**：原记「≈9283 est tokens」实为**字符数**（9235 chars → 7597 est tokens < 8192）⇒「内置角色 100% 复现」不成立；真实边界是**预览消息 > ~575 CJK 字**（内置 elysia 余量）或档案更大时确定性失败 | USER | MEDIUM | E1+**E2(7)** | **GUARDED** `558503be` `TRUTHFULNESS` | ✅ Batch 7 |
 | **KB-8** | tokenizer NORMAL 态 `_pending` / `_held` 缓冲**无上界**（长无换行段落可撑到 MB 级） | INTERNAL | LOW | E1 | **OPEN** | 小修 |
 | **F13** | 系统注入文本（唤醒词）被当作「用户消息」参与记忆提取 / mood 判定 | USER | LOW | E1 | **OPEN** | 小修 |
 | **P2-01r** | 会话列表 `list_all` 仍预取 200 ⇒ **第 201+ 条不可分页/搜索**；显式 session 过期无级联清理 worker | USER | MEDIUM | E1 | **OPEN** | Batch 4 备选 |
@@ -44,6 +44,7 @@
 | **KB-11** | **Batch 6 Challenger F-1**：`CharacterService._retarget_default_character` 的重试循环用 `user_identity_store.get()`（**缓存**）取 revision，而冲突路径刻意不刷缓存 ⇒ 权威模式下并发改档案时 3 轮重放同一个 expected、必然 `RevisionConflictError`（实测 observed = `[(1, False, 2)]*3`，fail-closed 无数据损坏，但归档默认角色会假失败）。本批新带的 `outcome.current_revision` 在这条路径**无消费者** | INTERNAL | LOW | E2(6) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 零散（改角色归档写链） |
 | **F17** | 可选节点失败时任务仍报 `COMPLETED`（文案同时含「已完成」与失败列表）——引擎终态定义问题 | INTERNAL | MEDIUM | E1 | **OPEN** → `PD-6` | 需语义决策 |
 | **F3** | `plan_too_large` 语义重构（需新枚举值 ⇒ 触契约可达性门禁） | INTERNAL | LOW | E1 | **OPEN** → `PD-5` | 需契约决策 |
+| **KB-12** | **Batch 7 Challenger W1/W2**（预览本地窗口判定的误差带）：`estimate_tokens` 是字符启发式，**对 CJK 偏高、对 JSON/代码偏低** —— 实测 est 8329 vs qwen 真值 7921（偏高 ⇒ 可能**误拒**一个勉强装得下的预览）、est 7302 vs 真值 12212（偏低 ⇒ 在强制窗口 provider 上仍可能 400 → 503）。修它需要真 tokenizer（§15/§16 明示不在 Batch 7 范围），且该 estimator 是 chat 与预览的共享底座 | USER | LOW | E2(7) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 需 tokenizer 决策 |
 
 ### 1.3 Runtime / Observability（TRUTHFULNESS 主表，见 §3）
 
@@ -58,6 +59,7 @@
 | **F5** | workflow 模型 reporter 缺（debug 只报主模型 `llm_model`，不报 task/workflow 用的模型） | ADMIN | LOW | E1 | **OPEN** | Batch 4-B 可选 |
 | **OBS-1** | 间歇性 xdist worker 死亡（8 轮 soak 中 1 次，且那轮被并发改动污染） | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定向 soak |
 | **OBS-2** | `context_window` 六家 provider 数值为**估算值**（只影响 prompt 截断时机，不影响正确性） | DEPLOYMENT | LOW | E1 | **OPEN**（校准） | 零散 |
+| **KB-13** | **Batch 7 Challenger W3 + 主 Agent E3**：`providers.yaml::llm.ollama.context_window = 8192` 与实测 ollama 0.24.0 默认 `num_ctx = 4096` **不一致**，且 ollama **超窗时静默截断并返回 200**（不报 400）⇒「装得下声明窗口」是**必要非充分**条件；影响 chat 与预览**两者**（人设被悄悄削掉）。同时解释了 F8 原始登记里「provider 400」为何在本地 ollama 上复现不出来。**注**：本条反驳 `OBS-2` 括号里的「不影响正确性」 | DEPLOYMENT | MEDIUM | E3(7) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` `TRUTHFULNESS` | owner 决策（改它会全局改 chat 截断时机） |
 | **F18r** | Mongo 补投对坏文档：永久 `delivered=False` + 每次启动告警，**无人工清理入口** | ADMIN | LOW | E1 | **OPEN** | 零散 |
 | **N-6** | `docs/architecture/invariants.md` §7 关于 `test_doc_counts` 的那行已过期 | INTERNAL | LOW | E1 | **OPEN**（文档） | 顺手 |
 | **N-7** | `scripts/clean_db.py` docstring 说常量「给测试当守卫用」，实际守卫不读它 | INTERNAL | LOW | E1 | **OPEN**（文档） | 顺手 |
@@ -122,6 +124,7 @@
 |---|---|---|---|---|
 | **GR-1** | **N-5**：文档数字门禁范围**硬编码三份文档** ⇒ `docs/architecture.md:372` 的「43 个 @property」（真值 46）永不被检查 | LOW | E1 | **OPEN** |
 | **GR-2** | **N-14**：`Module/config/tests/test_preflight.py` 两条弱用例（`test_minimax_key_present_passes` 随 ambient `.env` 走两条路径；`test_c1_*` 只测 helper） | LOW | E1 | **OPEN** |
+| **KB-14** | **Batch 7 副产物**：`core/tests/fake_llm.py` 的故障注入路径 `from Module.llm.errors import RateLimitError/ServiceUnavailableError` —— **该模块全仓不存在**（无 `Module/llm/errors.py`）⇒ `fault="http_429"` / `fault="http_503"` 会以 `ModuleNotFoundError` 结束而不是注入 429/503（当前无调用点，故未暴露）。与 F8 无关，本批不动测试替身 | LOW | E1 | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` |
 | **GR-3** | **N-15**：`EXPECTED_INDEX_OPTIONS` 有 **4 条 `unique` 未登记**（`generations.generation_id_1`/`desktop_calls.call_id_1`/`idempotency.conversation_id_1_client_request_id_1`/`character_instances.owner_user_id_1_character_id_1_canonical_1`）⇒ 这 4 条索引的选项**不被比对**。**Challenger 复核后降级**：`check_schema_drift` 从不 raise、冲突只 `logger.error`（"只报告不处置"就是实现本身）⇒ 补登记是**低风险机械收尾**，不是产品决策（`PD-3` 降为形式确认） | LOW | E2+E1 | **OPEN**（机械收尾：补 4 条 + 删 4 条记账） |
 | **GR-24** | **同表的新盲点（Challenger 发现）**：`_option_mismatches` **不比对 `partialFilterExpression`** ⇒ `character_instances.owner_user_id_1_character_id_1_canonical_1` 这类**部分唯一索引**只能"半登记"：库里是**普通唯一**索引（同样 `unique:true`）时**不报冲突**，而 `create_index(partialFilterExpression=…)` 必抛 ⇒ 仓储 `_db` 永久 None。GR-3 的解除条件（"确认线上该索引确为 unique"）**不足以**关闭它 | MEDIUM | E2 | **OPEN**（需独立的"部分索引"登记语义） |
 | **GR-25** | **Batch 6 Challenger F-2/F-4**（测试鉴别力）：① `core/character/tests/test_archive_consistency.py::_ConflictOnceStore` 是**无 repo 的本地模式**（缓存即权威），它覆盖的"冲突后重试成功"在**权威模式**不可复现 ⇒ 该路径 fake-green；② `core/input/tests/test_me_identity_failclosed.py::test_put_me_rejects_stale_revision` 用**单个 store**（winner 即自己 ⇒ 缓存已刷新），在"回显 expected / 读缓存 / `expected+1`"三种错误实现下**全绿**，对冲突元数据真值零鉴别力（已在文件内就地标注，真值守卫移到 `test_me_conflict_metadata_authority.py`） | LOW | E2 | **OPEN**（测试保真度；②已标注，①待补权威模式用例） |
@@ -220,6 +223,7 @@
 | ~~API 元数据~~ | ~~**N-3**~~ | ✅ **已修（Batch 6 `616e4993`）**：冲突现值由 repository 在冲突点回读权威库（唯一权威 = Mongo 文档 `revision`）并随 `UserIdentityUpdateOutcome` 携带，`_me_put` 只投影；未知则**省略**该字段（fail-closed）。语义 = 响应构造期的权威现值 | 守卫 `core/input/tests/test_me_conflict_metadata_authority.py`（16，修前 8 红）+ `tests/real_mongo/test_real_identity_conflict_metadata.py`（3，修前 3 红，含跨进程 writer）+ 不变量 CM1–CM5（`invariants.md` §3.3） | — | — |
 | ~~provider 能力~~ | ~~**N-10**~~ | ✅ **已修（Batch 5 `c70312de`）**：capability 真相收敛到各 registry 的 `_UNIMPLEMENTED_PROVIDERS`（`is_implemented()` 与 `create()` 守卫同常量），preflight/`--full`/`/api/providers` 一律问它 | 守卫 `Module/config/tests/test_preflight_provider_capability.py`（15）+ `core/input/tests/test_provider_registry.py`（修前 10 红） | — | — |
 | ~~provider 探测~~ | ~~**F6**~~ | ✅ **已修（Batch 5 `7ef3202b`）**：缺省目标读运行期句柄 `agent.stt.model`（未连接才回退 config） | 守卫 `core/input/tests/test_provider_test_target_authority.py`（8，含真实 `switch_stt` A→B；修前 5 红） | — | — |
+| ~~预览窗口~~ | ~~**F8**~~ | ✅ **已修（Batch 7 `558503be`）**：预览组装此前**不传** `prompt_budget_tokens` ⇒ 超**声明**窗口的请求照发，两类 provider 都受害——强制窗口类：provider 400 → 折成 **retryable 的 503**（"稍后重试"是谎报）；截断类（本机 ollama 0.24 实测）：200 + **静默截断**，人设被悄悄削掉。现按 **resolved runtime model** 的窗口取 canonical 预算；裁完仍装不下则**本地** 400 `CHARACTER_VALIDATION`，**零 provider 请求** | 守卫 `core/input/tests/test_character_preview_window.py`（8，修前 5 红；路由级 = `POST /api/characters/preview` + 窗口约束 stub）+ 不变量 PW1–PW6（`invariants.md` §1.1） | — | — |
 | ~~面板标志~~ | ~~**F7**~~ | ✅ **已修（Batch 5 `87cc7e38`）**：`Agent.stt_ok` 改为派生属性（`_stt is not None`），与 capabilities/`/debug` 同源；粘性槽位 `_stt_ok` 已删。**"对象非空不代表可用"经复核不成立**（实例化受 capability 门控；`available` 的既有判据就是这个） | 守卫 `core/agent/tests/test_service_availability_truthfulness.py`（8；修前 2 红） | — | — |
 | 门禁 | **N-15** | “13 个集合无漂移” | 4 条 `unique` 从未参与比对 | DEPLOYMENT | MEDIUM |
 | 门禁（已修） | N-4/N-8 | — | Batch 3.6 已 GUARDED，且守卫本身又被 Challenger 补强 | — | — |
@@ -259,6 +263,7 @@
 | **N-1 / N-11** | `/ready` 探 ping 假绿 + 装载失败无可查状态（同一因果链） | **GUARDED** `82b80e2e` + `fc648e20`；PD-1 契约落纸 `invariants.md` §3.1（R5/R6） |
 | **N-4 ≡ N-13** | `EXPECTED_INDEX_OPTIONS` 无表级 AST 守卫 | **GUARDED** `1382ae43` + `34b0faf6`（选项键集，Challenger F-A1） |
 | **N-8**(guard) | B3-CB-7 缺回归守卫 | **GUARDED** `6c559816`+`210e9c37`+`36bb5bcf`+`cc413eb4` |
+| **F8** | 预览超声明窗口照发 → 强制窗口类 provider 400 折成 **retryable 的 503**（谎报可恢复）；截断类 provider 静默截断 | **GUARDED** `558503be`；不变量 PW1–PW6（`invariants.md` §1.1）；守卫 `core/input/tests/test_character_preview_window.py`（8，修前 5 红） |
 | **F9** | Batch 2 的 F401 / CI / privacy guard | 已由 Batch 2 完成（见其执行记录） |
 | **M19 / M20** | resume 后 pause 被销毁 / cancel 规划期不推终态 | FIXED（E2/E3，`bb69485`…`5aa7368`） |
 | **LoggerFactory** | 被取代的旧设计（stdout 污染对话流） | 已删（2026-09-12），`get_caller_logger` 迁 `Module/_common` |
