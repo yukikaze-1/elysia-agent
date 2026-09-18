@@ -686,51 +686,64 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         return True
 
     async def _handle_turn_exception(self, e: BaseException) -> None:
-        """process 异常收口：区分 LLM 层错误 / 依赖不可用 / 内部错误并发射 generation.failed。"""
+        """process 异常收口：区分 LLM 层错误 / 依赖不可用 / 内部错误并发射 generation.failed。
+
+        Batch 11（§33/CF1）：这是与 `_handle_interrupt` **同一个 logical boundary** 的
+        另一入口——一旦本回合开始做终态收口，就不得被后续取消/异常打断在半路。
+        `turn_failed` 广播与 `generation.mark` 都是可挂起的外部 I/O；落在它们上面的
+        取消（生产形态：provider 失败正在收尾时用户按停止按钮）此前会直接穿出
+        `process()`——在 `except` 块里抛出的异常**不会**被兄弟 `except` 子句接住，
+        于是相位永久停在 THINKING、`run_state` 仍是 RUNNING ⇒ Agent 永久失聪。
+        因此把 canonical 收口放进 `finally`：无论上面走完、抛异常还是被取消，
+        相位都必须落到稳定终态。
+        """
         from core.character.service import CharacterBusyError
         from core.storage.base import StorageUnavailableError
 
-        if isinstance(e, CharacterBusyError):
-            # BE-STAGEH-01：破坏性变更（reset）在途，本回合不得开始——稳定公开错误，
-            # 客户端可重试（不泄漏实例内部状态）。
-            logger.warning("<<< 角色实例正在执行破坏性变更，拒绝开始 generation")
-            label = "角色实例正忙"
-            code = "CHARACTER_BUSY"
-            retryable = True
-        elif isinstance(e, StorageUnavailableError):
-            # P0-3：权威身份/角色存储不可用时 fail-closed——不伪造身份继续聊天。
-            logger.exception("<<< 存储依赖不可用，回合失败")
-            label = "存储不可用"
-            code = "STORAGE_UNAVAILABLE"
-            retryable = True
-        elif _is_llm_layer_error(e):
-            logger.exception("<<< LLM 调用异常，回退到 IDLE")
-            label = "LLM 调用失败"
-            code = "GENERATION_TIMEOUT" if isinstance(e, asyncio.TimeoutError) \
-                else "GENERATION_PROVIDER_UNAVAILABLE"
-            retryable = True
-        else:
-            logger.exception("<<< 处理回复时内部错误，回退到 IDLE")
-            label = "内部错误"
-            code = "INTERNAL"
-            retryable = False
-        err_msg = str(e)[:200]
-        if self._generation_ctx is not None:
-            try:
-                await self._output.turn_failed(
-                    code, err_msg, retryable, label, self._generation_ctx)
-            except Exception:
-                logger.debug("turn_failed 发射失败", exc_info=True)
-            self._turn_failed_emitted = True
-            if self._generation_registry is not None:
+        try:
+            if isinstance(e, CharacterBusyError):
+                # BE-STAGEH-01：破坏性变更（reset）在途，本回合不得开始——稳定公开错误，
+                # 客户端可重试（不泄漏实例内部状态）。
+                logger.warning("<<< 角色实例正在执行破坏性变更，拒绝开始 generation")
+                label = "角色实例正忙"
+                code = "CHARACTER_BUSY"
+                retryable = True
+            elif isinstance(e, StorageUnavailableError):
+                # P0-3：权威身份/角色存储不可用时 fail-closed——不伪造身份继续聊天。
+                logger.exception("<<< 存储依赖不可用，回合失败")
+                label = "存储不可用"
+                code = "STORAGE_UNAVAILABLE"
+                retryable = True
+            elif _is_llm_layer_error(e):
+                logger.exception("<<< LLM 调用异常，回退到 IDLE")
+                label = "LLM 调用失败"
+                code = "GENERATION_TIMEOUT" if isinstance(e, asyncio.TimeoutError) \
+                    else "GENERATION_PROVIDER_UNAVAILABLE"
+                retryable = True
+            else:
+                logger.exception("<<< 处理回复时内部错误，回退到 IDLE")
+                label = "内部错误"
+                code = "INTERNAL"
+                retryable = False
+            err_msg = str(e)[:200]
+            if self._generation_ctx is not None:
                 try:
-                    await self._generation_registry.mark(
-                        self._generation_ctx.generation_id,
-                        status="failed", finish_reason="error",
-                        error={"code": code, "message": err_msg, "retryable": retryable})
+                    await self._output.turn_failed(
+                        code, err_msg, retryable, label, self._generation_ctx)
                 except Exception:
-                    logger.debug("generation mark failed 失败", exc_info=True)
-        await self._handle_interrupt()
+                    logger.debug("turn_failed 发射失败", exc_info=True)
+                self._turn_failed_emitted = True
+                if self._generation_registry is not None:
+                    try:
+                        await self._generation_registry.mark(
+                            self._generation_ctx.generation_id,
+                            status="failed", finish_reason="error",
+                            error={"code": code, "message": err_msg, "retryable": retryable})
+                    except Exception:
+                        logger.debug("generation mark failed 失败", exc_info=True)
+        finally:
+            # ★ CF1/CF2：终态收口必须完成（`_handle_interrupt` 自身也是取消安全的）。
+            await self._handle_interrupt()
 
     async def process(self, user_message: str = "", user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None,
@@ -1333,6 +1346,22 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
     async def _handle_interrupt(self, source: str | None = None) -> None:
         """中断后的清理：取消 TTS 任务、回到 IDLE 状态。
 
+        Batch 11（KB-25）：本方法是**被取消回合的终态 owner**，因此它的"逻辑终态"
+        这一段必须对**重复取消**免疫。结构上分两层：
+
+        - **best-effort 段**（`try`）：对外帧（`turn_cancelled`）、generation 终态
+          落库、desktop 在途调用取消、TTS 清理、typing 关闭——全是可挂起的外部
+          I/O，**允许被取消/失败**（CF4：External cleanup must not block logical
+          terminality）；
+        - **逻辑终态**（`finally`）：`phases.handle_interrupt()` 经 canonical 边把
+          相位推离活跃区并广播 `STATE_CHANGE → IDLE`（pending drain 的唯一触发点）。
+          放进 `finally` 之后，上面任何一段 await 上的取消/普通异常都阻止不了它。
+
+        为什么不是 `asyncio.shield(整个 handler)`：那会让清理逃出 `process()` 的
+        `async with self._process_lock`（旧回合的 cleanup 与新回合交错，破坏 TH3），
+        且 shield 的 inner task 无人 await 时会变成 detached 清理任务（§29/§30）。
+        这里保护的是**同步的一小段**，没有新增任何 task。
+
         Args:
             source: 中断来源（cancel_current 存入 _interrupt_source，此处消费；
                 显式传入优先）。Task 9 mark 拆分据此区分「语音打断」与「断线」。
@@ -1342,37 +1371,40 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._interrupt_source = None
         if self.status.is_completely_idle:
             return
-        # 批次 3 review 修复（F9）：本回合已 mark(completed)（turn_completed 已发、
-        # TTS 窗口内打断）→ 不再发 CANCELLED/重标 cancelled——客户端已收 completed，
-        # 打断仅做 TTS 清理回 IDLE。
-        if self._generation_completed:
+        try:
+            # 批次 3 review 修复（F9）：本回合已 mark(completed)（turn_completed 已发、
+            # TTS 窗口内打断）→ 不再发 CANCELLED/重标 cancelled——客户端已收 completed，
+            # 打断仅做 TTS 清理回 IDLE。
+            if self._generation_completed:
+                self._executing_tools.clear()
+                self._tts_mgr.cancel_all()
+                await self._output.typing(False)
+                logger.debug("Interrupt after generation.completed — 保持 completed，仅清理")
+                return
+            # 批次 2：活动 generation 且未被错误路径覆盖 → v2 发 generation.failed{CANCELLED}
+            # （终态唯一：错误路径已发 failed 则不重发；v1 不发，保持现状打断无 ❌）
+            if self._generation_ctx is not None and not self._turn_failed_emitted:
+                try:
+                    await self._output.turn_cancelled(self._generation_ctx)
+                    self._turn_failed_emitted = True
+                except Exception:
+                    logger.debug("turn_cancelled 发射失败", exc_info=True)
+                # 批次 3（BE-024）：中断来源分派——disconnect → interrupted；其余
+                # （vad/button/新输入等）→ cancelled。终态唯一：错误路径已标 failed 不覆盖。
+                if self._generation_registry is not None:
+                    try:
+                        status = "interrupted" if source == "disconnect" else "cancelled"
+                        await self._generation_registry.mark(
+                            self._generation_ctx.generation_id, status=status)
+                    except Exception:
+                        logger.debug("generation mark %s 失败", status, exc_info=True)
+            # 批次 4（spec §8）：取消在途 desktop 调用（interrupt 语义，无桥/无在途则 no-op）
+            await self._cancel_desktop_calls()
             self._executing_tools.clear()
             self._tts_mgr.cancel_all()
             await self._output.typing(False)
+        finally:
+            # ★ CF1/CF2：逻辑终态。`handle_interrupt` 幂等（IDLE 时 no-op），因此
+            # "正常走完"与"被打断后补做"是同一段代码，不会重复广播 terminal 事件。
             await self.phases.handle_interrupt()
-            logger.debug("Interrupt after generation.completed — 保持 completed，仅清理")
-            return
-        # 批次 2：活动 generation 且未被错误路径覆盖 → v2 发 generation.failed{CANCELLED}
-        # （终态唯一：错误路径已发 failed 则不重发；v1 不发，保持现状打断无 ❌）
-        if self._generation_ctx is not None and not self._turn_failed_emitted:
-            try:
-                await self._output.turn_cancelled(self._generation_ctx)
-                self._turn_failed_emitted = True
-            except Exception:
-                logger.debug("turn_cancelled 发射失败", exc_info=True)
-            # 批次 3（BE-024）：中断来源分派——disconnect → interrupted；其余
-            # （vad/button/新输入等）→ cancelled。终态唯一：错误路径已标 failed 不覆盖。
-            if self._generation_registry is not None:
-                try:
-                    status = "interrupted" if source == "disconnect" else "cancelled"
-                    await self._generation_registry.mark(
-                        self._generation_ctx.generation_id, status=status)
-                except Exception:
-                    logger.debug("generation mark %s 失败", status, exc_info=True)
-        # 批次 4（spec §8）：取消在途 desktop 调用（interrupt 语义，无桥/无在途则 no-op）
-        await self._cancel_desktop_calls()
-        self._executing_tools.clear()
-        self._tts_mgr.cancel_all()
-        await self._output.typing(False)
-        await self.phases.handle_interrupt()
         logger.debug("Interrupt complete (source=%s) — agent is IDLE", source or "unknown")

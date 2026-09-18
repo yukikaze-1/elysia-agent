@@ -230,19 +230,40 @@ class FSMBackedPhaseController(CognitivePhaseController):
             await self._status._notify("idle")
 
     async def handle_interrupt(self) -> None:
+        """中断状态转换——进入 INTERRUPTED，50ms 后回到 IDLE（Batch 11：取消安全 + 幂等）。
+
+        `transition` / `bus.post` 是**同步**的，所以"相位离开活跃区"本身不会被取消
+        打断；会被打断的是中间那两段 await（`_notify("interrupted")` 与 UI 可观测
+        延迟 `asyncio.sleep(0.05)`）。因此把 **IDLE 落位 + IDLE 广播 + idle 通知**
+        放进 `finally`：无论这两段 await 是正常返回、抛普通异常、还是被**第二发**
+        `task.cancel()` 打断，相位都必须落到 IDLE——这就是 CF1/CF2 的"逻辑终态"。
+        50ms 延迟**保持可取消**：它只是 UI 可观测性，不该为它 shield 整个 handler
+        （§20/§28：临界区只保留"建立稳定逻辑终态"那一小段同步代码）。
+
+        幂等（§24）：完全空闲（IDLE）时直接返回——既避开 `IDLE → INTERRUPTED`
+        （转换表里的**非法边**，`core/schema/agent.py`）抛 `ValueError`，也让
+        "收口完成后又被调用一次"成为无副作用的 no-op，而不是广播出第二组
+        terminal 事件（§50）。
+        """
         from core.schema.event import StateChangeData
         from core.utils import get_request_id
 
+        if self._fsm.state == AgentState.IDLE:
+            return
         self._fsm.transition(AgentState.INTERRUPTED)
         self._bus.post(
             StateChangeData(state=AgentState.INTERRUPTED, request_id=RequestId(get_request_id())),
             priority=EventPriority.STATE_CHANGE,
         )
-        await self._status._notify("interrupted")
-        await asyncio.sleep(0.05)
-        self._fsm.transition(AgentState.IDLE)
-        self._bus.post(
-            StateChangeData(state=AgentState.IDLE, request_id=RequestId(get_request_id())),
-            priority=EventPriority.STATE_CHANGE,
-        )
-        await self._status._notify("idle")
+        try:
+            await self._status._notify("interrupted")
+            await asyncio.sleep(0.05)
+        finally:
+            # ★ 逻辑终态：同步落位 + 广播。这一小段没有 await ⇒ 任何后续取消都打不断它。
+            if self._fsm.state != AgentState.IDLE:
+                self._fsm.transition(AgentState.IDLE)
+                self._bus.post(
+                    StateChangeData(state=AgentState.IDLE, request_id=RequestId(get_request_id())),
+                    priority=EventPriority.STATE_CHANGE,
+                )
+            await self._status._notify("idle")
