@@ -173,7 +173,8 @@ async def test_repo_accepts_null_pronouns_and_reads_it_back():
     await repo.bootstrap_if_absent(
         UserIdentity(userId="usr_local_default", displayName="妖梦"))
 
-    updated = await repo.update_if_revision("usr_local_default", 1, {"pronouns": None})
+    updated = (await repo.update_if_revision(
+        "usr_local_default", 1, {"pronouns": None})).identity
     assert updated is not None
     assert updated.pronouns is None
     # 直读文档：null 确实落库（而不是被悄悄改写）
@@ -239,7 +240,7 @@ def test_local_store_accepts_null_pronouns_and_survives_reload(tmp_path):
     store.bootstrap("妖梦")
 
     import asyncio
-    updated = asyncio.run(store.update_if_revision(1, {"pronouns": None}))
+    updated = asyncio.run(store.update_if_revision(1, {"pronouns": None})).identity
     assert updated is not None
     assert updated.pronouns is None
     assert updated.revision == 2

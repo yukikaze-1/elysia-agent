@@ -27,6 +27,14 @@ N-11（failure truth 归属，Batch 4）：装载失败是**本 store 的事实*
 「ping 通」**不**蕴含「身份已装载」：库里文档不合域模型时 repo 连得好好的，而
 `_cached` 恒为 None。故 `/ready` 的 identity 门禁必须读 `is_available`，读
 `health_check()` 会假绿（N-1）。
+
+## 冲突元数据的权威（N-3 / Batch 6）
+
+CAS 冲突时「现在到第几版」的**唯一权威**是 Mongo 文档的 `revision` 字段，由
+repository 在冲突发生点回读并随 `UserIdentityUpdateOutcome.current_revision` 带上来
+（见 `core/storage/user_identity_repo.py`）。本 store 的 `_cached` 是**读缓存，不是
+权威**：多 writer 场景下它按定义就是陈旧的，409 的 `details.currentRevision`
+**绝不**从它取值。同一道理禁止 `expected + 1`（可能跳过多次写入）。
 """
 
 from __future__ import annotations
@@ -38,6 +46,7 @@ from pathlib import Path
 
 from core.profile.user_identity import (
     UserIdentity,
+    UserIdentityUpdateOutcome,
     LOCAL_DEFAULT_PRONOMS,
     LOCAL_DEFAULT_USER_ID,
 )
@@ -210,28 +219,40 @@ class UserIdentityStore:
             return identity
 
     async def update_if_revision(self, expected_revision: int,
-                                 updates: dict[str, object]) -> UserIdentity | None:
+                                 updates: dict[str, object]) -> UserIdentityUpdateOutcome:
         """CAS 更新：仅当当前 revision == expected_revision 时应用并递增。
 
         Updates 白名单为 displayName/preferredAddress/pronouns/locale/timezone/
         defaultCharacterId/initialized；不接收 userId/revision/createdAt/updatedAt。
-        冲突返回 None（调用方抛 USER_PROFILE_REVISION_CONFLICT）。
+
+        Returns:
+            `UserIdentityUpdateOutcome`：应用成功 → `identity` 为写后身份（并刷新本
+            store 缓存）；冲突 → `identity is None`，`current_revision` = **权威库
+            现值**（N-3 / Batch 6：不再回落到进程内缓存，也不做 `expected + 1`）。
+            调用方据此映射 409 `details.currentRevision`；`None` 表示权威现值未知
+            （记录不存在），此时必须**省略**该字段而不是伪造。
+
+        冲突**不刷新缓存**：409 是报告失败，不是隐式重试或静默 refresh（Batch 6 §38）；
+        缓存新鲜度是另一个问题（E1），本批不解决。
 
         repo 已装配时以 Mongo 为权威（CAS 原子）；权威身份不可用 → fail-closed
         （StorageUnavailableError → 503），不写本地造成「档案已更新」的假象。
+        冲突后的权威回读发生在 repository 内（冲突产生点携带真相），回读失败同样
+        以 StorageUnavailableError 冒泡——绝不回退成陈旧缓存值。
         """
         normalized = self._normalize_updates(updates)
         repo = self._repo
         if repo is not None:
             if not self.is_available:
                 raise StorageUnavailableError("用户身份权威存储不可用")
-            new = await repo.update_if_revision(
+            outcome = await repo.update_if_revision(
                 LOCAL_DEFAULT_USER_ID, expected_revision, normalized)
-            if new is not None:
+            if outcome.identity is not None:
                 with self._lock:
-                    self._cached = new
-            return new
+                    self._cached = outcome.identity
+            return outcome
         return self._update_local(expected_revision, normalized)
+
 
     # ---- 内部 ----
 
@@ -270,21 +291,25 @@ class UserIdentityStore:
         return normalized
 
     def _update_local(self, expected_revision: int,
-                      updates: dict[str, object]) -> UserIdentity | None:
-        """无 repo 时的内存 + JSONL CAS（单进程）。"""
+                      updates: dict[str, object]) -> UserIdentityUpdateOutcome:
+        """无 repo 时的内存 + JSONL CAS（单进程）。
+
+        本地模式下**缓存就是权威**（没有第二个 writer），故冲突时 `current_revision`
+        取当前缓存值——这不是"用缓存冒充权威"，而是该模式下唯一的权威来源。
+        """
         with self._lock:
             cur = self.get()
             if cur is None:
-                return None
+                return UserIdentityUpdateOutcome()
             if cur.revision != expected_revision:
-                return None
+                return UserIdentityUpdateOutcome(current_revision=cur.revision)
             new = cur.model_copy(deep=True)
             for key, value in updates.items():
                 setattr(new, key, value)
             new.touch()
             self._cached = new
             self._persist(new)
-            return new
+            return UserIdentityUpdateOutcome(identity=new)
 
     def _load_from_file(self) -> UserIdentity | None:
         """读本地 JSON 缓存文件；解析失败 → None（**刻意**不 raise，见下）。

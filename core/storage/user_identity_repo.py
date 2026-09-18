@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 
 from Module.database.documentdb import DocumentDBBackend, DocumentDBFactory
-from core.profile.user_identity import UserIdentity
+from core.profile.user_identity import UserIdentity, UserIdentityUpdateOutcome
 from core.schema.utils import now_iso
 from core.storage.base import is_duplicate_key, Repository, StorageUnavailableError
 
@@ -147,10 +147,30 @@ class UserIdentityRepository(Repository):
         user_id: str,
         expected_revision: int,
         updates: dict[str, object],
-    ) -> UserIdentity | None:
+    ) -> UserIdentityUpdateOutcome:
         """CAS 更新：filter 含 revision==expected，$set 同一次原子操作内递增版本。
 
-        返回 None 表示 expectedRevision 已过期（调用方映射 409）。未知/只读字段跳过。
+        返回 `UserIdentityUpdateOutcome`：
+        - 命中 → `identity` = 写后回读的身份；
+        - 未命中 → `current_revision` = **权威库当场回读**的现值（调用方据此报 409）。
+
+        **N-3 / Batch 6（冲突元数据真值）**：旧签名返回 `UserIdentity | None`，`None`
+        把"冲突"与"现值是多少"一起丢掉，路由层只好回头问进程内缓存——多 writer 时
+        那是陈旧值，于是 409 谎报 revision。真实 revision 的**唯一权威**是 Mongo 文档
+        的 `revision` 字段；冲突产生点（本方法）知道回读它的时机与语义，故由此处回读、
+        由此处携带，而不是让 route/store 各自猜一次。
+
+        **语义（必须写清，防止被读成更强的承诺）**：`current_revision` 是**构造冲突
+        结果那一刻**可观察到的权威现值（response-time），不保证等于"击败本次写入的
+        那个 writer 的 revision"——Mongo 的 `update_one` 在 filter 未命中时只返回计数
+        （`matched_count=0`），**拿不到**冲突瞬间的 actual revision（Batch 6 §12：不许
+        用额外 read 假装拥有这种更强语义）。并发写者 C 在 CAS 与回读之间提交时，
+        上报的是 C 之后的值——这正是客户端恢复所需要的值。
+
+        **只读、无副作用**：回读走 `get()`（纯读，不 bump/reload/repair）；回读失败
+        抛 `StorageUnavailableError`（由调用方 fail-closed 成 503），**绝不**回退成
+        缓存值或 `expected + 1`。记录不存在（外部删除）→ `current_revision=None`
+        （"不知道"），不伪造。
         """
         if self._db is None:
             raise StorageUnavailableError("UserIdentityRepository 未连接")
@@ -172,5 +192,12 @@ class UserIdentityRepository(Repository):
             reason="UserIdentityRepository.update_if_revision CAS 失败",
         )
         if modified <= 0:
-            return None
-        return await self.get(user_id)
+            # CAS 未命中：**当场**回读权威现值（唯一权威 = Mongo 文档 revision）。
+            # 未命中既可能是 revision 过期，也可能是文档已不存在——两者都经同一次
+            # 回读区分：读不到 ⇒ None = 未知（§31：不把 not-found 伪装成有值的冲突）。
+            fresh = await self.get(user_id)
+            return UserIdentityUpdateOutcome(
+                current_revision=None if fresh is None else fresh.revision)
+        identity = await self.get(user_id)
+        return UserIdentityUpdateOutcome(identity=identity)
+

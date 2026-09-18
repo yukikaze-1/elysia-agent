@@ -816,10 +816,10 @@ async def _make_default(svc: CharacterService, store: UserIdentityStore) -> str:
     """建一个 custom 角色并设为默认角色（手法同 test_archive_consistency.py）。"""
     store.bootstrap("妖梦")
     character_id = await _create(svc)
-    updated = await UserIdentityStore.update_if_revision(
+    outcome = await UserIdentityStore.update_if_revision(
         store, 1, {"defaultCharacterId": character_id, "initialized": True}
     )
-    assert updated is not None
+    assert outcome.identity is not None
     return character_id
 
 

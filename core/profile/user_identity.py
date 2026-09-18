@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
 
 from core.schema.utils import now_iso
@@ -44,3 +46,38 @@ class UserIdentity(BaseModel):
         """更新 updatedAt + 递增 revision（写前调用）。"""
         self.updatedAt = now_iso()
         self.revision += 1
+
+
+@dataclass(frozen=True)
+class UserIdentityUpdateOutcome:
+    """用户身份 CAS 更新的结果（N-3 / Batch 6：冲突必须携带权威现值）。
+
+    旧形状是裸 `UserIdentity | None`——`None` 把「谁赢了、现在到第几版」压成了一个
+    布尔，于是路由只能回头去问**进程内缓存**，把陈旧 revision 当成权威现值上报
+    （§18/§34：真实 revision 就是在这一层丢掉的）。本类型把冲突产生点知道的真相
+    原样带上去，上层只做投影，不重新推导。
+
+    三个来源三个答案，互不冒充（Conflict Metadata Truthfulness）：
+
+    | 字段 | 是什么 | 是不是权威 |
+    |---|---|---|
+    | 调用方的 `expected_revision` | 客户端声称的状态（请求负载） | ❌ |
+    | `UserIdentityStore` 的进程内缓存 | 上次装载/写入的快照，可陈旧 | ❌ |
+    | `current_revision` | CAS 未命中时从**权威库当场回读**的现值 | ✅（响应构造期） |
+
+    `current_revision is None` 表示**不知道**（记录已不存在或回读失败）——
+    fail-closed：调用方必须省略该元数据，而不是回退成缓存值或 `expected + 1`。
+
+    Attributes:
+        identity: 应用成功后的新身份；未应用（冲突）时为 None。
+        current_revision: 冲突时权威库的当前 revision；未知时为 None。
+    """
+
+    identity: UserIdentity | None = None
+    current_revision: int | None = None
+
+    @property
+    def applied(self) -> bool:
+        """本次 CAS 是否真的写入了（False = 冲突，按 `current_revision` 报告现状）。"""
+        return self.identity is not None
+

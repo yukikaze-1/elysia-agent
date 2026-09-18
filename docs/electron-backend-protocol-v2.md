@@ -240,7 +240,7 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `CHARACTER_PREVIEW_FAILED` | 503 | true | **落地**：角色预览暂不可用（`retryable=true` + `retryAfterMs=1000`，`character_routes.py:117-121`） |
 | `CHARACTER_STORAGE_UNAVAILABLE` | 503 | true | **落地**：角色存储不可用（Mongo 离线 fail-closed；`retryable=true` + `retryAfterMs=1000`，`character_routes.py:122-126`） |
 | `USER_PROFILE_NOT_FOUND` | 404 | false | **落地**：用户身份未初始化 / 权威存储无档案（`GET /api/me`；P0-3 fail-closed——权威存储不可用时改报 `STORAGE_UNAVAILABLE`，不报本码以免诱使客户端重建画像，`character_routes.py:232-238`） |
-| `USER_PROFILE_REVISION_CONFLICT` | 409 | true | **落地**：`expectedRevision` 已过期（`PUT /api/me` CAS 冲突；`retryable=true` + `retryAfterMs=100`，`details.currentRevision` 可带，`character_routes.py:270-280`） |
+| `USER_PROFILE_REVISION_CONFLICT` | 409 | true | **落地**：`expectedRevision` 已过期（`PUT /api/me` CAS 冲突；`retryable=true` + `retryAfterMs=100`，`details.currentRevision` 可带，`character_routes.py:270-286`）。`currentRevision` = **权威库现值**（repository 在冲突点回读，N-3 / Batch 6）；权威现值未知（记录已不存在 / 回读失败）时该字段**缺省**——不变量见 `docs/architecture/invariants.md` §3.3 |
 
 **数据保护语义**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删——含其 append-only 归档）；生成/TTS 进行中 `activate`/`delete` 活动会话 → 409 `AGENT_BUSY`。
 

@@ -82,11 +82,11 @@ async def test_user_identity_survives_agent_restart():
     try:
         store_a = agent_a.user_identity_store
         assert store_a.get() is not None and store_a.get().revision == 1  # type: ignore[union-attr]
-        updated = await store_a.update_if_revision(
+        outcome = await store_a.update_if_revision(
             1, {"displayName": "妖梦", "preferredAddress": "主人",
                 "pronouns": "她", "initialized": True})
-        assert updated is not None
-        assert updated.revision == 2
+        assert outcome.identity is not None
+        assert outcome.identity.revision == 2
     finally:
         await agent_a.stop()
 
@@ -140,10 +140,10 @@ async def test_restarted_agent_uses_persisted_identity_in_turn_prompt():
     agent_a = _make_agent(db)
     await agent_a.start()
     try:
-        updated = await agent_a.user_identity_store.update_if_revision(
+        outcome = await agent_a.user_identity_store.update_if_revision(
             1, {"displayName": "妖梦", "preferredAddress": "主人",
                 "pronouns": "她", "timezone": "Asia/Shanghai", "initialized": True})
-        assert updated is not None and updated.revision == 2
+        assert outcome.identity is not None and outcome.identity.revision == 2
     finally:
         await agent_a.stop()
 

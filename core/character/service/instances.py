@@ -371,12 +371,14 @@ class CharacterInstanceStateWriteChain(CharacterServiceBase):
             if profile.defaultCharacterId != character_id:
                 # 默认角色不是被归档角色——无需改动，响应沿用既有 None 语义。
                 return None
-            updated = await self.user_identity_store.update_if_revision(
+            outcome = await self.user_identity_store.update_if_revision(
                 profile.revision, {"defaultCharacterId": replacement}
             )
-            if updated is not None:
-                return updated
+            if outcome.identity is not None:
+                return outcome.identity
             # CAS 冲突（并发写档案）→ 重读后重试；耗尽则整体失败。
+            # 冲突现值（outcome.current_revision）在此无消费者：本路径靠重读 store
+            # 缓存重试，不向客户端报 revision。
         raise RevisionConflictError(character_id)
 
 

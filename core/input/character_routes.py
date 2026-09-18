@@ -263,13 +263,19 @@ async def _me_put(request: web.Request) -> web.Response:
         ),
     }
     try:
-        new = await store.update_if_revision(wire.expectedRevision, updates)
+        outcome = await store.update_if_revision(wire.expectedRevision, updates)
     except StorageUnavailableError:
         return _protocol_error_response(
             "STORAGE_UNAVAILABLE", "用户身份存储不可用", 503, retryable=True)
+    new = outcome.identity
     if new is None:
-        current = store.get()
-        details = {} if current is None else {"currentRevision": current.revision}
+        # N-3 / Batch 6：`currentRevision` 只来自**权威库**（repository 在冲突点回读，
+        # 随 outcome 带上来）。此前这里读 `store.get()`——进程内缓存，多 writer 时陈旧，
+        # 于是 409 谎报 revision，客户端按它重试必然再冲突（可死循环）。
+        # `None` = 权威现值未知（记录已不存在/回读失败）→ **省略**该字段，不伪造
+        # （§31/§33：承认不知道，好过报一个旧值）。
+        details = ({} if outcome.current_revision is None
+                   else {"currentRevision": outcome.current_revision})
         return _protocol_error_response(
             "USER_PROFILE_REVISION_CONFLICT",
             "expectedRevision 已过期",

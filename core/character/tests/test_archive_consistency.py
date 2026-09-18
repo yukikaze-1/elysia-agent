@@ -19,6 +19,7 @@ from core.character.service import (
     RevisionConflictError,
 )
 from core.profile.profile_store import UserIdentityStore
+from core.profile.user_identity import UserIdentityUpdateOutcome
 from core.storage.base import StorageUnavailableError
 from core.storage.character_repo import CharacterRepository
 from core.storage.character_revision_repo import CharacterRevisionRepository
@@ -57,10 +58,10 @@ async def _make_default(svc: CharacterService, store: UserIdentityStore) -> str:
     await svc.rev_repo.connect()
     detail = await svc.create(_draft(), owner_user_id="usr_local_default")
     character_id = detail.summary.characterId
-    updated = await UserIdentityStore.update_if_revision(
+    outcome = await UserIdentityStore.update_if_revision(
         store, 1, {"defaultCharacterId": character_id, "initialized": True})
-    assert updated is not None
-    assert updated.defaultCharacterId == character_id
+    assert outcome.identity is not None
+    assert outcome.identity.defaultCharacterId == character_id
     return character_id
 
 
@@ -87,7 +88,7 @@ class _ConflictOnceStore(UserIdentityStore):
         self.calls += 1
         if self.calls == 1:
             await super().update_if_revision(expected_revision, {"displayName": "并发改名"})
-            return None
+            return UserIdentityUpdateOutcome()
         return await super().update_if_revision(expected_revision, updates)
 
 
@@ -95,7 +96,7 @@ class _AlwaysConflictStore(UserIdentityStore):
     """持续 CAS 冲突——重试耗尽。"""
 
     async def update_if_revision(self, expected_revision, updates):  # noqa: ANN001
-        return None
+        return UserIdentityUpdateOutcome()
 
 
 class _DownStore(UserIdentityStore):

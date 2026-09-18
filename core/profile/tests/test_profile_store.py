@@ -44,16 +44,25 @@ async def test_update_if_revision_success():
     store = UserIdentityStore(storage_path=None)
     store.bootstrap("妖梦")
     # bootstrap 后 revision=1
-    result = await store.update_if_revision(1, {"displayName": "妖梦2"})
+    outcome = await store.update_if_revision(1, {"displayName": "妖梦2"})
+    assert outcome.applied is True
+    result = outcome.identity
     assert result is not None and result.displayName == "妖梦2" and result.revision == 2
+    assert outcome.current_revision is None      # 成功路径不带冲突元数据
 
 
 @pytest.mark.asyncio
-async def test_update_if_revision_conflict():
+async def test_update_if_revision_conflict_reports_local_authority():
+    """本地模式冲突：缓存即权威（没有第二个 writer），必须报出它而不是 None。
+
+    N-3 / Batch 6：旧形状返回裸 None，把"现值是多少"丢在 store 内部。
+    """
     store = UserIdentityStore(storage_path=None)
     store.bootstrap("妖梦")
-    result = await store.update_if_revision(99, {"displayName": "x"})  # 过期 revision
-    assert result is None
+    outcome = await store.update_if_revision(99, {"displayName": "x"})  # 过期 revision
+    assert outcome.applied is False
+    assert outcome.identity is None
+    assert outcome.current_revision == 1     # 本地模式的权威就是当前缓存
 
 
 @pytest.mark.asyncio
@@ -61,7 +70,9 @@ async def test_update_if_revision_unknown_field_skipped():
     """C3 修复：未知/非白名单字段跳过（而非 setattr 抛 ValueError → 500）。"""
     store = UserIdentityStore(storage_path=None)
     store.bootstrap("妖梦")
-    result = await store.update_if_revision(1, {"displayName": "妖梦2", "bogus_field": 123})
+    outcome = await store.update_if_revision(
+        1, {"displayName": "妖梦2", "bogus_field": 123})
+    result = outcome.identity
     assert result is not None
     assert result.displayName == "妖梦2"   # 合法字段已应用
     assert result.revision == 2            # touch 正常
@@ -73,7 +84,8 @@ async def test_update_if_revision_readonly_fields_skipped():
     """userId/revision/createdAt/updatedAt 只读——更新时跳过。"""
     store = UserIdentityStore(storage_path=None)
     store.bootstrap("妖梦")
-    result = await store.update_if_revision(1, {"userId": "usr_hacked", "revision": 999})
+    outcome = await store.update_if_revision(1, {"userId": "usr_hacked", "revision": 999})
+    result = outcome.identity
     assert result is not None
     assert result.userId == "usr_local_default"  # 未篡改
     assert result.revision == 2                   # 只 touch 递增，未被 999 覆盖
