@@ -59,7 +59,7 @@
 | **F5** | workflow 模型 reporter 缺（debug 只报主模型 `llm_model`，不报 task/workflow 用的模型） | ADMIN | LOW | E1 | **OPEN** | Batch 4-B 可选 |
 | **OBS-1** | 间歇性 xdist worker 死亡（8 轮 soak 中 1 次，且那轮被并发改动污染） | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定向 soak |
 | **OBS-2** | `context_window` 六家 provider 数值为**估算值**（只影响 prompt 截断时机，不影响正确性） | DEPLOYMENT | LOW | E1 | **OPEN**（校准） | 零散 |
-| **KB-13** | **Batch 7 Challenger W3 + 主 Agent E3**：`providers.yaml::llm.ollama.context_window = 8192` 与实测 ollama 0.24.0 默认 `num_ctx = 4096` **不一致**（主 Agent 亲测：6000 字不传 `num_ctx` → `prompt_eval_count=4096`，HTTP 200；显式 4096→4096、显式 8192 的 9000 字→8192，三截面全 200），且 ollama **超窗时静默截断并返回 200**（不报 400）⇒「装得下声明窗口」是**必要非充分**条件；影响 chat 与预览**两者**（人设被悄悄削掉）。同时解释了 F8 原始登记里「provider 400」为何在本地 ollama 上复现不出来。**注**：本条反驳 `OBS-2` 括号里的「不影响正确性」 | DEPLOYMENT | MEDIUM | E3(7) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` `TRUTHFULNESS` | owner 决策（改它会全局改 chat 截断时机） |
+| **KB-13** | **Ollama runtime context authority mismatch**（旧描述「声明 8192，但实际只有 4096」**不准确，已改写**）：Elysia 用静态 `contextWindow`（`providers.yaml::llm.ollama = 8192`）做 prompt budgeting，而 Ollama 的实际 serving context 是 **runtime allocation**（`num_ctx` / daemon 分配），**不会因为声明 8192 就变成 8192**——声明值 ↔ 运行时分配之间**没有绑定（authority 缺失）**。本机 E3 冷启动 A/B（ollama 0.24.0 / `qwen2.5:3b`；systemd **未配** `OLLAMA_CONTEXT_LENGTH`、service definition 无 `num_ctx` override）：①`ollama stop` 确认卸载后，native `/api/chat` **不传** `options.num_ctx` → `ollama ps` `CONTEXT=4096`、`GET /api/ps` `context_length=4096`；②再次彻底 stop 后显式 `num_ctx=8192` → 两者皆 **8192** ⇒ **静态 model metadata ≠ 当前 Ollama serving window**。后果：可能出现「Elysia budgeting window = 8192 而 Ollama actual serving context = 4096」，且 ollama 超窗是 **HTTP 200 + 静默截断**（不报 400）⇒ **不能依赖 provider error 发现 mismatch**；**preview 与 normal chat 两者都受影响**（人设被悄悄削掉）。同批旧测（6000 字不传 `num_ctx` → `prompt_eval_count=4096`；显式 8192 的 9000 字 → 8192，三截面全 200）也解释了 F8 原登记里的「provider 400」为何在本地 ollama 复现不出来。**注**：本条反驳 `OBS-2` 括号与 `providers.yaml` 注释里的「只影响截断时机，不影响正确性」。**Reach 备注**：词表无 `USER-adjacent` ⇒ 保持 `DEPLOYMENT`，但**用户可见**（人设静默缺失）。证据与设计方向见 [记录](docs/review/2026-09-18-ollama-runtime-context-authority-记录.md) | DEPLOYMENT | MEDIUM | E3(7)+**E3(A/B 冷启动)** | **OPEN**（**已确证**；`CONFIRMED` 非 §1.1 词表值）`NEW_FINDING_OUT_OF_SCOPE` `TRUTHFULNESS` | owner 决策（`PD-12` 语义 + 出口 `AR-16`） |
 | **F18r** | Mongo 补投对坏文档：永久 `delivered=False` + 每次启动告警，**无人工清理入口** | ADMIN | LOW | E1 | **OPEN** | 零散 |
 | **N-6** | `docs/architecture/invariants.md` §7 关于 `test_doc_counts` 的那行已过期 | INTERNAL | LOW | E1 | **OPEN**（文档） | 顺手 |
 | **N-7** | `scripts/clean_db.py` docstring 说常量「给测试当守卫用」，实际守卫不读它 | INTERNAL | LOW | E1 | **OPEN**（文档） | 顺手 |
@@ -117,6 +117,7 @@
 | **AR-11** | F11 accepted→consumed 窗口（ACK 证明入 EventBus ≠ 业务已持久化；BE-RISK-01） | 中 | E3 | **KEEP_AS_IS**（已接受的 at-least-once 边界） |
 | **AR-12** | 两套 CLI driver：`AgentServer.run_repl`（0 代码消费者，但 8 处文档承诺）vs `app.py::run_interactive`（真实入口，**行为已分岔**：后者有 `wait_until_idle()`） | 低 | E1 | **PRODUCT_DECISION_REQUIRED**（`PD-10`） |
 | **AR-13** | F4 残余：`handle_json_message`（≈16 圈 / 80 行）可选进一步拆分（已改为 `_WS_HANDLERS` 注册表薄壳，非阻塞） | 低 | E1 | **OPEN**（可选） |
+| **AR-16** | **Ollama Provider Adapter**（`KB-13` 的架构出口）：当 provider 的 runtime semantics 明显偏离通用 OpenAI-compatible 行为时，应由 provider-specific adapter 收口，而不是把 `if provider == "ollama"` 分散到 preview / CognitiveLoop / preflight / debug 等上层；目标形状 `LLMAdapter → LLMFactory → {OpenAICompatibleBackend, GeminiBackend, OllamaBackend}`（**不是**"每个 provider 都要独立 adapter"，只有 semantics 差异足够明显才拆）。预期职责：request/wire translation、`num_ctx`、`keep_alive`、Ollama-specific runtime options、**canonical Elysia context budget → Ollama runtime context 落实**、`prompt_eval_count`/`eval_count` → 通用 usage 归一、silent truncation / runtime diagnostic 语义、可选 `/api/ps` diagnostics（**不得**成为每次 generation 前的强制 probe；正常路径保持 1 user generation → 1 provider request）。**与 `AR-4`/`AR-5` 不同轴**（那两条是"切换 provider 的运行时能力"，本条是 provider-specific semantics 的收口点） | 中 | E1（动机为 `KB-13` 的 E3） | **DEFERRED**（不插进当前 correctness batch；理由与触发条件见 [记录](docs/review/2026-09-18-ollama-runtime-context-authority-记录.md) §3.5/§3.6；`PD-12` 未裁决） |
 
 ### 1.7 Guardrail / Test Debt
 
@@ -164,6 +165,7 @@
 | **PD-9** | 任务中心（TaskSystem）是否恢复？（2026-08-30 决策暂缓，恢复激励点已写明） | FEAT-16 | 暂缓 |
 | **PD-10** | 两套 CLI driver（`run_repl` vs `app.py::run_interactive`）去留——**行为已分岔** | AR-12 | 8 处文档承诺 |
 | **PD-11** | 记忆/工具参数的**写侧** `max_length` 是否加（S2-H9 的另一半） | DEP-4 | 只做了运行期截断 |
+| **PD-12** | `providers.yaml::context_window` 的语义是 **A：Elysia 实际允许/要求 provider 使用的 effective runtime context**（⇒ 可由 Ollama adapter 落实为 `num_ctx = contextWindow`），还是 **B：模型理论 capability / maximum context**（⇒ **不能**直接等价于 `num_ctx`：模型理论支持 32768，但本地 6GB GPU 可能只希望 runtime allocation 为 8192 ⇒ 未来或需区分 model context capability 与 effective/runtime context allocation）？ | `KB-13` 的修法 + `AR-16`（Phase 1/3） | **PRODUCT/ARCHITECTURE DECISION REQUIRED**：字段名与 schema **暂不决定**（不预设"一定直传 `num_ctx`"、也不预设"一定新增 `runtimeContextWindow`"）；留待 adapter batch 的全仓语义审计后由 owner 拍板 |
 
 ### 1.9 Future Features（**不与 correctness 混排**）
 
@@ -226,6 +228,7 @@
 | ~~预览窗口~~ | ~~**F8**~~ | ✅ **已修（Batch 7 `558503be`）**：预览组装此前**不传** `prompt_budget_tokens` ⇒ 超**声明**窗口的请求照发，两类 provider 都受害——强制窗口类：provider 400 → 折成 **retryable 的 503**（"稍后重试"是谎报）；截断类（本机 ollama 0.24 实测）：200 + **静默截断**，人设被悄悄削掉。现按 **resolved runtime model** 的窗口取 canonical 预算；裁完仍装不下则**本地** 400 `CHARACTER_VALIDATION`，**零 provider 请求** | 守卫 `core/input/tests/test_character_preview_window.py`（8，修前 5 红；路由级 = `POST /api/characters/preview` + 窗口约束 stub）+ 不变量 PW1–PW6（`invariants.md` §1.1） | — | — |
 | ~~面板标志~~ | ~~**F7**~~ | ✅ **已修（Batch 5 `87cc7e38`）**：`Agent.stt_ok` 改为派生属性（`_stt is not None`），与 capabilities/`/debug` 同源；粘性槽位 `_stt_ok` 已删。**"对象非空不代表可用"经复核不成立**（实例化受 capability 门控；`available` 的既有判据就是这个） | 守卫 `core/agent/tests/test_service_availability_truthfulness.py`（8；修前 2 红） | — | — |
 | 门禁 | **N-15** | “13 个集合无漂移” | 4 条 `unique` 从未参与比对 | DEPLOYMENT | MEDIUM |
+| provider 窗口 | **KB-13** | 「声明 8192 就能用 8192」（budgeting 按静态声明值算） | Ollama serving context 是 **runtime allocation**：冷启动不传 `num_ctx` 实测 **4096**、显式 `num_ctx=8192` 才 8192；超窗 **200 + 静默截断** ⇒ 不能靠 provider error 发现 mismatch | DEPLOYMENT | MEDIUM |
 | 门禁（已修） | N-4/N-8 | — | Batch 3.6 已 GUARDED，且守卫本身又被 Challenger 补强 | — | — |
 
 ## 4. Deferred / Currently Unreachable / Keep-As-Is
@@ -248,6 +251,7 @@
 | **KB-3** INTERRUPT+TTS emoji 合并 | 后端那半已修（`4bb8aff7`，S3-G7）；**剩余竞态在外部前端仓** | 前端仓修 |
 | **KB-9** `ConfirmModal` @keydown | 前端遗留（现行为已可靠） | 前端加固批次 |
 | **KB-1** `live2d.directive` 无发射点 | `KEEP_COMPAT`（协议已标注客户端容忍缺席） | `PD-8` |
+| **AR-16** Ollama Provider Adapter | **时序**：不插进当前 correctness batch 中途（blast radius：provider factory/backend boundary、context authority、request options、usage 归一、diagnostics、现有 OpenAI-compatible 路径） | 高优先级 correctness backlog **再清一轮后**自行开批；**提前触发**：某项 correctness 需动 Ollama request parameters / context window runtime semantics / `num_ctx` / provider-specific truncation / Ollama runtime model state 时，先做 Adapter batch |
 
 ## 5. Closed / Historical（一行索引；详细证据在 `docs/review/`）
 
