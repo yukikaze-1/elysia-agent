@@ -457,8 +457,11 @@ prepare 尾部（会改变 UI/打断/观测时机，而根因是取消边界不�
 
 **已知边界（本批登记，未修）**：
 
-- **入口之前的取消**（O1）：本回合已 ACK 的消息静默结束（没有任何 `generation.failed` 终态）。
-  相位不受影响，故不属于 KB-22。
+- ~~**入口之前的取消**（O1）：本回合已 ACK 的消息静默结束（没有任何 `generation.failed` 终态）。~~
+  **已由 Batch 12 关闭**（canonical backlog **KB-24**）：取消仍然不给这条输入一个
+  回复（`accepted` 不承诺回复），但它现在**必须**落一个可归因的显式终态
+  （`disposition=cancelled_pre_ownership` + 取消来源 + message/session 身份），
+  且**未接管输入的回合不得被新输入抢占**（新输入排队）。见 §4.5 AD1–AD6。
 - **`_prepare_turn` 的回合级写入不回滚**（O3）：取消传播时（入口之前）`_session` /
   `_prompt` / tool_context / `_tts_mgr.reset_for_turn` / `_clock` 的写入保留；`_clock`
   会残留成非 None（消费者都有"本回合会重设"的前提，当前无害）。
@@ -586,6 +589,80 @@ await 时还会变成 detached 清理任务）；不做 retry-until-clean；不�
   `interrupted`（`transition` 同相位 no-op、`bus.post` 照发）。当前唯一调用者是持
   `_process_lock` 的回合任务 ⇒ 不可达；若将来引入第二个调用者（IdleMonitor / Agent 层打断），
   必须先把判据从"IDLE 早退"升级为"完整 terminal 状态判据"。
+
+### 4.5 Accepted input delivery / admission ownership（AD）
+
+来源：[2026-09-18 Batch 12 执行记录](../review/2026-09-18-Batch12-accepted-input-delivery-closure-执行记录.md)。
+缺陷形状（canonical backlog **KB-24**，Batch 10 登记为 O1）：一条用户输入从
+"已被接受"到"回合真正接管"之间有一段**没有任何 owner** 的窗口——
+
+```text
+Agent.process_message() → bus.post(UserInputData) → return True   ← WS 层据此回 accepted=true
+  → _handle_user_input()（同步：spawn 回合任务 + 登记 _current_task）
+  → CognitiveLoop.process() → await _process_lock
+  → _prepare_turn(): _generation_ctx = None
+                     await session_resolver(...)      ← 真挂起点
+                     await registry.get_or_load(...)  ← 真挂起点
+                     _generation_ctx = GenerationContext(...)   ← ★ admission commit point
+  → enter_thinking() → _think_loop() → _build_turn_prompt()
+                                       └─ 到这一步输入才 session.add_message(...)
+```
+
+窗口内这条输入**不在** session/archive、**不在** `_pending_messages`，EventBus 对
+USER_INPUT **没有重投**（`_handle_interrupt` 只搬移不复制），`generation.*` 一个都没发。
+落在窗口内的取消会把回合任务连同这条已 ACK 的输入一起抹掉——**修前触发它不需要任何
+异常条件**：用户在窗口内再发一条消息，`_handle_user_input` 的旧判据
+（`prev not in _started_cognitive_tasks`）只认"coroutine 是否 first-step"，于是把
+"已 first-step、停在 `_prepare_turn`"的回合当成"真正在跑"而抢占它。两条消息都
+`accepted=true`，最终只有第二条有回应；而 v2 幂等表已把第一条落成 ACCEPTED，
+客户端拿同一 `clientRequestId` 重试只会被**逐字重放那个 accepted**。
+
+> **`accepted` 的真实合同（本批先确认、后修）**：`accepted` = **Transport Accepted**
+> ——"调用已进入 runtime 生命周期"（`bus.post` 成功，或有界 `_pending_messages`
+> append 成功）＋ 决策幂等（同 `clientRequestId` 重放同一 ACK）。它**不**承诺
+> 持久化、**不**承诺一定被回复、**不**承诺失败一定告知。因此下面的不变量**不是**
+> "每条 accepted 都会得到回复"（用户可以取消、系统可以停机），而是
+> "**accepted 之后这条输入始终有一个 lifecycle owner 或一个显式终态**"。
+> 进程崩溃后的恢复**不在**该保证范围内（`accepted ≠ durable`）。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **AD1** | 一旦输入获得 runtime-level `accepted`，它必须**始终**由以下之一拥有：active turn、`_pending_messages`、或显式终态。不得存在"无 owner"窗口 | `core/agent/tests/test_admission_input_delivery.py::test_admission_gap_incoming_input_queues_and_nothing_is_lost`（PRE_FIX_RED）、`::test_third_message_arriving_while_second_is_still_on_the_bus`（三条都不得丢） | `make test-quick` / `test-normal` | **push/backend** |
+| **AD2** | admission commit point（`_generation_ctx` 建立，与 `enter_thinking()` 之间无 await）**之前**的取消不得让已接受输入无声消失：必须落一个**可归因**的显式终态 | `::test_admission_gap_stop_button_cancels_with_explicit_disposition`（PRE_FIX_RED：断言 `disposition=cancelled_pre_ownership` + 取消来源）、`::test_stop_button_clearing_pending_is_attributable`（PRE_FIX_RED：pending 清空同样可归因） | 同上 | **push/backend** |
+| **AD3** | **未接管输入的在途回合不得被抢占**：新输入排队（FIFO 不抢），只有真正接管了的回合才允许被新输入打断 | `::test_admission_gap_incoming_input_queues_and_nothing_is_lost`（PRE_FIX_RED）、`::test_admission_gap_preserves_fifo_order`（PRE_FIX_RED，M1→M2 原序） | 同上 | **push/backend** |
+| **AD4** | admission recovery **不得**让同一条逻辑输入被处理两次（原子交接：owner 要么是回合、要么是 pending，不得同时） | `::test_cancel_after_history_append_does_not_duplicate_processing`（边界之后：断言该输入在 session 中**恰一条**、LLM **恰被喂一次**、pending 为空——不是 `<= 1`，那对"一次都没处理"同样成立） | 同上 | **push/backend** |
+| **AD5** | 显式取消与停机**不得复活**本应保持取消的输入；recovery 也不得把 shutdown / 用户 stop 的取消意图偷偷撤销 | `::test_admission_gap_stop_button_cancels_with_explicit_disposition`（不 requeue、之后不得被处理）、`::test_stop_button_clearing_pending_is_attributable` | 同上 | **push/backend** |
+| **AD6** | 正常快速路径与"Agent 真忙 ⇒ 排队"两条既有路径**不因本组不变量而改变**（零调度跳变、零新增轮询）；且"已接管输入的回合不被新消息抢占"这一既有语义保持（用户连发两条 = 排队，不是打断） | `::test_normal_fast_path_unchanged`、`::test_busy_agent_still_queues_after_fix`（ALREADY_GREEN_GUARD）、`::test_new_input_does_not_preempt_a_turn_that_owns_its_input`（PRODUCT_CONTRACT_GUARD） | 同上 | **push/backend** |
+| **AD7** | ownership 判据**不得陈旧**：新回合一旦开始执行，就不得再冒领上一回合的 `_generation_ctx`（否则停在 `_process_lock` 上的回合会被误判为"已接管"，第三条消息抢占它 ⇒ 已 ACK 输入静默丢失且**零 disposition**） | `::test_ownership_judgement_is_never_stale_for_a_new_turn`（Challenger C 反证的回归守卫） | 同上 | **push/backend** |
+| **AD8** | 排队消息不得因为"在途回合从未离开 IDLE"而永久滞留：回合结束（取消/异常/正常）后若已空闲且仍有排队消息，必须重新获得处理权——复用既有出队路径，不新增调度器/轮询 | `::test_turn_ending_without_state_change_still_drains_pending`（PRE_FIX_RED；生产形态 = P0-3 `StorageUnavailableError` 在窗口内 fail-closed） | 同上 | **push/backend** |
+
+**明确不做**（本批取舍）：不延后 ACK（会把"排队时客户端长时间没有 ACK"引入 wire
+契约）、不把 ACK 前移成持久化（本批**不是** durable queue 项目）、不新增 FSM 状态 /
+转换边、不新增 wire 枚举、不改 pending 出队机制、不加 watchdog / 轮询 /
+`asyncio.shield` 包 `process()`、不把 session history 当工作队列、不对所有
+`CancelledError` 一律 requeue（那会复活用户 stop 掉的输入）。
+
+**已知边界（本批登记，未修）**：
+
+- **连发三条时 pending 内的既有乱序**：上一条消息还排在 **EventBus 队列**里
+  （事件消费者尚未把它交给 `_handle_user_input`）时，`process_message` 因
+  `bus.pending_user_inputs > 0` 把新消息**直接** append 进 `_pending_messages`；
+  随后消费者才把旧消息也 append 进去 ⇒ 两条在 pending 里反序（实测 `['M3','M2']`）。
+  与 KB-24 同族（"事件在总线里排队时尚无 pending 归属"）但**不同根**：这里两条都
+  **有** owner（pending），只是次序错了；修法前后行为一致（非本批引入）。
+  由 `test_third_message_arriving_while_second_is_still_on_the_bus` 钉住现状，
+  不在本批修（修它要动 `process_message` 的入队判据与 pending 语义）。
+- **终态归因是日志级**：显式终态只存在于运行时日志
+  （`disposition=cancelled_pre_ownership` / `failed_pre_ownership` /
+  `cancelled_by_interrupt` + source + message/session 身份），**不**产生 wire 帧、
+  **不**写库。这与"不为满足文字不变量增加无用 DB 记录"的取舍一致；客户端因此仍
+  无法区分"这条被取消了"与"这条从未被处理"（→ 新登记 KB-40）。
+- **v1/REST 输入的身份为空**：`_admission_message_id` 取自 v2 预分配的 `messageId`；
+  v1/REST 路径没有这个 ID ⇒ 终态日志里 `message_id=-`（只有 conversation_id）。
+  身份正是"最需要归因"的低版本路径上最弱的那一环（→ 新登记）。
+- **`_drain_pending_after_turn` 只在 `is_completely_idle` 时出队**：它刻意**不**越过
+  `IDLE 已广播 / 锁未释放`（KB-28）那条边界——若收口仍持锁，新回合会卡在锁上而被
+  下一条消息当作在途回合取消。KB-28 未修，故这里也不越过它。
 
 ---
 
