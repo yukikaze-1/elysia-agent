@@ -860,6 +860,16 @@ class Agent(AgentLifecycle, AgentServer):
                 self._bus.post(drained.data, priority=drained.priority,
                                type=EventType.STATE_CHANGE)
             elif isinstance(drained.data, UserInputData):
+                # KB-24（Batch 12）：这三处（此处 + 下方 pending 清空 + 任务被取消）
+                # 都会让一条**已经 ACK accepted** 的输入以"用户取消"为终态消失。
+                # 语义本身是既有产品合同（停止按钮 = 放弃尚未开始的输入，见
+                # `docs/architecture/invariants.md` 的中断表），但**静默**不是：
+                # `accepted` 的承诺是"已交给 runtime 生命周期"，所以处置必须可归因。
+                logger.info(
+                    "中断丢弃已接受但未派发的输入 — disposition=cancelled_by_interrupt "
+                    "source=%s message_id=%s conversation_id=%s",
+                    data.source, drained.data.message_id or "-",
+                    drained.data.conversation_id or "-")
                 self._release_session_work(
                     drained.data.conversation_id,
                     drained.data.session_work_reserved,
@@ -869,6 +879,12 @@ class Agent(AgentLifecycle, AgentServer):
                 # priority / type 原样保留（NORMAL / task_result），下一个循环就能消费。
                 self._bus.post(drained.data, priority=drained.priority,
                                type=drained.type)
+        if self._pending_messages:
+            logger.info(
+                "中断清空排队消息 %d 条 — disposition=cancelled_by_interrupt source=%s "
+                "message_ids=%s",
+                len(self._pending_messages), data.source,
+                [self._pending_message_id(p) for p in self._pending_messages])
         for pending in self._pending_messages:
             self._release_pending_session_work(pending)
         self._pending_messages.clear()
@@ -878,6 +894,13 @@ class Agent(AgentLifecycle, AgentServer):
         """释放一份 v2 accepted work；供完成、排队丢弃、中断和 shutdown 共用。"""
         if reserved and conversation_id is not None:
             self._session_manager.release_work(conversation_id)
+
+    @staticmethod
+    def _pending_message_id(pending: _PendingMessage | dict) -> str:
+        """读排队项的身份（兼容 `_PendingMessage` 与少量旧代码/测试用的 dict）。"""
+        if isinstance(pending, dict):
+            return str(pending.get("message_id") or "-")
+        return str(pending.message_id or "-")
 
     def _release_pending_session_work(self, pending: _PendingMessage | dict) -> None:
         """释放 pending 引用；兼容少量旧测试/迁移代码使用的 dict 队列项。"""
@@ -908,13 +931,35 @@ class Agent(AgentLifecycle, AgentServer):
         # C1/P1-06：前一条 cognitive task 若尚未真正开始（同 tick 第二条已 accepted 的
         # 消息，pre-start）——不得隐式取消它（否则已 ACK 消息静默丢失且 lease 泄漏），
         # 改为入队等待；只有任务真正在跑时才允许「新输入打断当前生成」。
+        #
+        # KB-24（Batch 12）：上面这条判据当初只覆盖了 pre-start 那一段，漏掉了
+        # **已 first-step、但还停在 `_prepare_turn` 挂起点**的那一段（会话解析
+        # `SessionManager.ensure_loaded` 的 Mongo/JSONL load、`registry.get_or_load`）。
+        # 那一段里 `_generation_ctx` 已被入口清空、尚未赋值 ⇒ **本回合还没接管这条输入**
+        # （见 `CognitiveLoop.current_turn_owns_input`），任务却在 `_started_cognitive_tasks`
+        # 里 ⇒ 旧判据放行走 `cancel_current()`。于是一次普通的"连发两条"就把第一条
+        # **已 ACK** 的消息连同它的回合一起静默抹掉：消息没进 session/archive、没进
+        # pending、没有 generation.started/failed 终态帧、EventBus 也不重投——而 v2 幂等表
+        # 已经落成 ACCEPTED，客户端拿同一 clientRequestId 重试只会被逐字重放那个
+        # `accepted`。两条消息都 `accepted=True`，最终只有第二条有回应。
+        #
+        # 修法与 C1/P1-06 同构、只是补全判据：**没接管输入的在途回合不得被抢占**
+        # （新输入排队，FIFO 不抢），只有真正接管了的回合并发新输入才允许打断。
         prev = self._cognitive.current_task
-        if prev is not None and not prev.done() and prev not in self._started_cognitive_tasks:
+        if (prev is not None and not prev.done()
+                and (prev not in self._started_cognitive_tasks
+                     or not self._cognitive.current_turn_owns_input)):
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
+                # KB-24：这里静默 `return` 会让调用方以为事件已处置（它没有任何返回
+                # 通道）。与 `process_message` 的队列满分支同口径显式记录，便于把
+                # "已 ACK 却消失"从观测面区分出来。
+                logger.warning(
+                    "消息队列已满 (%d) — 丢弃已接受的输入 (message_id=%s)",
+                    max_queue, data.message_id or "-")
                 self._release_session_work(data.conversation_id, data.session_work_reserved)
                 return
-            logger.debug("Agent pre-start——新消息排队 (queue=%d)",
+            logger.debug("Agent 尚未接管输入（pre-start / prepare）——新消息排队 (queue=%d)",
                        len(self._pending_messages) + 1)
             self._pending_messages.append(_PendingMessage(
                 text=data.text, user_name=data.user_name, request_id=data.request_id,
@@ -959,6 +1004,9 @@ class Agent(AgentLifecycle, AgentServer):
             self._started_cognitive_tasks.discard(task)
             self._release_session_work(
                 data.conversation_id, data.session_work_reserved)
+            # KB-24（Batch 12 Challenger A）：回合可能在**从未离开 IDLE** 的情况下结束
+            # （窗口内取消/异常），此时不会有 STATE_CHANGE→IDLE，pending 需要兜底出队。
+            self._drain_pending_after_turn()
 
         try:
             task = self._turns.spawn(
@@ -1054,29 +1102,70 @@ class Agent(AgentLifecycle, AgentServer):
         if state in (AgentState.IDLE, AgentState.IDLE_BACKGROUND_TASK):
             set_request_id("-")
             if self._pending_messages:
-                pending = self._pending_messages.pop(0)
-                logger.debug("排队消息出队 (%d 条剩余)", len(self._pending_messages))
-                try:
-                    self._bus.post(UserInputData(
-                        text=pending.text,
-                        user_name=pending.user_name,
-                        request_id=pending.request_id,
-                        content=pending.content,
-                        emotion=pending.emotion,
-                        events=list(pending.events or []),
-                        message_id=pending.message_id,  # 批次 2：忙时排队不丢预分配 ID
-                        # review 修复（F3/链路#1）：透传 conversation_id + protocol_version——
-                        # 否则 v2 排队消息出队后降级为 v1 语义（恒 default），丢失会话归属。
-                        conversation_id=pending.conversation_id,
-                        protocol_version=pending.protocol_version,
-                        session_work_reserved=pending.session_work_reserved,
-                        origin_connection_id=pending.origin_connection_id,
-                    ))
-                except Exception:
-                    self._release_session_work(
-                        pending.conversation_id, pending.session_work_reserved)
-                    raise
+                self._dispatch_pending_message()
         await self._output.notify_state(state)
+
+    def _dispatch_pending_message(self) -> None:
+        """把队首的排队消息重投进 EventBus（FIFO 出队）。
+
+        搬移而非复制：`pop(0)` 与 `bus.post` 之间**没有 await** ⇒ 不存在"取出后还没
+        放回就被抢占"的窗口，一条消息也不可能同时属于 pending 与总线。
+
+        提取为独立方法（KB-24 / Batch 12），因为现在有**两个**调用点：
+        ① `_handle_state_change`（`STATE_CHANGE → IDLE`，既有机制）；
+        ② 回合任务的 done callback（`_drain_pending_after_turn`）——见那里的理由。
+        """
+        pending = self._pending_messages.pop(0)
+        logger.debug("排队消息出队 (%d 条剩余)", len(self._pending_messages))
+        try:
+            self._bus.post(UserInputData(
+                text=pending.text,
+                user_name=pending.user_name,
+                request_id=pending.request_id,
+                content=pending.content,
+                emotion=pending.emotion,
+                events=list(pending.events or []),
+                message_id=pending.message_id,  # 批次 2：忙时排队不丢预分配 ID
+                # review 修复（F3/链路#1）：透传 conversation_id + protocol_version——
+                # 否则 v2 排队消息出队后降级为 v1 语义（恒 default），丢失会话归属。
+                conversation_id=pending.conversation_id,
+                protocol_version=pending.protocol_version,
+                session_work_reserved=pending.session_work_reserved,
+                origin_connection_id=pending.origin_connection_id,
+            ))
+        except Exception:
+            self._release_session_work(
+                pending.conversation_id, pending.session_work_reserved)
+            raise
+
+    def _drain_pending_after_turn(self) -> None:
+        """回合任务落定后的兜底出队（KB-24 / Batch 12 Challenger A）。
+
+        **为什么必须有这个第二出队点**：pending 的唯一既有出队时机是
+        `STATE_CHANGE → IDLE`（`_handle_state_change`）。但一个回合可能**从未离开 IDLE**
+        就结束——取消/异常落在 `_prepare_turn` 的窗口里正是如此（相位本来就是 IDLE），
+        此时 `handle_interrupt` 也因为"已 IDLE"而 no-op ⇒ 没有 STATE_CHANGE ⇒ 被本批
+        新守卫**排队**的那条已 ACK 消息会一直躺在 `_pending_messages` 里，而 Agent
+        对外显示完全空闲。实测两条生产形态：`switch_llm` 的 `cancel_current()`
+        （`server.py:392`）与 P0-3 的 `StorageUnavailableError` fail-closed。
+
+        这里在**回合任务结束之后**检查一次"已空闲且仍有排队消息"，是同步调用
+        （不 spawn 新任务、不新增轮询/watchdog），走的是与既有出队**同一个**
+        `_dispatch_pending_message`。条件严格：只有 `is_completely_idle` 才出队——
+        若收口仍持锁（`IDLE 已广播 / 锁未释放`窗口，KB-28），新回合会卡在锁上而"下一条
+        消息"会把它当在途回合取消；那条边界本批不修，故这里也**不**越过它。
+        """
+        if not self._pending_messages:
+            return
+        if not self.status.is_completely_idle:
+            return
+        current = self._cognitive.current_task
+        if current is not None and not current.done():
+            return          # 已有新回合在途（刚被出队），不必也不该再出队
+        logger.info(
+            "回合结束但仍有 %d 条排队消息且已空闲 — 兜底出队（无 STATE_CHANGE→IDLE 可用）",
+            len(self._pending_messages))
+        self._dispatch_pending_message()
 
     # 工具注册在 start() 中经 ToolAdapter.start() 完成
 

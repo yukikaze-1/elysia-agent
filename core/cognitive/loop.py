@@ -254,6 +254,17 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._mood_applied: bool = False
         self._process_lock = asyncio.Lock()
         self._current_task: asyncio.Task | None = None
+        # KB-24（Batch 12）：本回合**已接受但尚未接管**那条输入的身份——只服务于
+        # "接管前结束"的终态归因（`_handle_prepare_cancelled` / `_handle_turn_exception`），
+        # 让日志能把 disposition 落到具体 message/session，而不是一句无主的
+        # "无状态需要收口"。清空点 = `process()` 取锁之前；取值点 = `_prepare_turn`
+        # 解析出目标会话之后（`enter_thinking()` 之前）。
+        self._admission_message_id: MessageId | None = None
+        self._admission_session_id: str = ""
+        # KB-24：本回合那条输入是否**已经写进会话历史**（`_build_turn_prompt` 的
+        # `session.add_message` 之后置 True）。它是"commit point 之后、历史之前"这个
+        # 窄窗口的判据——在那里用户可见的帧一个都没发，输入却已经不可能被重来。
+        self._turn_message_persisted: bool = False
         # 预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。
         # 注意：此前注释写「保留供 agent.py stop() 读取」，但全仓无任何读写点；
         # TTS 取消实际走 _tts_mgr.cancel_all()（见 agent/_lifecycle_tools.py）。
@@ -349,6 +360,36 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._current_task = task
 
     @property
+    def current_turn_owns_input(self) -> bool:
+        """在途回合是否**已经接管**它那条用户输入（KB-24 的 admission commit point）。
+
+        判据是 `_generation_ctx` 非 None：它在 `_prepare_turn` 里、`enter_thinking()`
+        **之前**由一次无 await 的赋值建立，而清空点是 `process()` 的**第一条语句**
+        （在取锁之前，见那里的注释）——因而"非 None"严格等价于"**本回合**已进入
+        THINKING"（Batch 10 的既有判据，见 `_handle_prepare_cancelled`），而"本回合"
+        由 `_process_lock` 串行化保证。
+
+        调用方（Agent 的事件处理）据此判断能否**抢占**在途回合。在途任务分四段：
+
+        | 阶段 | `_current_task` | `_generation_ctx` | 本属性 |
+        |---|---|---|---|
+        | spawn 后、coroutine 尚未 first-step（pre-start） | 有 | 上一回合遗留值 | **不可靠**——调用方必须同时看 `_started_cognitive_tasks` |
+        | 已 first-step、停在 `await self._process_lock` 上 | 有 | **None**（已在 `process()` 入口清空） | **False ← 未接管** |
+        | 已 first-step、停在 `_prepare_turn` 的挂起点 | 有 | **None** | **False ← KB-24 要保护的窗口** |
+        | 已 `enter_thinking()` 及其后全部阶段 | 有 | 非 None | True |
+
+        为什么第一段不可靠：任务在**取 `_process_lock` 之前**被取消时 coroutine 体从未
+        执行，`_generation_ctx` 保留的是**上一个**回合的值 ⇒ 只看本属性会把"还没开始"
+        误判成"已接管"。第二、三段则相反——coroutine 一旦 first-step 就会同步执行到
+        `process()` 的清空行，所以"已 first-step 且为 None"精确地就是
+        **admission 尚未提交**。
+
+        ⚠️ 本属性只回答"回合是否已接管输入"，**不代表输入从此不会丢**：接管之后的
+        保证由 Batch 10/11 的取消安全收口负责，接管之前由调用方的排队处置负责。
+        """
+        return self._generation_ctx is not None
+
+    @property
     def process_lock(self) -> asyncio.Lock:
         """回合执行锁 — `process()` 全程持有。
 
@@ -375,9 +416,18 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         取消被 disconnect 规则锁死成 interrupted。
         """
         if self._current_task is not None and not self._current_task.done():
+            # KB-24（Batch 12 Challenger D）：**无 source 的取消必须把来源重置为
+            # "unknown"**。修前只在 `source is not None` 时写 `_interrupt_source`，
+            # 于是 `switch_llm` / 抢占 / 系统唤醒这些无 source 的取消会**沿用上一发**
+            # 的来源（实测：先来一次 voice_cancel，再来一次无 source 取消，admission
+            # 终态被误归因成 `voice_cancel`）。归因错了比没有归因更坏——它会把排查
+            # 引向不存在的原因。
             if source is not None:
                 if self._interrupt_source != "disconnect" or source == "disconnect":
                     self._interrupt_source = source
+            elif self._interrupt_source != "disconnect":
+                # disconnect 是终态来源，保留（既有语义，见 test_interrupt_source）。
+                self._interrupt_source = "unknown"
             self._current_task.cancel()
             self._current_task = None
             return True
@@ -486,7 +536,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         origin_connection_id: str = "",
     ) -> _TurnSetup | None:
         """process 的同步准备阶段：会话解析、context 换绑、日志、generation 建档。"""
-        self._generation_ctx = None
+        # `_generation_ctx` / admission 身份已在 `process()` 取锁**之前**清空（KB-24：
+        # 取锁本身可能是第一个挂起点，判据必须在那之前就只描述本回合）。
         self._generation_completed = False
         self._turn_failed_emitted = False
 
@@ -495,6 +546,12 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         except SessionNotFoundError:
             logger.warning("会话已删除，拒绝在途消息 conversation_id=%s", conversation_id)
             return None
+
+        # KB-24：会话已解析、`_generation_ctx` 还没建 —— 这正是 admission 的
+        # **未接管窗口**。把身份记在这里，接管前被取消时才能把终态归因到具体输入
+        # （此后的赋值全是同步的，不存在"记录到一半又被取消"的缝隙）。
+        self._admission_message_id = message_id
+        self._admission_session_id = str(target.session_id)
 
         gen_conversation_id = conversation_id or target.session_id
         # Task 8（B1 闭环）：从 session.character_binding 解析 instance_id，
@@ -674,13 +731,50 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             语义**（继续传播）。这条区分是既有合同：`_prepare_turn` 之前的取消一直
             是传播的（`test_process_start_clears_stale_generation_ctx` 的 F5），
             而 `_think_loop` 窗口的取消一直由回合自己消费（同文件 F9 用例）。
+
+        KB-24（Batch 12）：返回 False 这一支**不是**"什么都没发生"——这条已 ACK 的输入
+        此刻在别处没有任何 owner，必须落一个显式终态（见下方实现处注释）。
         """
         if self._generation_ctx is None:
-            logger.info("<<< 准备阶段被取消（THINKING 入口之前）— 无状态需要收口")
+            # KB-24（Batch 12）：返回 False 这一支**不是**"什么都没发生"。这条输入已经
+            # 拿到 runtime-level `accepted`（`Agent.process_message` 已 `bus.post` 并让
+            # WS 层回 `accepted=true`），而此刻它在别处**没有任何 owner**：没进
+            # session/archive（那条 append 在 `_build_turn_prompt`，即 `_think_loop`
+            # 之内）、没进 `_pending_messages`、EventBus 也不重投 USER_INPUT。
+            # 所以本支必须落一个**显式终态**（`cancelled_pre_ownership`）：`accepted`
+            # 承诺的是"已交给 runtime 生命周期"，不是"一定会被回复"，而"被取消"只有
+            # 在**可归因**时才与"静默消失"有区别。取消来源经 `cancel_current(source=…)`
+            # 贯通（停止按钮 `websocket`、语音取消 `voice_cancel`、模型热切换等），
+            # 输入身份取本回合刚解析出的会话与预分配 message_id，在此如实记录。
+            logger.info(
+                "<<< 已接受的输入在接管前被取消 — admission disposition="
+                "cancelled_pre_ownership source=%s message_id=%s conversation_id=%s"
+                "（未产生回复；不进 session/pending，也不会被重投）",
+                self._interrupt_source or "unknown",
+                self._admission_message_id or "-",
+                self._admission_session_id or "-")
+            # 来源是一次性的：消费后立即清空，避免下一发无 source 的取消沿用旧值
+            # （Challenger D：错归因会把排查引向不存在的原因）。
+            self._interrupt_source = None
             return False
         # 本回合已在 prepare 阶段结束：释放回合级计时器引用（与主体 finally 同义，
         # 避免 debug/诊断面继续报一个已经死掉的回合的 clock）。
         self._clock = None
+        if not self._turn_message_persisted:
+            # KB-24（Batch 12，§9.2 的第二形态）：本回合已越过 admission commit point
+            # （相位收口因此是安全的，Batch 10 的成果），但那条输入**还没进会话历史**
+            # ——`session.add_message` 在 `_build_turn_prompt` 里，即 `_think_loop` 之内。
+            # 此刻取消：本回合没有产出过任何用户可见帧（typing / generation.started /
+            # TTS 都在更后面），所以"以取消收场"是对的；但用户手里的 `accepted` 需要
+            # 一个**可归因的终点**，否则它与"从未被处理"在观测面上无法区分。
+            logger.info(
+                "<<< 已接受的输入在写进历史前被取消 — admission disposition="
+                "cancelled_pre_ownership source=%s message_id=%s conversation_id=%s"
+                "（未产生回复；不进 session/pending，也不会被重投）",
+                self._interrupt_source or "unknown",
+                self._admission_message_id or "-",
+                self._admission_session_id or "-",
+            )
         logger.info("<<< 准备阶段被取消（THINKING 入口之后）— 经 canonical 中断路径收口")
         await self._handle_interrupt()
         return True
@@ -726,6 +820,19 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 code = "INTERNAL"
                 retryable = False
             err_msg = str(e)[:200]
+            if self._generation_ctx is None:
+                # KB-24（Batch 12 Challenger A/D）：**接管之前**的异常与取消同 root ——
+                # 这条输入已 ACK，但没进 session、没进 pending、EventBus 不重投，而
+                # `generation.failed` 这条终态帧只在 ctx 非 None 时才发。所以这个分支
+                # 同样必须落可归因终态；否则 `StorageUnavailableError`（P0-3 fail-closed）
+                # 这类窗口内失败会让 M1 无声消失、连一条 disposition 都没有。
+                logger.info(
+                    "<<< 已接受的输入在接管前因异常结束 — admission disposition="
+                    "failed_pre_ownership error=%s message_id=%s conversation_id=%s"
+                    "（未产生回复；不进 session/pending，也不会被重投）",
+                    type(e).__name__,
+                    self._admission_message_id or "-",
+                    self._admission_session_id or "-")
             if self._generation_ctx is not None:
                 try:
                     await self._output.turn_failed(
@@ -757,6 +864,17 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                        origin_connection_id: str = "",
                        ) -> None:
         """处理用户消息，驱动一轮完整的 ReAct 认知循环。"""
+        # KB-24（Batch 12 Challenger C）：本回合的 ownership 判据与 admission 身份
+        # **必须在取锁之前**清空。`await self._process_lock` 可能是本回合的第一个挂起点
+        # （上一回合收口尚未放锁；pending 出队 spawn 的回合就停在这里）——若等到
+        # `_prepare_turn` 才清，那一段里 `_generation_ctx` 仍是**上一个**回合的值，
+        # `current_turn_owns_input` 会误报"已接管"（Challenger 实测：第三条消息抢占一个
+        # 还停在锁上、什么都没接管的回合 ⇒ 已 ACK 的输入静默丢失且**零 disposition**）。
+        # 这两条赋值在事件循环的一个同步步内完成，此后判据只描述本回合。
+        self._generation_ctx = None
+        self._admission_message_id = None
+        self._admission_session_id = ""
+        self._turn_message_persisted = False
         async with self._process_lock:
             # #43：与 `Agent.process_message` 同一判定点（生命周期 + 相位）。
             # CR-08 之后这里曾是两处独立的检查，新增入口很容易只问一半。
@@ -906,6 +1024,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 message_id=user_message_id or new_message_id(),
                 timestamp=_now_iso(),
             ))
+            # KB-24：输入已进历史 —— 此后用户至少能在历史里看到"我说过这句"。
+            self._turn_message_persisted = True
         tool_defs = self._tool_adapter.definitions() if self._tool_adapter else None
         # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
         if tool_defs and supports_mm:
