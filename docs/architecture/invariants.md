@@ -362,6 +362,40 @@ fake 行为一致）5 正常 + 3 坏文档、每页 2 时只走出 5 条就"收�
 仓内没有任何写入者会产生这种文档。见 [todo.md](../../todo.md)（`KB-15`）与
 `test_missing_updated_at_row_is_unreachable_registered_gap`（xfail 钉住）。
 
+### 4.2 Speaking 生命周期（SP）
+
+来源：[2026-09-18 Batch 9 执行记录](../review/2026-09-18-Batch9-speaking-state-recovery-执行记录.md)。
+缺陷形状（canonical backlog **KB-6**）：`TTSStreamManager.wait_all()` 没有超时预算，
+而"某一轮讲话真正结束"的唯一信号就是它返回（`FSMBackedPhaseController.finish_turn`）。
+一旦有**任何**门控（`_release_events[seq]`）永远不会被 `set`，`wait_all()` 就永不返回，
+FSM 永久停在 **SPEAKING**——回合仍持有 `_process_lock` ⇒ 新用户消息只进
+`_pending_messages`（只在 `STATE_CHANGE→IDLE` 时出队），**纯文字聊天里 Agent 不再回复**，
+且"再说一句"救不回来（新消息不触发 interrupt），只能等一次 VAD/停止按钮或重启。
+
+三条挂起源：
+① `_download_and_forward` 的两个**早退分支**在 `try/finally` 之外直接 `return`（S2-G3 已修）；
+② `reset_for_turn` 直接 `clear()` 门控 dict，让已持有旧 `Event` 的等待者永久挂起（S2-G3 已修）；
+③ **任务在"首个 event-loop step 之前"被取消** ⇒ 协程体一行都不执行、早退分支与 `finally`
+全都没进 ⇒ 放行从未发生（Batch 9 修）。③ 的可达路径是用户在本轮播放中点掉 TTS 再打开
+（`Agent.set_service("tts", False/True)` → `set_enabled(False)` 的同步段里 `cancel_all()`；
+`BaseEventLoop._run_once` 先 poll I/O 再跑本批 ready，所以 WS handler 的 step 能与
+"本轮入队句子"的 step 同批，而 TTS 任务的 step 要等下一批）。
+
+**SPEAKING 的语义**（本批核对，未重新定义）："Agent 正在向用户输出本轮的 response"，
+**不是**"扬声器正在出声"——首句到达即进入（与 TTS 是否可用无关），退出由**服务端输出工作**
+的完成决定，客户端播放不被追踪。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **SP1** | 每次进入 SPEAKING 都有**明确的退出 owner**（正常：`finish_turn`；异常/打断：`handle_interrupt`），不存在"进了没人负责出"的路径 | `core/cognitive/tests/test_speaking_lifecycle.py`（16 例，真实 `process()` → 真实 `AgentFSM.transition`；每条先断言**确实进过 SPEAKING**再断言终态） | `make test-quick` / `test-normal` | **push/backend** |
+| **SP2** | success / failure / cancel / interrupt / empty / shutdown **都不能**留下 `state == SPEAKING` 且"当前输出工作 == 无" | 同上逐场景；`assert_no_speaking_work_left()` 同时断言无未落定 TTS 任务、无未释放门控 | 同上 | **push/backend** |
+| **SP3** | 旧 speaking epoch 的**迟到完成**不得覆盖新一轮（不得把它切成 IDLE，也不得提前放行它的门控） | `test_speaking_lifecycle.py::test_stale_completion_from_interrupted_turn_cannot_overwrite_next_turn`；`core/adapter/tests/test_tts_adapter.py::test_stale_task_from_previous_turn_does_not_forward` | 同上 | **push/backend** |
+| **SP4** | 完成由**生命周期完成**驱动，**不是**"队列空"/"任务已创建"：输出工作还活着时不得提前退出；门控链必须闭合（放行不得依赖"协程体是否运行过"） | `test_speaking_lifecycle.py::test_speaking_does_not_exit_while_output_work_is_alive`；`core/adapter/tests/test_tts_adapter.py::test_prestart_cancel_releases_successor_gate`（PRE_FIX_RED） | 同上 | **push/backend** |
+
+**明确不做**（本批的取舍，避免"看起来更稳"的假修复）：不给 `wait_all()` 加超时、
+不加 SPEAKING watchdog / 超时复位、不新增第二个 generation 计数器、不引入说话生命周期协调器。
+超时只会把"永久卡死"换成"提前离开 SPEAKING 而音频仍在播"——那违反 SP4 与 SPEAKING 的语义。
+
 ---
 
 ## 5. 架构与静态面
