@@ -12,6 +12,7 @@ from Module.system_prompt.budget import (
     CONTEXT_HEADROOM_RATIO,
     DEFAULT_CONTEXT_WINDOW,
     budget_from_context_window,
+    effective_context_window,
     estimate_messages_tokens,
     estimate_tokens,
     system_prompt_budget,
@@ -66,6 +67,20 @@ class TestEstimation:
         assert budget_from_context_window(1000) == int(1000 * CONTEXT_HEADROOM_RATIO)
         assert budget_from_context_window(None) == int(
             DEFAULT_CONTEXT_WINDOW * CONTEXT_HEADROOM_RATIO)
+
+    def test_effective_window_is_the_shared_fallback(self):
+        """窗口的**有效值**与预算必须同源：未声明/非法 → 保守默认。
+
+        Batch 7（F8）抽出的共享回退点：预览的"是否装得下"本地校验按**窗口**判定，
+        而预算是 `窗口×0.75`；若两处各写一份回退规则，一处改 16K、另一处还是 32K
+        就会静默漂移。`0` 与负数属"没填/坏元数据"，同样回退默认值——负数若原样
+        参与换算会得到退化的极小预算（裁到只剩骨架却不报错）。
+        """
+        assert effective_context_window(8192) == 8192
+        assert effective_context_window(None) == DEFAULT_CONTEXT_WINDOW
+        assert effective_context_window(0) == DEFAULT_CONTEXT_WINDOW
+        assert effective_context_window(-5) == DEFAULT_CONTEXT_WINDOW
+        assert budget_from_context_window(0) == budget_from_context_window(None)
 
     def test_system_prompt_share_is_a_fraction(self):
         assert 0 < system_prompt_budget(1000) < 1000

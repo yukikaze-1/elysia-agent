@@ -142,10 +142,28 @@ def estimate_messages_tokens(messages: list[dict]) -> int:
     return total
 
 
+def effective_context_window(context_window: int | None) -> int:
+    """上下文窗口的**有效值**（token）：未声明/非法时用保守默认。
+
+    "未声明 ≠ 无上限"是本模块的前提——调用方必须对 None 取保守默认，否则
+    "没配 = 不截断"会退化成"超 context 变 provider 400"的原始缺陷。
+
+    非法值（0 / 负数）与未声明同视：`providers.yaml` 是手写元数据，`0` 只可能是
+    "没填"，而负数若原样参与换算会得到一个退化的极小预算（把 prompt 裁到只剩骨架
+    却不报错）。两者都回退到保守默认，属既有兼容策略（unknown → 保守 fail-open）。
+
+    之所以单独成一个函数：**"窗口的有效值"与"预算"是两个不同的量**。只要有人
+    按窗口做判定（如预览请求"是否装得下"的本地校验），它必须与预算取同一个回退
+    值；把这条规则抄第二遍就会漂移（一处改成 16K、另一处还是 32K）。
+    """
+    if context_window is None or context_window <= 0:
+        return DEFAULT_CONTEXT_WINDOW
+    return context_window
+
+
 def budget_from_context_window(context_window: int | None) -> int:
     """上下文窗口 → prompt 预算（token）。未声明窗口时用保守默认。"""
-    window = context_window or DEFAULT_CONTEXT_WINDOW
-    return max(1, int(window * CONTEXT_HEADROOM_RATIO))
+    return max(1, int(effective_context_window(context_window) * CONTEXT_HEADROOM_RATIO))
 
 
 def system_prompt_budget(prompt_budget_tokens: int) -> int:

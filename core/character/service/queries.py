@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from core.character.definition import CharacterDefinition
 from core.character.draft import CharacterDraft
+from core.character.preview import PreviewPromptTooLargeError
 from core.character.revision import CharacterRevision
 from core.character.service.base import CharacterServiceBase
 from core.character.service.errors import (
@@ -20,6 +21,7 @@ from core.character.service.errors import (
     CharacterPreviewUnavailableError,
     CharacterQueryError,
     CharacterStorageUnavailableError,
+    CharacterValidationError,
 )
 from core.character.service.helpers import (
     MAX_CHARACTER_LIST_SCAN,
@@ -269,6 +271,13 @@ class CharacterQueryChain(CharacterServiceBase):
             )
         except CharacterPreviewUnavailableError:
             raise
+        except PreviewPromptTooLargeError as exc:
+            # PPW-4：请求确定装不下 resolved 模型窗口 —— 这是**可行动**的输入问题
+            # （改角色档案或换模型），不是"provider 暂时不可用"。映射到既有的
+            # 400 CHARACTER_VALIDATION（非重试），避免用 503 谎报可恢复性。
+            logger.info("角色预览内容超出模型窗口: %s", exc)
+            raise CharacterValidationError(
+                "角色预览内容超出当前模型的上下文窗口") from exc
         except Exception as exc:
             logger.warning("角色预览推理失败: %s", type(exc).__name__)
             raise CharacterPreviewUnavailableError("角色预览上游失败") from exc
