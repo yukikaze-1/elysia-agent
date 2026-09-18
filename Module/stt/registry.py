@@ -14,6 +14,18 @@ if TYPE_CHECKING:
 # provider 默认值统一由 Module/config/providers.yaml 管理
 _BACKENDS: dict[str, dict] = load_provider_defaults("stt")
 
+# 本仓**未实现**的 provider（与 `Module/llm/registry.py` 同形的 capability 权威）：
+# providers.yaml 里声明了，但工厂建不出后端。`create()` 的守卫与 `is_implemented()`
+# 查询读**同一个常量**，不可能漂移。
+#
+# 为什么不能各写一份（Batch 5 / N-10）：`Module/config/preflight.py` 此前自带
+# `_STT_STUB_PROVIDERS = {"openai", "deepgram"}`，与本文件的内联元组是同一事实的两份
+# 副本；两处漂移时预检就会报出一个运行期不成立的结论。判据必须只有一处。
+#
+# 语义边界同 LLM：描述**当前这份代码**的 provider 级实现情况，不描述厂商产品能力，
+# 也不描述 model 级能力。不在集合中的 provider 一律按"已实现"对待（fail-open）。
+_UNIMPLEMENTED_PROVIDERS: frozenset[str] = frozenset({"openai", "deepgram"})
+
 
 class STTFactory:
     """静态工厂 — STTFactory.create("sensevoice/sense-voice")。"""
@@ -43,7 +55,7 @@ class STTFactory:
                 f"Unknown provider '{provider}'. Known: {', '.join(sorted(_BACKENDS))}"
             )
 
-        if provider in ("openai", "deepgram"):
+        if provider in _UNIMPLEMENTED_PROVIDERS:
             raise NotImplementedError(f"{provider} backend is not yet implemented")
 
         cfg = _BACKENDS[provider]
@@ -87,3 +99,26 @@ class STTFactory:
         kwargs.pop("api_key", None)
         kwargs.update(overrides)
         return cls.create(model_id, **kwargs)
+
+    @classmethod
+    def is_implemented(cls, model_id: str) -> bool:
+        """检测该 provider 在**本仓**是否有实现（`create()` 能否建出后端）。
+
+        报告的调用方（preflight、provider test、debug）应问这里，而不是自己维护一份
+        "哪些 STT provider 未实现"的副本表。与 `Module/llm/registry.py::is_implemented`
+        同形，判据与 `create()` 的守卫同源。
+
+        Args:
+            model_id: 格式为 "provider/model-name" 的标识字符串，或纯 provider 名。
+
+        Returns:
+            True 表示本仓实现了该 provider；False 表示 providers.yaml 声明了但未实现
+            （openai / deepgram），或 provider 未声明。
+
+        Raises:
+            无——只查询，不建连、不发网络请求。
+        """
+        provider = model_id.split("/")[0] if "/" in model_id else model_id
+        if provider not in _BACKENDS:
+            return False
+        return provider not in _UNIMPLEMENTED_PROVIDERS

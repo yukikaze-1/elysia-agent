@@ -25,6 +25,25 @@ from core.storage import secret_store
 _SERVICES = ("llm", "stt", "tts")
 
 
+def _provider_is_implemented(service: str, name: str) -> bool:
+    """问运行期权威：本仓实现了该 provider 吗（capability，不是"配置齐不齐"）。
+
+    判据只在各 Module 的 registry（`is_implemented()` 与工厂守卫读同一个常量），
+    本函数不维护第二份清单。Batch 5 / N-10。
+    """
+    if service == "llm":
+        from Module.llm import LLMFactory
+
+        return LLMFactory.is_implemented(name)
+    if service == "stt":
+        from Module.stt import STTFactory
+
+        return STTFactory.is_implemented(name)
+    from Module.tts import TTSFactory
+
+    return TTSFactory.is_implemented(name)
+
+
 def is_provider_configured(cfg: dict) -> bool:
     """判定 provider 是否已配置（local 恒 True；custom/空 models 由调用方跳过）。"""
     if cfg.get("local"):
@@ -73,7 +92,13 @@ def build_providers_response(
         unconf: list[dict] = []
         for name, cfg in providers.items():
             if name == "custom" or not cfg.get("models"):
-                continue  # meta-provider / NotImplemented：不进下拉、不进 unconfigured
+                continue  # meta-provider / 无可选模型：不进下拉、不进 unconfigured
+            if not _provider_is_implemented(service, name):
+                # 本仓未实现 ⇒ 不进下拉、不进 unconfigured。此前的排他**只是"models 为空"
+                # 的副产品**（gemini/deepgram/openai-stt 恰好都没写 models）：给 gemini
+                # 补一个 model id，它就会带着 credentialConfigured=true 出现在下拉里，
+                # 把用户直接送进 NotImplementedError。现在按 capability 排他（Batch 5 / N-10）。
+                continue
             if is_provider_configured(cfg):
                 service_dict[name] = {
                     "models": cfg.get("models", []),

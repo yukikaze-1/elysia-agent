@@ -27,6 +27,12 @@ _COUNTS = _Counts()
 
 
 # ---- provider 映射表 ----
+#
+# ⚠️ 这两张表只回答「该 provider 的凭据/地址用哪些 env key」与「这个名字认不认识」，
+# **不回答「本仓实现了没有」**——后者是 capability 事实，唯一权威在各 Module 的
+# registry（`LLMFactory.is_implemented` / `STTFactory.is_implemented`）。
+# Batch 5 / N-10 之前这里还有张 `_STT_STUB_PROVIDERS`，是 registry 内联元组的第二份
+# 副本；已删除，判据改问 registry（§90：不要第二套静态真相表）。
 
 _LLM_PROVIDER_ENV: dict[str, str] = {
     "deepseek": "DEEPSEEK_API_KEY",
@@ -50,9 +56,6 @@ _STT_PROVIDER_ENV: dict[str, str] = {
     "deepgram": "DEEPGRAM_API_KEY",
 }
 
-# 暂未实现的 STT provider
-_STT_STUB_PROVIDERS = {"openai", "deepgram"}
-
 _CRITICAL_PACKAGES = ["aiohttp", "httpx", "openai", "pydantic", "jinja2", "yaml", "dotenv"]
 
 
@@ -61,6 +64,26 @@ _CRITICAL_PACKAGES = ["aiohttp", "httpx", "openai", "pydantic", "jinja2", "yaml"
 def _parse_provider(model_id: str) -> str:
     """从 'provider/model' 解析 provider 部分。"""
     return model_id.split("/")[0] if "/" in model_id else model_id
+
+
+def _llm_provider_implemented(provider: str) -> bool:
+    """问运行期权威：本仓实现了该 LLM provider 吗。
+
+    只查 registry 的 capability 元数据，**不建连、不发网络请求**（PCT-3：静态预检
+    network-free）。`Module.llm` 会拉起 openai SDK，故 `run()` 把 `_check_pip_deps()`
+    排在 `_check_llm_env()` 之前——缺包时由它给出可读的 [FAIL]，
+    而不是让这里抛裸 ImportError。
+    """
+    from Module.llm import LLMFactory
+
+    return LLMFactory.is_implemented(provider)
+
+
+def _stt_provider_implemented(provider: str) -> bool:
+    """问运行期权威：本仓实现了该 STT provider 吗（同 `_llm_provider_implemented`）。"""
+    from Module.stt import STTFactory
+
+    return STTFactory.is_implemented(provider)
 
 
 def _fail(msg: str) -> None:
@@ -137,7 +160,20 @@ def _resolved_llm_url(provider: str) -> tuple[str, str]:
 
 
 def _check_llm_env(config: Any) -> None:
-    """根据 LLM provider 检查 API key 与 base URL（判据与运行期一致）。"""
+    """根据 LLM provider 检查实现可用性与 API key / base URL（判据与运行期一致）。
+
+    三步，顺序即语义（§79：错误类别必须与真实失败层一致）：
+
+    1. **capability**（本仓实现了没有）——未实现 ⇒ FAIL 并**就此打住**。理由：LLM 是
+       启动必需子系统，`LLMAdapter.__init__` 无条件 `LLMFactory.create`，未实现的
+       provider 会让进程在启动期抛 `NotImplementedError`。此时再去报 "API key 已设置 /
+       URL ok" 是**假绿**（N-10 的原始形态：13/13 passed 然后启动崩）。
+    2. 凭据。
+    3. 地址（按运行期回退链解析）。
+
+    判据来源是 `LLMFactory.is_implemented`（运行期权威），不是本模块的静态表——
+    本模块不维护"哪些 provider 未实现"的副本。
+    """
     model_id = config.llm.model
     provider = _parse_provider(model_id)
     if provider == "ollama":
@@ -145,8 +181,20 @@ def _check_llm_env(config: Any) -> None:
         return
     key = _LLM_PROVIDER_ENV.get(provider)
     if key is None:
+        # 未知 provider：**保持 fail-open**（WARN 不 FAIL）。它在 providers.yaml 里
+        # 有没有实现由 registry 决定，本模块不猜；缺 metadata ≠ 未实现。
         _warn(f"未知 LLM provider: {provider}")
         return
+
+    if not _llm_provider_implemented(provider):
+        _fail(
+            f"LLM provider '{provider}' 在本仓尚未实现 — "
+            f"运行期 LLMFactory.create('{model_id}') 会抛 NotImplementedError，"
+            f"进程将在启动期失败。请改用已实现的 provider，"
+            f"或先在 Module/llm/ 里补上实现"
+        )
+        return
+
     val = os.getenv(key, "")
     if val:
         _pass(f"LLM env ok ({key} 已设置)")
@@ -307,7 +355,8 @@ def _check_stt_env(config: Any) -> None:
     """根据 STT provider 检查可用性（WARN 级别——可选子系统不阻断启动）。
 
     同 `_check_tts_env`：判据是"运行期能否建出后端"（地址 + 凭据逐项判），
-    不是"env 变量是否被设置"。
+    不是"env 变量是否被设置"。**"本仓实现了没有"问 registry**（此前是本模块自带的
+    `_STT_STUB_PROVIDERS` 副本表——同一事实的第二份副本，漂移即假绿）。
     """
     if not config.stt.enabled:
         _pass("STT 未启用，跳过 env 检查")
@@ -317,7 +366,7 @@ def _check_stt_env(config: Any) -> None:
     if key is None:
         _warn(f"未知 STT provider: {provider}")
         return
-    if provider in _STT_STUB_PROVIDERS:
+    if not _stt_provider_implemented(provider):
         _warn(f"STT provider '{provider}' 暂未实现（factory 会抛出 NotImplementedError）")
         return
     _judge_optional_provider(provider, "stt", "STT")
@@ -375,6 +424,13 @@ async def _check_llm_connectivity(config: Any) -> None:
         _pass("LLM ollama 为本地服务，跳过连通性检查")
         return
 
+    if not _llm_provider_implemented(provider):
+        # capability 缺失 ≠ 连通性问题（§79）。这里不再去 `LLMFactory.create` 撞一次
+        # NotImplementedError 再把它报成"连通异常"——那会让读日志的人去查网络，
+        # 而真正的原因（本仓没实现）已在 `_check_llm_env` 判 FAIL。
+        _warn(f"LLM provider '{provider}' 未实现，跳过连通性检查")
+        return
+
     try:
         from Module.llm import LLMFactory
         backend = LLMFactory.create(config.llm.model)
@@ -414,8 +470,11 @@ async def _check_stt_connectivity(config: Any) -> None:
         return
 
     provider = _parse_provider(config.stt.model)
-    if provider in _STT_STUB_PROVIDERS:
-        _pass(f"STT '{provider}' 暂未实现，跳过连通性检查")
+    if not _stt_provider_implemented(provider):
+        # §34：unsupported 不得被"跳过"并报成成功。STT 是可选子系统，判 WARN
+        # （与 `_check_stt_env` 同级别），不上 FAIL——否则 --full 会拒绝一个
+        # 合法跑纯文本模式的部署。
+        _warn(f"STT provider '{provider}' 未实现，无法探活")
         return
 
     try:
@@ -487,8 +546,11 @@ def run(config: Any, full: bool = False) -> bool:
     # Phase 1: 必须通过
     _check_python()
     _check_dotenv()
-    _check_llm_env(config)
+    # pip 依赖排在 provider 检查之前：`_check_llm_env` 会 import Module.llm（拉起 openai
+    # SDK），缺包时应当由 `_check_pip_deps` 给出可读的 [FAIL]（"缺失 pip 包: openai"），
+    # 而不是让静态检查抛裸 ImportError。
     _check_pip_deps()
+    _check_llm_env(config)
     _check_character_file(config)
     _check_embedding_model()
     _check_mongo_env(config)

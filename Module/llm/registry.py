@@ -14,6 +14,21 @@ if TYPE_CHECKING:
 # provider 默认值统一由 Module/config/providers.yaml 管理
 _BACKENDS: dict[str, dict] = load_provider_defaults("llm")
 
+# 本仓**未实现**的 provider：providers.yaml 里声明了（会进预检、会进下拉候选），
+# 但工厂建不出后端。这是「哪些 provider 实现了」的**唯一权威**——`create()` 的建连守卫
+# 与 `is_implemented()` 查询读的是同一个常量，两者不可能漂移。
+#
+# 为什么需要它（Batch 5 / N-10）：`gemini/<model>` 此前预检 `[PASS]`、运行期
+# `LLMFactory.create` 必然 `NotImplementedError`（E2 实测：预检 13/13 passed 之后
+# `LLMAdapter("gemini/…")` 在**构造期**就抛）。预检当时没有"未实现"这个概念，
+# 只能看 env 齐不齐；而"env 齐"与"本仓实现了"是两件事（PCT-2 / PCT-6）。
+#
+# 语义边界：本集合描述**当前这份代码**（provider 级），不描述厂商产品能力，也不描述
+# model 级能力（后者见 `supports_multimodal` 与 providers.yaml 的 `supports_*` 字段）。
+# 声明在 providers.yaml 里却不在本集合中的 provider 一律按"已实现"对待——
+# 缺 metadata ≠ 未实现（fail-open，不误拒第三方/插件 provider）。
+_UNIMPLEMENTED_PROVIDERS: frozenset[str] = frozenset({"gemini"})
+
 
 class LLMFactory:
     """LLM 后端工厂 — LLMFactory.create("deepseek/deepseek-v4-pro") 返回配置好的 backend。"""
@@ -46,8 +61,8 @@ class LLMFactory:
                 f"Unknown provider '{provider}'. Known: {', '.join(sorted(_BACKENDS))}"
             )
 
-        if provider == "gemini":
-            raise NotImplementedError("Gemini backend is not yet implemented")
+        if provider in _UNIMPLEMENTED_PROVIDERS:
+            raise NotImplementedError(f"{provider} backend is not yet implemented")
 
         cfg = _BACKENDS[provider]
         base_url = resolve_base_url(cfg.get("url_key", ""), cfg, kwargs.pop("base_url", None))
@@ -141,3 +156,31 @@ class LLMFactory:
         """
         provider = model_id.split("/")[0] if "/" in model_id else model_id
         return bool(_BACKENDS.get(provider, {}).get("supports_multimodal", False))
+
+    @classmethod
+    def is_implemented(cls, model_id: str) -> bool:
+        """检测该 provider 在**本仓**是否有实现（`create()` 能否建出后端）。
+
+        这是"配置存在 / provider 已解析"与"实现支持"之间的那道判据：报告的调用方
+        （preflight、provider test、debug）应当问这里，而不是自己维护一份
+        "哪些 provider 未实现"的副本表——同一事实的第二份副本必然漂移（Batch 5 / N-10）。
+
+        与 `supports_multimodal` / `context_window` 同形：接受 `"provider/model"`
+        或纯 provider 名。**provider 级**判断（本仓的守卫就是 provider 级的）；不声称
+        model 级能力。
+
+        Args:
+            model_id: 格式为 "provider/model-name" 的标识字符串，或纯 provider 名。
+
+        Returns:
+            True 表示本仓实现了该 provider；False 表示
+            （a）`providers.yaml` 声明了但本仓未实现（如 gemini），或
+            （b）provider 未声明（运行期 `create()` 会以 ValueError 拒绝）。
+
+        Raises:
+            无——本方法只查询，不建连、不发网络请求。
+        """
+        provider = model_id.split("/")[0] if "/" in model_id else model_id
+        if provider not in _BACKENDS:
+            return False
+        return provider not in _UNIMPLEMENTED_PROVIDERS

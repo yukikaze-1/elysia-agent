@@ -127,3 +127,50 @@ def test_custom_env_key_configured(tmp_path):
         resp = build_providers_response(custom_data, secret_path=tmp_path)
     entry = resp["custom"]["llm"][0]
     assert entry["credentialConfigured"] is True
+
+
+# ---- Batch 5 / N-10：下拉排他按 capability，而不是"models 为空"的副产品 --------
+
+
+@pytest.mark.unit
+def test_unimplemented_provider_excluded_even_with_models():
+    """未实现的 provider **即使声明了 models** 也不进下拉、不进 unconfigured。
+
+    修前判据只有 `not cfg.get("models")`：gemini 今天被排除只是因为它恰好没写 models
+    （providers.yaml `models: []`）。给它补一个 model id，它就会带着
+    `credentialConfigured: true` 出现在下拉里，用户选中后撞 `NotImplementedError`。
+    本用例把"排他理由"钉在 capability 上。
+    """
+    synthetic = {
+        "llm": {
+            "gemini": {
+                "base_url": "https://generativelanguage.googleapis.com",
+                "url_key": "GEMINI_URL",
+                "env_key": "GEMINI_API_KEY",
+                "models": ["gemini-2.5-pro"],   # ← 声明了模型，仍不得进下拉
+            },
+            "deepseek": {
+                "base_url": "https://api.deepseek.com",
+                "url_key": "DEEPSEEK_URL",
+                "env_key": "DEEPSEEK_API_KEY",
+                "models": ["deepseek-v4-flash"],
+            },
+        },
+        "stt": {},
+        "tts": {},
+    }
+    env = {"GEMINI_API_KEY": "x", "GEMINI_URL": "https://example.invalid",
+           "DEEPSEEK_API_KEY": "y"}
+    with patch.dict(os.environ, env, clear=True), \
+         patch("core.providers.provider_registry.load_provider_defaults",
+               side_effect=lambda svc: synthetic.get(svc, {})):
+        resp = build_providers_response({"llm": [], "stt": [], "tts": []})
+
+    # 负向：未实现 → 两处都不出现（不是"配置齐了就露出来"）
+    assert "gemini" not in resp["llm"], (
+        "未实现的 provider 出现在 /api/providers 下拉里——选中即 NotImplementedError"
+    )
+    assert "gemini" not in resp["unconfigured"]["llm"]
+    # 正向对照：同一次调用里已实现的 provider 必须照常出现（防"一律排除"的假绿）
+    assert "deepseek" in resp["llm"]
+    assert resp["llm"]["deepseek"]["models"] == ["deepseek-v4-flash"]

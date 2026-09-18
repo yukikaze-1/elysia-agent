@@ -34,6 +34,15 @@ if TYPE_CHECKING:
 # provider 默认值统一由 Module/config/providers.yaml 管理
 _BACKENDS: dict[str, dict] = load_provider_defaults("tts")
 
+# 本仓**未实现**的 provider（与 llm/stt registry 同形的 capability 权威）。
+# 当前为空：三个 TTS provider（gpt-sovits / minimax / custom）都有实现，
+# 这也是本文件此前**没有** `NotImplementedError` 守卫的原因。
+#
+# 仍然显式声明这个集合，是为了让"哪些 provider 实现了"在三个子系统里只有**同一个形状**
+# 的权威（`is_implemented()` + `create()` 守卫读同一常量）；将来若要加占位 provider
+# （如某厂商 API 已声明但后端未写），在这里登记即可，不必再去改报告层。
+_UNIMPLEMENTED_PROVIDERS: frozenset[str] = frozenset()
+
 
 class TTSFactory:
     """静态工厂 — TTSFactory.create("gpt-sovits/default")。"""
@@ -66,6 +75,12 @@ class TTSFactory:
         # MiniMax 限速参数：仅对 minimax 后端生效，提前取出避免透传给其他后端
         # （gpt-sovits / custom 构造函数不接受该 kwarg，传入会 TypeError）
         rate_limit_rpm = kwargs.pop("rate_limit_rpm", None)
+
+        # capability 守卫：与本文件 `_UNIMPLEMENTED_PROVIDERS` 同源。当前集合为空，
+        # 故永不触发——它的作用是让"实例化 ⇒ 实现存在"这条不变量在三个 provider
+        # 子系统里由同一个形状保证（新增占位 provider 时只登记一处）。
+        if provider in _UNIMPLEMENTED_PROVIDERS:
+            raise NotImplementedError(f"{provider} backend is not yet implemented")
 
         cfg = _BACKENDS[provider]
         explicit_base_url = kwargs.get("base_url")  # minimax 分支需要原始值
@@ -126,3 +141,29 @@ class TTSFactory:
         kwargs["rate_limit_rpm"] = config.rate_limit_rpm
         kwargs.update(overrides)
         return cls.create(model_id, **kwargs)
+
+    @classmethod
+    def is_implemented(cls, model_id: str) -> bool:
+        """检测该 provider 在**本仓**是否有实现（`create()` 能否建出后端）。
+
+        与 `Module/llm/registry.py` / `Module/stt/registry.py` 的同名方法同形，
+        让 capability 判据在三个子系统里只有一种问法（Batch 5 / N-10 的 Authority Map）。
+
+        注意：本方法**只回答"有没有实现"**，不回答"配置齐不齐"——缺 API key、
+        缺 base_url、gpt-sovits 的 model 段不在音色表里，都是 `create()` 的
+        `ValueError`，属配置/解析层，不属 capability 层。
+
+        Args:
+            model_id: 格式为 "provider/model-name" 的标识字符串，或纯 provider 名。
+
+        Returns:
+            True 表示本仓实现了该 provider；False 表示未声明（运行期以 ValueError 拒绝）
+            或已声明但未实现（当前为空集）。
+
+        Raises:
+            无——只查询，不建连、不发网络请求。
+        """
+        provider = model_id.split("/")[0] if "/" in model_id else model_id
+        if provider not in _BACKENDS:
+            return False
+        return provider not in _UNIMPLEMENTED_PROVIDERS
