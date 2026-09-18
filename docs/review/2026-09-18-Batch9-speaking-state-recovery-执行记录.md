@@ -460,12 +460,30 @@ git worktree add /tmp/b9-mut    HEAD          # 变异注入
 | 新增套件 | `core/cognitive/tests/test_speaking_lifecycle.py` 16 passed；`core/adapter/tests/test_tts_adapter.py` 13 passed |
 | order perturbation（§91） | 交错用例按"success→failure / failure→success / interrupt→normal / normal→interrupt / 陈旧完成→新轮"覆盖；另有 400 轮随机交错探针（`tmp/batch9_probe/test_probe4.py`，4×100 seed）无 stranded、无孤儿任务 |
 | fresh process（§92） | **NOT APPLICABLE**：`TTSStreamManager` / `CognitiveLoop` / `AgentFSM` 均为实例级对象，无模块级单例或 import 期状态；每个用例自建实例（`RecordingFSM` 记录 history 也只在测试内） |
-| `make test-quick` | 见 §23 附表 |
-| `make test-normal` | 同上 |
-| `make test-full` | 同上 |
-| frontend / build | 后端 schema 未变 ⇒ 只跑 required build（见附表） |
-| static gates | `lint` / `pyright` / `check-arch` / `check-contract` / `check-types` / `check-timeouts` / `check-test-sets` 全绿（§89） |
-| real CI | 见附表（push 后确认 Backend / Real MongoDB / Frontend 全绿） |
+| `make test-quick` | ✅ **6170 passed, 2 skipped, 2 xfailed**（79.2s） |
+| `make test-normal` | ✅ **6170 passed, 2 skipped, 2 xfailed**（78.8s） |
+| `make test-full` | ✅ **6202 passed, 34 skipped, 2 xfailed**（449.5s） |
+| targeted（`core/status` + `core/adapter` + `core/cognitive` + `core/agent`） | ✅ **910 passed**（79.7s，含 36 格 FSM 矩阵与 shutdown 韧性） |
+| order perturbation（§91） | ✅ 交错用例（success→failure / failure→success / interrupt→normal / normal→interrupt / A 迟到完成→B 活跃）+ 400 轮随机交错探针（4×100 seed）无 stranded、无孤儿任务；每轮 xdist 不影响（无共享真实设备） |
+| fresh process（§92） | **NOT APPLICABLE** —— `TTSStreamManager` / `CognitiveLoop` / `AgentFSM` 全是实例级对象，无模块单例、无全局 EventBus、无 import 期状态（用例逐条自建实例） |
+| frontend / build | ✅ 后端 schema/契约零改动；本机按 CI 同款 Node（v22.23.0）跑 `npm run build` 退出 0（产物在 `static/`，gitignored） |
+| static gates（§89 全项） | ✅ `make lint` / `make pyright`（0 errors）/ `check-arch` / `check-contract` / `check-types`（含 17 golden frames + 错误码单源）/ `check-timeouts` / `check-test-sets`（Quick ∪ remainder == Normal，6174 == 6174）/ `check-compose` / `check-env-lock` / `check-debug-auth` / `check-secrets` / `check-ci-isolation` 全绿 |
+| **real CI** | ⏳ **待 owner push**（§23.1） |
+
+### 23.1 Real CI 状态
+
+**本机无 GitHub 凭据**（`git push --dry-run` 报 `could not read Username for 'https://github.com'`，
+与 Batch 4–8 同一环境限制）⇒ 4 个本地提交已就绪（`712850f4` / `b830e1f8` / `cb87cbf5` / `45a95e8d`），
+**真实 CI 由 owner push 后触发**。
+
+push 后需核对的 required job（`docs/ci.md`：本仓只有 push 触发器）：
+
+| job | 期望 | 本批相关面 |
+|---|---|---|
+| `backend` | 绿 | 全部静态门禁 + `test-quick` / `test-normal`（本机等价证据见上表） |
+| `real-mongo` | 绿 | 本批**零 persistence 改动**（无新集合/字段/索引/迁移），未跑该层；CI 自然运行 |
+| `frontend` | 绿 | 前端零改动；本机 `npm run build` 退出 0 |
+| `contract-frames` | 绿 | 契约层零改动；本机 `make check-types` 绿 |
 
 ---
 
