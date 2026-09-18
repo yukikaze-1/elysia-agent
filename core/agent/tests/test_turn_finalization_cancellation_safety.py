@@ -350,13 +350,17 @@ async def test_pending_message_is_processed_after_second_cancel(agent):
 async def test_stop_button_during_error_finalization_does_not_deafen_agent(monkeypatch):
     """CF-T1（PRE_FIX_RED，**用户可见**）：异常收口期间按停止按钮不得让 Agent 失聪。
 
-    这是 KB-25 同一边界上真正**用户可达且用户可见**的形态：回合因 provider 失败
-    进入异常收口（`_handle_turn_exception`）时用户按下停止按钮——取消落在收口的
-    await 上会一路逃出 `process()`（在 `except` 块里抛出的异常不会被兄弟 `except`
-    子句接住）⇒ 相位永久停在 THINKING、`run_state` 仍是 RUNNING ⇒ 之后每条消息
-    都被 ACK accepted 后进 pending，**永远没有回合再启动**。
+    这是 KB-25 同一边界上真正**用户可达且用户可见**的形态（canonical backlog = **KB-31**）：
+    回合因 provider 失败进入异常收口（`_handle_turn_exception`）时用户按下停止按钮——
+    取消落在收口的 await 上会一路逃出 `process()`（在 `except` 块里抛出的异常**不被
+    兄弟 `except` 子句**接住）⇒ 相位永久停在 THINKING、`run_state` 仍是 RUNNING ⇒
+    之后每条消息都被 ACK accepted 后进 pending，**永远没有回合再启动**。
 
-    修复前：第二条 `accepted=True` 但 `被处理=False`。修复后：恢复正常。
+    **修前的失败点**：第一条相位断言（原始输出 `transitions=['thinking']`）——即
+    "锁已释放 + 任务已结束 + FSM 仍宣称 active"（CF2）。"第二条消息被处理"那一臂给的是
+    另一层判别力（错误修法，例如强推 IDLE 却不走 canonical 收口），**它不是修前的红点**；
+    修前的**用户面原始输出**见探针 `/tmp/b11/probe_exc_window.py`
+    （`第二条 accepted=True 被处理=False pending=['第二条']`）。
     """
     _install_fake_llm(monkeypatch, failing=True)
     a = Agent(config=AppConfig())

@@ -764,6 +764,32 @@ M5/M6/M7/M5′ 分别钉住"不吞取消 / 广播是逻辑终态的一部分 / �
 逻辑终态不得重复广播"。
 **没有**为了凑数做无关变异（§71）；M5′ 是 Challenger 复核后**新增**的（§22.2 W1）。
 
+### 23.1 两半修复的**独立性**实验（KB-25 半 vs KB-31 半）
+
+M4 只证明了"去掉 KB-31 那半会红"，没有证明**反过来**。为了把"同一个 diff 的两半"钉死，
+把修复 patch 按 hunk 切开（`/tmp/b11/split_patch.py` → `/tmp/b11/hunks/`），在独立 worktree
+（detached `@ f62e2468` + 只带本批测试）里跑 4 个场景（`/tmp/b11/independence_experiment.py`）：
+
+| 场景 | KB-31 guard（异常收口被取消，含 **USER/RUNNING** 形态） | KB-25 guard（第二发取消） |
+|---|---|---|
+| **S0** 未修复（= 回退 Batch 11 全部生产改动） | ❌ FAIL / ❌ FAIL | ❌ FAIL / ❌ FAIL / ❌ FAIL |
+| **S1** 完整修复 | ✅ / ✅ | ✅ / ✅ / ✅ |
+| **S2** 修复**只含** `_handle_turn_exception` 那一半 | ✅ / ✅ | ❌ / ❌ / ❌ |
+| **S3** 修复**减去** `_handle_turn_exception` 那一半 | ❌ / ❌ | ✅ / ✅ / ✅ |
+
+S0 原始输出：
+
+```
+E  AssertionError: 异常收口被取消 ⇒ 相位永久停在 THINKING（与 KB-25 同一边界）：
+   fsm=thinking lock=False states=['THINKING'] rejected=[] bus=['thinking'] notified=['thinking']
+E  AssertionError: 异常收口被取消 ⇒ 相位停在活跃区（Agent 永久失聪）：transitions=['thinking']
+```
+
+**结论（回答"是否同一个 production diff"）**：**同一个 commit（`b56a8442`）、不同的 hunk**；
+两半**互不可推**（S2 绿 KB-31 而 KB-25 全红；S3 反之），也**互不覆盖**（S0/S3 证明回退后
+KB-31 guard 真实变红）。这正是把 KB-31 判为 `SAME_ROOT_DISTINCT_REACHABILITY` 而不是
+`SAME_ROOT_ALIAS` 的可执行依据。
+
 ---
 
 ## 24. Task Leak / Detached Cleanup Evidence
@@ -898,12 +924,17 @@ $ make test-real-mongo
 
 | 不变量 | 守卫 | 套件 |
 |---|---|---|
-| CF1 收口已开始 ⇒ 重复取消不阻止稳定终态 | 15 条 PRE_FIX_RED（10 loop + 5 Agent） | `make test-quick` / `test-normal`（CI `push/backend`） |
-| CF2 runtime terminal truth 先于 ownership 释放 | 每条用例的序列 + 锁断言 | 同上 |
+| CF1 终态收口一旦开始 ⇒ 后续取消（含第二发及更多发）不阻止稳定终态 | 15 条 PRE_FIX_RED（10 loop + 5 Agent），其中 **1 条 loop + 1 条 Agent 是 KB-31 的形态** | `make test-quick` / `test-normal`（CI `push/backend`） |
+| CF2 runtime terminal truth 先于 ownership 释放 | 每条用例的序列 + 锁断言；**KB-31 的专属判别点** = `test_cancel_during_error_finalization_settles` + `test_stop_button_during_error_finalization_does_not_deafen_agent`（修前 2 红） | 同上 |
 | CF3 保护不得吞掉取消意图 | `expect_cancelled=True` 断言 + M5 变异 | 同上 |
 | CF4 资源清理不得阻塞逻辑终态 | `test_ordinary_exception_in_cleanup_still_settles_state`、desktop 清理配对用例 | 同上 |
 | CF5 收口仍 turn-scoped | 交错用例 + pending 恢复用例 | 同上 |
-| CF6 停机仍有界、不启动新回合 | 停机用例（真实 3s 预算） | 同上 |
+| CF6 停机仍有界、不产生新回合生命周期 | 停机用例（真实 3s 预算） | 同上 |
+
+> **CF1 措辞的一处修正（复核 KB-31 时发现）**：CF1 原文写的是"**后续重复取消**"，
+> 按字面**不覆盖** KB-31（它是落在异常收口上的**第一发**取消）。已把 CF1 主语改为
+> "终态收口一旦开始（无论由取消、异常还是正常收尾触发）⇒ **该收口过程本身**对后续
+> 取消免疫"。KB-31 原本由 **CF2** 覆盖（锁已释放 + 任务已结束 + FSM 仍 active 的非法组合）。
 
 同时**解除**了 TH4 的附带限定（"收口能在 3s 内走完时成立"）——已在该节就地写明。
 
