@@ -96,19 +96,58 @@ class FakeSessionRepo:
         self.deleted.append(sid)
         return 1
 
-    async def list_all(self) -> list[SessionSummary]:
-        summaries = []
-        for sid, doc in self.sessions.items():
-            summaries.append(SessionSummary(
-                session_id=SessionId(sid),
-                message_count=len(doc.get("messages", [])),
-                updated_at=doc.get("updated_at", ""),
-                title=doc.get("title", ""),
-                character_binding=doc.get("cb"),
-            ))
-        # 模拟 repo 排序：updated_at DESC
+    def _summary(self, sid: str) -> SessionSummary:
+        doc = self.sessions[sid]
+        return SessionSummary(
+            session_id=SessionId(sid),
+            message_count=len(doc.get("messages", [])),
+            updated_at=doc.get("updated_at", ""),
+            title=doc.get("title", ""),
+            character_binding=doc.get("cb"),
+        )
+
+    def _visible_sorted(self) -> list[SessionSummary]:
+        """契约序：updated_at DESC，同值时 session_id ASC。"""
+        summaries = [self._summary(sid) for sid in self.sessions]
+        summaries.sort(key=lambda s: str(s.session_id))
         summaries.sort(key=lambda s: s.updated_at, reverse=True)
         return summaries
+
+    async def list_all(self) -> list[SessionSummary]:
+        """**有界诊断读**（≤200，与真实仓储同口径）——用户列表路径不得使用它。
+
+        批次 8 / P2-01r 的 fake 保真修复：旧实现返回**全量**且不排序 tie-break，
+        于是"manager 把 200 预取当分页用"这类缺陷在 fake 上永远看不见
+        （真实仓储的 `list_all(limit=200)` 才是生产截断点）。
+        """
+        return self._visible_sorted()[:200]
+
+    async def list_page(self, *, limit: int,
+                        after: tuple[str, str] | None = None,
+                        search: str = "") -> list[SessionSummary]:
+        """keyset 分页（与真实 `SessionRepository.list_page` 同语义，含 limit 保真）。"""
+        if limit <= 0:
+            return []
+        rows = self._visible_sorted()
+        if search:
+            q = search.lower()
+            rows = [s for s in rows if q in s.title.lower()]
+        if after is not None:
+            c_ts, c_sid = after
+            rows = [s for s in rows
+                    if s.updated_at < c_ts
+                    or (s.updated_at == c_ts and str(s.session_id) > c_sid)]
+        return rows[:limit]
+
+    async def summaries_by_ids(self, session_ids) -> dict[SessionId, SessionSummary]:
+        """覆盖层批量读（与真实仓储同语义：只返回存在的记录）。"""
+        return {SessionId(str(sid)): self._summary(str(sid))
+                for sid in session_ids if str(sid) in self.sessions}
+
+    async def get_summary(self, session_id) -> SessionSummary | None:
+        """单文档摘要读（与真实仓储同语义：不存在返回 None）。"""
+        sid = str(session_id)
+        return self._summary(sid) if sid in self.sessions else None
 
 
 class FakeMsgRepo:

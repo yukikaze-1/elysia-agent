@@ -15,7 +15,7 @@ from core.schema.part import TextPart
 from core.schema.service_state import ServiceState
 from core.schema.types import IsoTimestamp, SessionId
 
-from core.storage.base import Repository, StorageUnavailableError
+from core.storage.base import Repository, StorageUnavailableError, search_regex_filter
 from core.storage.character_write_guard import (
     count_assistant_without_character,
     warn_missing_character_snapshot,
@@ -79,6 +79,29 @@ class SessionSummary:
     character_binding: CharacterBinding | None = None
 
 
+def _summary_from_doc(d: dict) -> SessionSummary:
+    """sessions doc → `SessionSummary`（四个读路径的唯一投影点）。
+
+    **为什么收成一个函数**（批次 8 / P2-01r）：列表窗口读（`list_all`）、分页读
+    （`list_page`）、单文档读（`get_summary`）、批量读（`summaries_by_ids`）必须
+    对同一条 doc 给出**同一个**摘要——各写一份投影，任何一份漏字段（如
+    `character_binding`）都会变成"某一页少了字段"这类逐页漂移。
+
+    `updated_at` 强制收成 `str`：它是分页的**排序键**，历史/损坏文档可能缺字段或为
+    null，而 `str` 与 `None` 比较会抛 `TypeError`（在归并里表现为"整个列表静默退化"）。
+    投影层归一后，下游所有键比较都是 str vs str。**注意**：归一不等于可达——缺
+    `updated_at` 的文档在 keyset 谓词下仍可能被漏掉（见 todo.md 的登记项）。
+    """
+    raw_ts = d.get("updated_at")
+    return SessionSummary(
+        session_id=SessionId(d.get("session_id", "")),
+        message_count=len(d.get("messages", [])),
+        updated_at=raw_ts if isinstance(raw_ts, str) else "",
+        title=d.get("title", ""),
+        character_binding=normalize_character_binding(d.get("character_binding")),
+    )
+
+
 class SessionRepository(Repository):
     """会话存储 — MongoDB sessions 集合。"""
 
@@ -118,6 +141,11 @@ class SessionRepository(Repository):
             )
             await self._db.ensure_index(COLLECTION, [("session_id", 1)])
             await self._db.ensure_index(COLLECTION, [("updated_at", -1)])
+            # 批次 8 / P2-01r：keyset 分页的排序是 (updated_at DESC, session_id ASC)，
+            # 单键 updated_at 索引无法提供该顺序（真 Mongo 会退化成扫描 + 阻塞排序，
+            # 实测 20k 会话 23.3ms/页 vs 有复合索引 1.2ms/页）。新增索引由 ensure_index
+            # 幂等覆盖（ARCH-INC-P1-04：不做迁移框架），并已在 schema_drift 登记。
+            await self._db.ensure_index(COLLECTION, [("updated_at", -1), ("session_id", 1)])
             logger.info("SessionRepository: MongoDB connected")
             return True
         except Exception as e:
@@ -380,34 +408,145 @@ class SessionRepository(Repository):
         logger.info("SessionRepository delete: session_id=%s, deleted=%d", session_id, result)
         return result
 
-    async def list_all(self) -> list[SessionSummary]:
-        """列出最近会话摘要。
+    async def list_page(self, *, limit: int,
+                        after: tuple[str, str] | None = None,
+                        search: str = "") -> list[SessionSummary]:
+        """**keyset 分页**读取一页会话摘要（存储层分页的唯一入口）。
+
+        这是 `GET /api/sessions` 的取数原语（批次 8 / P2-01r）：排序与谓词与设计
+        文档 `docs/superpowers/specs/archive/2026-08/2026-08-04-electron-backend-batch3-multi-session.md`
+        §4「列表游标（keyset）」逐字一致——
+
+          - 排序 `updated_at DESC, session_id ASC`（**tie-break 下推到存储**：
+            只按 updated_at 排序时，时间戳相同的记录在页边界上可能被重复或漏掉）；
+          - 下一页谓词 `(updated_at < U) OR (updated_at = U AND session_id > S)`；
+          - `search` 对 title 做大小写不敏感子串匹配（`$regex`，转义 + 长度上限
+            统一走 `search_regex_filter`；超长按**无匹配**处理，与消息/角色搜索同口径）；
+          - `limit` 是**单页上限**，与数据集大小无关——调用方必须用返回的最后一条
+            记录继续翻页，直到拿不满一页为止。**不得**用"预取全量再切片"替代
+            （那正是 P2-01r：`limit=200` 预取把单页上限变成了数据集上限）。
+
+        Args:
+            limit: 单页最多返回多少条（<=0 返回空列表，不落到后端）。
+            after: 上一页最后一条的 `(updated_at, session_id)`；None = 第一页。
+            search: title 子串（大小写不敏感）；空串不过滤。
 
         Returns:
-            会话摘要列表，按更新时间降序，最多 200 条。
+            至多 `limit` 条摘要，按契约顺序排列。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（与 `list_all` 同一 fail-closed 口径）。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），会话分页无法判定")
+        if limit <= 0:
+            return []
+        filt: dict = {}
+        if search:
+            clause = search_regex_filter(search)
+            if clause is None:
+                # 超长搜索词：**不能忽略过滤**（忽略会返回全部会话，比空结果更危险）。
+                logger.warning("会话搜索词超长（%d 字符）——按无匹配处理", len(search))
+                return []
+            filt["title"] = clause
+        if after is not None:
+            after_ts, after_sid = after
+            filt["$or"] = [
+                {"updated_at": {"$lt": after_ts}},
+                {"updated_at": after_ts, "session_id": {"$gt": after_sid}},
+            ]
+        db = self._db
+        docs = await self._call(
+            lambda: db.find(COLLECTION, filt,
+                            sort=[("updated_at", -1), ("session_id", 1)], limit=limit),
+            reason="SessionRepository.list_page 查询失败",
+        )
+        return [_summary_from_doc(d) for d in docs]
+
+    async def get_summary(self, session_id: SessionId) -> SessionSummary | None:
+        """按会话 ID 读**单条**摘要（不经过任何列表窗口）。
+
+        详情/重命名路径（`GET|PATCH /api/sessions/{id}`）此前复用一个"最多 200 条"
+        的列表视图，于是第 201+ 条会话的详情拿到 None、由路由兜底成 `updatedAt: ""`
+        ——同一 root cause 的第二个出口（批次 8 / P2-01r）。单文档读与窗口无关。
+
+        Args:
+            session_id: 会话 ID。
+
+        Returns:
+            摘要；会话不存在返回 None。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（离线 ≠ 不存在）。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），会话摘要无法判定")
+        db = self._db
+        docs = await self._call(
+            lambda: db.find(COLLECTION, {"session_id": session_id}, limit=1),
+            reason="SessionRepository.get_summary 查询失败",
+        )
+        return _summary_from_doc(docs[0]) if docs else None
+
+    async def summaries_by_ids(
+        self, session_ids: Sequence[SessionId],
+    ) -> dict[SessionId, SessionSummary]:
+        """批量读摘要（按 session_id `$in`）——进程内覆盖层的持久键/字段来源。
+
+        `SessionManager` 的列表合并需要知道"某个本地摘要对应的持久记录是否存在、
+        其持久 `updated_at`/`message_count`/绑定是什么"：覆盖层的**有效排序键**是
+        `max(持久键, 本地键)`（改过名的会话要被"抬"到最前），只靠本地值会把记录
+        摆错位置；反之若把覆盖层整条从结果里剔除，它会**丢失**。一次 `$in` 查询
+        （ID 数 = 进程内写过的会话数）替代逐条 `find`。
+
+        Args:
+            session_ids: 待查会话 ID 序列（去重后查询；空序列不发查询）。
+
+        Returns:
+            `{session_id: 摘要}`，只含真实存在的记录。
+
+        Raises:
+            StorageUnavailableError: MongoDB 未连接（离线 ≠ 不存在）。
+        """
+        if self._db is None:
+            raise StorageUnavailableError(
+                "SessionRepository 未连接（MongoDB 不可用），覆盖层摘要无法判定")
+        ids = list(dict.fromkeys(str(s) for s in session_ids))
+        if not ids:
+            return {}
+        db = self._db
+        docs = await self._call(
+            lambda: db.find(COLLECTION, {"session_id": {"$in": ids}}, limit=len(ids)),
+            reason="SessionRepository.summaries_by_ids 查询失败",
+        )
+        return {SessionId(str(d.get("session_id", ""))): _summary_from_doc(d) for d in docs}
+
+    async def list_all(self) -> list[SessionSummary]:
+        """列出最近会话摘要（**有界诊断读**，≤200 条）。
+
+        ⚠️ **用户列表不走这里**（批次 8 / P2-01r）：本方法只服务 debug 面板
+        （`GET /debug/api/sessions`——无分页参数、按"全部会话"展示）。用户可见的
+        会话列表走 `list_page()`；把本方法的 200 当成分页取数，正是 P2-01r 的成因：
+        单页上限变成了数据集上限，第 201+ 条不可达。
+
+        Returns:
+            会话摘要列表，按更新时间降序，最多 200 条（**上界是诊断成本，不是产品语义**）。
 
         Raises:
             StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed
                 ——离线时不得把「读不到」报成「没有会话」）。
 
-        调用方（`SessionManager._merged_summaries`）已捕获该异常并显式降级为
-        进程内摘要 + warning；这是**有意的降级点**，不是让本方法返回空的理由。
+        `SessionManager` 的降级路径已捕获该异常并显式降级为进程内摘要 + warning；
+        这是**有意的降级点**，不是让本方法返回空的理由。
         """
         if self._db is None:
             raise StorageUnavailableError(
                 "SessionRepository 未连接（MongoDB 不可用），会话列表无法判定")
         db = self._db
         docs = await db.find(COLLECTION, {}, sort=[("updated_at", -1)], limit=200)
-        return [
-            SessionSummary(
-                session_id=SessionId(d.get("session_id", "")),
-                message_count=len(d.get("messages", [])),
-                updated_at=d.get("updated_at", ""),
-                title=d.get("title", ""),
-                character_binding=normalize_character_binding(d.get("character_binding")),
-            )
-            for d in docs
-        ]
+        return [_summary_from_doc(d) for d in docs]
 
     async def clear_all(self, *, confirm: str) -> int:
         """清空全部会话（**破坏性且不可逆**，要求类型化确认）。

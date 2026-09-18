@@ -55,8 +55,9 @@ class TestSessionRepository:
     def test_list_all_is_fail_closed_when_db_none(self):
         """决策 #8（owner 2026-09-16）：会话列表读 fail-closed。
 
-        调用方 `SessionManager._merged_summaries` 捕获后显式降级为进程内摘要 +
-        warning——降级点写在调用方（可观测），而不是让仓储安静地返回空。
+        调用方捕获后显式降级为进程内摘要 + warning——降级点写在调用方（可观测），
+        而不是让仓储安静地返回空。批次 8 / P2-01r 起用户列表走 `list_page`，
+        但 `list_all`（debug 面板的有界诊断读）保持同一 fail-closed 口径。
         """
         import asyncio
         from core.storage.base import StorageUnavailableError

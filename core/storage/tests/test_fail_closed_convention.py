@@ -204,6 +204,11 @@ _CONVENTION: dict[str, dict[str, str]] = {
         "load": READ_FAIL_CLOSED,
         "delete": WRITE,
         "list_all": READ_FAIL_CLOSED,
+        # 批次 8 / P2-01r：分页读、单文档摘要读、覆盖层批量读——三条都是读路径，
+        # 与同仓其余读同向 fail-closed（"我不知道" ≠ "没有会话"）。
+        "list_page": READ_FAIL_CLOSED,
+        "get_summary": READ_FAIL_CLOSED,
+        "summaries_by_ids": READ_FAIL_CLOSED,
         "clear_all": WRITE,
         "count_incomplete_character_binding": READ_FAIL_CLOSED,
     },
@@ -257,6 +262,8 @@ _ARG_FACTORIES: dict[str, Any] = {
     "generation_id": lambda: "probe",
     "attachment_id": lambda: "probe",
     "attachment_ids": lambda: ["probe"],
+    "session_ids": lambda: ["probe"],
+    "limit": lambda: 10,
     "doc_id": lambda: "probe",
     "character_id": lambda: "probe",
     "instance_id": lambda: "probe",

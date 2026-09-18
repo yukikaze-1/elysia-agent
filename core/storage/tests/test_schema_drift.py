@@ -324,8 +324,9 @@ class TestExpectedIndexesPinnedToCode:
         """防止解析器故障导致表被"清空"却测试通过。"""
         total = sum(len(v) for v in EXPECTED_INDEXES.values())
         assert len(EXPECTED_INDEXES) == 13
-        # 28 = 26（#6 前）+ background_task_results.{task_id_1, ttl_expires_at_1}
-        assert total == 28, f"期望 28 个索引，实际 {total}"
+        # 29 = 26（#6 前）+ background_task_results.{task_id_1, ttl_expires_at_1}
+        #      + sessions.updated_at_-1_session_id_1（批次 8 / P2-01r 分页排序索引）
+        assert total == 29, f"期望 29 个索引，实际 {total}"
 
 
 #: 代码声明了索引**选项**、但 `EXPECTED_INDEX_OPTIONS` 尚未登记的索引（N-15 记账）。
@@ -662,7 +663,8 @@ class TestCheckSchemaDrift:
 
         assert report.scanned is True
         assert report.has_drift is False  # 缺失不算「漂移」（不阻断），但会被报告
-        assert report.missing["sessions"] == ("session_id_1", "updated_at_-1")
+        assert report.missing["sessions"] == (
+            "session_id_1", "updated_at_-1", "updated_at_-1_session_id_1")
         assert report.absent == ()
 
     @pytest.mark.asyncio

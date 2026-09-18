@@ -642,9 +642,10 @@ async def sessions_detail_handler(request: web.Request) -> web.Response:
     total = await agent.message_repo.count_by_session(SessionId(sid))
     summary = await _session_summary(request.app, agent, sid, total)
     if summary is None:
-        # has_session 通过但 list_all 未命中（Mongo 离线等极端场景）→ 兜底空摘要。
+        # has_session 通过但单文档摘要读不到（Mongo 不可用等极端场景）→ 兜底空摘要。
         # BE-P1-05 clean-start：default 恒有本地摘要（updatedAt=now）——本兜底对
-        # default 不再触发，updatedAt 非空可解析（详见 SessionManager._merged_summaries）。
+        # default 不再触发，updatedAt 非空可解析（详见 SessionManager.get_summary：
+        # 批次 8 / P2-01r 起按 ID 直读单文档，不再依赖"最多 200 条"的列表窗口）。
         character = await _character_snapshot(
             request.app,
             getattr(agent.session_manager.get(SessionId(sid)), "character_binding", None),

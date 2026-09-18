@@ -19,6 +19,7 @@ import base64
 import json
 import logging
 import os
+import re
 import uuid
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -31,7 +32,7 @@ from paths import ProjectPath
 from core.character.binding import CharacterBinding, normalize_character_binding
 from core.schema.utils import now_iso
 from core.schema.types import SessionId
-from core.storage.base import StorageUnavailableError
+from core.storage.base import MAX_SEARCH_LEN, StorageUnavailableError
 from core.storage.session_repo import (
     SessionRepository,
     SessionSummary,
@@ -80,6 +81,38 @@ def _decode_cursor(cursor: str) -> tuple[str, str]:
     if not updated_at or not sid:
         raise ValueError("游标格式非法")
     return updated_at, sid
+
+
+def _precedes(a: SessionSummary, b: SessionSummary) -> bool:
+    """在 `updated_at DESC, session_id ASC` 序中，a 是否严格先于 b。"""
+    if a.updated_at != b.updated_at:
+        return a.updated_at > b.updated_at
+    return str(a.session_id) < str(b.session_id)
+
+
+def _after_cursor(s: SessionSummary, after: tuple[str, str]) -> bool:
+    """s 是否严格位于游标之后（同一序）——契约谓词 `(U' < U) OR (U' = U AND S' > S)`。"""
+    c_ts, c_sid = after
+    return s.updated_at < c_ts or (s.updated_at == c_ts and str(s.session_id) > c_sid)
+
+
+def _sort_summaries(items: list[SessionSummary]) -> None:
+    """就地排序：`updated_at DESC`，同值时 `session_id ASC`（两遍稳定排序）。"""
+    items.sort(key=lambda s: str(s.session_id))
+    items.sort(key=lambda s: s.updated_at, reverse=True)
+
+
+def _title_matches(title: str, search: str) -> bool:
+    """title 的大小写不敏感子串匹配（size search 语义的唯一判据）。
+
+    **与存储侧同族语义**：持久层那条路径由 Mongo `$regex` + `$options:"i"` 过滤，
+    覆盖层（进程内本地摘要）没有 Mongo 可问——这里用 `re.IGNORECASE` 正则而非
+    `str.lower()`，使两条路径都是"大小写不敏感正则"（内存 fake 的 `$regex` 也是
+    Python `re`）。用 `lower()` 会与正则产生可观测分歧（如 U+017F 'ſ' 在
+    `re.IGNORECASE` 下匹配 's'、在 `lower()` 下不匹配）——即同一条标题在持久层
+    命中、在覆盖层不命中。
+    """
+    return re.search(re.escape(search), title, re.IGNORECASE) is not None
 
 
 class SessionManager:
@@ -140,6 +173,10 @@ class SessionManager:
         # repo 恢复后，持久层摘要与这些本地摘要在读取时合并去重。
         self._local_summaries: dict[SessionId, SessionSummary] = {}
         self._local_title_overrides: set[SessionId] = set()
+        # 上一次 `list()` 若降级为进程内摘要并给出了续页游标，把它记在这里：
+        # 离线模式的多页遍历要能继续，而"从持久层页翻到一半失败"必须如实抛出
+        # （不得伪装成 has_more=false）。见 `list()` 的降级分支。
+        self._degraded_cursor: str | None = None
         # review 复核 #5 D2：提交后清理（附件 refs + 归档）由 agent 注入（经
         # set_attachment_cleanup 接 release_session_attachments）；失败登记
         # _pending_cleanup journal，健康循环 retry_pending_cleanup 重试。
@@ -423,36 +460,151 @@ class SessionManager:
             character_binding=normalize_character_binding(summary.character_binding),
         )
 
-    async def _merged_summaries(self) -> list[SessionSummary]:
-        """合并 Mongo 摘要与进程内离线摘要，并过滤删除 tombstone。"""
-        try:
-            persisted = await self._repo.list_all()
-        except Exception:
-            logger.warning("session list_all 失败，降级使用进程内摘要", exc_info=True)
-            persisted = []
-        merged = {
-            SessionId(s.session_id): self._copy_summary(s)
-            for s in persisted
-            if SessionId(s.session_id) not in self._deleting
-            and SessionId(s.session_id) not in self._deleted
+    def _merge_summary(self, persisted: SessionSummary | None,
+                       local: SessionSummary | None) -> SessionSummary | None:
+        """合并"持久层摘要 + 进程内本地摘要"成一条**新**摘要（覆盖层语义单点）。
+
+        规则与批次 3 一致（BE-P1-05 的合并优先级）：
+          - `message_count` 取 `max`（本地窗口计数不得压低持久计数）；
+          - `updated_at` 取 `max`——本地 `updated_at` 是**有效排序键**的一部分：
+            `rename()` 把本地值设为 now，于是改过名的会话会被"抬"到列表最前；
+            clean-start 的 default 本地摘要也因此胜出陈旧 Mongo 文档；
+          - title 以本地覆盖为准（本地为空则沿用持久）；
+          - binding 本地非空则覆盖。
+
+        返回**新对象**：调用方（list/detail）会写 `active` 字段，不得污染
+        repo 返回对象或 `_local_summaries` 里的缓存对象。
+        """
+        if persisted is None and local is None:
+            return None
+        base = persisted if persisted is not None else local
+        assert base is not None  # 上面的分支已排除双 None
+        merged = self._copy_summary(base)
+        if persisted is None or local is None:
+            return merged
+        merged.message_count = max(persisted.message_count, local.message_count)
+        merged.updated_at = max(persisted.updated_at, local.updated_at)
+        if SessionId(local.session_id) in self._local_title_overrides or not merged.title:
+            merged.title = local.title
+        if local.character_binding is not None:
+            merged.character_binding = normalize_character_binding(local.character_binding)
+        return merged
+
+    def _visible_local(self) -> dict[SessionId, SessionSummary]:
+        """进程内本地摘要中未被删除 tombstone 遮蔽的部分。"""
+        return {
+            SessionId(sid): local
+            for sid, local in self._local_summaries.items()
+            if sid not in self._deleting and sid not in self._deleted
         }
-        for sid, local in self._local_summaries.items():
-            if sid in self._deleting or sid in self._deleted:
+
+    def _local_entries(self, persisted_by_id: dict[SessionId, SessionSummary],
+                       after: tuple[str, str] | None,
+                       search: str,
+                       visible: dict[SessionId, SessionSummary] | None = None,
+                       ) -> tuple[list[SessionSummary], set[str]]:
+        """构造覆盖层侧的有序条目 + "同时存在于持久层"的 ID 集合。
+
+        Args:
+            persisted_by_id: 覆盖层对应持久记录的摘要（`summaries_by_ids` 结果）。
+                离线降级时传 `{}`（此时全部本地条目都当本地-only 处理）。
+            after: keyset 游标（None = 首页）。
+            search: title 子串（大小写不敏感）；空串不过滤。
+            visible: **调用方快照**的可见本地摘要。必须与 `persisted_by_id` 取自同
+                一次快照——两次读取之间若有 `create()`/`rename()` 插进来，新条目
+                会被当成"本地-only"（不在 `overlay_ids` 里），而它的持久记录又会被
+                持久层流吐一次 ⇒ **同一条记录在一页里出现两次**。
+
+        Returns:
+            (按契约序排好的条目, 同时存在于持久层的会话 ID 集合)。后者用于把
+            这些记录从持久层流里剔除——它们的**有效排序键**可能被本地值抬高，
+            位置由覆盖层决定；若不剔除，同一条记录会在后续页**重复**出现。
+        """
+        entries: list[SessionSummary] = []
+        overlay_ids: set[str] = set()
+        source = self._visible_local() if visible is None else visible
+        for sid, local in source.items():
+            persisted = persisted_by_id.get(sid)
+            if persisted is not None:
+                overlay_ids.add(str(sid))
+            merged = self._merge_summary(persisted, local)
+            if merged is None:  # pragma: no cover - _visible_local 保证 local 非 None
                 continue
-            current = merged.get(sid)
-            if current is None:
-                merged[sid] = self._copy_summary(local)
+            if search and not _title_matches(merged.title, search):
                 continue
-            current.message_count = max(current.message_count, local.message_count)
-            # BE-P1-05 合并优先级：default 本地摘要 updated_at=now 恒新鲜——max(updated_at)
-            # 保证 clean-start 本地 default 胜出陈旧 Mongo default 文档（旧时间戳不得
-            # 遮蔽活跃会话）；Mongo 侧更新的 default 文档（含消息上下文）则正常胜出。
-            current.updated_at = max(current.updated_at, local.updated_at)
-            if sid in self._local_title_overrides or not current.title:
-                current.title = local.title
-            if local.character_binding is not None:
-                current.character_binding = normalize_character_binding(local.character_binding)
-        return list(merged.values())
+            if after is not None and not _after_cursor(merged, after):
+                continue
+            entries.append(merged)
+        _sort_summaries(entries)
+        return entries, overlay_ids
+
+    async def _merged_page(self, after: tuple[str, str] | None, limit: int,
+                           search: str) -> list[SessionSummary]:
+        """持久层 keyset 分页 ⊕ 覆盖层的**归并**，返回至多 limit+1 条。
+
+        为什么是归并而不是"先取全量再切片"（P2-01r 的成因）：
+        持久层只逐页吐（`repo.list_page`，limit+1 探测），覆盖层（进程内写入的
+        会话摘要，数量 = 本进程创建/改名/恢复过的会话数）在内存里是完整且有序的，
+        两个有序序列做 k 路归并即可——内存占用与单页大小同阶，与数据集大小无关。
+
+        **游标语义**：本方法的 `after` 是"客户端游标"（上页最后一条的**有效**键）。
+        持久层的两条读都不带额外状态，因此每页都会把覆盖层重新合并一次；
+        覆盖层里被抬高的记录若落在游标之前，会被 `_after_cursor` 正确滤掉，
+        落在游标之后的则按有效键插回正确位置——不重不漏。
+        """
+        visible = self._visible_local()      # 快照一次，见 _local_entries 的 visible 说明
+        persisted_by_id = await self._repo.summaries_by_ids(list(visible.keys()))
+        entries, overlay_ids = self._local_entries(persisted_by_id, after, search,
+                                                   visible=visible)
+        out: list[SessionSummary] = []
+        emitted: set[str] = set()            # 同一 session_id 只吐一次（见下）
+        idx = 0
+        stream_after = after
+        stream_done = False
+        while len(out) <= limit and not stream_done:
+            window = await self._repo.list_page(limit=limit + 1, after=stream_after,
+                                                search=search)
+            if window:
+                stream_after = (window[-1].updated_at, str(window[-1].session_id))
+                # 未满窗（≤limit）⇒ 持久层已到末尾；满窗则可能还有下一页窗口。
+                stream_done = len(window) <= limit
+            else:
+                stream_done = True
+            k = 0
+            while len(out) <= limit and (k < len(window) or idx < len(entries)):
+                if k < len(window) and (idx >= len(entries)
+                                        or _precedes(window[k], entries[idx])):
+                    candidate = window[k]
+                    k += 1
+                    sid = str(candidate.session_id)
+                    if sid in overlay_ids:
+                        continue  # 由覆盖层代表（有效键/字段已在 entries 里合并）
+                    if (SessionId(sid) in self._deleting
+                            or SessionId(sid) in self._deleted):
+                        continue  # 删除 tombstone：本地已删、持久层尚未消失
+                    if sid in emitted:
+                        # 同一 session_id 的**重复文档**（sessions 的 session_id 上没有
+                        # 唯一索引，并发 upsert 可产生）。修前按 session_id 建字典天然
+                        # 去重；下推分页后若不去重，列表会出现两条同 ID 记录。
+                        logger.warning("session 列表发现重复文档 session_id=%s（已去重）", sid)
+                        continue
+                    emitted.add(sid)
+                    out.append(candidate)
+                else:
+                    entry = entries[idx]
+                    idx += 1
+                    sid = str(entry.session_id)
+                    if sid in emitted:  # pragma: no cover - 覆盖层条目自身唯一
+                        continue
+                    emitted.add(sid)
+                    out.append(entry)
+        return out
+
+    def _local_page(self, after: tuple[str, str] | None, limit: int,
+                    search: str) -> list[SessionSummary]:
+        """Mongo 离线时的降级分页：只用进程内摘要，但合同（cursor/limit/search）不变。"""
+        entries, _ = self._local_entries({}, after, search)
+        return entries[:limit + 1]
 
     def set_character_binding(self, sid: SessionId, value: object) -> CharacterBinding | None:
         """设置缓存会话及本地摘要的规范化 binding；持久化仍由 create/save 边界负责。"""
@@ -465,48 +617,85 @@ class SessionManager:
         return binding
 
     async def get_summary(self, sid: SessionId) -> SessionSummary | None:
-        """获取单会话摘要；Mongo 离线时同样可返回本地创建/重命名结果。"""
+        """获取单会话摘要：**按 ID 直读持久层**（不经过任何列表窗口）+ 本地覆盖。
+
+        修前实现遍历"最多 200 条"的合并列表 ⇒ 第 201+ 条会话的详情拿到 None，
+        路由兜底成 `updatedAt: ""`（P2-01r 的第二出口）。Mongo 离线时仍返回
+        本地创建/重命名结果。
+        """
         sid = SessionId(sid)
-        for summary in await self._merged_summaries():
-            if summary.session_id == sid:
-                summary.active = (sid == self._active_id)
-                return summary
-        return None
+        if sid in self._deleting or sid in self._deleted:
+            return None
+        local = self._local_summaries.get(sid)
+        try:
+            persisted = await self._repo.get_summary(sid)
+        except Exception:
+            logger.warning("session get_summary 读取失败，降级使用进程内摘要 sid=%s",
+                           sid, exc_info=True)
+            persisted = None
+        merged = self._merge_summary(persisted, local)
+        if merged is None:
+            return None
+        merged.active = (sid == self._active_id)
+        return merged
 
     async def list(self, *, cursor: str | None = None, limit: int = 50,
                    search: str = "") -> tuple[list[SessionSummary], bool, str | None]:
-        """列出会话摘要。
+        """列出会话摘要（**分页在存储层完成**，见 `SessionRepository.list_page`）。
 
-        数据源 repo.list_all()（≤200，updated_at DESC）；内存过滤：
+        数据源 = 持久层 keyset 分页 ⊕ 进程内本地摘要覆盖层（`_merged_page`）；
+        离线（仓储不可达）时显式降级为纯本地摘要（`_local_page`），合同不变：
           - search 仅匹配 title（大小写不敏感），不混消息文本；
           - keyset 游标 base64(`updated_at|session_id`)；
+          - `has_more` 用 **limit+1** 探测（与设计文档 §4 一致）；
           - items 填 active（按 active_id 比较）。
+
+        `limit` 是**单页上限**，与数据集大小无关：客户端沿 `next_cursor` 继续
+        请求即可走遍全部可见记录（P2-01r / 不变量 PG1）。
+
+        Raises:
+            ValueError: 游标格式非法（路由折 400 CONTRACT_VALIDATION）。
 
         Returns:
             (items, has_more, next_cursor)。
         """
-        summaries = await self._merged_summaries()
-        if search:
-            q = search.lower()
-            summaries = [s for s in summaries if q in s.title.lower()]
-        # 排序：updated_at DESC，同 updated_at 时 session_id ASC tiebreak
-        # （稳定排序：先 session_id ASC，再 updated_at DESC 主键）
-        summaries.sort(key=lambda s: s.session_id)
-        summaries.sort(key=lambda s: s.updated_at, reverse=True)
-        if cursor:
-            c_ts, c_sid = _decode_cursor(cursor)
-            summaries = [
-                s for s in summaries
-                if s.updated_at < c_ts or (s.updated_at == c_ts and s.session_id > c_sid)
-            ]
+        after = _decode_cursor(cursor) if cursor else None
+        # 契约：limit ∈ [1, cap]（路由 `_parse_limit` 已夹取）。这里再兜一层是为了
+        # 让 `has_more`/`next_cursor` 的元数据恒自洽——limit<=0 时"还有更多"却给不出
+        # 游标（items 为空）是自相矛盾的 metadata。
+        if limit < 1:
+            limit = 1
+        if search and len(search) > MAX_SEARCH_LEN:
+            # 与仓储 `search_regex_filter` 同判据：超长搜索词按"无匹配"处理
+            # （不能只让持久层侧无命中、覆盖层侧仍有命中——那会自相矛盾）。
+            logger.warning("会话搜索词超长（%d 字符）——按无匹配处理", len(search))
+            return [], False, None
+        degraded = False
+        try:
+            summaries = await self._merged_page(after, limit, search)
+            self._degraded_cursor = None
+        except Exception:
+            # 降级（"仓储不可达 ⇒ 只报进程内摘要"）是**既有**的有意语义，但必须
+            # 与"翻到一半失败"区分开：
+            #   - 首页失败 → 整份列表退化为进程内视图（与修前一致）；
+            #   - 后续页失败 → 只有当该游标**确实来自上一次降级页**时才继续降级
+            #     （离线模式的多页遍历必须自洽）；否则如实抛出——绝不能让一次
+            #     存储故障伪装成"列表到底了"（短页 + has_more=false）。
+            if cursor is not None and cursor != self._degraded_cursor:
+                raise
+            logger.warning("session 分页读取失败，降级使用进程内摘要", exc_info=True)
+            summaries = self._local_page(after, limit, search)
+            degraded = True
         has_more = len(summaries) > limit
         items = summaries[:limit]
         for s in items:
-            s.active = (s.session_id == self._active_id)
+            s.active = (SessionId(s.session_id) == self._active_id)
         next_cursor: str | None = None
         if has_more and items:
             last = items[-1]
             next_cursor = _encode_cursor(last.updated_at, last.session_id)
+        # 记住"这一页是降级页"的游标，使离线模式的多页遍历自洽（见上面的 except）。
+        self._degraded_cursor = next_cursor if (degraded and has_more) else None
         return items, has_more, next_cursor
 
     async def rename(self, sid: SessionId, title: str) -> bool:

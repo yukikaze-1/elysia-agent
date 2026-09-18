@@ -143,7 +143,16 @@ EXPECTED_INDEXES: dict[str, frozenset[str]] = {
         "conversation_id_1_client_request_id_1", "expires_at_1",
     }),
     "message_archive": frozenset({"session_id_1", "session_id_1__id_-1"}),
-    "sessions": frozenset({"session_id_1", "updated_at_-1"}),
+    "sessions": frozenset({
+        "session_id_1", "updated_at_-1",
+        # 批次 8 / P2-01r：keyset 分页的双键排序索引（updated_at DESC, session_id ASC）。
+        # 为什么是**必需**而不是"顺手加的性能优化"：分页查询的下推谓词 + tie-break
+        # 排序只有在有这条复合索引时才能由 SORT_MERGE（两次 IXSCAN）提供顺序；
+        # 否则每次列表请求都退化成"扫描 + 阻塞排序"。实测（真 Mongo，20k 会话）：
+        # 无该索引 23.3ms/页、有该索引 1.2ms/页，而旧实现（单键索引）1.9ms/页——
+        # 不建它等于用 12× 的每页回归换分页正确性。
+        "updated_at_-1_session_id_1",
+    }),
     "token_usage": frozenset({"session_id_1"}),
     "user_identity_profiles": frozenset({"user_id_1"}),
 }
