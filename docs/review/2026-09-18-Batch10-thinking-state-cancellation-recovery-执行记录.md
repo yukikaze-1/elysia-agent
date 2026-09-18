@@ -527,7 +527,14 @@ M6/M7 是 Challenger 找到的两个洞的专属守卫（缺哪一半修复就�
 
 ## 25. Commits
 
-**待填**。
+| commit | 内容 |
+|---|---|
+| `f550666c` | `fix(cognitive): recover cancelled thinking lifecycle safely` —— 生产修复（`core/cognitive/loop.py`）+ 14 条守卫用例（10 条 PRE_FIX_RED + 4 条 ALREADY_GREEN_GUARD）同 commit |
+| `3a0fed8b` | `docs(architecture): record thinking lifecycle invariants` —— `docs/architecture/invariants.md` 新增 §4.3 TH1–TH5 |
+| `ada5cce9` | `docs(review): record Batch 10 thinking state cancellation recovery` —— 本文件 |
+| `f94a67eb` | `docs(todo): reclassify KB-22 as GUARDED (Batch 10)` + 登记 KB-24–KB-30 |
+
+基线：`d0d54b89`（Batch 9 结束点）。
 
 ---
 
@@ -551,7 +558,37 @@ cp <本批两个新测试文件> /tmp/b10-prefix/…           # 只带测试，
 
 ## 27. Test Results
 
-**待填**（targeted / quick / normal / full / frontend / static gates / real CI）。
+| 项 | 结果 |
+|---|---|
+| targeted（`core/cognitive/tests` + `core/agent/tests` + `core/status` + `core/input/tests`） | ✅ **1805 passed**（51.9s，`-n 8 --dist loadfile`） |
+| 本批新套件 | ✅ `test_thinking_cancellation.py` 10 passed；`test_thinking_cancel_recovery.py` 4 passed；同跑既有 `test_session_resolver.py` 共 **25 passed** |
+| **PRE_FIX_RED 属性** | ✅ 独立 worktree（`/tmp/b10-prefix` @ `d0d54b89`）内：回退修复 ⇒ **10 failed / 4 passed**；`git apply` 修复 ⇒ **25 passed**（详见 §20/§26） |
+| 变异矩阵 | ✅ M1–M7 各自杀死对应用例（§20），M0 基线 14 passed |
+| async order perturbation（§94） | ✅ 确定性交错用例：A 取消→B 启动（锁串行化，状态序列零交错）、恢复窗口内 pending 到达→恢复→drain、停机→取消、取消→重复取消、入口前取消→正常回合。**无 sleep 造 race**（屏障 = Event；唯一 `sleep(0)` 只用于"让出一次事件循环步"） |
+| random stress（辅助） | 未做（本批无共享设备/时序敏感资源；确定性交错为主证据，符合 §45） |
+| fresh process | **NOT APPLICABLE** —— `CognitiveLoop`/`AgentFSM`/`EventBus`/`GenerationRegistry` 全是实例级对象，无模块级单例、无 import 期状态（用例逐条自建实例；唯一"全局"是测试内的 `fake_storage` 导流） |
+| `make test-quick` | ✅ **6184 passed, 2 skipped, 2 xfailed**（78.4s；Batch 9 为 6170 ⇒ +14 = 本批新用例） |
+| `make test-normal` | ✅ **6184 passed, 2 skipped, 2 xfailed**（78.5s） |
+| `make test-full` | ✅ **6216 passed, 34 skipped, 2 xfailed**（445.8s） |
+| frontend / build | ✅ 后端 schema/契约零改动；`cd frontend && npm run build` 退出 0（产物 `static/`，gitignored） |
+| static gates（全项） | ✅ `make lint` / `make pyright`（0 errors, 0 warnings）/ `check-arch` / `check-contract` / `check-types`（含错误码单源 + golden frames）/ `check-timeouts` / `check-debug-auth` / `check-secrets` / `check-test-sets`（`|Quick|=|Normal|=6188`，`|remainder|=0`，互斥且并集相等）/ `check-compose` / `check-env-lock` / `check-ci-isolation` 全绿 |
+| `make test-real-mongo` | 未本地跑（本批**零 persistence 改动**：无新集合/字段/索引/迁移；CI 自然运行） |
+| **real CI** | ⏳ **待 owner push**（§27.1） |
+
+### 27.1 Real CI 状态
+
+本机无 GitHub 凭据（`git push --dry-run` ⇒ `could not read Username for 'https://github.com'`，
+与 Batch 4–9 同一环境限制）⇒ 4 个本地提交已就绪（`f550666c` / `3a0fed8b` / `ada5cce9` / `f94a67eb`），
+**真实 CI 由 owner push 后触发**。
+
+push 后需核对的 required job（`docs/ci.md`：本仓只有 push 触发器）：
+
+| job | 期望 | 本批相关面 |
+|---|---|---|
+| `backend` | 绿 | 全部静态门禁 + `test-quick` / `test-normal`（本机等价证据见上表；14 条新用例都带 `service` marker ⇒ 落在 Quick ⊆ Normal） |
+| `real-mongo` | 绿 | 零 persistence 改动，未跑该层；CI 自然运行 |
+| `frontend` | 绿 | 前端零改动；本机 `npm run build` 退出 0 |
+| `contract-frames` | 绿 | 契约层零改动；本机 `make check-types` 绿 |
 
 ---
 
