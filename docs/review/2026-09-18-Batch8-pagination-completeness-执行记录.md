@@ -480,6 +480,17 @@ OBS-6（409/404 存在性语义）、KB-11（角色归档重试读缓存）、GR
 
 ## 26. CI 验证状态
 
-本机 push 后核对（`docs/ci.md`：本仓只有 push 触发器）：`backend`、`real-mongo`、
-`frontend`、`contract-frames` 等 required job 全绿。真实结果见提交后的 CI 记录与本批
-最终交付说明。
+**本机无 GitHub 凭据（`git push` 报 `could not read Username for 'https://github.com'`，
+与 Batch 4–7 同一环境限制）⇒ 本地三个提交已就绪，真实 CI 由 owner push 后触发。**
+
+push 后需核对的 required job（`docs/ci.md`：本仓只有 push 触发器）：
+
+| job | 期望 | 本批相关面 |
+|---|---|---|
+| `backend` | 绿 | `make lint` / `pyright` / `check-arch` / `check-contract` / `check-types` / `check-timeouts` / `check-debug-auth` / `check-secrets` / `check-test-sets` / `check-compose` / `check-env-lock` / `check-ci-isolation` + `test-quick`/`test-normal` |
+| `real-mongo` | 绿 | `tests/real_mongo/test_real_session_pagination.py`（7 例）——本机已跑整层 `make test-real-mongo`（22 passed） |
+| `frontend` | 绿 | 前端未改；本机 `npm run build` 退出 0 |
+| `contract-frames` | 绿 | 契约层零改动；本机 `make check-types` 绿 |
+
+本地等价证据（全部已执行，见 §20）：`test-quick` 6140 ✅ / `test-normal` 6146 ✅ /
+`test-full` 6178 ✅ / `test-real-mongo` 22 ✅ / 全部静态门禁 ✅ / 前端 build ✅。
