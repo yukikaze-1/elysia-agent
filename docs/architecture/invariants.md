@@ -499,7 +499,12 @@ BaseException, object)`），既不被沿途的 `except Exception` 接住，也*
   `Module/_common/task_scope.py:277`；`cancel_current()` 本身是 one-shot，**不可能**发第二发）
   只要落在上面任何一个 await 上，CancelledError 就穿过收口链逃出 `process()`；
 - 同理，**第一发**取消落在 `_handle_turn_exception` 的 await 上（think 路径的
-  `except Exception` 分支不在任何取消边界内）也照样逃出。
+  `except Exception` 分支不在任何取消边界内——`except` 块里抛出的异常**不被兄弟子句**
+  接住，但**会被外层 try** 接住，故 prepare 路径上的同一个 handler 自 Batch 10 起就已覆盖，
+  think 路径没有这层包裹）也照样逃出。这一半登记为 **KB-31**（`USER`/`HIGH`：
+  `run_state` 仍是 RUNNING ⇒ 用户可见的永久失聪），与 KB-25 **同 root、同 owner、
+  同 invariant、同 fix**，但守卫互斥、可达性相反 ⇒ canonical 上**不合并**
+  （`SAME_ROOT_DISTINCT_REACHABILITY`，不是 KB-23 那种 `SAME_ROOT_ALIAS`）。
 
 后果是同一个：`_process_lock` 由 `async with` 释放、回合任务以 cancelled 结束，
 而相位**留在 THINKING 或 INTERRUPTED**——`status.is_accepting_input` 恒假 ⇒ 之后每条

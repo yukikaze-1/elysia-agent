@@ -257,16 +257,43 @@ self._bus.post(StateChangeData(IDLE), STATE_CHANGE)   # pending drain 的唯一�
 只在 H 的触发动作层面成立、**后果不可见**（`accepts_new_turns` 在 STOPPED 时为假）。
 **没有**发现任何 `run_state == RUNNING` 下的第二发来源（独立子智能体 A 逐条复核后同样的结论）。
 
-### 9.1 同一边界上"用户可见"的形态（本批 Phase 1 新发现）
+### 9.1 同一边界上"用户可见"的形态（本批 Phase 1 新发现 → KB-31）
 
 | 形态 | 第一发来源 | 落点 | `run_state` | 用户可见？ |
 |---|---|---|---|---|
 | **KB-25 严格形态** | H（第二发） | 收口链任意 await | STOPPED | ❌（后果不可见） |
-| **K1（本批新发现）** | A（停止按钮，**第一发**） | `_handle_turn_exception` 的 `turn_failed` / `mark` await | **RUNNING** | ✅ **永久失聪** |
+| **K1（本批新发现 → KB-31）** | A（停止按钮，**第一发**） | `_handle_turn_exception` 的 `turn_failed` / `mark` await | **RUNNING** | ✅ **永久失聪** |
 
 K1 的完整 E2：provider 失败 → 回合进入异常收口 → 用户按停止按钮 → 取消从 `except Exception`
 块里逃出（**兄弟 `except asyncio.CancelledError` 不接**）→ 相位永停 THINKING →
 第二条 `accepted=True` 但**永不处理**（`pending=['第二条']`）。探针原始输出见 §11.2。
+
+#### 9.1.1 为什么"prepare 路径的异常收口"没有这个问题，而 think 路径有（KB-31 的机制核实）
+
+关键在于 **`except` handler 内抛出的异常由谁接**。本机实测（Python 3.12.13，
+`/tmp/b11/verify_sibling_semantics.py`）：
+
+```
+(a) 同一 try 的兄弟 except: escaped          ← 兄弟子句**不接**
+(b) 外层 try 的 except  : caught-by-outer    ← 外层子句**接**
+```
+
+据此把 `process()` 里**全部**终态收口入口逐个核对（`_generation_ctx` 非 None = 本回合已开始）：
+
+| # | 路径（`core/cognitive/loop.py`） | handler 收口前的 await | 谁接住 handler 内的取消 | 结论 |
+|---|---|---|---|---|
+| E1 | prepare `except (CharacterBusyError, StorageUnavailableError)` | `_handle_turn_exception`：`turn_failed` / `mark` | **外层** `except asyncio.CancelledError`（该 handler 属于外层 try 的 body） | ✅ **Batch 10 已覆盖** |
+| E2 | prepare `except Exception`（ctx≠None） | 同上 | 同上 | ✅ Batch 10 已覆盖 |
+| E3 | prepare 外层 `except CancelledError` | `_handle_prepare_cancelled` → `_handle_interrupt` | 无前置 await（`_clock=None` 同步） | ✅ |
+| E4 | think `except CancelledError` | `_archive_partial_reply`（**函数体同步、无挂起点**）→ `_handle_interrupt` | — | ✅ |
+| E5 | **think `except Exception` → `_handle_turn_exception`** | `turn_failed` / `mark` | **没有任何外层 try** ⇒ 逃出 `process()` | ❌ **K1 = KB-31**，Batch 11 修 |
+| E6 | `_think_loop` 自身的 except（清理后 re-raise） | `typing(False)` | 在 `process()` 的 try 之内 ⇒ 由 E4/E5 接住 | ✅ |
+| E7 | `_finalize_turn` / `finish_turn` 内的 await | — | 冒泡到 E4（相位可能已 IDLE ⇒ 本就稳定） | ✅ |
+
+⇒ Batch 10 的 `test_cancel_during_error_recovery_is_also_covered` 之所以是绿的，
+**不是因为"取消边界包住了 handler"**（兄弟子句接不住），而是因为那个 handler 的调用点
+本身位于外层 try 之内（E1/E2）；think 路径的同一 handler（E5）**没有**这层包裹，
+于是留给了 Batch 11。
 
 ---
 
@@ -917,7 +944,7 @@ $ make test-real-mongo
 
 | ID（建议） | 发现 | 证据 | 影响 |
 |---|---|---|---|
-| **KB-31** | **K1**：取消（第一发）落在 `_handle_turn_exception` 的 await 上时，取消从 `except Exception` 块里逃出 `process()`（**兄弟 `except` 子句不接**）⇒ `run_state == RUNNING` 下相位永停 THINKING、Agent 永久失聪 | 本批探针 `/tmp/b11/probe_exc_window.py`（§11.2）+ `test_stop_button_during_error_finalization_does_not_deafen_agent`（PRE_FIX_RED） | **USER / HIGH** —— 与 KB-25 同一 logical boundary，本批**已一并修复**；单独登记是为了让"可达性证据"与 KB-25 的"严格第二发"区分开 |
+| **KB-31** ✅ **已关闭（GUARDED，同一 fix）** | **K1**：取消（第一发）落在 **think 路径** `_handle_turn_exception` 的 await 上时，取消从 `except Exception` 块里逃出 `process()`（**兄弟 `except` 子句不接**，机制核实见 §9.1.1）⇒ `run_state == RUNNING` 下相位永停 THINKING、Agent 永久失聪。**关闭依据**：① 同 root（"逻辑终态挂在可取消 await 链尾"）、同 owner（`process()` 的这一次调用）、同 invariant（CF1/CF2）、同 fix（`b56a8442` 的 `_handle_turn_exception` finally）；② 守卫 = `test_cancel_during_error_finalization_settles`（loop 级）+ `test_stop_button_during_error_finalization_does_not_deafen_agent`（Agent 级 E2），**修前 2 failed / 修后 2 passed**（独立 worktree `@ f62e2468` 实测）；③ 变异 **M4**（只拿掉 `_handle_turn_exception` 的 finally）**恰好杀死这两条**，而 M2/M3（fsm 层 / loop 层 finally）**杀不死**它们 ⇒ 两半修复各自必要。**canonical 分类 = `SAME_ROOT_DISTINCT_REACHABILITY`**（**不**并入 KB-25：§36 要求"同一 regression guard 基本可覆盖"，而两者守卫**互斥**；且可达性相反——KB-25 严格形态 STOPPED/不可见，KB-31 是 RUNNING/用户可见） | 本批探针 `/tmp/b11/probe_exc_window.py`（§11.2）+ 上面两条守卫 + §9.1.1 的 E1–E7 全表 | **USER / HIGH**（已闭合） | **E2(11)** | **GUARDED** `b56a8442`（同一 fix） | ✅ Batch 11 |
 | **KB-32** | `scripts/check_timeout_budget.py` 看不见**裸字面量**预算：`_turns.drain(timeout=3.0)`（`lifecycle.py:320`）与 `_CHANNEL_SEND_TIMEOUT=5.0`（`manager.py:40`）构成"外层 3.0 < 内层 5.0"的 S2-A3 形状，但门禁只盘**具名常量**、且明确拒绝跨模块调用图推断 ⇒ 该不对称对门禁不可见 | 独立子智能体 C 的审计；`manager.py:159-162` → `loop.py:1376` | 门禁盲区（非本批 scope）。KB-27 是它的姊妹条目 |
 | **KB-33** | `FSMBackedPhaseController.finish_turn` 的 12 组合里 5 组抛 `ValueError`（只有第一次 transition 有 `can_transition` 守卫），且**零 gated 覆盖**（12 组合矩阵只存在于被 `pytest.ini::norecursedirs` 排除的 `tmp/b9_fsm/`） | 本批按 `VALID_TRANSITIONS` 独立重算 + 全仓 grep | 真实度/覆盖债；当前 5 组均未经 `process()` 可达（除 `reset + 活跃回合 + bg=True`） |
 | **KB-34** | 第二发取消若落在 `_cancel_desktop_calls()` 上，在途 desktop 调用不会被逐条 `cancel_call`（best-effort 放弃，允许）；兜底只有启动期 `mark_stale_expired` ⇒ 运行期长窗口内那些调用会一直挂着 | `test_second_cancel_during_desktop_cleanup_settles` 的断言（`cancelled_calls == []`） | INTERNAL / LOW；属 §5 B 资源清理语义，不是 CF1/CF2 违反 |
@@ -939,6 +966,8 @@ $ make test-real-mongo
 - **KB-15 / KB-16 / KB-17**；**OBS-6 / OBS-7 / OBS-8**；**KB-11**；**GR-25**；**N-15**；
 - 以及 §1 Canonical Backlog 其余全部条目。
 
-本批新增的 follow-up：**KB-31**（已修但独立登记）、**KB-32**、**KB-33**、**KB-34**、
+本批新增的 follow-up：**KB-32**、**KB-33**、**KB-34**、
 **KB-35**（`finally` 内异常掩盖取消，不可达）、**KB-36**（并发第二调用者重复广播，不可达）、
 **KB-37**（`_notify` 顺序 best-effort，不可达），以及 **KB-28 的补证**（O2 在第二发取消路径上成立）。
+**KB-31 不在 follow-up 内**——它已随同一 fix `b56a8442` 关闭（`GUARDED`，
+`SAME_ROOT_DISTINCT_REACHABILITY`，见 §34）。
