@@ -322,6 +322,46 @@ bump 版本；没有去掉 revision filter、没有 last-write-wins、没有"取
 **U 的单一映射点**：内部终态 → 用户级语义只经**一个**函数（Batch 1.8 §1 第 5 条）。
 这样"映射正确"只需在一个地方成立，而不是在每个消费方各自成立。
 
+### 4.1 Pagination completeness（PG）
+
+来源：[2026-09-18 Batch 8 执行记录](../review/2026-09-18-Batch8-pagination-completeness-执行记录.md)。
+缺陷形状（canonical backlog **P2-01r**）：会话列表的数据源是
+`SessionRepository.list_all()` 的 `find({}, sort=[("updated_at", -1)], limit=200)`
+——**单页上限被当成了数据集上限**；`SessionManager.list()` 在这个 ≤200 的窗口里
+做游标过滤与搜索，于是第 201+ 条记录既翻不到也搜不到，而最后一页**谎报**
+`has_more=false`（客户端据此停止）。设计文档（批次 3 spec §4「列表游标（keyset）」）
+从未允许任何数据集上限——这是"实现缺失"，不是产品决策。
+
+> **A client following the published pagination contract can eventually reach every
+> visible record in a stable result set.**
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **PG1** | **可达性完备**：稳定数据集里，客户端只依据公开合同（`has_more` / `cursor`）继续请求，最终能拿到**全部**可见记录；不得存在"前 N 条可见、其余永久不可达" | `core/input/tests/test_sessions_pagination.py`（21 例：201/225 条 + 边界矩阵 0/1/50/51/199/200/201/225 + search 分页）、`core/memory/tests/test_session_manager_pagination.py`（覆盖层/离线/竞态）、`core/storage/tests/test_session_repo_pagination.py`（存储层原语） | `make test-quick` / `test-normal` | **push/backend** |
+| **PG2** | **单页上限 ≠ 数据集上限**：`limit` 只约束一页；取数必须**在存储层分页**（keyset 谓词 + 排序 + `limit` 下推），不得"预取全量再切片"，也不得"取前 N 条再分页" | `core/storage/tests/test_session_repo_pagination.py::TestQueryShape::test_page_read_never_fetches_more_than_the_page`、`::test_sort_and_cursor_predicate_are_pushed_down`、`core/memory/tests/test_session_manager_pagination.py::TestReachabilityBeyondTwoHundred::test_list_does_not_prefetch_the_whole_dataset`（结构性：用户列表路径碰 `list_all` 即红） | 同上 | **push/backend** |
+| **PG3** | **不重不漏 + 稳定序**：完整分页的 ID 并集 **等于**权威可见集合、两两交集为空；排序 `updated_at DESC, session_id ASC` 的 tie-break **必须下推到查询**（相同时间戳跨页不重复不遗漏） | `test_sessions_pagination.py::TestBoundaryMatrix`、`::TestReachabilityBeyondTwoHundred::test_two_hundred_and_one_sessions_all_reachable`、`test_session_repo_pagination.py::TestStorageLevelPagination::test_identical_timestamps_tie_break_across_boundaries`、`tests/real_mongo/test_real_session_pagination.py::test_identical_timestamps_use_storage_level_tie_break` | `make test-quick` / `test-normal` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **PG4** | **元数据自洽**：`has_more=true ⇔ cursor 存在`；走到末尾是"空页 + has_more=false"（200），不是 404/400；`limit` 被夹取只影响**单页**大小，不改变可达性 | `test_sessions_pagination.py::TestMetadataCoherence`、`::TestPageSizeCapIsNotDatasetCap` | 同上 | **push/backend** |
+| **PG5** | **单文档读与列表窗口无关**：`GET /api/sessions/{id}` 的摘要按 ID 直读（不再依赖"最近 N 条"列表），否则第 201+ 条的详情会兜底成 `updatedAt: ""`（前端契约要求非空） | `core/memory/tests/test_session_manager_pagination.py::test_get_summary_is_authoritative_beyond_the_old_cap`、`core/storage/tests/test_session_repo_pagination.py::TestSummaryReads`、`tests/real_mongo/test_real_session_pagination.py::test_single_document_summary_is_window_independent` | `make test-quick` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **PG6** | **失败的真相**：翻页中途的存储读失败**不得**折成"短页 + has_more=false"（那是把故障谎报成"列表到底了"）；离线降级只在首页（或以同一个降级页游标续翻）成立 | `test_session_manager_pagination.py::TestAdversarialRegressions::test_mid_walk_storage_failure_is_not_reported_as_end_of_list`、`::test_offline_repo_falls_back_to_local_summaries_with_pagination` | `make test-quick` / `test-normal` | **push/backend** |
+
+**为什么"下推"而不是"提高 200 上限"**：把 `limit=200` 改成 2000 只是把边界往后挪
+（数据集总会超过它），并且每次列表请求都要读全量文档（会话 doc 内嵌消息窗口）。
+PG2 因此把"存储层分页"本身当成不变量：修复的验收判据之一是**单页读取量不得随
+数据集增长**（`test_page_read_never_fetches_more_than_the_page` + 结构性守卫）。
+
+**为什么 tie-break 必须在查询里**：内存 fake 的排序是 Python Timsort（同值稳定），
+真 Mongo 对相等排序键**不作任何顺序保证**——只按 `updated_at` 排序时，相同时间戳
+的记录在页边界可能被重复或漏掉。该不变量由真库用例证明（`push/real-mongo`）。
+
+**已知边界（本批登记，未修）**：缺 `updated_at`（字段缺失/null）的历史文档在
+keyset 谓词下不可达——真库实测（`$lt` 对缺失/null 走 **type bracketing**，与内存
+fake 行为一致）5 正常 + 3 坏文档、每页 2 时只走出 5 条就"收敛"；若某页末尾正好是
+这类文档，`_encode_cursor` 会写出 `updated_at=""` 的游标，下一页谓词匹配不到任何
+字符串文档 ⇒ 该页之后的记录被掐断。本批只保证**它不连坐健康记录**（投影层把非
+`str` 归一为 `""`，避免 `None > str` / `max(None, str)` 让整份列表静默退化）。
+仓内没有任何写入者会产生这种文档。见 [todo.md](../../todo.md)（`KB-15`）与
+`test_missing_updated_at_row_is_unreachable_registered_gap`（xfail 钉住）。
+
 ---
 
 ## 5. 架构与静态面
