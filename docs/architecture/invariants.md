@@ -73,7 +73,8 @@
 来源：[2026-09-17 Batch 1.6 执行记录](../review/2026-09-17-Batch1.6-runtime-authority-lifecycle-执行记录.md)、
 [2026-09-16 Batch 1 执行记录](../review/2026-09-16-Batch1-correctness-durability-执行记录.md) §4、
 [2026-09-18 Batch 4 执行记录](../review/2026-09-18-Batch4-runtime-health-truthfulness-执行记录.md)、
-[2026-09-18 Batch 5 执行记录](../review/2026-09-18-Batch5-provider-capability-truthfulness-执行记录.md)。
+[2026-09-18 Batch 5 执行记录](../review/2026-09-18-Batch5-provider-capability-truthfulness-执行记录.md)、
+[2026-09-18 Batch 6 执行记录](../review/2026-09-18-Batch6-conflict-metadata-truthfulness-执行记录.md)（§3.3）。
 
 | ID | Invariant | Test | Gate | CI |
 |---|---|---|---|---|
@@ -202,6 +203,48 @@ STT/TTS 后端又都是 `ABC`），也因为 `capabilities.services.*.available`
 documentdb 拉进来（它们有同形的 `NotImplementedError` 守卫，但当前没有"上报假绿"的
 报告面），也不建立通用的 ProviderCapability 框架。
 
+### 3.3 Conflict metadata truth（CM）
+
+来源：[2026-09-18 Batch 6 执行记录](../review/2026-09-18-Batch6-conflict-metadata-truthfulness-执行记录.md)。
+canonical finding：**N-3**（`PUT /api/me` 的 409 `details.currentRevision` 读进程内
+陈旧缓存 ⇒ 谎报；客户端按它重试必然再冲突）。
+
+**权威归属（一句话）**：乐观并发冲突时，**当前 revision 的唯一权威是权威持久化
+存储里的那条记录**（`user_identity_profiles.revision`，经 repository 读取），
+不是请求负载、不是进程内缓存、不是 `expected + 1`、也不是路由自己重新算一次。
+
+| 关注点 | 权威 | 说明 |
+|---|---|---|
+| 请求里的 `expectedRevision` | 请求负载 | 客户端**声称**的状态；冲突后不得回显成"现值" |
+| `UserIdentityStore._cached` | 运行时读缓存 | 读路径服务用；多 writer 时按定义可能陈旧 |
+| 持久化当前 revision | 权威库文档字段 | **唯一权威**；读出走 `UserIdentityRepository.get()` |
+| CAS 冲突判定 | repository 的 `update_one(filter={user_id, revision: expected})` | `modified_count == 0` ⇒ 未命中 |
+| 409 的 `currentRevision` | repository 在冲突点回读的权威现值 | 上层只投影；未知则**省略** |
+
+**语义（必须写清，防止被读成更强的承诺）**：`currentRevision` = **构造冲突响应那一刻**
+可观察到的权威现值（response-time），**不**保证等于"击败本次写入的那个 writer 的
+revision"。Mongo 的 `update_one` 在 filter 未命中时只返回计数（`matched_count=0`），
+**拿不到**冲突瞬间的 actual revision；用一次额外 read 去假装拥有这种更强语义正是
+§12 禁止的。并发写者 C 在 CAS 与回读之间提交时，上报的是 C 之后的值——那也正是
+客户端恢复所需要的值。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **CM1** | 冲突元数据**源自权威持久化状态**：409 的 `details.currentRevision` 等于权威库里那条记录的 `revision` | `core/input/tests/test_me_conflict_metadata_authority.py::test_cmt1_conflict_reports_authoritative_revision`、`tests/real_mongo/test_real_identity_conflict_metadata.py::test_real_conflict_reports_authoritative_revision` | `make test-normal` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **CM2** | **陈旧请求/缓存 revision 永不冒充权威现值**：不得返回客户端提交的 expected、store 读缓存、冲突前旧值、`expected + 1`；多次 intervening write 后报的是权威现值 | `::test_cmt2_stale_cache_never_reported_as_current`、`::test_cmt3_multiple_intervening_writes_not_expected_plus_one`、`::test_cmt_repeated_conflict_tracks_authoritative_state`、`core/storage/tests/test_user_identity_repo.py::test_update_if_revision_conflict_reads_authority_not_caller_state`、`tests/real_mongo/…::test_real_multiple_writes_never_expected_plus_one` | `make test-normal` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **CM3** | **失败的乐观更新不得改动权威状态，也不得隐式重试**：冲突路径不重写、不 bump revision、不 save、不 repair、不 refresh 后重放；winner 的 payload 与 revision 原样保留 | `::test_cmt4_failed_writer_preserves_winner_state` | `make test-normal` | **push/backend** |
+| **CM4** | **同一权威记录上的不同 writer 报同一真相**：两个独立 store/repo 实例、乃至跨进程 writer 写入后，落败方的 409 报的都是权威现值 | `::test_cmt_order_perturbation_both_orders_agree`、`tests/real_mongo/…::test_real_cross_process_writer_is_the_reported_authority` | `make test-normal` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **CM5** | **不知道就不说**（fail-closed）：权威现值读不到（记录已不存在）→ **省略** `details.currentRevision`；权威回读失败 → 503 `STORAGE_UNAVAILABLE`。**绝不**回退成缓存值假装权威 | `::test_cmt_missing_record_reports_no_fabricated_revision`、`::test_cmt_read_failure_after_conflict_fails_closed_503`、`core/storage/tests/test_user_identity_repo.py::test_update_if_revision_conflict_without_record_reports_unknown` | `make test-normal` | **push/backend** |
+
+**范围纪律（不泛化）**：本条只覆盖「乐观并发冲突时的**上报值**」，不覆盖 cache
+freshness（E1：外部写入者改库后热缓存不自动刷新 ⇒ `GET` 可陈旧、`PUT` 可能持续 409）。
+冲突路径读一次权威库**不**构成全局 freshness 机制，也不做 conflict→cache refresh。
+
+**CAS 本身未被削弱**：filter 仍含 `revision: expected`，`$set` 在同一原子操作内
+bump 版本；没有去掉 revision filter、没有 last-write-wins、没有"取最新 revision
+静默重试"。本批只改**报告真相**，不改并发保护强度。
+
+
 ---
 
 ## 4. User-visible semantics（U）
@@ -304,6 +347,7 @@ documentdb 拉进来（它们有同形的 `NotImplementedError` 守卫，但当�
 | [todo.md](../../todo.md) | 待办与 follow-up（含本文 §7 的承接项） |
 | [2026-09-18 Batch 4 执行记录](../review/2026-09-18-Batch4-runtime-health-truthfulness-执行记录.md) | R5/R6 的来源 |
 | [2026-09-18 Batch 5 执行记录](../review/2026-09-18-Batch5-provider-capability-truthfulness-执行记录.md) | PC1–PC6 的来源（N-10 / F6 / F7） |
+| [2026-09-18 Batch 6 执行记录](../review/2026-09-18-Batch6-conflict-metadata-truthfulness-执行记录.md) | CM1–CM5 的来源（N-3：409 冲突元数据真值） |
 | [2026-09-16 Batch 1 执行记录](../review/2026-09-16-Batch1-correctness-durability-执行记录.md) | P1/P2/R 的来源 |
 | [2026-09-17 Batch 1.7 执行记录](../review/2026-09-17-Batch1.7-background-task-terminal-state-执行记录.md) | T1–T4 的来源 |
 | [2026-09-17 Batch 1.8 执行记录](../review/2026-09-17-Batch1.8-user-visible-terminal-semantics-执行记录.md) | U1–U5 的来源 |
