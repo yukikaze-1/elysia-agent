@@ -742,12 +742,12 @@ post-ACK 的容量竞争仍以"显式终态"收场，符合 §40 的"不得静�
 
 | 顺序 | commit | 内容 |
 |---|---|---|
-| 1 | `fix(agent): preserve accepted input ownership across admission cancellation` | 生产修复 + 8 条守卫（同一 commit，§108） |
-| 2 | `docs(architecture): record accepted-input delivery invariants` | `docs/architecture/invariants.md` §4.5 / O1 关闭 |
-| 3 | `docs(review): record Batch 12 accepted input delivery closure` | 本执行记录 |
-| 4 | `docs(todo): close KB-24 as GUARDED + register new findings` | todo 更新 |
+| 1 | `16547090` `fix(agent): preserve accepted input ownership across admission cancellation` | 生产修复 + **12 条**守卫（同一 commit，§108）：`core/cognitive/loop.py`、`core/agent/agent.py`、`core/agent/tests/test_admission_input_delivery.py` |
+| 2 | `631d974b` `docs(architecture): record accepted-input delivery invariants` | `docs/architecture/invariants.md` §4.5 AD1–AD8 / O1 关闭 |
+| 3 | `22fbc027` `docs(review): record Batch 12 accepted input delivery closure` | 本执行记录 |
+| 4 | `ea3d87d2` `docs(todo): close KB-24 as GUARDED and register KB-38..KB-45` | todo 更新（KB-24 → GUARDED/HIGH；新增 KB-38–KB-45） |
 
-（若最终未 confirmed，则只做 2–4，不造 production diff。）
+全部落在 `main`（本仓既有做法：worktree 只做隔离验证）。`git status` 干净。
 
 ---
 
