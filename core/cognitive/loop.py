@@ -588,8 +588,13 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                     user_name, emo_tag, len(log_text), message_id or "")
         log_conversation("user", user_name, log_text)
 
-        await self.phases.enter_thinking()
-
+        # KB-22（Batch 10）：本回合的 generation 上下文必须在 `enter_thinking()` **之前**
+        # 建立。它是"本回合是否已开始"的 ownership 判据（见 `_handle_prepare_cancelled`），
+        # 而 `enter_thinking()` 内部的 `_notify("thinking")` 是一个 await——若某个
+        # `on_change` 订阅者在该 await 上挂起，取消会落在"FSM 已 THINKING、ctx 还没建"
+        # 的缝隙里，判据就会误判成"本回合没进过 THINKING"并放任取消逃逸。
+        # ctx 赋值与 `enter_thinking()` 之间**没有** await，所以把它提前之后，
+        # "ctx 非 None"与"FSM 已经/即将 transition 到 THINKING"严格等价（Challenger A3b）。
         self._generation_ctx = GenerationContext(
             generation_id=new_generation_id(),
             user_message_id=MessageId(message_id or ""),
@@ -605,6 +610,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             character_revision=runtime.revision.revision,
         )
         self._turn_failed_emitted = False
+
+        await self.phases.enter_thinking()
+
         if self._generation_registry is not None:
             try:
                 await self._generation_registry.register(
@@ -636,6 +644,46 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             log_text=log_text,
             runtime=runtime,
         )
+
+    async def _handle_prepare_cancelled(self) -> bool:
+        """回合在 THINKING 入口之后、`_think_loop` 之前被取消时的收口（KB-22）。
+
+        **判据是"本回合是否真的开始过"，不是 `fsm.state == THINKING`**
+        （§59：A 的 cleanup 看到 THINKING 时，那也可能是 B 的 THINKING）。本回合
+        开始过的句柄是 `_generation_ctx`——它在 `phases.enter_thinking()` **之前**
+        建立（与 `enter_thinking()` 之间没有 await ⇒ "ctx 非 None"与"FSM 已经/即将
+        transition 到 THINKING"严格等价，即使某个 `on_change` 订阅者在
+        `enter_thinking` 的 `_notify` 上挂起也成立），并在 `_prepare_turn` 入口清空；
+        而 `_prepare_turn` 全程在 `process()` 的 `_process_lock` 之内 ⇒ 此刻不可能有
+        第二个回合的 ctx 混进来。
+
+        ctx 为 None ⇒ 取消落在回合开始之前（`_prepare_turn` 的任何挂起点）：本回合还
+        没有任何对外状态（typing/`generation.started`/TTS 都在 `_think_loop` 里才开始），
+        **不做**任何 FSM 收口——否则会把上一个回合留在相位上的 `IDLE_BACKGROUND_TASK`
+        误推成 IDLE（那不是本回合的状态，cleanup 必须 turn-scoped）。
+
+        收口复用 canonical 的 `_handle_interrupt()`（THINKING → INTERRUPTED →
+        IDLE，经 `FSMBackedPhaseController.handle_interrupt`），不新增状态补丁、
+        不直接改 FSM：`THINKING → IDLE` 在 `VALID_TRANSITIONS` 里本来就是**非法边**，
+        而 INTERRUPTED 是 THINKING 的合法出口。中断语义（终态唯一、TTS 清理、
+        desktop 在途调用取消）因此与 `_think_loop` 窗口的取消完全一致。
+
+        Returns:
+            True = 本回合进过 THINKING，收口已执行（取消已被 canonical owner 消费）；
+            False = 取消落在 THINKING 入口之前，未做任何事——调用方应**保持取消
+            语义**（继续传播）。这条区分是既有合同：`_prepare_turn` 之前的取消一直
+            是传播的（`test_process_start_clears_stale_generation_ctx` 的 F5），
+            而 `_think_loop` 窗口的取消一直由回合自己消费（同文件 F9 用例）。
+        """
+        if self._generation_ctx is None:
+            logger.info("<<< 准备阶段被取消（THINKING 入口之前）— 无状态需要收口")
+            return False
+        # 本回合已在 prepare 阶段结束：释放回合级计时器引用（与主体 finally 同义，
+        # 避免 debug/诊断面继续报一个已经死掉的回合的 clock）。
+        self._clock = None
+        logger.info("<<< 准备阶段被取消（THINKING 入口之后）— 经 canonical 中断路径收口")
+        await self._handle_interrupt()
+        return True
 
     async def _handle_turn_exception(self, e: BaseException) -> None:
         """process 异常收口：区分 LLM 层错误 / 依赖不可用 / 内部错误并发射 generation.failed。"""
@@ -711,13 +759,49 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             from core.character.service import CharacterBusyError
             from core.storage.base import StorageUnavailableError
 
+            # KB-22（Batch 10）：取消边界必须覆盖**整个回合**。`_prepare_turn` 在
+            # `phases.enter_thinking()`（:591）之后还有一个真挂起点——:610 的
+            # `generation_registry.register`（Mongo upsert）：它既不被内层
+            # `except Exception`（:618）接住（Python 3.8+ 起 `CancelledError` 是
+            # `BaseException`），也不在外层这两个 except 的类型里（下面那个内层 try）。
+            # 取消从这里逃出 `process()` ⇒ canonical 收口 `_handle_interrupt()`
+            # 永不执行 ⇒ FSM 永久停在 THINKING：进程活着、EventBus 活着、新消息
+            # 只会进 `_pending_messages`（只在 `STATE_CHANGE→IDLE` 出队，而那个事件
+            # 再也不会来）⇒ 用户感知为**永久失聪**（只有 `Agent.start()` 能救）。
+            #
+            # 结构：内层 try 是**异常边界**（两个稳定错误 + 入口之后的普通异常都收口到
+            # `_handle_turn_exception`），外层 try 是**取消边界**。外层**必须**套住内层：
+            # `_handle_turn_exception` 自身也是 awaits（output / registry），在它里面被
+            # 取消与在 prepare 里被取消是同一个洞。入口之前的普通异常/取消一律保持
+            # 既有语义（原样向外抛），不做任何相位收口。
+            setup: _TurnSetup | None = None
             try:
-                setup = await self._prepare_turn(
-                    user_message, user_name, stt_emotion, content,
-                    message_id, conversation_id, protocol_version,
-                    origin_connection_id)
-            except (CharacterBusyError, StorageUnavailableError) as exc:
-                await self._handle_turn_exception(exc)
+                try:
+                    setup = await self._prepare_turn(
+                        user_message, user_name, stt_emotion, content,
+                        message_id, conversation_id, protocol_version,
+                        origin_connection_id)
+                except (CharacterBusyError, StorageUnavailableError) as exc:
+                    await self._handle_turn_exception(exc)
+                    return
+                except Exception as exc:
+                    # KB-22 同根的另一半（Challenger I3/I3b）：窗口里抛出的**普通异常**
+                    # （例如 generation 审计字段校验失败、领域 op-guard 异常）此前同样
+                    # 逃出 process()，把相位永久留在 THINKING——病症与取消版一字不差。
+                    # 判据与取消版共用：ctx 非 None ⟺ 本回合已开始；入口之前抛出的异常
+                    # 保持既有语义（原样向外抛，不做任何相位收口）。
+                    if self._generation_ctx is None:
+                        raise
+                    await self._handle_turn_exception(exc)
+                    return
+            except asyncio.CancelledError:
+                # 入口之前落下的取消：本回合没有任何状态需要收口 ⇒ **保持取消语义**
+                # （`_prepare_turn` 之前的取消一直是传播的，既有合同见
+                # `test_process_start_clears_stale_generation_ctx`）。
+                # 入口之后：canonical 收口已把状态交给中断路径，与 `_think_loop`
+                # 窗口的取消一致地由回合自己消费，不再向外抛。
+                if not await self._handle_prepare_cancelled():
+                    raise
                 return
             if setup is None:
                 return
