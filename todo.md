@@ -37,7 +37,8 @@
 | **F8** | ~~prompt 预算 cross-path：`core/character/preview.py` 调 `build_messages` **不传** `prompt_budget_tokens`（chat 路径传） ⇒ 预览路径可超 context → provider 400~~ —— 预览改用 canonical 预算（**resolved runtime model** 的声明窗口 × 同一常量）；裁完仍装不下 → **本地** 400 `CHARACTER_VALIDATION`（非重试、**零 provider 请求**），不再把确定性的输入问题谎报成可重试的 503。**频率主张修正（Batch 7 现测）**：原记「≈9283 est tokens」实为**字符数**（9235 chars → 7597 est tokens < 8192）⇒「内置角色 100% 复现」不成立；真实边界是**预览消息 > ~575 CJK 字**（内置 elysia 余量）或档案更大时确定性失败 | USER | MEDIUM | E1+**E2(7)** | **GUARDED** `558503be` `TRUTHFULNESS` | ✅ Batch 7 |
 | **KB-8** | tokenizer NORMAL 态 `_pending` / `_held` 缓冲**无上界**（长无换行段落可撑到 MB 级） | INTERNAL | LOW | E1 | **OPEN** | 小修 |
 | **F13** | 系统注入文本（唤醒词）被当作「用户消息」参与记忆提取 / mood 判定 | USER | LOW | E1 | **OPEN** | 小修 |
-| **P2-01r** | 会话列表 `list_all` 仍预取 200 ⇒ **第 201+ 条不可分页/搜索**；显式 session 过期无级联清理 worker | USER | MEDIUM | E1 | **OPEN** | Batch 4 备选 |
+| **P2-01r** | ~~会话列表 `list_all` 仍预取 200 ⇒ **第 201+ 条不可分页/搜索**~~ —— 分页下推到存储（`SessionRepository.list_page` keyset：谓词 + `updated_at DESC, session_id ASC` + `limit` + title `$regex` 全部进查询），`SessionManager.list()` 改为"持久层分页流 ⊕ 进程内覆盖层"归并，`get_summary` 按 ID 直读单文档。**另一半**（显式 session 过期级联清理 worker）经复核 **SUPERSEDED**：2026-08-10 起 `sessions` 不再有 TTL/过期机制，删除走显式级联（`cascade_repos` + AST 覆盖守卫 `test_session_cascade.py`），没有"过期"可级联 | USER | MEDIUM | ~~E1~~ **E2+E3(8)** | **GUARDED** `36cb7cec` | ✅ Batch 8 |
+| **KB-17** | **Batch 8 副产物**：`PATCH /api/sessions/{id}` 的 title **无长度上限**，而 `POST /api/sessions`（`SessionCreateRequest`）限 200、搜索词上限也是 200（超长按"无匹配"）——于是 >200 字的标题可被创建，但**只能用 ≤200 字的搜索词命中**；两条写路径的契约不对称 | USER | LOW | E1 | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 零散 |
 | **KB-2** | LLM 有时不输出 `<mood>`（回退关键词），deepseek-v4-flash 结构化输出不稳定 | USER | LOW | E3 | **OPEN** | prompt 小修 |
 | **KB-4** | VAD 易被环境音触发（aggressiveness / 降噪） | USER | LOW | E3 | **OPEN** | 调参 |
 | **KB-10** | TTS 取消 + HTTP 流清理交互可能泄漏（`Module/tts/gpt_sovits.py`，2026-06-22 记录） | INTERNAL | LOW | E1 | **OPEN** | 零散 |
@@ -71,6 +72,7 @@
 | **OBS-4** | Batch 1.6 §12#6 的遗留（`consolidator` + `Cannot send a request, as the client has been closed`）在 HEAD 上**定位不到**：`consolidator.py` 无 `close`、`_apply_service_state` 已在 `core/agent/_lifecycle_services.py:158` ⇒ 记录本身疑似错位，需一次定性复核 | INTERNAL | LOW | E0 | **INSUFFICIENT_EVIDENCE** | 定点复核 |
 | **OBS-5** | Batch 1.6 §12#2 后半：把 stt/tts 的 `model`/`enabled` 补进 `/debug/api`（需跑 `make gen-types`）——F7 只覆盖了**标志语义**，字段补齐这半没被任何条目跟踪 | ADMIN | LOW | E1 | **OPEN** | 零散 |
 | **OBS-6** | **Batch 6 Challenger J-3**：外部删除权威身份档后（缓存仍热）`PUT /api/me` 连报 409「expectedRevision 已过期」而记录**根本不存在**（`details` 为空、无恢复线索），同状态 `GET /api/me` 仍 200 + 陈旧 revision —— 错误码在撒谎 + 恢复路径未闭环。属 E1 freshness 同族（需要"存在性"判定与 404/409 的契约决策），Batch 6 只做到"不伪造 revision" | USER | LOW | E2(6) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 与 E1 同批 |
+| **OBS-7** | **Batch 8 副产物**：debug 面板 `GET /debug/api/sessions` 仍读 `SessionRepository.list_all()`（**有界诊断读 ≤200**）——它是**另一个 endpoint**（ADMIN 面、无 cursor 参数），不在 P2-01r（USER 面）范围内；但同一"200 变成数据集上限"的形状仍在，超过 200 个会话时面板看不到更早的会话。修它需要 debug 契约加分页（前端 `SessionPanel.vue` 同步改） | ADMIN | LOW | E2(8) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` | 零散 |
 
 ### 1.4 Deployment / Config truthfulness
 
@@ -96,6 +98,8 @@
 | **F2** | reminder **无持久化**：进程重启提醒即丢（用户已收到「已设置提醒」）——修法是 feature 形状（durable store + 启动恢复） | USER | MEDIUM | E1+E2 | **OPEN** | 独立小批 |
 | **F14** | durable delivery（WAL + 仓储 + 启动补投）**已由 Batch 1.7 完成**；exactly-once **刻意不承诺**（at-least-once 语义） | INTERNAL | N/A | E3 | **KEEP_AS_IS** | — |
 | **RB-1** | Mongo 3 个 write-only 字段（`attachments.sha256` / `background_task_results.delivered_at` / `message_archive.metadata.incomplete`）：未连真实 Mongo 无法证明旧记录可读 | LEGACY_DATA_ONLY | LOW | E1 | **DEFERRED**（`LIKELY_DEAD` 不删） | 真实 Mongo 抽样 |
+| **KB-15** | **Batch 8 Challenger G3**：**缺/为 null 的 `updated_at` 的历史会话文档在 keyset 下不可达**（真库实测 `$lt` 对缺失/null 走 type bracketing，与内存 fake 一致：5 正常 + 3 坏文档、每页 2 只走出 5 条就"收敛"）；若某页末尾正好是这类文档，游标会写成 `updated_at=""`，下一页谓词匹配不到任何字符串 ⇒ **该页之后的记录被掐断**。本批只做到"不连坐健康记录"（投影层把非 `str` 归一为 `""`，避免 `None > str` / `max(None, str)` 让整份列表静默退化）+ xfail 钉住。仓内无写入者会产生这种文档（`create/save/ensure_exists` 恒写 `now_iso()`）；修它需数据归一化或查询形态变更（聚合 `$ifNull`/哨兵键） | LEGACY_DATA_ONLY | LOW | E2(8，真库探针) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` |
+| **KB-16** | **Batch 8 Challenger F5**：`sessions.session_id` **没有唯一索引**（只有普通 `session_id_1`）⇒ 并发 upsert 可产生同一 `session_id` 的两份文档。修前按 session_id 建字典天然去重（静默吞掉一份）；下推分页后列表会显示两条同 ID 记录——本批在 `SessionManager._merged_page` 里显式去重（保留先出现者 + warning），**未动 schema**（加唯一索引会改变写路径的失败语义，属独立决策） | INTERNAL | LOW | E2(8) | **OPEN** `NEW_FINDING_OUT_OF_SCOPE` |
 | **N-12** | 存量文档若 `pronouns: ""`，`GET /api/me` 仍 500（契约 `_text()` 拒空串 ⇒ 仓内无写入者） | LEGACY_DATA_ONLY | LOW | E3 | **CURRENTLY_UNREACHABLE** | 不排 |
 
 ### 1.6 Architecture Debt
@@ -117,6 +121,7 @@
 | **AR-11** | F11 accepted→consumed 窗口（ACK 证明入 EventBus ≠ 业务已持久化；BE-RISK-01） | 中 | E3 | **KEEP_AS_IS**（已接受的 at-least-once 边界） |
 | **AR-12** | 两套 CLI driver：`AgentServer.run_repl`（0 代码消费者，但 8 处文档承诺）vs `app.py::run_interactive`（真实入口，**行为已分岔**：后者有 `wait_until_idle()`） | 低 | E1 | **PRODUCT_DECISION_REQUIRED**（`PD-10`） |
 | **AR-13** | F4 残余：`handle_json_message`（≈16 圈 / 80 行）可选进一步拆分（已改为 `_WS_HANDLERS` 注册表薄壳，非阻塞） | 低 | E1 | **OPEN**（可选） |
+| **AR-17** | **Batch 8 副产物**：`_local_summaries`（进程内会话摘要覆盖层）**无淘汰无上限**——每页一次 `summaries_by_ids($in)` 的代价 = 本进程创建/改名/恢复过的会话数，且覆盖层条目永不因持久化确认而清除。当前规模（个人应用进程生命周期内的新建/改名）下可忽略；若单进程长期运行并大量建会话，需"持久化确认即淘汰"或按窗口裁剪 | 低 | E1 | **OPEN**（性能/内存，非正确性） |
 | **AR-16** | **Ollama Provider Adapter**（`KB-13` 的架构出口）：当 provider 的 runtime semantics 明显偏离通用 OpenAI-compatible 行为时，应由 provider-specific adapter 收口，而不是把 `if provider == "ollama"` 分散到 preview / CognitiveLoop / preflight / debug 等上层；目标形状 `LLMAdapter → LLMFactory → {OpenAICompatibleBackend, GeminiBackend, OllamaBackend}`（**不是**"每个 provider 都要独立 adapter"，只有 semantics 差异足够明显才拆）。预期职责：request/wire translation、`num_ctx`、`keep_alive`、Ollama-specific runtime options、**canonical Elysia context budget → Ollama runtime context 落实**、`prompt_eval_count`/`eval_count` → 通用 usage 归一、silent truncation / runtime diagnostic 语义、可选 `/api/ps` diagnostics（**不得**成为每次 generation 前的强制 probe；正常路径保持 1 user generation → 1 provider request）。**与 `AR-4`/`AR-5` 不同轴**（那两条是"切换 provider 的运行时能力"，本条是 provider-specific semantics 的收口点） | 中 | E1（动机为 `KB-13` 的 E3） | **DEFERRED**（不插进当前 correctness batch；理由与触发条件见 [记录](docs/review/2026-09-18-ollama-runtime-context-authority-记录.md) §3.5/§3.6；`PD-12` 未裁决） |
 
 ### 1.7 Guardrail / Test Debt
@@ -227,6 +232,8 @@
 | ~~provider 探测~~ | ~~**F6**~~ | ✅ **已修（Batch 5 `7ef3202b`）**：缺省目标读运行期句柄 `agent.stt.model`（未连接才回退 config） | 守卫 `core/input/tests/test_provider_test_target_authority.py`（8，含真实 `switch_stt` A→B；修前 5 红） | — | — |
 | ~~预览窗口~~ | ~~**F8**~~ | ✅ **已修（Batch 7 `558503be`）**：预览组装此前**不传** `prompt_budget_tokens` ⇒ 超**声明**窗口的请求照发，两类 provider 都受害——强制窗口类：provider 400 → 折成 **retryable 的 503**（"稍后重试"是谎报）；截断类（本机 ollama 0.24 实测）：200 + **静默截断**，人设被悄悄削掉。现按 **resolved runtime model** 的窗口取 canonical 预算；裁完仍装不下则**本地** 400 `CHARACTER_VALIDATION`，**零 provider 请求** | 守卫 `core/input/tests/test_character_preview_window.py`（8，修前 5 红；路由级 = `POST /api/characters/preview` + 窗口约束 stub）+ 不变量 PW1–PW6（`invariants.md` §1.1） | — | — |
 | ~~面板标志~~ | ~~**F7**~~ | ✅ **已修（Batch 5 `87cc7e38`）**：`Agent.stt_ok` 改为派生属性（`_stt is not None`），与 capabilities/`/debug` 同源；粘性槽位 `_stt_ok` 已删。**"对象非空不代表可用"经复核不成立**（实例化受 capability 门控；`available` 的既有判据就是这个） | 守卫 `core/agent/tests/test_service_availability_truthfulness.py`（8；修前 2 红） | — | — |
+| API 元数据 | **P2-01r** | ~~`has_more=false` + 无 cursor（"没有更多"）~~ | 持久层还有第 201+ 条（单页上限被当成数据集上限） | USER | MEDIUM |
+| ~~API 元数据~~ | ~~**P2-01r**~~ | ✅ **已修（Batch 8 `36cb7cec`）**：分页下推到存储 （keyset 谓词 + 双键排序 + `limit` + title `$regex`），service 只做"持久层分页流 ⊕ 进程内覆盖层"归并；`has_more` 用 limit+1 探测 | 守卫 `core/input/tests/test_sessions_pagination.py`（21，修前 10 红）+ `tests/real_mongo/test_real_session_pagination.py`（7）+ 不变量 PG1–PG6 | — | — |
 | 门禁 | **N-15** | “13 个集合无漂移” | 4 条 `unique` 从未参与比对 | DEPLOYMENT | MEDIUM |
 | provider 窗口 | **KB-13** | 「声明 8192 就能用 8192」（budgeting 按静态声明值算） | Ollama serving context 是 **runtime allocation**：冷启动不传 `num_ctx` 实测 **4096**、显式 `num_ctx=8192` 才 8192；超窗 **200 + 静默截断** ⇒ 不能靠 provider error 发现 mismatch | DEPLOYMENT | MEDIUM |
 | 门禁（已修） | N-4/N-8 | — | Batch 3.6 已 GUARDED，且守卫本身又被 Challenger 补强 | — | — |
@@ -248,6 +255,7 @@
 | **GR-22** 前端遗留 | 属前端仓/独立 spec | 前端批次 |
 | **AR-1/AR-2/AR-5/AR-10/AR-11** | 见 §1.6（`KEEP_AS_IS`/`REFACTOR_LATER`，理由已入库） | 公开面收窄专项 / 产品决策 |
 | **DEP-2 / DEP-4 / DEP-6 / SEC-1 / SEC-2** | 见 §1.4/§1.5（已接受或已裁定） | owner 决定 / 触发条件 |
+| **Batch 8 并发写位移**（accepted risk） | keyset 分页的**固有语义**：翻页期间新插入的记录（key 在游标之前）会被本轮遍历跳过、被改名的记录会被"抬高"而跳过——两者都只影响**当轮**遍历，下一次请求即一致；删除的记录不会复活。产品接受 eventual pagination（不引入 snapshot isolation） | 产品要求"分页期间强一致快照"时（需版本化读/事务） |
 | **KB-3** INTERRUPT+TTS emoji 合并 | 后端那半已修（`4bb8aff7`，S3-G7）；**剩余竞态在外部前端仓** | 前端仓修 |
 | **KB-9** `ConfirmModal` @keydown | 前端遗留（现行为已可靠） | 前端加固批次 |
 | **KB-1** `live2d.directive` 无发射点 | `KEEP_COMPAT`（协议已标注客户端容忍缺席） | `PD-8` |
@@ -268,6 +276,7 @@
 | **N-4 ≡ N-13** | `EXPECTED_INDEX_OPTIONS` 无表级 AST 守卫 | **GUARDED** `1382ae43` + `34b0faf6`（选项键集，Challenger F-A1） |
 | **N-8**(guard) | B3-CB-7 缺回归守卫 | **GUARDED** `6c559816`+`210e9c37`+`36bb5bcf`+`cc413eb4` |
 | **F8** | 预览超声明窗口照发 → 强制窗口类 provider 400 折成 **retryable 的 503**（谎报可恢复）；截断类 provider 静默截断 | **GUARDED** `558503be`；不变量 PW1–PW6（`invariants.md` §1.1）；守卫 `core/input/tests/test_character_preview_window.py`（8，修前 5 红） |
+| **P2-01r** | 会话列表数据源 `list_all(limit=200)` ⇒ 第 201+ 条不可分页/搜索，最后一页 `has_more=false` 谎报"没有更多"（详情路径同源 ⇒ 第 201+ 条 `updatedAt:""`）；另一半"过期级联清理 worker"**SUPERSEDED**（2026-08-10 起 sessions 无 TTL，删除走显式级联） | **GUARDED** `36cb7cec`；不变量 PG1–PG6（`invariants.md` §4.1）；守卫 `core/input/tests/test_sessions_pagination.py`（21）+ `core/memory/tests/test_session_manager_pagination.py`（30）+ `core/storage/tests/test_session_repo_pagination.py`（24）+ `tests/real_mongo/test_real_session_pagination.py`（7）；修前 49 红（三套件）+ 1 xpass |
 | **F9** | Batch 2 的 F401 / CI / privacy guard | 已由 Batch 2 完成（见其执行记录） |
 | **M19 / M20** | resume 后 pause 被销毁 / cancel 规划期不推终态 | FIXED（E2/E3，`bb69485`…`5aa7368`） |
 | **LoggerFactory** | 被取代的旧设计（stdout 污染对话流） | 已删（2026-09-12），`get_caller_logger` 迁 `Module/_common` |
