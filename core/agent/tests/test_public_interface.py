@@ -39,7 +39,10 @@ STARTUP_PROPS = [
     ("response_recorder", "_response_recorder"),
     ("started_at", "_started_at"),
 ]
-SCALAR_PROPS = [("user_name", "_user_name"), ("state", "_state"), ("stt_ok", "_stt_ok")]
+# F7：`stt_ok` 不再映射到私有槽位——它是**派生属性**（`_stt is not None`），
+# 与 capabilities `/debug` 同源。派生属性由 `TestScalarProperties` 之外的一条
+# 专门用例覆盖（见 test_stt_ok_is_derived_from_runtime_handle）。
+SCALAR_PROPS = [("user_name", "_user_name"), ("state", "_state")]
 
 
 @pytest.fixture
@@ -127,6 +130,16 @@ class TestScalarProperties:
     @pytest.mark.parametrize("pub,priv", SCALAR_PROPS)
     def test_returns_value(self, agent, pub, priv):
         assert getattr(agent, pub) == getattr(agent, priv)
+
+
+class TestDerivedProperties:
+    """派生属性的判据（不映射到同名私有槽位）。"""
+
+    def test_stt_ok_is_derived_from_runtime_handle(self, agent):
+        """`stt_ok` == `agent.stt is not None`——与 capabilities.available 同源（F7）。"""
+        assert agent.stt is None
+        assert agent.stt_ok is False
+        assert agent.stt_ok == (agent.stt is not None)
 
 
 class TestWriteMethods:

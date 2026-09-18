@@ -111,7 +111,6 @@ def _host(
     a._llm = None                    # 由 _install_llm 填
     a._stt = None
     a._tts = None
-    a._stt_ok = False
     a._cognitive = MagicMock()
     a._cognitive.configure = MagicMock()
     # `_sync_tts_gate` 会 await 它（真实的 TTSStreamManager.set_enabled 是协程）

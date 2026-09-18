@@ -284,7 +284,6 @@ class AgentServer:
         _config_overrides: Mapping[str, Any]
         _tts: TTSBackend | None
         _stt: STTBackend | None
-        _stt_ok: bool
         _req_counter: int
         _mongo_ok: bool
         _milvus_ok: bool
@@ -414,7 +413,8 @@ class AgentServer:
         """热切换 STT 后端。先建后关 + 1s 连通性测试——成功后才替换并关闭旧后端。
 
         custom/<name> 的 base_url/api_key 经 resolve_model_params 从 custom_providers.yaml 解析。
-        成功后写入 ServiceState.stt_model 并置 _stt_ok（config 保持默认不改写）。
+        成功后写入 ServiceState.stt_model（config 保持默认不改写）。
+        可用性不另设标志——`agent.stt_ok` 派生自运行期句柄（F7）。
 
         Args:
             model_id: 新的 STT 模型标识符（如 ``sensevoice/sense-voice``）。
@@ -445,7 +445,6 @@ class AgentServer:
                 except Exception:
                     pass
             self._stt = new_backend
-            self._stt_ok = True
             # config 保持默认，写入运行时状态
             self.session.service_state.stt_model = model_id
             try:
@@ -463,7 +462,6 @@ class AgentServer:
                     await new_backend.close()
                 except Exception:
                     pass
-            self._stt_ok = False
             logger.error("STT switch failed: %s", e)
             return {"ok": False, "error": str(e)}
 
@@ -640,7 +638,6 @@ class AgentServer:
                     stt_runtime = stt_params.pop("runtime", "backend")
                     if stt_runtime != "backend":
                         self._stt = None
-                        self._stt_ok = False
                         logger.info("STT Profile %s 由 Electron 执行，后端不启动", stt_model)
                         stt_backend = None
                     else:
@@ -657,12 +654,10 @@ class AgentServer:
                             raise RuntimeError(result.get("error", "服务不可用"))
                         # 显式赋槽位（只建一个）——create_app/handle_ws 从槽位读取（支持热切换）
                         self._stt = stt_backend
-                        self._stt_ok = True
                         logger.info("STT backend connected for server mode")
                 except Exception:
                     # 失败复位，防 stale
                     self._stt = None
-                    self._stt_ok = False
                     logger.info("STT not available — text-only mode", exc_info=False)
 
             app = app_factory(cast(Any, self), serve_static=True,

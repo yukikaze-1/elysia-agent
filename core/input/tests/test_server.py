@@ -668,7 +668,6 @@ class TestSetService:
         def _mount_stt(model: str) -> dict:
             # 模拟 switch_stt 补建成功：挂载假后端（capabilities available 由此判定）
             agent._stt = _FakeSTTBackend(agent.config.stt.model)
-            agent._stt_ok = True
             return {"ok": True}
 
         agent.switch_stt = AsyncMock(side_effect=_mount_stt)

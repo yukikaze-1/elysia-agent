@@ -93,7 +93,8 @@ class TestSwitchServiceState:
         assert agent._stt is backend                 # 新后端已挂槽（switch_stt 写 self._stt）
         assert agent.session.service_state.stt_model == "sensevoice/sense-voice"
         assert agent.config.stt.model == orig_cfg_model   # config 不被改写（同对象 → == 成立）
-        assert agent._stt_ok is True                 # 断言后备字段（agent.stt_ok 在 mock 上是 auto-mock，is True 恒 False）
+        # F7：`stt_ok` 已改为派生属性（读 `_stt`），没有后备槽位可断言；
+        # "可用"与"后端已挂"现在是同一个事实，上一条 `agent._stt is backend` 即其判据。
 
     @pytest.mark.service
     @pytest.mark.asyncio

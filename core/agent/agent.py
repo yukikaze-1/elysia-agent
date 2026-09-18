@@ -434,7 +434,9 @@ class Agent(AgentLifecycle, AgentServer):
         self._stt: STTBackend | None = None  # STT 后端 — stt_transcribe() 读取，支持热切换
 
         self._stt_emotion_state: dict = {"emotion": "NEUTRAL", "events": []}  # STT 情绪/事件状态
-        self._stt_ok = False  # STT 连通性标志 — 在 run_server() 中设置
+        # F7：不再有 `_stt_ok` 槽位——`stt_ok` 是派生属性（读 `self._stt`），
+        # 与 capabilities / /debug 同源。粘性标志会让"上一次探测的结果"与
+        # "此刻能不能用"变成两套真相。
 
         # Task 7（记忆 v2 隔离）：consolidator/memory_reflector 不再构造全局单例——
         # per-runtime 化后由 _make_runtime 构造挂 CharacterRuntime（registry 解析）。
@@ -1426,9 +1428,26 @@ class Agent(AgentLifecycle, AgentServer):
         return self._started_at
 
     @property
-    def stt_ok(self):
-        """STT 可用标志。"""
-        return self._stt_ok
+    def stt_ok(self) -> bool:
+        """STT 可用标志——**读运行期后端句柄**（`self._stt is not None`）。
+
+        F7：此前这里返回一个粘性槽位 `_stt_ok`（只在 `__init__` / bootstrap /
+        `switch_stt` 写入），于是同一个事实有了两个答案：
+
+        * `switch_stt` 失败时槽位被置 False，而失败路径**保留仍然可用的旧后端**
+          （先建后关）⇒ 报告说"不可用"，其实 STT 还能转写；
+        * 停机路径把 `_stt` 置 None 却不复位槽位 ⇒ 报告说"可用"，而后端已经没了。
+
+        派生之后，本属性与 `capabilities.services.stt.available`（下发给前端的同一
+        事实）、`/debug` 的 `stt_ok` **同源**，三者不可能互相矛盾（PCT-5）。
+
+        "可用"的语义是**按构造即可用**（runtime usable by construction）：
+        `STTFactory` 对未实现的 provider 在建连期就拒绝，后端又都是 ABC（抽象方法
+        没实现根本实例化不出来），故"句柄存在"⇒"实现支持该 capability"。
+        它**不**承诺远端此刻可达——那需要网络探测，属 `--full` / provider test，
+        不是进程内状态读取（PCT-4/§26）。
+        """
+        return self._stt is not None
 
     async def stt_transcribe(self, audio: bytes) -> str:
         """STT 转写（公开接口）。读取当前 agent.stt 后端，支持热切换。"""
