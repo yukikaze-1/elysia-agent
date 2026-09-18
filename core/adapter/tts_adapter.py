@@ -189,6 +189,30 @@ class TTSStreamManager:
             self._release_events[seq] = event
         event.set()
 
+    def _release_successor_gate(self, seq: int, epoch: int) -> None:
+        """放行 `seq` 的后继门控——**与任务是否运行过无关**的兜底释放（KB-6）。
+
+        `_download_and_forward` 只在**协程体真的开始执行**之后才有机会放行后继门控
+        （早退分支与 `finally` 都在体内）。而 `stream_sentence()` 只把任务交给事件
+        循环排队，它的**首个 step 要等到下一批**；这中间任何取消（`cancel_all` /
+        `cancel_stream`）都会让该任务在"一行都没跑"的状态下结束 —— 那时后继门控
+        **永不 set**，而 `wait_all()` 没有超时 ⇒ 整轮卡在 SPEAKING。
+
+        可达路径（Batch 9 实测）：用户在本轮播放中点掉 TTS（`set_service("tts", False)`
+        → `set_enabled(False)` 的同步段：`_enabled=False` + `cancel_all()`，段内无
+        `await`）→ 该步与"入队该句"的回合步落在**同一批 ready** ⇒ 取消失效在首个
+        step 之前；再把 TTS 打开、同一轮继续有句子入队 → 门控孤儿 → FSM 停在
+        SPEAKING，新回合拿不到 `_process_lock`（无自动恢复，只能等一次中断/重启）。
+
+        幂等：`_release_gate` 对已 set 的 event 再 set 是无副作用的，因此取消点与
+        `finally` 都调用它是安全的（无需"只释放一次"的簿记）。
+
+        epoch 守卫与 `finally` 同一语义：**旧轮次的取消不得提前放行新一轮的句子**
+        （否则破坏播放顺序——比挂起更隐蔽）。
+        """
+        if epoch == self._turn_epoch:
+            self._release_gate(seq + 1)
+
     def stream_sentence(self, sentence: str, *, ctx: object | None = None) -> None:
         """启动一句的 TTS 后台任务。
 
@@ -240,6 +264,11 @@ class TTSStreamManager:
         )
         self._tasks.append(task)
         self._task_by_sid[sid] = task
+        # KB-6：把本任务的轮次代号与序号挂在任务上——取消点（`cancel_all` /
+        # `cancel_stream`）需要在**任务未运行过**的情况下也能放行后继门控，
+        # 而那时协程体的局部变量根本不存在（`flush_on_cancel` 用同一手法）。
+        task._tts_seq = seq          # type: ignore[attr-defined]
+        task._tts_epoch = self._turn_epoch  # type: ignore[attr-defined]
         # 完成清理
         self._tasks = [t for t in self._tasks if not t.done()]
         self._task_by_sid = {s: t for s, t in self._task_by_sid.items() if not t.done()}
@@ -295,13 +324,26 @@ class TTSStreamManager:
                 self._seq, self._turn_chars, kb,
             )
 
+    def _cancel_task(self, task: asyncio.Task) -> None:
+        """取消单个 TTS 任务，并**在其运行过之前**也放行后继门控（KB-6）。
+
+        任务若从未被调度过（取消发生在它的首个 step 之前），协程体一行都不会执行
+        —— 早退分支与 `finally` 都不跑，后继门控就永远没人 set。此时由本方法补上
+        放行；任务若已运行过，`finally` 也会放行一次（`_release_gate` 幂等）。
+        """
+        seq = getattr(task, "_tts_seq", None)
+        epoch = getattr(task, "_tts_epoch", None)
+        task.cancel()
+        if isinstance(seq, int) and isinstance(epoch, int):
+            self._release_successor_gate(seq, epoch)
+
     def cancel_all(self) -> None:
         """取消所有进行中的 TTS 任务。"""
         pending = [t for t in self._tasks if not t.done()]
         if pending:
             logger.debug("TTS: cancelled %d tasks", len(pending))
         for t in pending:
-            t.cancel()
+            self._cancel_task(t)
         self._tasks.clear()
         # 同步剪除 _task_by_sid——否则窗口期 audio.cancel 对刚被取消的 sid 返回 True
         # 而任务不再补 audio_cancelled（语义失真，review N3）
@@ -318,7 +360,7 @@ class TTSStreamManager:
             return False
         if stream_id not in self._audio_forwarding:
             return False           # 已 audio_end（末尾 emoji/finally 窗口）——不再补事件
-        task.cancel()
+        self._cancel_task(task)
         return True
 
     def set_emotion(self, emotion: str | None) -> None:

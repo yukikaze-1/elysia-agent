@@ -300,3 +300,126 @@ async def test_stale_task_from_previous_turn_does_not_forward():
     await asyncio.sleep(0.05)
 
     assert out.sids == [], f"旧轮次的句被播出去了：{out.sids}"
+
+
+# ---------------------------------------------------------------------------
+# Batch 9（KB-6）：早退分支的 gate 释放——**任务已创建、首次运行时后端已摘除**
+# ---------------------------------------------------------------------------
+
+class _CountingTTS:
+    """立即返回音频的后端（可重复使用，用于"后端装回后"的后续句）。"""
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def synthesize(self, text, **kw):
+        self.calls.append(text)
+        return b"RIFF" + b"\0" * 16
+
+    def get_preprocess(self):
+        return None
+
+    @property
+    def stream_format(self):
+        return "wav"
+
+
+@pytest.mark.asyncio
+async def test_task_created_before_backend_removed_still_releases_gate():
+    """Batch 9：**句 1 的任务已创建、首次运行时后端已被摘除** → 早退也必须放行 gate 2。
+
+    与既有 `test_early_return_releases_successor_gate` 的窗口不同：那条是"后端在
+    两句入队之间被换掉"，这条是**同一句的任务**落在"创建时后端在、运行时后端没了"
+    的窗口里——即 `stream_sentence()` 已返回、任务尚未被调度的那一段。
+
+    这条窗口是 KB-6 的**原始机制**：早退分支在 `try/finally` **之外**直接 `return`，
+    不释放后继门控 ⇒ 句 2 永久挂在 `gate 2` 上 ⇒ `wait_all()`（无超时）永不返回
+    ⇒ `finish_turn` 卡住 ⇒ FSM 停在 SPEAKING。修复前本用例在 `wait_all()` 处超时
+    （已用 `/tmp/b9-prefix`（9f323f07~1）隔离 worktree 复验）。
+
+    本用例**不**用 `reset_for_turn()` 触发号志变化（那会 set 掉旧门控、掩盖缺陷），
+    因此判别力全部落在"早退是否释放后继门控"这一点上。
+    """
+    backend = _CountingTTS()
+    mgr = TTSStreamManager(tts=backend, output=_FakeOutput(), character_name="elysia")
+    mgr.reset_for_turn()
+    mgr.stream_sentence("句 1")          # 创建任务（seq=1）；gate 1 已 set
+    mgr.set_backend(None)                # 后端摘除——任务尚未被调度
+    await asyncio.sleep(0)               # 任务首次运行 → `not self._tts` 早退分支
+    mgr.set_backend(backend)             # 后端装回
+    mgr.stream_sentence("句 2")          # seq=2 → gate 2 未 set 时会永久等
+
+    # 结构化终态：wait_all 返回即"没有活着的输出工作"。超时=真回归（死锁探测器）。
+    await asyncio.wait_for(mgr.wait_all(), timeout=2.0)
+    assert all(t.done() for t in mgr._tasks), "有任务没能收尾（门控没被放行）"  # noqa: SLF001
+    assert backend.calls == ["句 2"], "句 2 从未被合成——它被卡在门控上了"
+    assert all(ev.is_set() for ev in mgr._release_events.values()), (  # noqa: SLF001
+        f"仍有未释放的门控：{[s for s, e in mgr._release_events.items() if not e.is_set()]}")  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# Batch 9（KB-6 根因③）：**任务在首个 step 之前被取消**时的门控放行
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_prestart_cancel_releases_successor_gate():
+    """Batch 9（PRE_FIX_RED）：任务被取消时**协程体一行都没跑**，后继门控仍必须放行。
+
+    与上面两条守卫的窗口都不同：那两条都假定协程体至少执行过一次（早退分支或
+    `finally` 里放行）。这一条是**根本没有协程体可走**：
+
+    `stream_sentence()` 只把任务交给事件循环排队，首个 step 要等到下一批；
+    `set_enabled(False)` 的同步段（`_enabled=False` → `flush_on_cancel` →
+    `cancel_all()`，段内无 `await`）可以在那之前把它取消 —— Python 3.12 对未启动
+    协程是"在起点抛出"，于是早退分支与 `try/finally` **全都没进**，
+    `_release_gate(seq+1)` 永不执行。
+
+    随后 TTS 重新打开、同一轮继续入队 seq+1：`stream_sentence` 现建一个**未 set**
+    的 gate，它的任务永远停在 `await gate.wait()` ⇒ `wait_all()`（无超时）永不返回
+    ⇒ `finish_turn` 卡住 ⇒ FSM 停在 SPEAKING。
+
+    生产触发面：用户在本轮播放中点掉 TTS →`Agent.set_service("tts", False)`
+    （core/agent/server.py `_sync_tts_gate`）——WS handler 的 step 与本轮"入队句子"
+    的 step 可以落在同一批 ready（`BaseEventLoop._run_once` 先 poll I/O 再跑本批），
+    而 TTS 任务的 step 要等下一批。修复前本用例在 `wait_all()` 处超时
+    （已在 `/tmp/b9-prefix`（S2-G3 之前）与 HEAD-未修 的隔离 worktree 复验）。
+    """
+    backend = _CountingTTS()
+    mgr = TTSStreamManager(tts=backend, output=_FakeOutput(), character_name="elysia")
+    mgr.reset_for_turn()
+    mgr.stream_sentence("句 1")          # 任务已创建，首个 step 尚未运行
+    await mgr.set_enabled(False)         # 同步段：cancel_all 落在首个 step 之前
+    await mgr.set_enabled(True)          # 用户又把 TTS 打开
+    mgr.stream_sentence("句 2")          # seq=2 —— gate 2 只能由句 1 放行
+
+    assert mgr._release_events[2].is_set(), (  # noqa: SLF001
+        "句 1 被 pre-start 取消后 gate 2 未被放行——句 2 会永久等待，"
+        "wait_all() 无超时 ⇒ FSM 卡 SPEAKING")
+    await asyncio.wait_for(mgr.wait_all(), timeout=2.0)
+    assert all(t.done() for t in mgr._tasks), "有任务没能收尾（门控没被放行）"  # noqa: SLF001
+    assert backend.calls == ["句 2"], f"句 2 未完成合成：{backend.calls}"
+
+
+@pytest.mark.asyncio
+async def test_prestart_cancel_of_later_task_does_not_disturb_new_turn():
+    """同上机制在"取消后重开 TTS、再开新一轮"的正常次序下也必须收敛。"""
+    backend = _CountingTTS()
+
+    class _Out(_FakeOutput):
+        async def audio_start(self, sid, **kw):   # 转发路径会调它（缺了就抛 AttributeError 被吞）
+            pass
+
+    mgr = TTSStreamManager(tts=backend, output=_Out(), character_name="elysia")
+    mgr.reset_for_turn()
+    mgr.stream_sentence("旧轮句 1")       # epoch=1，任务未运行
+    await mgr.set_enabled(False)          # pre-start 取消（epoch 仍是 1）
+    await mgr.set_enabled(True)           # 用户随后又把 TTS 打开（真实 set_service 序列）
+
+    mgr.reset_for_turn()                  # 新一轮：epoch=2
+    mgr.stream_sentence("新轮句 1")       # seq=1 → gate 1（已 set）
+    mgr.stream_sentence("新轮句 2")       # seq=2 → gate 2（必须**保持未 set**，句 1 还没播完）
+    assert not mgr._release_events[2].is_set(), (  # noqa: SLF001
+        "旧轮次的取消补放行把新一轮的 gate 2 提前 set 了（播放顺序被破坏）")
+
+    await asyncio.wait_for(mgr.wait_all(), timeout=2.0)
+    assert backend.calls == ["新轮句 1", "新轮句 2"], backend.calls
