@@ -313,22 +313,24 @@ def _record_user_input(self, session, content, message_id) -> None:
         timestamp=_now_iso(),
     ))
 
-# ② process() 取锁**之前**的同步段暂存（那里才知道 is_task_result）
-self._claimed_input_record = (
+# ② process() 取锁**之前**的同步段构造**协程局部**载荷（那里才知道 is_task_result）
+record = (
     None if is_task_result
     else (content if content else [{"type": "text", "content": user_message}], message_id)
 )
+#    ⇒ 沿终态路径**显式下传**：_handle_prepare_cancelled(record) /
+#      _handle_turn_exception(e, record) → _handle_interrupt(record=…) → 下面这个 helper。
+#    （**不**放实例属性——Challenger W1 反证 + 实测 N2：两个 process() 体重叠时
+#     载荷会跨回合串味。见 §17 的 M11。）
 
 # ③ 唯一消费点：_handle_interrupt() 的零 await prologue（在 is_completely_idle 早退之前）
-def _record_claimed_input(self, source=None) -> bool:
+def _record_claimed_input(self, source=None, record=None) -> bool:
     if self._generation_ctx is None:      return False   # ①未 claim
-    if self._turn_message_persisted:      return False   # ②已记录
-    pending = self._claimed_input_record
-    if pending is None:                   return False   # ③非用户输入
-    self._claimed_input_record = None                    # 一次性消费
+    if self._turn_message_persisted:      return False   # ②已记录（幂等）
+    if record is None:                    return False   # ③非用户输入
     target = getattr(self, "_session", None)             # 已 claim ⇒ 必为本回合 target
     if target is None:                    return False
-    content, message_id = pending
+    content, message_id = record
     if message_id is not None and _session_has_message_id(target, message_id):
         self._turn_message_persisted = True;  return False   # 既有身份 ⇒ 只对账
     self._record_user_input(target, content, message_id)
@@ -343,7 +345,7 @@ def _record_claimed_input(self, source=None) -> bool:
   W3 `:853` / W2 `:965`），不新增 per-path 分支；
 - **没有 schema / wire / FSM / EventBus / lock / admission / pending 的任何改动**；
 - **没有新增调度器、轮询、watchdog、shield、detached 清理任务**；
-- 正常路径只多一次 `self._claimed_input_record = None`（同步赋值）；
+- 载荷是**协程局部量**，不新增实例状态 ⇒ "载荷属于哪个回合"在结构上不可能搞错；
 - 全部注释写清"为什么在这里"与"明确不做什么"。
 
 ---
@@ -364,7 +366,8 @@ def _record_claimed_input(self, source=None) -> bool:
 | ① `_generation_ctx is not None` | claim 之前不得补写（CT5） | **M3** → CT-T6b 红 |
 | ② `not _turn_message_persisted` | 已记录 ⇒ no-op（CT3/AD4） | **M2** → CT-T11 红 |
 | ③ 载荷非 None | 合成系统唤醒不是用户输入（§43） | **M8** → CT-T7 红 |
-| 一次性消费 | 同回合 W3→W1 叠加不双写 | **M2** 的一部分 → CT-T11 红 |
+| 协程局部载荷（非实例属性） | 两个 `process()` 体重叠时载荷不跨回合串味 | **M11** → CT-T15 红 |
+| 零 await prologue | 第二发取消/等待锁的新回合打不进"已 claim 未补写"的缝 | **M9 / M10** → CT-T14 红 |
 | 身份核对 | 防御纵深（**非唯一防线**） | **M7** → 存活（见 §16） |
 | 异常吞成 warning | 绝不外抛、绝不阻塞收口（CT6） | **M5** → CT-T10 红 |
 
@@ -435,7 +438,7 @@ describe_image / submit_task **不受影响**；`svc["_session_msg_count"]` 与
 
 ## 16. Regression Tests 分类（§26/§65）
 
-`core/agent/tests/test_claimed_input_conversation_truth.py`（**15 例**）：
+`core/agent/tests/test_claimed_input_conversation_truth.py`（**17 例**）：
 
 | 用例 | 类别 | 修前 |
 |---|---|---|
@@ -452,11 +455,13 @@ describe_image / submit_task **不受影响**；`svc["_session_msg_count"]` 与
 | `test_ct_t7_synthetic_task_result_turn_is_not_recorded_as_user_history` | PRODUCT_CONTRACT_GUARD（按条数） | 🟢 |
 | `test_ct_t10_session_write_failure_does_not_block_terminal_finalization` | FALSIFICATION_GUARD（CF） | 🟢 |
 | `test_ct_t11_record_recovery_is_idempotent_across_repeated_finalization` | FALSIFICATION_GUARD（幂等） | 🟢 |
-| `test_ct_t12_shutdown_in_window_stays_bounded_and_starts_no_new_turn` | FALSIFICATION_GUARD（停机） | 🟢 |
+| `test_ct_t12_shutdown_in_window_stays_bounded_and_starts_no_new_turn` | FALSIFICATION_GUARD（停机 + 真相层恰一条） | 🟢 |
 | `test_ct_t13_exception_finalization_cancelled_does_not_double_record` | FALSIFICATION_GUARD（W3→W1 叠加） | 🟢 |
+| `test_ct_t14_direct_injection_preemption_still_records_claimed_input` | **PRE_FIX_RED**（直投输入抢占 = 最宽的生产触发面）+ 唯一能杀 **M9/M10** 的守卫 | 🔴 |
+| `test_ct_t15_payload_never_leaks_across_overlapping_process_bodies` | FALSIFICATION_GUARD（两个 `process()` 体重叠 ⇒ 载荷不得跨回合串味）+ 唯一能杀 **M11** 的守卫 | 🟢 |
 
-**PRE_FIX_RED 证据**：修前 `6 failed, 4 passed`（CT-T6b 是修后补的，补前为 `6 failed, 4 passed`）；
-修后 `15 passed`。
+**PRE_FIX_RED 证据**：修前 `6 failed, 4 passed`（当时套件 10 例；CT-T6b / CT-T14 是随后补入的，
+它们的鉴别力由**变异** M3 / M9 给出，见 §17）；修后 **17 passed**。
 
 ---
 
@@ -467,7 +472,7 @@ describe_image / submit_task **不受影响**；`svc["_session_msg_count"]` 与
 
 | 变异 | 内容 | 期望 | 实测 |
 |---|---|---|---|
-| **M1** | 移除 recovery 调用点（恢复旧空洞） | CT-T1(w1/w2)/T2/T3/T8/T9 红 | **KILLED**（6 条全红） |
+| **M1** | 移除 recovery 调用点（恢复旧空洞） | CT-T1(w1/w2)/T2/T3/T8/T9 红 | **KILLED**（加固后 **10 条**红，含 CT-T12/T13/T14/T15） |
 | **M2** | 取消侧去掉门禁② + 一次性消费 | CT-T11 红 | **KILLED** |
 | **M3** | 去掉门禁①（允许 pre-claim 补写） | CT-T6b 红 | **KILLED** |
 | **M4** | **Option A**：normal path 记录移到 `build_messages` 之前 | CT-T4 红（prompt 双计） | **KILLED** |
@@ -475,11 +480,37 @@ describe_image / submit_task **不受影响**；`svc["_session_msg_count"]` 与
 | **M6** | 只写旁路会话，不进目标会话 | CT-T1(w1)/T3 红 | **KILLED** |
 | **M7** | 去掉身份幂等（保留门禁②+一次性消费） | 预期**存活** | **SURVIVED（符合预期）** |
 | **M8** | 去掉 `is_task_result` 排除 | CT-T7 红 | **KILLED** |
+| **M9** | 把 recovery 从**零 await prologue** 挪到收口链末尾（`finally` 里 `phases.handle_interrupt()` 之后） | CT-T14 红 | **KILLED**（`1 failed, 15 passed`，**只有 CT-T14 抓到**） |
+| **M10** | 在 recovery **之前**插一个 `await asyncio.sleep(0)`（保留位置，破坏「零 await」） | CT-T14 红 | **KILLED**（`1 failed, 16 passed`，**只有 CT-T14 抓到**）—— 关闭 Challenger 的 finding #3（它跑的是加 CT-T14 **之前**的套件，当时 15/15 全绿） |
+| **M11** | 把载荷从**协程局部量**改回**实例属性**（重新引入跨回合泄漏） | CT-T15 红 | **KILLED**（`1 failed, 16 passed`，**只有 CT-T15 抓到**）—— 关闭 Challenger 的 finding #1 |
 
 > **M7 的诚实解读**：身份核对 `_session_has_message_id()` **不是**唯一的幂等防线——
 > 门禁②（`_turn_message_persisted`）+ 一次性消费已经足够。身份核对是**防御纵深**
 > （v2 有稳定 ID 时做权威对账）。本批**不**把它说成"必需"，也不为它编造一个能杀它的
 > 守卫；它的价值在于"判据落在既有身份而非平行布尔"（§38 的**首选**，不是**唯一**）。
+
+> **M9 的意义**：它证明「补写放在**零 await prologue**」是**承重设计**而非风格偏好 ——
+> 一旦挪到收口链末尾，被**直投输入抢占**的回合（抢占方的新回合会在取锁前清空
+> `_generation_ctx`，Batch 12 的有意设计）就会让门禁①把这条**已 claim** 的输入判成
+> 「未 claim」而静默丢弃。CT-T14 是唯一能抓到它的守卫（CT-T11 / CT-T13 用的是第二发
+> 取消，没有新回合来清 ctx）。
+
+**随机调度扰动（§104，辅助证据）**：`tmp/b15/main/stress_kb46.py`，**600 轮**在
+同一个真 Agent 上按随机场景序列推进（`w2_cancel` 122 / `w2_exc` 132 /
+`preclaim_cancel` 115 / **`w2_preempt` 115** / `normal` 116；`seed=20260919`）。
+每轮只断言**该轮**的不变量（session 是有界 deque，会逐出旧消息，末尾统一断言无意义）：
+claimed 场景该 token **恰一条**、pre-claim 场景**0 条**、每轮结束 `is_completely_idle`
+且 pending 为空、正常回合 LLM **恰一次**调用，另做 3 次真实 prompt 计数（恰一次）。
+
+```text
+rounds=600 stats={'w2_cancel': 122, 'w2_exc': 132, 'preclaim_cancel': 115,
+                  'w2_preempt': 115, 'normal': 116}
+prompt_checks=3 llm_calls=232 phase=idle final_user_msgs=14
+1 passed in 34.60s
+```
+
+其中 **`w2_preempt`（直投输入抢占）是 M9 的临界路径**（抢占方的新回合会在取锁**之前**
+清空 `_generation_ctx`）—— 115 轮全部无丢失、无重复、无 phantom、无 active-state orphan。
 
 **两个由变异暴露、当场补齐的守卫缺口**（`dbed9856`）：
 
@@ -509,7 +540,7 @@ describe_image / submit_task **不受影响**；`svc["_session_msg_count"]` 与
 | env 锁 | `make check-env-lock` | ✅ |
 | CI 信任边界 | `make check-ci-isolation` | ✅ 3 个 workflow |
 | 契约漂移 | `make check-types` | ✅（含 17 个 golden frames + 错误码单源） |
-| targeted（新守卫） | `pytest core/agent/tests/test_claimed_input_conversation_truth.py` | ✅ **15 passed** |
+| targeted（新守卫） | `pytest core/agent/tests/test_claimed_input_conversation_truth.py` | ✅ **17 passed** |
 | Batch 12/13/14 套件 | `test_admission_input_delivery` + `test_pending_input_ordering` + 认知套件 | ✅ |
 | 取消安全收口（Batch 11） | `core/cognitive/tests/test_cancellation_safe_finalization.py` + `core/agent/tests/test_turn_finalization_cancellation_safety.py` | ✅ |
 | quick | `make test-quick` | ✅ **6253 passed**, 2 skipped, 2 xfailed |
@@ -541,11 +572,11 @@ describe_image / submit_task **不受影响**；`svc["_session_msg_count"]` 与
 | ID | 不变量 | 守卫 |
 |---|---|---|
 | **CT1** | 被 active turn claim 的 user input，不得因受支持的取消/失败从 runtime conversation truth 静默消失 | CT-T1(W1/W2)、CT-T2、RM1 |
-| **CT2** | claim / record / model-consume / terminal 各有独立 owner；进历史只有一个 canonical 权威 | CT-T3（真实 `stream_think` 入参）、RM1/RM2 |
+| **CT2** | claim / record / model-consume / terminal 各有独立 owner；进历史只有一个 canonical 权威；**载荷与 claim 同源**（协程局部量，不跨回合） | CT-T3（真实 `stream_think` 入参）、**CT-T15**、RM1/RM2 |
 | **CT3** | 补写幂等：同一条逻辑输入在 history/archive/model context 里恰一次 | CT-T11、CT-T5、CT-T13、CT-T4 |
 | **CT4** | 保留 user truth 不得伪造 assistant 产出或"回合已完成" | CT-T1（`roles[-1]`、`generations.status`）、CT-T8 |
 | **CT5** | claim **之前**取消/失败的输入不得被提升进会话历史 | CT-T6、CT-T6b |
-| **CT6** | truth 保护不得阻塞取消安全终态收口与停机（同步零 await、绝不外抛） | CT-T10、CT-T12、CT-T11 |
+| **CT6** | truth 保护不得阻塞取消安全终态收口与停机（**补写必须在收口链的首个 await 之前**、同步零 await、绝不外抛） | CT-T10、**CT-T12**、CT-T11、**CT-T14**（M9/M10 的唯一杀手） |
 
 落纸：`docs/architecture/invariants.md` §4.8。
 
@@ -591,6 +622,50 @@ describe_image / submit_task **不受影响**；`svc["_session_msg_count"]` 与
 被实测证伪（`state: THINKING` 在 record 之前就发）—— 已在该注释处更正并标注实测证据。
 
 ---
+
+---
+
+## 24. Challenger Findings（§74–§86）
+
+独立对抗审计（Challenger 子代理）：`tmp/b15/challenger/report.md`（含 68 例自建对抗用例
+`final_run.log`、独立变异驱动器 `mutate.py`，跑在自建 worktree `/tmp/b15-challenger-wt`）。
+**主 Agent 独立复现了它报告的全部 FIX finding**（不采信结论，只看字面输出）。
+
+### 24.1 被打破的（已在本批修复）
+
+| # | Challenger 主张 | 主 Agent 独立复现 | 处置 |
+|---|---|---|---|
+| **W1** | `_claimed_input_record` 是**实例属性**且 `process()` 同步前缀在**锁外** ⇒ 载荷与 claim 可来自不同回合 | ✅ `tmp/b15/main/probe_n2_leak.py`：`claimed_by_b=True payload=([{'type':'text','content':'N2-A-正文'}], None) A_count=2 B_count=0` | **已修**（`c961595d`）：载荷改为 `process()` 的**协程局部量**并沿终态路径显式下传 ⇒ 同探针 `A_count=1 B_count=1`；新增守卫 **CT-T15**（变异 **M11** 唯一杀手） |
+| **#3** | "零 await prologue"这半边**无人守**（它跑的是加 CT-T14 **之前**的套件：插一个 `await` 后 15/15 全绿） | 复跑变异 **M10**（recovery 前插 `await asyncio.sleep(0)`）：当前套件 **1 failed（CT-T14）/ 16 passed** | **已闭合**：CT-T14 是 M9/M10 的唯一杀手。Challenger 的观察对**当时**的套件成立，对当前 HEAD 不成立 |
+| **假绿 CT-T12** | 功能整个删掉仍绿；含恒真式断言 `pending_messages == [] or is not None`（该属性恒返回 list），且从不断言真相层 | ✅ 复跑变异 **M1**：加固前 CT-T12 绿 | **已修**：删恒真式，补"停机窗口内被取消的已 claim 输入**恰一条**"的真相层断言 ⇒ **M1 现在 10 条红**（含 CT-T12） |
+| **假绿 CT-T11** | 单独删门禁②、一次性消费、recovery 后的 `persisted=True` 都不红（只有"门禁②+一次性消费"同删才红） | ✅ 载荷改为下传后，只调 `_handle_interrupt()` 是**无载荷 no-op** ⇒ 原写法确实退化成恒真 | **已修**：改为在窗口内以 `process()` 的同一构造形状给 helper 喂**两次**（True→False） ⇒ 变异 **M2** 现在被 CT-T11 + CT-T5 杀 |
+| **假绿 CT-T8** | `roles[texts.index(m1)+1] != "assistant" or …` 用 user 文本下标索引 `roles`，`or` 右侧实测恒真 | ✅ 静态复核确认 | **已修**：按 `session.messages` 的**真实**下标断言"M1 之后不得出现 assistant" |
+| **注释不成立** | "normal 与 recovery 共享同一份一次性载荷，谁先写谁消费，另一个必然在门禁②上短路"——normal path **不查**门禁② | ✅ 静态复核确认（normal path 无条件写） | **已修注释**：改为准确表述（门禁② 是 **recovery 侧**的短路判据；两条权威在**生产**上互斥，因为 recovery 只在终态路径运行） |
+
+### 24.2 登记不修（超出本批 scope）
+
+| # | 主张 | 判定 |
+|---|---|---|
+| **#2 / L** | 同一 `message_id` 跨回合重放会得到**两条**历史（上游 `ws_v2` 的 TAKEOVER 分支复用 `entry.user_message_id`；触发前提 = `_prepare_turn` 的 `register` 失败被 `except Exception: logger.debug` 吞掉 ⇒ 幂等表 stale） | **不是本批引入**：修前 normal path 同样无条件 append（同 id 两次准入 ⇒ 两条）。本批的 recovery 只在**同回合内**按身份去重。跨回合去重属准入/幂等语义，**登记 KB-57**（需产品决策：合法重发 vs 重放） |
+| **E2/E2b** | 在**回合之外**手动先跑 recovery 再放行 normal path ⇒ 双写（v2 身份检查也拦不住） | 非生产可达（recovery 只在终态路径运行；normal 与 recovery 在生产上互斥）。**已由注释更正覆盖**，不新增守卫 |
+
+### 24.3 未能打破的（逐条实测，均有字面输出）
+
+W1/W2 取消（v1 与 v2 身份均保留预分配 id）、record 之后取消/异常、普通异常、
+W3→W1 叠加恰一次、重复终态调用、phantom 防护（G1–G3）、prompt 唯一性（`count=1`）、
+M1→M2→M3 顺序与既有 PO 套件 25 passed、停机**有界**且不复活且**确实落库**、
+`StorageUnavailableError` / 归档失败均不阻终态、多模态 image/file 结构保留、
+`add_message` 零 await（AST + 运行期零切换）、`self._session` 全类唯一赋值点
+（`loop.py:593`，claim 在 `:680`）+ 归属实验（只写目标会话与 archive）、
+`_handle_interrupt` 生产调用点恰 3、`is_task_result` 排除完整、
+既有套件未被削弱（`git show --name-status`：删掉的**逻辑行**只有原 5 行 `add_message`）。
+
+### 24.4 一处结论修正（Challenger 对，我们低估）
+
+**"不承诺 durability"是低估**：停机路径下补写**确实**会被 `save_all()` 落库
+（`[I3] sessions_hits=2 archive_hits=1`，与正常回合的对照同值）。本批"不承诺
+durability"的准确含义是**进程硬杀**（`accepted ≠ durable`），不是"取消路径永不落
+`sessions`"。已据此更正 `docs/architecture/invariants.md` §4.8 的边界措辞。
 
 ## 23. 后续（§40）
 

@@ -888,16 +888,24 @@ process()  取锁**之前**清空 _generation_ctx / _admission_* / _turn_message
 | **CT5** | **claim 之前**被取消/失败的输入**不得**被 conversation-truth 补写提升进会话历史（Batch 12 的 admission 边界不得被本批破坏） | `::test_ct_t6_pre_claim_cancel_creates_no_phantom_history`（取消路径：`_handle_prepare_cancelled` 见 ctx 为 None 直接返回，**不进**收口）、`::test_ct_t6b_pre_claim_exception_creates_no_phantom_history`（异常路径：`_handle_turn_exception` 的 `finally` **一定**进收口 ⇒ 此处"已 claim"门禁是**唯一**防线） | 同上 | **push/backend** |
 | **CT6** | conversation-truth 保护**不得**阻塞取消安全的终态收口与停机：补写必须是**同步零 await**（不新增挂起点、不做 DB 往返），任何异常都不得外抛——否则第二发取消会让相位永停 THINKING（CF1/CF2 回归） | `::test_ct_t10_session_write_failure_does_not_block_terminal_finalization`（§64：写失败仍须回 IDLE）、`::test_ct_t12_shutdown_in_window_stays_bounded_and_starts_no_new_turn`（§67：停机有界且不得在 STOPPED 后开新回合）、`::test_ct_t11_…`（重复收口） | 同上 | **push/backend** |
 
-**实现形状（唯一权威 + 一次性载荷 + 三条门禁）**：
+**实现形状（唯一权威 + 协程局部载荷 + 三条门禁 + 一处消费点）**：
 
 - `CognitiveLoop._record_user_input()` —— user message 进会话历史的**唯一权威**
   （normal path 与 recovery 共用；Batch 14 的 W1/W2"两种会话真相"因此不会再出现）。
-- `process()` 取锁**之前**的同步段暂存 `_claimed_input_record = (content, message_id)`；
-  `is_task_result=True` 直接存 `None` ⇒ 合成系统唤醒**不可能**被写成用户历史。
+- `process()` 取锁**之前**的同步段构造**协程局部量** `record = (content, message_id)`，
+  沿终态路径**显式下传**（`_handle_prepare_cancelled(record)` /
+  `_handle_turn_exception(e, record)` → `_handle_interrupt(record=…)`）；
+  `is_task_result=True` 直接构造为 `None` ⇒ 合成系统唤醒**不可能**被写成用户历史。
+  **不放实例属性**：Challenger 反证 + 主 Agent 独立复现（N2）——两个 `process()` 体
+  重叠时（实测 in-flight 峰值 = 2），入口的同步前缀会把旧回合的载荷覆盖成新回合的，
+  旧回合若随后 claim，其 recovery 就会把**新回合的正文**写进历史（实测
+  `A_count=2 B_count=0`）。局部量让"载荷属于哪个回合"在**结构上**不可能搞错。
 - `CognitiveLoop._record_claimed_input()` 在 `_handle_interrupt()` 的**零 await prologue**
-  一次性消费（在 `is_completely_idle` 早退**之前**）——一处覆盖 W1/W2/W3。三条门禁：
+  消费（在 `is_completely_idle` 早退**之前**）——一处覆盖 W1/W2/W3。三条门禁：
   ① 已 claim（`_generation_ctx is not None`）、② 未 recorded（`_turn_message_persisted`）、
-  ③ 是用户输入（载荷非 None）；另在拿到稳定身份时核对 `_session_has_message_id()`。
+  ③ 载荷非 None；另在拿到稳定身份时核对 `_session_has_message_id()` 作防御纵深。
+  "零 await"是**承重约束**（变异 M9/M10 证明：一旦挪到首个 await 之后，被直投输入
+  抢占的回合就会因为等待锁的新回合先跑一步、清掉 ctx 而静默丢失 ⇒ CT-T14）。
 
 **CT1–CT6 的边界（明确不做）**：不引入事务 / 回滚 / durable inbox / unit-of-work
 （**KB-30 保持独立**——本批只挪动**一个** user-input truth commit point，不建立整个回合的
@@ -910,7 +918,10 @@ process()  取锁**之前**清空 _generation_ctx / _admission_* / _turn_message
 `sessions` 文档由既有的 `save()` 在**下一个成功回合的 after_response** / 关机
 `save_all()` 落库。因此取消路径上的补写**不**立即进 `sessions` 文档；
 `test_rm1` 显式 `save()` 后经真 `SessionRepository.load()` 读回才断言（→ 新登记
-**KB-51**）。这是**既有**语义，不是本批引入的。
+**KB-51**）。这是**既有**语义，不是本批引入的。**边界澄清（Challenger 实测）**：
+**关机**路径下补写**确实**会被 `save_all()` 落库（实测 `[I3] memory=1
+sessions_hits=2 archive_hits=1`，与正常回合的对照同值）——本批"不承诺 durability"
+指的是**进程硬杀**（`accepted ≠ durable`），不是"取消路径永远不落 `sessions`"。
 
 ## 5. 架构与静态面
 
