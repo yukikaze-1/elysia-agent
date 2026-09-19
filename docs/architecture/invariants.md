@@ -651,15 +651,25 @@ USER_INPUT **没有重投**（`_handle_interrupt` 只搬移不复制），`gener
   pending 里反序（实测 `['M3','M2']`，处理顺序 `M1 → M3 → M2`）。
 - **终态归因是日志级**：显式终态只存在于运行时日志
   （`disposition=cancelled_pre_ownership` / `failed_pre_ownership` /
-  `cancelled_by_interrupt` + source + message/session 身份），**不**产生 wire 帧、
-  **不**写库。这与"不为满足文字不变量增加无用 DB 记录"的取舍一致；客户端因此仍
-  无法区分"这条被取消了"与"这条从未被处理"（→ 新登记 KB-40）。
+  `cancelled_by_interrupt` + source + message/session 身份；Batch 14 起另有
+  `cancelled_by_shutdown`，见 §4.7），**不**产生 wire 帧、**不**写库。这与"不为满足
+  文字不变量增加无用 DB 记录"的取舍一致；客户端因此仍无法区分"这条被取消了"与
+  "这条从未被处理"（→ 新登记 KB-40）。
+- **"接管之后、进历史之前"这一段没有归因**：`cancelled_pre_ownership` 只在
+  `_handle_prepare_cancelled` 里打，而该 handler 只覆盖 `_prepare_turn` 之内的落点；
+  取消若落在 `_think_loop` → `_build_turn_prompt`（`loop.py:1152` → `:1021` 的
+  `session.add_message` 之前）这一段，处置只有一句 `<<< 用户打断`。
+  **Batch 14 已确证这是可达的**（USER：直投输入或停止按钮落在这个窗口）→ 新登记
+  **KB-46**（原 N7），与"该输入是否应进会话历史"这一产品决策绑定，本批**只登记不修**。
 - **v1/REST 输入的身份为空**：`_admission_message_id` 取自 v2 预分配的 `messageId`；
   v1/REST 路径没有这个 ID ⇒ 终态日志里 `message_id=-`（只有 conversation_id）。
   身份正是"最需要归因"的低版本路径上最弱的那一环（→ 新登记）。
 - **`_drain_pending_after_turn` 只在 `is_completely_idle` 时出队**：它刻意**不**越过
   `IDLE 已广播 / 锁未释放`（KB-28）那条边界——若收口仍持锁，新回合会卡在锁上而被
-  下一条消息当作在途回合取消。KB-28 未修，故这里也不越过它。
+  下一条消息当作在途回合取消。**Batch 14 实测**：该边界今天不会造成丢失——新输入
+  （公开入口与直投）在 Batch 12 的 `not_owning` + Batch 13 的 `_has_older_waiting_input`
+  之下都会**排队**而不是取消那个卡在锁上的回合；原始"下一条消息取消它并吞掉已 ACK
+  输入"的形态在 HEAD 上**已不成立**（见 §4.7 RO2 与 KB-28 的 reclassify）。
 
 ---
 
@@ -736,15 +746,89 @@ queue / priority queue、不把所有输入一律塞进 pending（保持 fast pa
   它改成 UUID / 每会话计数 / 随机值会让顺序静默错乱，而那条守卫会先红。
 - **停机 / 显式中断不覆盖**：顺序不变量只约束"保持可处理的 accepted 输入"；停止按钮与
   `Agent.stop()` 清空 bus + pending 是既有终态合同（PO5/PO6 只要求"不复活、不重排幸存者"）。
+  **Batch 14 更正**：这句话的**代码**此前只做到 pending 那一半——`Agent.stop()` 不清总线，
+  于是总线驻留的 accepted 输入会跨 `stop()→start()` 边界被新 epoch 消费（**KB-47**）。
+  现已按本句的合同补齐（见 §4.7 RO1）；顺序不变量本身仍不覆盖停机。
 - **停止按钮只支持整队取消**：没有"只取消 pending 里某一条"的接口 ⇒ §38 的
   "cancel 中间项"当前 **N/A**（PO5 只覆盖整队清除后的相对顺序）。
 - **直投输入的抢占语义（保留）**：直投输入在**等待集为空**时仍会走 spawn 分支抢占已接管
   输入的回合（既有行为，本批未改；§34 Keep-As-Is）。本批只挡住"等待集里有更早输入"时的越队。
-  副作用是"已 claim 但未进历史就被抢占"的丢失形态（→ 新登记 N7，非本批引入）。
+  副作用是"已 claim 但未进历史就被抢占"的丢失形态 → **Batch 14 已确证为 USER 可达并登记
+  KB-46**（原 N7；含"停止按钮落在同一窗口"这一更宽的触发面），本批只登记不修（产品决策 +
+  KB-30 依赖，见 §4.7 的 RO3 未建立说明）。
 - **排序键读不到时的口径是保守的**：本条读不到 ⇒ 只要等待集非空就排队；等待者读不到 ⇒
   视为更早。今天 5 个 `UserInputData` 生产者全都带 `next_request_id()`，所以两支都不可达；
   它们存在的意义是"将来新增入口忘带键时退化成排队，而不是静默越队"（Challenger A/B 各自把
   这条不可达性变成了可执行事实）。
+
+---
+
+### 4.7 Runtime epoch ownership（RO）
+
+来源：[2026-09-19 Batch 14 执行记录](../review/2026-09-19-Batch14-residual-input-ownership-triage-执行记录.md)。
+缺陷形状（canonical backlog **KB-47**，Batch 13 登记为 **N8**）：`EventBus` 的生命周期与
+`Agent` 实例相同（`EventBus()` 在 `Agent.__init__` 构造），而同一实例的
+`stop() → start()` 是**新的 runtime epoch**——
+
+```text
+事件消费者被钉在一个真实的挂起点上（如 _handle_state_change → output.notify_state）
+  → process_message(M1) → bus.post(UserInputData(M1)) → return True（= 已 accepted）
+  → Agent.stop()：_state=STOPPED / _pending_messages 清空 / 消费者取消
+       —— 但 M1 仍在**总线队列**里（取消消费者 ≠ 清队列）
+  → Agent.start()：新 epoch 的消费者取到的第一条事件就是 M1
+  ⇒ 被当成**新输入**处理：进 session 历史、喂 LLM、可能再次触发工具副作用
+```
+
+"非 durable 的 accepted 输入不得跨运行被消费"**早已是写下的合同**，只是代码只做了
+一半：`docs/architecture/invariants.md` 本节 §4.6 的 PO5/已知边界（"停止按钮与
+`Agent.stop()` 清空 bus + pending 是既有终态合同"）、§4.5 的 AD5（"显式取消与**停机**
+不得复活本应保持取消的输入"），以及输入层的 S2-R2-4 判据
+（`core/input/ws_handlers/chat.py` / `core/input/voice_sessions.py`：
+"停机窗口内输入层不再向 bus 投任何事件……**残留事件跨运行被消费本身就是缺陷族**"，
+commit `c029110e`）都按"停机即结束 ownership"写；而 `Agent.stop()` 此前只清 pending。
+
+> **术语**：**runtime epoch** = 两次 `start()` 之间的一段运行期。同一实例的
+> `stop()→start()` 是**新 epoch**（`fsm.reset()` + `reset_lifecycle_state()` +
+> `_started_cognitive_tasks.clear()` + 新消费者）；`clear_work()` 的 docstring 亦写明
+> 目的是"避免同一 Agent restart 残留"。本批**不引入** `RuntimeEpoch` 框架/字段——
+> epoch 只是"停机边界"的语义说法，机制仍是"stop 时结束 ownership"。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **RO1** | `Agent.stop()` **结束**所有"非 durable、未被任何回合接管"的 accepted 输入的 ownership——**两个容器都算**（总线驻留 ＋ `_pending_messages`）：停机返回后总线**不得**再驻留 `USER_INPUT`（不得跨 epoch 复活）；且**两处的丢弃都必须可归因**（`disposition=cancelled_by_shutdown` + 身份）并释放 v2 session-work 引用 | `core/agent/tests/test_runtime_epoch_input_ownership.py::test_stop_boundary_ends_input_ownership_and_prevents_resurrection`（PRE_FIX_RED：修前 `bus.pending_user_inputs==1`，restart 后该输入进 session/被喂 LLM 且零 disposition）、`::test_stop_boundary_attributes_queued_pending_input`（PRE_FIX_RED：修前 pending 被清空却零日志，而停止按钮路径对同一处置记 `cancelled_by_interrupt`） | `make test-quick` / `test-normal` | **push/backend** |
+| **RO2** | 停机清扫**按 event type 分类**，不得退化为全清：`TaskResultData` 等 durable 终态（§2 T3/T6）必须原位保留；幸存者的出队顺序（`priority, seq`）与计数/快照簿记不得被改变 | `::test_stop_boundary_preserves_durable_events`（PRE_FIX_RED；变异 M2"粗暴全清"⇒ 本条红）、`core/monitoring/tests/test_event_bus_ownership.py`（4 例：分类 / 顺序不变 / 空集 no-op / 已派发者不受影响） | 同上 | **push/backend** |
+| **RO3** | **合法 transient 不得改变用户可见的 ownership 语义**：`_current_task` 指向已结束任务（**KB-26**）与 `FSM=IDLE + _process_lock 仍持有`（**KB-28**）都可以存在，前提是它们不产生 bypass / duplicate / omission / resurrection。Batch 14 以证据**证伪**了两者的用户可见后果（见下方"合法 transient 的边界"） | KB-26：`tmp/b14/subA/probe_kb26.py`（5 例，逐个触发全部 5 个生产读者）；KB-28：`tmp/b14/subA/probe_kb28.py`（4 例）；两者当前**只作证伪记录**，未入库为常驻守卫（若要长期钉住需在后续批次把探针转正） | — | — |
+
+**RO1/RO2 的边界（明确不做）**：不新增 `RuntimeEpoch` 管理框架 / 不新增 epoch 字段、
+不做 restart 侧过滤（`start()` 在 spawn 消费者**之前**就已 `_state = RUNNING`，那期间
+被接受的输入是**合法**的新 epoch 工作，start 侧清扫会误伤它们）、不改 FSM / 不改
+pending 容器 / 不改 `_process_lock` / 不加 watchdog 或轮询、不触碰 wire 与 schema。
+
+**RO1 的残留缺口（已登记，未修）**：清扫发生在 `stop()` 的最后一步，因此
+**清扫之后**才被投进总线的事件仍会跨 epoch 存活。今天有两条直投入口**不查**
+`status.is_service_running`（`core/input/ws_handler.py::do_transcription`、
+`core/input/ws_v2.py::_handle_voice_commit`；另两条——`do_interrupt` 与
+`voice_sessions` REALTIME——已按 S2-R2-4 加了该判据），它们在停机窗口尾部（以及
+`runner.cleanup()` 期间）仍可投递 → 新登记 **KB-48**（**E2 实测**：`stop()` 返回后真
+`do_transcription` 仍能把事件投进总线，`start()` 后进 session/LLM）。**归属**：与 RO1 同族但
+**不同权威**（输入层准入 vs. Agent 停机边界），按"一个 root-cause cluster"的约束
+本批不合并修复（§48）。
+
+**合法 transient 的边界（Batch 14 实测，KB-26 / KB-28）**：
+
+- **`_current_task` 陈旧**（KB-26）：`_current_task` 的权威含义只是"最近 spawn 的回合 /
+  取消目标"（写点 `loop.py:940`、`agent.py:1168/1218/1258`；清点 `loop.py:431-434/457`），
+  ownership 判据自 Batch 12 起是 `_generation_ctx`（`current_turn_owns_input`）＋
+  `_started_cognitive_tasks`。生产读者**恰好 5 处**（`loop.py:418`、`agent.py:1092`、
+  `agent.py:1340`、`debug/info.py:164`，以及 `loop.py:431` 的取消调用），每一处都在
+  `.done()` 守卫之内 ⇒ 陈旧句柄**不产生**错误取消 / 错误排队 / 误报忙 / 跳过登记。
+- **`FSM=IDLE` 而锁未释放**（KB-28）：原始claim（"下一条消息取消卡在锁上的回合，
+  吞掉已 ACK 且已出队的消息"）在 HEAD 上**已被 Batch 12/13 的判据覆盖**——卡在
+  `_process_lock` 的回合尚未接管输入（`_generation_ctx` 已在 `process()` 入口清空），
+  于是新输入（公开入口与直投）走 `not_owning` ⇒ **排队**；实测 claims/session/LLM
+  三层顺序 `KA→KB→KC→KV`，无丢失、无重复、队列正常排空。它仍需要"某个
+  `on_change` 订阅者在通知上挂起"这一前提，而仓内生产不注册这类订阅者 ⇒
+  **当前不可达**（保留为 OPEN/LOW，归入 KB-28 的 reclassify）。
 
 ---
 
