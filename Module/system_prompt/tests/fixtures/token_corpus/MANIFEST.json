@@ -19,6 +19,15 @@
    "set": "te"
   },
   {
+   "id": "cjk_ext_b_ideographs",
+   "kind": "text",
+   "category": "cjk_ext",
+   "path": "text/cjk_ext_b_ideographs.txt",
+   "chars": 105,
+   "bytes": 420,
+   "set": "te"
+  },
+  {
    "id": "cjk_ja",
    "kind": "text",
    "category": "cjk_ja",
@@ -154,6 +163,24 @@
    "set": "te"
   },
   {
+   "id": "digits_long_numbers",
+   "kind": "text",
+   "category": "digits",
+   "path": "text/digits_long_numbers.txt",
+   "chars": 839,
+   "bytes": 839,
+   "set": "te"
+  },
+  {
+   "id": "digits_run",
+   "kind": "text",
+   "category": "digits",
+   "path": "text/digits_run.txt",
+   "chars": 1000,
+   "bytes": 1000,
+   "set": "te"
+  },
+  {
    "id": "empty",
    "kind": "text",
    "category": "small",
@@ -271,12 +298,138 @@
    "set": "te"
   },
   {
+   "id": "latin1_accented",
+   "kind": "text",
+   "category": "unicode",
+   "path": "text/latin1_accented.txt",
+   "chars": 515,
+   "bytes": 541,
+   "set": "te"
+  },
+  {
    "id": "markdown_mixed",
    "kind": "text",
    "category": "markdown",
    "path": "text/markdown_mixed.txt",
    "chars": 588,
    "bytes": 594,
+   "set": "te"
+  },
+  {
+   "id": "script_arabic",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_arabic.txt",
+   "chars": 465,
+   "bytes": 864,
+   "set": "te"
+  },
+  {
+   "id": "script_armenian_georgian",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_armenian_georgian.txt",
+   "chars": 417,
+   "bytes": 960,
+   "set": "te"
+  },
+  {
+   "id": "script_cyrillic",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_cyrillic.txt",
+   "chars": 465,
+   "bytes": 861,
+   "set": "te"
+  },
+  {
+   "id": "script_devanagari",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_devanagari.txt",
+   "chars": 456,
+   "bytes": 1212,
+   "set": "te"
+  },
+  {
+   "id": "script_ethiopic",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_ethiopic.txt",
+   "chars": 381,
+   "bytes": 957,
+   "set": "te"
+  },
+  {
+   "id": "script_greek",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_greek.txt",
+   "chars": 441,
+   "bytes": 819,
+   "set": "te"
+  },
+  {
+   "id": "script_hebrew",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_hebrew.txt",
+   "chars": 375,
+   "bytes": 675,
+   "set": "te"
+  },
+  {
+   "id": "script_latin2_czech",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_latin2_czech.txt",
+   "chars": 453,
+   "bytes": 543,
+   "set": "te"
+  },
+  {
+   "id": "script_latin2_polish",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_latin2_polish.txt",
+   "chars": 459,
+   "bytes": 507,
+   "set": "te"
+  },
+  {
+   "id": "script_mixed_accented_cyrillic",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_mixed_accented_cyrillic.txt",
+   "chars": 739,
+   "bytes": 994,
+   "set": "te"
+  },
+  {
+   "id": "script_myanmar",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_myanmar.txt",
+   "chars": 420,
+   "bytes": 1170,
+   "set": "te"
+  },
+  {
+   "id": "script_thai",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_thai.txt",
+   "chars": 456,
+   "bytes": 1254,
+   "set": "te"
+  },
+  {
+   "id": "script_vietnamese",
+   "kind": "text",
+   "category": "script",
+   "path": "text/script_vietnamese.txt",
+   "chars": 483,
+   "bytes": 642,
    "set": "te"
   },
   {
@@ -295,15 +448,6 @@
    "path": "text/tiny_zh_greeting.txt",
    "chars": 2,
    "bytes": 6,
-   "set": "te"
-  },
-  {
-   "id": "unicode_accents_cyrillic",
-   "kind": "text",
-   "category": "unicode",
-   "path": "text/unicode_accents_cyrillic.txt",
-   "chars": 739,
-   "bytes": 994,
    "set": "te"
   },
   {

@@ -310,11 +310,72 @@ def _text_cases() -> dict[str, tuple[str, str]]:
         "👨‍👩‍👧‍👦 👩🏽‍💻 🏳️‍🌈 🇨🇳🇯🇵 éèêë ñ ç ü ö a\u0301e\u0301o\u0301 "
         "１２００ ＡＢＣ 。，、！？ " * 8,
     )
-    cases["unicode_accents_cyrillic"] = (
+    # 纯重音拉丁（欧洲文本常见）——**在合同内**，由拟合决定系数。
+    cases["latin1_accented"] = (
         "unicode",
+        " ".join(_FR_SENTENCES) + " Grüße aus München, Straße, ça va, año, señor, "
+        "cœur, naïve, Škoda, mañana, ćwikła, Gdańsk, İstanbul")
+    # 混合脚本（西里尔/希腊/希伯来/阿拉伯）——**合同外**：与 `script_*` 同类，
+    # 跨家族 token 率相差 3–6×，单一系数无法覆盖（见模块 docstring 的 scope 声明）。
+    cases["script_mixed_accented_cyrillic"] = (
+        "script",
         " ".join(_FR_SENTENCES) + " " + " ".join(_RU_SENTENCES) + " "
         "Grüße aus München — Straße, ça va, año, Ελληνικά, עברית, العربية",
     )
+
+    # --- 非拉丁文字（Batch 18 Challenger C2/C3 的根因：语料只有 Latin/CJK）---
+    # 为什么必须有：`other` 类原本只有 398 字（占语料 0.647%，其中 64% 是西里尔），
+    # 却被用来给**所有**非 CJK/non-Latin 文字定价——实测 CJK 扩展 B 落到它上面得到
+    # 0.13×、埃塞俄比亚 0.21×、缅甸 0.20×、天城文 0.29×。语料缺样本 ⇒ 线性规划
+    # 无从知道这些文字的真实 token 率。每条都用**多码位**拼（不是单字重复），
+    # 避免又落进"重复退化"这一类。
+    # 注意：CJK 扩展 B **不是** `script`（合同外）——它是**汉字**，本产品一定会遇到
+    # （人名/地名里的生僻字）。它有自己的类 `cjk_ext`，参与拟合与硬合同。
+    cases["cjk_ext_b_ideographs"] = ("cjk_ext", "𠮷𩸽𠀋𡈽𣇃𠮟𡌛𣐆𤘩𥅽𦐑𧄍𨦇𩜙𪗀" * 7)
+    cases["script_ethiopic"] = (
+        "script", "ሰላም ልዑል ነገር ግን አማርኛ ቋንቋ ጽሑፍ ደራሲ መጽሐፍ ትምህርት ልጅ እናት አባት ቤት ውሃ "
+                  "ወቅት ቀን ሌሊት ፀሐይ ጨረቃ ከዋክብት ሰማይ ምድር ዛፍ አበባ ወንዝ ተራራ ባሕር ከተማ መንገድ ሰው ሕዝብ" * 3)
+    cases["script_myanmar"] = (
+        "script", "မြန်မာဘာသာစကား လက်ရှိအခြေအနေ ပညာရေး ကျန်းမာရေး စီးပွားရေး နိုင်ငံရေး "
+                  "မိသားစု ဆရာ ကျောင်း စာအုပ် ရေမြေ တောတောင် နေ့ည မနက် ညနေ ကျေးဇူးတင်ပါတယ်" * 3)
+    cases["script_devanagari"] = (
+        "script", "नमस्ते दुनिया यह एक परीक्षण वाक्य है शिक्षा स्वास्थ्य अर्थ राजनीति परिवार "
+                  "शिक्षक विद्यालय पुस्तक जल भूमि वन पर्वत नदी सागर नगर मार्ग मनुष्य जनता दिन रात" * 3)
+    cases["script_thai"] = (
+        "script", "สวัสดีชาวโลกนี่คือประโยคทดสอบ การศึกษา สุขภาพ เศรษฐกิจ การเมือง ครอบครัว "
+                  "ครู โรงเรียน หนังสือ น้ำ ป่า ภูเขา แม่น้ำ ทะเล เมือง ถนน มนุษย์ ประชาชน วัน คืน" * 3)
+    cases["script_hebrew"] = (
+        "script", "שלום עולם זהו משפט בדיקה חינוך בריאות כלכלה פוליטיקה משפחה מורה בית ספר "
+                  "ספר מים אדמה יער הר נהר ים עיר דרך אדם אנשים יום לילה" * 3)
+    cases["script_arabic"] = (
+        "script", "مرحبا بالعالم هذه جملة اختبار التعليم الصحة الاقتصاد السياسة الأسرة المعلم "
+                  "المدرسة الكتاب الماء الأرض الغابة الجبل النهر البحر المدينة الطريق الإنسان الناس" * 3)
+    cases["script_greek"] = (
+        "script", "Γεια σου κόσμε αυτή είναι μια δοκιμή εκπαίδευση υγεία οικονομία πολιτική "
+                  "οικογένεια δάσκαλος σχολείο βιβλίο νερό γη δάσος βουνό ποτάμι θάλασσα πόλη" * 3)
+    cases["script_latin2_polish"] = (
+        "script", "Zażółć gęślą jaźń oraz źdźbło trawy. Edukacja zdrowie gospodarka polityka "
+                  "rodzina nauczyciel szkoła książka woda ziemia las góra rzeka morze miasto droga" * 3)
+    cases["script_latin2_czech"] = (
+        "script", "Příliš žluťoučký kůň úpěl ďábelské ódy. Vzdělání zdraví hospodářství politika "
+                  "rodina učitel škola kniha voda země les hora řeka moře město cesta člověk" * 3)
+    cases["script_vietnamese"] = (
+        "script", "Xin chào thế giới đây là một bài kiểm tra. Giáo dục sức khỏe kinh tế chính trị "
+                  "gia đình giáo viên trường học sách nước đất rừng núi sông biển thành phố con người" * 3)
+    cases["script_cyrillic"] = (
+        "script", "Привет мир это проверка Образование Здоровье Экономика Политика Семья Учитель "
+                  "Школа Книга Вода Земля Лес Гора Река Море Город Дорога Человек Люди День Ночь" * 3)
+    cases["script_armenian_georgian"] = (
+        "script", "Բարեւ աշխարհ սա փորձարկում է Կրթություն Առողջություն Տնտեսություն Ընտանիք "
+                  "გამარჯობა მსოფლიო ეს ტესტია განათლება ჯანმრთელობა ეკონომიკა ოჯახი" * 3)
+
+    # --- 纯数字串（另一个语料缺口：长数字在分组 tokenizer 下便宜得多）---
+    # `json_numeric_arrays` 里的数字都嵌在 JSON 标点里，线性规划把标点的方差摊到了
+    # digits 系数上（实测 generic digits=1.33），而**纯数字串**在 llama3/cl100k/o200k
+    # 上是 3 位一组（≈0.33 token/位）——差 4×。
+    cases["digits_run"] = ("digits", "1234567890" * 100)
+    cases["digits_long_numbers"] = (
+        "digits", " ".join(str(10 ** 12 + i * 987654321) for i in range(60)))
 
     # --- 重复/退化输入（Challenger 面：自然文本之外的最坏一侧）---
     # 为什么必须有：BPE 的合并率完全取决于词表——`"你好" * N` 会合并（0.5 token/字），

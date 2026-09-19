@@ -1105,34 +1105,37 @@ API（`sessions[]/has_more/cursor` 与 `SessionSummary` 逐字段不变）、不
 |---|---|---|---|---|
 | **TE1** | **单一估算权威**：同一个 resolved model 下，所有 prompt 预算消费者（chat 组装、system prompt 梯子、历史裁剪、预览窗口判定、工具结果截断）走**同一份**估算实现与**同一套** profile 选择规则；不得出现第二份 `_estimate_tokens` 式公式 | `core/prompt/tests/test_prompt_budget.py::TestEstimation`、`core/prompt/tests/test_prompt_budget_wiring.py::TestAssemblerWiring`、`Module/tool/tests/test_framework.py::TestTokenEstimation` | `make test-quick` / `test-normal` | **push/backend** |
 | **TE2** | 估算**确定性、本地、无 provider 网络调用**（热路径不查 token 计数端点、不下载 tokenizer、不引入 tokenizer 依赖） | `Module/system_prompt/tests/test_token_corpus_contract.py::TestEstimatorHygiene::test_determinism_across_repeated_calls`；`Module/llm/tests/test_ollama_token_truth.py`（external，旁证） | `make test-quick` / `test-normal` | **push/backend** |
-| **TE3** | 估算器是**有界近似**且合同被显式声明：低估不得越过 chat 侧 25% 余量（`est/actual ≥ 0.75`），高估不得越出 profile 声明的 T；**近似不得被表述为精确计数** | `::TestEstimatorContract::test_no_family_is_underestimated_beyond_the_budget_headroom`、`::test_no_family_is_overestimated_beyond_the_declared_bound`、`::test_declared_bounds_are_the_measured_bounds`、`::test_hard_floor_follows_the_headroom_ratio` | `make test-quick` | **push/backend** |
-| **TE4** | 估算必须**区分实质不同的内容类**（CJK / 结构化密集 / 消息框架 / 工具 schema），不得退回"按字符数线性外推"；按 resolved model 选 profile（`cjk_opt` / `generic`），未知模型回退**保守** profile | `::TestEstimatorContract`（全量语料 × 7 个权威 tokenizer）、`::TestFailureModeGuards::test_same_char_count_different_content_differs`、`::test_profile_selection_has_one_authority` | `make test-quick` | **push/backend** |
+| **TE3** | 估算器是**有界近似**且合同被显式声明：低估不得越过 chat 侧 25% 余量（`est/actual ≥ 0.75`），高估不得越出 profile 声明的 T；**近似不得被表述为精确计数** | `::TestEstimatorContract::test_no_family_is_underestimated_beyond_the_budget_headroom`、`::test_no_family_is_overestimated_beyond_the_declared_bound`、`::test_declared_bounds_are_the_measured_bounds`、`::test_hard_floor_follows_the_headroom_ratio`（文档即断言） | `make test-quick` | **push/backend** |
+| **TE4** | 估算必须**区分实质不同的内容类**（拉丁/CJK/生僻字/假名/emoji/数字/结构化密集/消息框架/工具 schema），不得退回"按字符数线性外推"；按 resolved model 选 profile（**6 个家族**），未知模型回退**保守** profile | `::TestEstimatorContract`（全量语料 × 权威 tokenizer）、`::test_cross_family_spread_is_why_profiles_exist`（同文本跨家族差 >3×）、`::test_same_char_count_different_content_differs` | `make test-quick` | **push/backend** |
 | **TE5** | **prompt 的每一段都不可漏算也不可重算**：provider request = `messages + tools`，两者一起进预算；`system` 与当前用户消息永不因裁剪丢失 | `::TestPromptComposition`、`core/prompt/tests/test_prompt_budget_wiring.py::TestMessageBuilderToolAccounting`、`::TestTurnPromptWiring::test_tool_definitions_are_taken_before_the_budget_is_spent` | `make test-quick` | **push/backend** |
 | **TE6** | 未知/自定义模型**保持可用**：估算不因缺 metadata 抛错，走确定性的保守回退；配置非法（畸形 schema / 缺字段）不得让 prompt 组装崩掉 | `::TestEstimatorHygiene::test_unknown_model_falls_back_and_stays_usable`、`Module/system_prompt/tests/test_token_corpus_contract.py::TestPreFixRed::test_legacy_formula_ignores_tool_schemas_entirely` | `make test-quick` | **push/backend** |
+| **TE7** | **合同外文字只许高估**：婆罗米系/东南亚/希伯来/阿拉伯/希腊/亚美尼亚/西里尔这些跨家族差 3–6× 的文字，由**固定在已验证家族实测上界**的系数覆盖 ⇒ 无静默截断面；代价（某些家族高估最多 ~6×）是显式接受的 | `::TestKnownLimitations::test_out_of_scope_scripts_never_underestimate` | `make test-quick` | **push/backend** |
+| **TE8** | **CJK 扩展 B–I（生僻字）在合同内且单列一类**：它们比 BMP 汉字贵 3–7×（实测 est/actual 曾 = **0.13**） | `::TestEstimatorContract`（`cjk_ext_b_ideographs` 语料）、`scripts/token_corpus/validate_families.py` | `make test-quick` | **push/backend** |
 
 **TE3 的两个数从哪来**：`budget = window × 0.75`，而超窗在 Ollama 上是
 **HTTP 200 + 静默截断**（Batch 17 实测，从不报 400）⇒ 估算低估超过 25% 时，"预算
 判装得下"就不再蕴含"provider 完整消费"。高估同样是缺陷（过早裁记忆/历史、预览误拒，
 §9），故它是**双侧**合同而不是"越保守越好"。
 
-**profile 为什么必须按模型选（一条被证伪过的单公式假设）**：同一段中文在不同
-tokenizer 下每字符 token 数相差 **3.6×**（DeepSeek-V3 0.58 / Qwen2.5 0.64 /
-Llama-3 0.86 / o200k 0.84 / Mistral 1.14 / cl100k 1.21 / p50k 2.12）。用单一系数
-同时满足"不低估任何一家"，最坏高估被顶到 **1.72–1.83×**（Batch 18 线性规划实测）。
+**profile 为什么必须按家族选（一条被证伪过的假设）**：家族之间在**两条独立轴**上
+分叉——①CJK 压缩率（0.58–1.21 token/字）②**数字分组**（Qwen/Mistral 逐位
+≈1.0 token/位，DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴**不共线**：用两个
+profile 覆盖时，"数字密集"内容被迫高估 **2.4–2.8×**（Batch 18 线性规划 + 真实
+Ollama 实测）。故按族分 6 个 profile；本仓默认的 `deepseek/*` 因此拿到 T=1.46
+而不是 2.4。
 
-**已验证范围与已知未覆盖家族**：声明的 `[0.75, T]` 只在拟合验证过的家族上成立
-（`cjk_opt`←Qwen2.5/DeepSeek-V3，外部验证 Qwen3-8B 亦在区间内；`generic`←Llama-3/
-Mistral/o200k/cl100k，外部验证 OLMo-7B 亦在区间内）。Batch 18 实测**未覆盖**：
-**Yi-1.5-6B（min 0.66）/ Phi-3-mini-4k（min 0.63）**，越界样本都是 emoji 类。
-把它们纳入拟合会把 `generic` 的 T 从 1.71 顶到 **2.19**（实测），对所有 custom/未知
-使用者生效 ⇒ **判定不划算，如实登记**（`todo.md` `KB-74`）。验证入口：
-`scripts/token_corpus/validate_families.py`。
+**已验证范围**：6 个 profile 各自的依据家族（见 `budget.py` docstring 的表），
+其中 Qwen3-8B（对 `qwen`）与 OLMo-7B（对 `llama`）经**外部**验证亦在区间内。
+验证入口 `scripts/token_corpus/validate_families.py`（改家族时跑一次，
+据此决定"纳入拟合"还是"如实登记"）。
 
-**合同外的已知边界（实测登记，不隐藏）**：`repeat` 类（同字符重复）的 token 率
+**合同外的已知边界（实测登记，不隐藏）**：①`repeat` 类（同字符重复）的 token 率
 **完全由词表决定**，字符统计无法区分——实测 `"哈哈"×300` = 0.25 token/字而
-`"呀"×300` = 1.00 token/字，两者字符分布同构。故该类不参与硬合同，其**实测区间**
-单独钉在 `::TestKnownLimitations::test_degenerate_repeats_stay_within_the_recorded_range`
-（cjk_opt [0.55, 5.40] / generic [0.35, 3.60]）；任何改动让它越界都会红。
+`"呀"×300` = 1.00 token/字，两者字符分布同构；②`script` 类（婆罗米系/东南亚/
+希伯来/阿拉伯/希腊/亚美尼亚/西里尔）跨家族差 **3–6×**，单一系数不可能覆盖。
+①② 都不参与硬合同；①的实测区间钉在
+`::TestKnownLimitations::test_degenerate_repeats_stay_within_the_recorded_range`，
+②的方向（**只许高估**）钉在 `::test_out_of_scope_scripts_never_underestimate`。
 
 **真值层级（本批定义）**：G1 provider 观测输入计数（Ollama `prompt_eval_count`，
 须先证明未截断）> G2 模型权威 tokenizer（HF `tokenizer.json`）> G3 第三方通用

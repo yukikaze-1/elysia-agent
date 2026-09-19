@@ -65,7 +65,7 @@ class TestEstimation:
     def test_cjk_dense_profile_matches_the_cjk_optimized_families(self):
         """qwen/deepseek 家族：自然中文实测 ≈0.57–0.64 token/字，不再按 1 字 1 token。"""
         assert estimate_tokens("你好世界", model="ollama/qwen2.5:3b") == 3
-        assert estimate_tokens("你好世界", model="deepseek/deepseek-v4-flash") == 3
+        assert estimate_tokens("你好世界", model="deepseek/deepseek-v4-flash") == 4
         # 未识别模型走保守 profile：同一串估得更高（不许比紧界更低）
         assert estimate_tokens("你好世界") > estimate_tokens(
             "你好世界", model="ollama/qwen2.5:3b")
@@ -73,12 +73,14 @@ class TestEstimation:
     def test_profile_selection_has_one_authority(self):
         from Module.system_prompt.budget import profile_for_model
 
-        assert profile_for_model("ollama/qwen2.5:3b") == "cjk_opt"
-        assert profile_for_model("deepseek/deepseek-v4-flash") == "cjk_opt"
+        assert profile_for_model("ollama/qwen2.5:3b") == "qwen"
+        assert profile_for_model("deepseek/deepseek-v4-flash") == "deepseek"
+        assert profile_for_model("ollama/llama3:8b") == "llama"
+        assert profile_for_model("ollama/mistral:7b") == "mistral"
+        assert profile_for_model("openai/gpt-4o") == "openai"
         # provider 段不参与判定：custom 里跑的 qwen 也该拿紧界
-        assert profile_for_model("custom/qwen2.5-7b-instruct") == "cjk_opt"
-        for unknown in ("openai/gpt-4o", "ollama/llama3:8b", "ollama/mistral:7b",
-                        "mimo/mimo-v2.5", "custom/whatever", None, ""):
+        assert profile_for_model("custom/qwen2.5-7b-instruct") == "qwen"
+        for unknown in ("mimo/mimo-v2.5", "custom/whatever", None, ""):
             assert profile_for_model(unknown) == "generic"
 
     def test_dense_ascii_is_not_underestimated(self):
@@ -182,12 +184,12 @@ class TestHistoryTruncation:
         assert messages[-1]["content"] == "现在这句"
 
     def test_over_budget_drops_oldest_first(self):
-        """只丢到"装得下"为止：丢掉最旧那一条（≈425 token）后即满足预算 600。
+        """只丢到"装得下"为止：丢掉最旧那一条后即满足预算。
 
-        算得出来的前提：u1/a1 各 420 个汉字 ≈ 425 token，近两轮 + system + 当前
-        合计 ≈ 40 token。总 ≈890 > 600 → 丢 u1 → ≈465 ≤ 600 → 停手。
+        算得出来的前提（Batch 18 重算：`generic` profile 下 420 汉字 ≈ 637 token）：
+        整份 ≈1330 token，预算 900 ⇒ 丢 u1 后 ≈693 ≤ 900 → 停手（恰丢一条）。
         """
-        messages = self._messages(budget=600)
+        messages = self._messages(budget=900)
         assert messages[0]["role"] == "system"
         assert messages[-1]["content"] == "现在这句"
         assert len(messages) == 5, f"只该丢最旧一条，实际剩 {len(messages)} 条"
@@ -198,7 +200,7 @@ class TestHistoryTruncation:
     def test_truncation_drops_one_message_at_a_time(self):
         """逐条丢（不是整段清空）：两条 420 字的历史，预算只够丢一条。
 
-        总 ≈890 token，预算 600 ⇒ 丢 u1（≈425）后 ≈465 即满足 ⇒ 必须**保住** a1。
+        总 ≈1330 token，预算 900 ⇒ 丢 u1（≈637）后 ≈693 即满足 ⇒ 必须**保住** a1。
         若实现改成"超预算就清空历史"，本用例红。
         """
         builder = MessageBuilder()
@@ -209,7 +211,7 @@ class TestHistoryTruncation:
             _assistant("刚才的回答", mid="a2"),
         ]
         messages = builder.build_messages("系统提示", history, "现在这句",
-                                          prompt_budget_tokens=600)
+                                          prompt_budget_tokens=900)
         joined = " ".join(str(m.get("content")) for m in messages)
         assert "很久以前说的话" not in joined
         assert "很早以前的回答" in joined, f"不该把历史清空：{messages!r}"

@@ -169,7 +169,7 @@ class TestAssemblerWiring:
         asyncio.run(assembler.build_system_prompt(
             user_message="在吗", prompt_budget_tokens=2048, model_id=_MODEL))
         assert seen == [_MODEL], f"render 收到的是 {seen}"
-        assert _PROFILE_FAMILIES and _profile_model("cjk_opt") == _MODEL
+        assert _PROFILE_FAMILIES and _profile_model("qwen") == _MODEL
 
 
 class TestMessageBuilderToolAccounting:

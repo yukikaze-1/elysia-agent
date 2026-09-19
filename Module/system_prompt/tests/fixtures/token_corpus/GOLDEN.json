@@ -76,6 +76,15 @@
    "o200k_base": 101,
    "p50k_base": 101
   },
+  "cjk_ext_b_ideographs": {
+   "deepseek_v3": 420,
+   "qwen2.5": 280,
+   "llama3": 413,
+   "mistral": 421,
+   "cl100k_base": 413,
+   "o200k_base": 413,
+   "p50k_base": 420
+  },
   "cjk_ja": {
    "deepseek_v3": 235,
    "qwen2.5": 229,
@@ -211,6 +220,24 @@
    "o200k_base": 568,
    "p50k_base": 679
   },
+  "digits_long_numbers": {
+   "deepseek_v3": 359,
+   "qwen2.5": 839,
+   "llama3": 359,
+   "mistral": 840,
+   "cl100k_base": 359,
+   "o200k_base": 359,
+   "p50k_base": 317
+  },
+  "digits_run": {
+   "deepseek_v3": 334,
+   "qwen2.5": 1000,
+   "llama3": 334,
+   "mistral": 1001,
+   "cl100k_base": 334,
+   "o200k_base": 334,
+   "p50k_base": 499
+  },
   "empty": {
    "deepseek_v3": 0,
    "qwen2.5": 0,
@@ -328,6 +355,15 @@
    "o200k_base": 445,
    "p50k_base": 865
   },
+  "latin1_accented": {
+   "deepseek_v3": 155,
+   "qwen2.5": 155,
+   "llama3": 159,
+   "mistral": 173,
+   "cl100k_base": 162,
+   "o200k_base": 137,
+   "p50k_base": 204
+  },
   "markdown_mixed": {
    "deepseek_v3": 233,
    "qwen2.5": 241,
@@ -336,6 +372,123 @@
    "cl100k_base": 236,
    "o200k_base": 235,
    "p50k_base": 248
+  },
+  "script_arabic": {
+   "deepseek_v3": 120,
+   "qwen2.5": 117,
+   "llama3": 123,
+   "mistral": 351,
+   "cl100k_base": 297,
+   "o200k_base": 90,
+   "p50k_base": 399
+  },
+  "script_armenian_georgian": {
+   "deepseek_v3": 273,
+   "qwen2.5": 420,
+   "llama3": 759,
+   "mistral": 466,
+   "cl100k_base": 783,
+   "o200k_base": 123,
+   "p50k_base": 936
+  },
+  "script_cyrillic": {
+   "deepseek_v3": 171,
+   "qwen2.5": 192,
+   "llama3": 168,
+   "mistral": 188,
+   "cl100k_base": 246,
+   "o200k_base": 153,
+   "p50k_base": 489
+  },
+  "script_devanagari": {
+   "deepseek_v3": 240,
+   "qwen2.5": 435,
+   "llama3": 213,
+   "mistral": 457,
+   "cl100k_base": 450,
+   "o200k_base": 105,
+   "p50k_base": 723
+  },
+  "script_ethiopic": {
+   "deepseek_v3": 684,
+   "qwen2.5": 483,
+   "llama3": 855,
+   "mistral": 796,
+   "cl100k_base": 855,
+   "o200k_base": 669,
+   "p50k_base": 864
+  },
+  "script_greek": {
+   "deepseek_v3": 213,
+   "qwen2.5": 381,
+   "llama3": 165,
+   "mistral": 442,
+   "cl100k_base": 384,
+   "o200k_base": 168,
+   "p50k_base": 513
+  },
+  "script_hebrew": {
+   "deepseek_v3": 147,
+   "qwen2.5": 141,
+   "llama3": 369,
+   "mistral": 376,
+   "cl100k_base": 369,
+   "o200k_base": 117,
+   "p50k_base": 432
+  },
+  "script_latin2_czech": {
+   "deepseek_v3": 177,
+   "qwen2.5": 234,
+   "llama3": 150,
+   "mistral": 219,
+   "cl100k_base": 240,
+   "o200k_base": 168,
+   "p50k_base": 306
+  },
+  "script_latin2_polish": {
+   "deepseek_v3": 162,
+   "qwen2.5": 177,
+   "llama3": 189,
+   "mistral": 209,
+   "cl100k_base": 192,
+   "o200k_base": 156,
+   "p50k_base": 264
+  },
+  "script_mixed_accented_cyrillic": {
+   "deepseek_v3": 226,
+   "qwen2.5": 237,
+   "llama3": 223,
+   "mistral": 269,
+   "cl100k_base": 276,
+   "o200k_base": 197,
+   "p50k_base": 470
+  },
+  "script_myanmar": {
+   "deepseek_v3": 360,
+   "qwen2.5": 624,
+   "llama3": 795,
+   "mistral": 535,
+   "cl100k_base": 795,
+   "o200k_base": 204,
+   "p50k_base": 1125
+  },
+  "script_thai": {
+   "deepseek_v3": 180,
+   "qwen2.5": 246,
+   "llama3": 203,
+   "mistral": 457,
+   "cl100k_base": 450,
+   "o200k_base": 195,
+   "p50k_base": 855
+  },
+  "script_vietnamese": {
+   "deepseek_v3": 192,
+   "qwen2.5": 114,
+   "llama3": 114,
+   "mistral": 291,
+   "cl100k_base": 216,
+   "o200k_base": 123,
+   "p50k_base": 426
   },
   "tiny_greeting": {
    "deepseek_v3": 1,
@@ -354,15 +507,6 @@
    "cl100k_base": 2,
    "o200k_base": 1,
    "p50k_base": 4
-  },
-  "unicode_accents_cyrillic": {
-   "deepseek_v3": 226,
-   "qwen2.5": 237,
-   "llama3": 223,
-   "mistral": 269,
-   "cl100k_base": 276,
-   "o200k_base": 197,
-   "p50k_base": 470
   },
   "unicode_emoji": {
    "deepseek_v3": 289,

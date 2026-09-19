@@ -65,38 +65,46 @@ vocab，不在热路径问 provider 要 token 数（§59–§63）。故这里�
 - `T`（最坏高估倍数）：profile 相关（见下表）。高估不是"安全"：它会过早裁掉
   记忆/历史、并让预览误拒（§9）。故 T 也是被约束的量，本模块报告它。
 
-### 两个 profile（按 resolved model 的**单一**判定点选择）
+### 六个 profile（按 resolved model 的**单一**判定点选择）
 
-| profile | 覆盖 | 依据（真 tokenizer） | M | T |
+| profile | 覆盖（模型名子串） | 依据（权威 tokenizer） | 实测 est/actual | 声明 T |
 |---|---|---|---|---|
-| `cjk_opt` | 模型名含 `qwen` / `deepseek` | Qwen2.5-3B（HF）+ Ollama `prompt_eval_count` 实测、DeepSeek-V3 tokenizer | 0.79 | **1.26** |
-| `generic` | 其余一切（含未知/`custom`） | Llama-3-8B、Mistral-7B-v0.3、`o200k_base`、`cl100k_base` | 0.80 | **1.71** |
+| `qwen` | `qwen` / `qwq` | Qwen2.5-3B（HF + 真实 Ollama 双证） | [0.78, 1.19] | 1.20 |
+| `deepseek` | `deepseek` | DeepSeek-V3 | [0.80, 1.46] | 1.46 |
+| `llama` | `llama` | Llama-3-8B、OLMo-7B | [0.81, 1.73] | 1.74 |
+| `openai` | `gpt` / `chatgpt` | `cl100k_base`、`o200k_base` | [0.80, 1.52] | 1.52 |
+| `mistral` | `mistral` / `mixtral` | Mistral-7B-v0.3 | [0.80, 1.30] | 1.31 |
+| `generic` | **其余一切**（未知 / `custom` / `mimo`） | 上述全部（保守回退） | [0.80, 2.67] | 2.68 |
 
-为什么必须按模型分 profile（一条**被证伪过的**单公式假设）：同一段中文在不同
-tokenizer 下每字符 token 数相差 **3.6×**（DeepSeek-V3 0.58 / Qwen2.5 0.64 /
-Llama-3 0.86 / o200k 0.84 / Mistral 1.14 / cl100k 1.21 / p50k 2.12）。用单一系数
-同时满足"不低估任何一家"，最坏高估会被顶到 **1.72–1.83×**（Batch 18 用线性规划实测，
-见 `docs/review/2026-09-19-Batch18-*` 执行记录）。分 profile 后，本仓**默认的
-`deepseek/*`** 与本地 `ollama/qwen2.5*` 拿到紧界（≤1.26），未知模型拿到保守回退。
+为什么必须按**家族**分 profile（一条被证伪过的假设）：家族之间在**两条独立轴**上分叉——
+①CJK 压缩率（0.58–1.21 token/字）②**数字分组**（Qwen/Mistral 逐位 ≈1.0 token/位，
+DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴不共线：用两个 profile 覆盖时，
+"数字密集"内容会被迫高估 **2.4–2.8×**（实测：把 deepseek 塞进 qwen 组、或把 mistral
+塞进 llama 组）。按族分之后，本仓**默认的 `deepseek/*`** 拿到 T=1.46 而不是 2.4。
 
-### 已验证范围与**已知未覆盖**的家族（诚实声明，§113/§196）
+### 合同范围（诚实声明，§113/§196）
 
-声明的 `[M, T]` 只在**拟合时验证过的家族**上成立：
+**在合同内**（参与拟合与硬下限断言）：
+- 文字：拉丁（含重音）、CJK BMP、**CJK 扩展 B–I**（生僻字，单列 `cjk_ext` 类——
+  实测它们比 BMP 汉字贵 3–7×，旧实现漏了这段区间 ⇒ est/actual = **0.13**）、
+  假名、谚文、数字、ASCII 标点、emoji、JSON/代码/Markdown 结构、消息框架、工具 schema。
+- 家族：上表六个 profile 各自的依据家族；其中 Qwen3-8B（对 `qwen`）与 OLMo-7B
+  （对 `llama`）经**外部**验证也在区间内。
 
-- `cjk_opt`：Qwen2.5-3B（HF tokenizer 与真实 Ollama `prompt_eval_count` 双证）、
-  DeepSeek-V3。**Qwen3-8B 经外部验证也在区间内**（min 0.80）。
-- `generic`：Llama-3-8B、Mistral-7B-v0.3、`o200k_base`、`cl100k_base`。
-  **OLMo-7B 经外部验证也在区间内**（min 0.80）。
-- 已知**未覆盖**（Batch 18 实测，`scripts/token_corpus/validate_families.py` 可复现）：
-  **Yi-1.5-6B（min 0.66）** 与 **Phi-3-mini-4k（min 0.63）**，越界样本都是 emoji 类
-  （Phi-3 另含繁体中文）。即在这两个家族上仍可能低估到 0.63–0.66，低于 0.75 硬下限。
-  **为什么不修**：把它们纳入拟合会把 `generic` 的最坏高估从 **1.71 顶到 2.19**
-  （实测），而 `generic` 服务的是**所有** custom/未知使用者——用全局质量换两个家族的
-  极端输入不划算。已登记为 `KB-74`，并把"纳入/排除"做成可执行入口。
-- `p50k_base`（GPT-3 时代 byte-level BPE）**在合同外**：`providers.yaml` 无对应模型。
+**合同外**（实测登记，不隐藏；`TestKnownLimitations` 钉住区间）：
+1. `repeat` 类（同字符重复）：token 率完全由词表决定，字符统计无法区分
+   （`"哈哈"×300` = 0.25 token/字 vs `"呀"×300` = 1.00）。实测区间 `[0.58, 5.34]`。
+2. `script` 类（**婆罗米系 / 东南亚 / 希伯来 / 阿拉伯 / 希腊 / 亚美尼亚 / 西里尔**）：
+   跨家族 token 率相差 **3–6×**（实测缅甸文 qwen 1.49 vs o200k 0.49 token/字；
+   亚美尼亚文 cl100k 1.88 vs o200k 0.29）⇒ **单一字符类系数不可能同时覆盖**。
+   本实现把这一类的系数固定在**已验证家族上的实测上界 + 余量**（3.00 token/字符），
+   方向是**安全侧**：这些文字**不会再低估**（无静默截断面），代价是某些家族上
+   高估最多 ~6×。`scripts/token_corpus/validate_families.py` 可复现。
+3. `p50k_base`（GPT-3 时代 byte-level BPE）：`providers.yaml` 无对应模型。
 
-新增 provider/model 家族时：跑 `scripts/token_corpus/validate_families.py <repo>`，
-把结论写进执行记录，再决定"纳入拟合"还是"登记为未覆盖"。
+**已知的判定漂移面**：`profile_for_model` 是**名字匹配**，不是权威 metadata。
+`ollama/deepseek-r1:8b` 实为 Llama-arch 蒸馏（拿 `deepseek` profile）；反向
+`ollama/qwq:32b` 是真 Qwen 却曾落到 `generic`（现已登记 `qwq` 标记）。登记 `KB-73`/`KB-75`。
 
 ### 系数怎么来的（不是手调 magic number）
 
@@ -141,16 +149,31 @@ SYSTEM_PROMPT_BUDGET_SHARE: float = 0.5
 _PER_MESSAGE_OVERHEAD_TOKENS: int = 4
 
 # ---------------------------------------------------------------------------
-# 字符类（9 类）
+# 字符类（11 类）
 # ---------------------------------------------------------------------------
 
-# 统一表意文字（含扩展 A / 兼容区）+ 谚文音节与字母。
+# 统一表意文字（BMP：扩展 A / 基本区 / 兼容区）+ 谚文音节与字母。
 _CJK_IDEO_RANGES: tuple[tuple[int, int], ...] = (
     (0x3400, 0x4DBF),    # CJK 扩展 A
     (0x4E00, 0x9FFF),    # CJK 基本区
     (0xF900, 0xFAFF),    # CJK 兼容表意
     (0xAC00, 0xD7AF),    # 谚文音节
     (0x1100, 0x11FF),    # 谚文字母
+)
+
+# **CJK 扩展 B 及以后**（U+20000+，含扩展 C–I）、部首/笔画补充。
+#
+# 为什么单列一类：它们**不是**冷门角落——人名/地名里的生僻字就在这一段，是中文
+# 产品的真实输入。实测它们比 BMP 汉字贵 3–7×（BMP 0.64 token/字 vs 扩展 B
+# 2.67–4.02），因为绝大多数 tokenizer 对它们退化成逐字节编码。旧实现既没有这一
+# 段区间（落进 `other`）、又按"非 CJK → 4 字符 1 token"计 ⇒ 实测 est/actual =
+# **0.13**（7.7× 低估，"预算判装得下而实际静默截断"）。
+_CJK_EXT_RANGES: tuple[tuple[int, int], ...] = (
+    (0x2E80, 0x2EFF),    # CJK 部首补充
+    (0x2F00, 0x2FDF),    # 康熙部首
+    (0x31C0, 0x31EF),    # CJK 笔画
+    (0x20000, 0x2FA1F),  # 扩展 B–F
+    (0x30000, 0x323AF),  # 扩展 G–I
 )
 
 # 假名（日文）单独计：它比汉字合并得更狠（实测 ~2.1 字符/token vs 汉字 ~1.5）。
@@ -177,49 +200,84 @@ _EMOJI_RANGES: tuple[tuple[int, int], ...] = (
     (0x1F1E6, 0x1F1FF),  # 区域指示符（国旗）
 )
 
+# 重音拉丁（欧洲文本常见：é ü ñ ç ğ ş Š ć）：**在合同内**，由拟合定价。
+_LATIN_EXT_RANGES: tuple[tuple[int, int], ...] = (
+    (0x00A0, 0x036F),    # Latin-1 字母 + 拉丁扩展 A/B + IPA + 组合变音符
+)
+
 _NEWLINE_CHARS = frozenset(" \t\n\r\v\f")
 
 # ---------------------------------------------------------------------------
-# profile 系数：token / 字符。见模块 docstring「系数怎么来的」。
+# profile 系数：token / 字符。见模块 docstring「系数怎么来的」与「已验证范围」。
 # ---------------------------------------------------------------------------
 
 _CLASSES: tuple[str, ...] = (
-    "word", "digits", "punct", "space", "cjk", "kana", "cjksym", "emoji", "other",
+    "word", "digits", "punct", "space", "cjk", "cjk_ext", "kana", "cjksym",
+    "emoji", "latin_ext", "other",
 )
 
 _TOKEN_WEIGHTS: dict[str, dict[str, float]] = {
-    # Qwen2.5 / DeepSeek-V3 家族：中文压缩率高（~1.5–1.7 字符/token），数字逐位切分。
-    "cjk_opt": {
-        "word": 0.2220, "digits": 0.9452, "punct": 0.5766, "space": 0.2330,
-        "cjk": 0.5800, "kana": 0.5279, "cjksym": 1.3308, "emoji": 1.5397,
-        "other": 0.2883,
+    # 逐族拟合（每个 profile 的系数由"该族 tokenizer 上的 min-max 线性规划"给出，
+    # 见 `docs/review/2026-09-19-Batch18-*` §7 与 `scripts/token_corpus/`）。
+    "qwen": {
+        "word": 0.2000, "digits": 0.9949, "punct": 0.5779, "space": 0.2201,
+        "cjk": 0.6997, "cjk_ext": 2.1333, "kana": 0.5668, "cjksym": 0.2000,
+        "emoji": 1.5514, "latin_ext": 0.8601, "other": 3.0000,
     },
-    # 其余一切（Llama / Mistral / OpenAI BPE / 未知）：保守回退，T=1.66。
+    "deepseek": {
+        "word": 0.2768, "digits": 0.4866, "punct": 0.8063, "space": 0.2000,
+        "cjk": 0.8195, "cjk_ext": 3.2000, "kana": 0.5304, "cjksym": 0.2466,
+        "emoji": 1.5697, "latin_ext": 1.0079, "other": 3.0000,
+    },
+    "llama": {
+        "word": 0.3024, "digits": 0.5084, "punct": 0.8714, "space": 0.3521,
+        "cjk": 1.3196, "cjk_ext": 3.2000, "kana": 0.7156, "cjksym": 0.4878,
+        "emoji": 2.0193, "latin_ext": 1.6723, "other": 3.0000,
+    },
+    "openai": {
+        "word": 0.2735, "digits": 0.5051, "punct": 0.6909, "space": 0.2000,
+        "cjk": 1.2558, "cjk_ext": 3.1467, "kana": 1.4595, "cjksym": 0.2000,
+        "emoji": 2.3042, "latin_ext": 1.1090, "other": 3.0000,
+    },
+    "mistral": {
+        "word": 0.2422, "digits": 1.3014, "punct": 0.7169, "space": 0.3333,
+        "cjk": 1.3188, "cjk_ext": 3.2076, "kana": 0.8030, "cjksym": 0.4161,
+        "emoji": 1.8849, "latin_ext": 3.4031, "other": 3.0000,
+    },
+    # 未知模型的**保守回退**：对全部已验证家族取"不低估"的解（T=2.67）。
     "generic": {
-        "word": 0.2707, "digits": 1.3302, "punct": 0.7018, "space": 0.2108,
-        "cjk": 1.1235, "kana": 0.7508, "cjksym": 1.7809, "emoji": 2.6110,
-        "other": 0.7970,
+        "word": 0.2722, "digits": 0.8008, "punct": 1.0157, "space": 0.8030,
+        "cjk": 1.5015, "cjk_ext": 3.2076, "kana": 0.7583, "cjksym": 1.4447,
+        "emoji": 3.6582, "latin_ext": 0.2000, "other": 3.0000,
     },
 }
 
-_PROFILE_CJK_OPT = "cjk_opt"
-_PROFILE_GENERIC = "generic"
-_DEFAULT_PROFILE = _PROFILE_GENERIC
-
-# 归入 `cjk_opt` 的模型名子串（小写匹配，**唯一的模型判定点**）。
-# 只登记**有权威 tokenizer 证据**的家族；新增家族必须同时更新语料契约测试。
 # 工具段（tools=[...]）的结构化估算常量——见 `estimate_tools_tokens`。
-# 实测（qwen2.5:3b，native /api/chat，对同一请求带/不带 tools 的 prompt_eval_count 差）：
+# 实测（qwen2.5:3b，native /api/chat，同一请求带/不带 tools 的 prompt_eval_count 差）：
 #   工具段整体框架（第一个工具之前的部分）≈ 77 → 取 100（保守）
-#   同构工具边际成本 ≈ 45/个（骨架 ≈45 − 该工具自身内容）→ 工具骨架取 10，
-#     其余落在"参数骨架 + 内容"两栏
+#   同构工具边际成本 ≈ 45/个（骨架 ≈45 − 该工具自身内容）→ 工具骨架取 10
 #   参数边际成本 ≈ 15/个 → 参数骨架取 12
-#   在仓内 4 组真实/合成 schema 上复核：est/actual ∈ [0.97, 1.24]
+#   在仓内 4 组真实/合成 schema 上复核：est/actual ∈ [0.97, 1.22]；参数量极多而
+#   描述极短的"裸参数"schema 上会到 1.57（**高估**，方向安全；见 KB-76）
 _TOOLS_SECTION_BOILERPLATE_TOKENS: int = 100
 _TOOL_FRAME_TOKENS: int = 10
 _TOOL_PARAM_FRAME_TOKENS: int = 12
 
-_CJK_OPT_NAME_MARKERS: tuple[str, ...] = ("qwen", "deepseek")
+_DEFAULT_PROFILE = "generic"
+
+# model 名 → profile 的**唯一**判定表（顺序即优先级；小写子串匹配，只看模型段）。
+#
+# 为什么按"tokenizer 家族"而不是"是不是 CJK"分组：家族之间在**两条独立轴**上分叉——
+# ①CJK 压缩率（0.58–1.21 token/字）②**数字分组**（Qwen/Mistral 逐位 ≈1.0 token/位，
+# 而 DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴不共线，用两个 profile 覆盖会
+# 在"数字密集"内容上被迫高估 2.4–2.8×（实测），故按族分。
+_PROFILE_MARKERS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("qwen", "qwq"), "qwen"),
+    (("deepseek",), "deepseek"),
+    (("llama",), "llama"),
+    (("mistral", "mixtral"), "mistral"),
+    (("gpt", "chatgpt"), "openai"),
+)
 
 
 def profile_for_model(model: str | None) -> str:
@@ -229,18 +287,23 @@ def profile_for_model(model: str | None) -> str:
     "判据只有一份"，而不是"不许判"。未知/None 一律回退 `generic`
     （保守 profile）——自定义 provider 不得因为"认不出"而变得不可用或不可信。
 
+    **已知边界**：这是**名字匹配**，不是权威 metadata。名字含家族词但实际不是该
+    tokenizer 的模型会拿到错的 profile（实测 `ollama/deepseek-r1:8b` 是 Llama-arch
+    蒸馏；`ollama/qwq:32b` 是真 Qwen 但落到 generic）。登记为 `KB-73`/`KB-75`。
+
     Args:
         model: `provider/model` 形式的已解析模型 id，或 None。
 
     Returns:
-        `_TOKEN_WEIGHTS` 的键（`cjk_opt` / `generic`）。
+        `_TOKEN_WEIGHTS` 的键。
     """
     if not model:
         return _DEFAULT_PROFILE
     # 只按 **模型段** 匹配，不看 provider 段：`custom/qwen2.5-7b` 也该拿到紧界。
     name = model.rpartition("/")[2].lower()
-    if any(marker in name for marker in _CJK_OPT_NAME_MARKERS):
-        return _PROFILE_CJK_OPT
+    for markers, profile in _PROFILE_MARKERS:
+        if any(marker in name for marker in markers):
+            return profile
     return _DEFAULT_PROFILE
 
 
@@ -255,14 +318,20 @@ def _classify(char: str) -> str:
     code = ord(char)
     if code < 128:
         return "punct"
-    if any(lo <= code <= hi for lo, hi in _EMOJI_RANGES):
-        return "emoji"
+    # 区间两两不相交 ⇒ 顺序**只影响速度、不影响语义**。按本产品的实际内容分布
+    # 排序（汉字最常见），实测 CJK 密集文本因此快 ~2×（10 万汉字 236ms → ~100ms）。
+    if any(lo <= code <= hi for lo, hi in _CJK_IDEO_RANGES):
+        return "cjk"
     if any(lo <= code <= hi for lo, hi in _CJK_SYMBOL_RANGES):
         return "cjksym"
     if any(lo <= code <= hi for lo, hi in _KANA_RANGES):
         return "kana"
-    if any(lo <= code <= hi for lo, hi in _CJK_IDEO_RANGES):
-        return "cjk"
+    if any(lo <= code <= hi for lo, hi in _CJK_EXT_RANGES):
+        return "cjk_ext"
+    if any(lo <= code <= hi for lo, hi in _EMOJI_RANGES):
+        return "emoji"
+    if any(lo <= code <= hi for lo, hi in _LATIN_EXT_RANGES):
+        return "latin_ext"
     return "other"
 
 

@@ -133,11 +133,15 @@ class PromptCharacterPreviewAdapter:
         #
         # **判据的诚实边界（Batch 18 更新）**：估算器是**有界近似**（不是 provider
         # tokenizer），误差带按 resolved model 的 profile 声明在
-        # `Module/system_prompt/budget.py` 的 docstring 里：`cjk_opt`（qwen/deepseek）
-        # 实测 est/actual ∈ [0.78, 1.22]，`generic` ∈ [0.78, 1.66]。
-        # ⇒ 本判据的 false reject 只可能发生在"真实输入已占满窗口的
-        # [1/T, 1] 区间"（cjk_opt ≤18%、generic ≤40%），且绝不发出真实超窗的请求。
-        # 两个 profile 的**方向保证**都成立：低估不超过 22%，故 chat 侧 25% 余量仍有余。
+        # `Module/system_prompt/budget.py` 的 docstring 里（6 个 profile，
+        # 实测 est/actual 下限 ≥0.78、上限 1.25–2.68 视家族而定）。
+        # ⇒ 本判据的两侧都**不是绝对的**，别再写成"绝不发出真实超窗的请求"
+        # （Batch 18 Challenger 已证伪那句）：
+        #   * 低估侧：合同外的文字（婆罗米系/东南亚/希伯来/阿拉伯等）与 `repeat`
+        #     类不享受下限保证 —— 它们由保守固定系数覆盖（只高估）或如实登记；
+        #   * 高估侧：真实输入落在窗口的 [1/T, 1] 区间时仍会被本地拒（T 越小越窄，
+        #     例如 `qwen` 的 T=1.25 ⇒ 最坏 20% 的窗口宽度）。
+        # 这条判据的价值是"把**大部分**必失败请求挡在发出去之前"，不是精确计数。
         estimated_input = estimate_messages_tokens(messages, model=model_id)
         effective_window = effective_context_window(window)
         if estimated_input >= effective_window:

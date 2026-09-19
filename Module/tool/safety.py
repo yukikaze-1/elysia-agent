@@ -98,8 +98,9 @@ def _estimate_tokens(text: str) -> int:
     此前这里有一份独立公式 `int(latin/4 + cjk)`，`latin` 由
     `re.findall(r"[a-zA-Z0-9\\s\\W]", text)` 数出。它的分类与预算侧**不同构**，
     实测三个缺陷：① `_` 是唯一不匹配的 ASCII 字符 ⇒ 蛇形标识符按 1 token/下划线
-    计（4× 膨胀）；② emoji 全部落进 `latin` ⇒ `"😀" * 500` 估成 0 token（截断
-    永不触发）；③ 中文标点落进 `latin` ⇒ 按 1/4 token 计。
+    计（4× 膨胀）；② 短 emoji 串落进 `latin` 后被向下取整抹成 **0**
+    （`"😀🎉🚀"` → `int(3/4)` = 0 ⇒ 截断永不触发；长串仍会得到 ≈1/4 token per
+    emoji，即低估 ~4×）；③ 中文标点落进 `latin` ⇒ 按 1/4 token 计。
     §"Estimator Single Authority"（TE1）要求同一个模型下所有消费者用同一份算法，
     故这里改成薄委托（保留私有名以免扩大改动面）。
 

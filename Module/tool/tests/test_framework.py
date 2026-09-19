@@ -277,9 +277,11 @@ class TestTokenEstimation:
         assert 5 < tokens < 15
 
     def test_chinese(self):
+        # Batch 18：工具结果截断走**保守的 generic profile**（1.50 token/字），
+        # 不再是旧的"1 字 1 token"。这里只钉"同一量级、方向保守"。
         text = "这是一段中文测试文本"
         tokens = _estimate_tokens(text)
-        assert 8 <= tokens <= 12
+        assert 10 <= tokens <= 25
 
     def test_mixed(self):
         text = "Hello 世界 test 测试"

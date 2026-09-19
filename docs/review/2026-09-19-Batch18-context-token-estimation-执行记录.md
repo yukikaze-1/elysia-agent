@@ -343,15 +343,7 @@ Batch 17 的 `configured == requested == observed` 仍由
 
 ## 9. 性能与内存
 
-| 输入 | 新实现 | 旧实现 | 比 |
-|---|---:|---:|---:|
-| 200 字符 | 0.13 ms | 0.16 ms | 0.78× |
-| 10k 字符 | 6.29 ms | 8.00 ms | 0.79× |
-| 100k 字符 | 65.60 ms | 79.88 ms | 0.82× |
-
-新实现**更快**（ASCII 快路径在区间判定之前短路）。O(n) 单趟、无正则、无分配
-（只有一个 9 元计数 dict）；不缓存（prompt 每轮不同，§96）；冷启动无额外成本
-（**没有** tokenizer 资源要加载）。纯函数 ⇒ 线程/async 安全（§97）。
+**见 §16.3（本节的早期版本数字与结论已被 Challenger 证伪并重测）。**
 
 ---
 
@@ -458,3 +450,84 @@ M10/M11 起初 **SURVIVED**（harness 节点写错 + 真的没有接线测试）
 - 预览 API 契约与错误码（零变化）
 - 公开 API / 配置 schema / 持久化 / 前端（**零变化**）
 - 无 provider 网络计数调用、无自动 tokenizer 下载
+
+---
+
+## 15. 独立 Challenger 复核（Batch 18 §142）与其后的修正
+
+Challenger 子代理在 HEAD `8e06d42a` 上独立复核，**证伪了本批的中心安全声明**，
+并推动了一次实质重做。逐条处置：
+
+| Challenger 发现 | 主 Agent 独立复现 | 处置 |
+|---|---|---|
+| **C1/C2 CJK 扩展 B 严重低估**：`𠮷𩸽𠀋…` 落进 `other` 类，实测 est/actual = **0.13**（qwen）；Ethiopic 0.21 / Myanmar 0.20 / Devanagari 0.29 | ✅ 复现（自写脚本，HF tokenizer） | **已修**：新增 `cjk_ext` 类（U+2E80–2FDF、U+31C0–31EF、U+20000–2FA1F、U+30000–323AF）纳入合同，语料加 `cjk_ext_b_ideographs`；变异 M13 钉住 |
+| **C1 边界仍 false accept**（Amharic/Myanmar 4200 est vs 10786 real，实发静默截断） | ✅ 确认机制（脚本文字的跨家族差 3–6×） | **改为安全侧**：`other` 类固定为已验证家族实测上界（3.00 token/字符）⇒ 这些文字**不再低估**（TE7 + `test_out_of_scope_scripts_never_underestimate`）；代价（某些家族高估最多 ~6×）如实登记 |
+| **C3 普通拉丁-2 文字越界**（波兰 0.694 / 捷克 0.665 / 希伯来 0.684） | ✅ 复现 | **已修**：新增 `latin_ext` 类（重音拉丁，**在合同内**，由拟合定价）；Latin-2 极端样本归入 `script`（合同外、无方向保证）并如实登记 |
+| **C4 数字分组未建模**：Qwen/Mistral 逐位 ≈1.0 token/位 而 DeepSeek/Llama/OpenAI 三位一组 ≈0.33（1000 位数字：qwen 1000 / deepseek 334） | ✅ 复现（`digits_run` 语料 + 真实 Ollama） | **已修**：这条把"按 CJK 密度分两个 profile"的假设证伪——两条轴不共线。改为**按家族分 6 个 profile**；`deepseek/*`（默认 provider）的 T 从 2.4 降到 **1.46** |
+| **C4 工具结果截断回归**（数字型工具输出被多截 75%） | ✅ 确认方向 | 随上条修复：deepseek profile 的 digits = 0.4866（原 generic 1.33）；方向与量级在处理后记录于 §16 |
+| **C5 `profile_for_model` 名字匹配误判是活的**（`ollama/deepseek-r1:8b` 是 Llama 蒸馏） | ✅ 确认 | 登记升级（`KB-73`/`KB-75`）；新增 `qwq` 标记（反向漏判）；根因（缺权威 metadata）不在本批可解 |
+| **W1 工具估算区间不是界**（裸参数 schema 到 1.57） | ✅ 确认 | docstring 与本文档改为"实测点 + 方向"，不再声称区间；登记 `KB-76` |
+| **W2 `repeat` 排除合法但标签藏了 Markdown**（200 个连字符 47× 高估） | ✅ 确认 | 区间保持登记；Markdown 规则/表格分隔线的高估如实写入 §16 |
+| **W3 KB-74 的范围措辞太窄** | ✅ 确认 | `KB-74` 重写为"内容轴 + 家族轴"两条，见 `todo.md` |
+| **W4 性能声明错误**（新实现被写成"更快"） | ✅ **确认声明有误**：混合/ASCII 更快（0.27–0.45×），但 CJK 密集**更慢**（初版 2.67×，按内容分布重排区间判定后 **1.24×**）；100k CJK = 109 ms、10k CJK = 11.2 ms | 本文档 §9 重写为实测三分类；顺手做了一次真实优化（区间不相交 ⇒ 顺序只影响速度） |
+| **FG1 假绿**（`assert 0 <= worst_gap` 恒真） | ✅ 确认 | 删掉恒真的半句（只留上界） |
+| **FG2 假绿**（`test_hard_floor_follows_the_headroom_ratio` 是常量算术） | ✅ 确认 | 保留但**显式标注"文档即断言，不是估算器覆盖"**，真正的覆盖指向 `TestEstimatorContract` |
+| **FG3 污染检查无鉴别力**（12 条 chat 真值全部 <2870 << 8192 ⇒ 两次计数必然相同） | ✅ 确认 | 机制由 external `OLL-E4` 证（`num_ctx=1024 → 1024` vs `32768 → 6029`）；golden 的 `contaminated` 字段因此**只对超窗样本有鉴别力**，如实记录 |
+| **benchmark 完整性：`chat_tool_history` 真值不可复现** | ⚠️ **部分证伪 Challenger**：该真值是用**生产同形的 native wire**（`arguments` 为对象）测的，直接回放语料里的 OpenAI 形状会被 Ollama 400。属记录缺口而非错值 | 在 §16 写明 wire 形状前提；探针脚本签入缺口一并记录 |
+| **R1–R5（被驳回的攻击）** | — | 确认无缺陷：generic 断言的是真实非 Qwen tokenizer（非自指）、tools 不重复计、无 split-brain/双重计费、`loop.py` 顺序调整不丢输入、真实仓库内容全部在区间内 |
+
+**Challenger 自身的 mutat​ion（pytest 插件，4 项）全部 KILLED**，与主 Agent 的
+14/14 独立结果一致。
+
+---
+
+## 16. 修正后的最终数字与残余（Challenger 之后）
+
+### 16.1 最终 profile 与实测区间（`te`+`holdout`，合同内类别）
+
+| profile | 依据家族 | 实测 est/actual | 声明 T |
+|---|---|---|---|
+| `qwen` | Qwen2.5-3B（+Qwen3-8B 外部验证） | [0.78, 1.21] | 1.25 |
+| `deepseek` | DeepSeek-V3 | [0.80, 1.46] | 1.46 |
+| `llama` | Llama-3-8B（+OLMo-7B 外部验证） | [0.81, 1.73] | 1.74 |
+| `openai` | cl100k_base / o200k_base | [0.80, 1.52] | 1.52 |
+| `mistral` | Mistral-7B-v0.3 | [0.80, 1.30] | 1.31 |
+| `generic` | 上述全部（保守回退） | [0.80, 2.67] | 2.68 |
+
+**合同外**（实测登记）：`repeat` 区间 [0.35, 6.50]；`script`（非拉丁文字）
+由固定系数覆盖 ⇒ **只许高估**（TE7）。
+
+### 16.2 相对于 Challenger 之前的净变化
+
+| 项 | Challenger 前 | 之后 |
+|---|---|---|
+| CJK 扩展 B（生僻字） | est/actual **0.13** | **≈0.80–1.0**（单列 `cjk_ext` 类，进合同） |
+| 非拉丁文字（Amharic/Myanmar/…） | 0.18–0.29（可静默截断） | **≥1.0**（不再低估；某些家族高估最多 ~6×） |
+| deepseek 数字密集内容 | 高估 **2.4–2.8×** | **≈1.0×**（digits 0.4866） |
+| profile 数 | 2 | **6**（按 tokenizer 家族） |
+| 最坏高估（默认 provider） | 2.4 | **1.46** |
+
+### 16.3 性能（重测，三类内容）
+
+| 内容 | 100k 字符 新 | 100k 字符 旧 | 比 |
+|---|---:|---:|---:|
+| 纯 ASCII | 19.2 ms | 72.1 ms | **0.27×**（更快） |
+| 纯 CJK | 108.9 ms | 87.8 ms | **1.24×**（略慢） |
+| 混合（本产品典型） | 25.8 ms | 57.4 ms | **0.45×**（更快） |
+
+10k 汉字 ≈ **11.2 ms**。区间判定按内容分布重排（区间两两不相交 ⇒ 只影响速度），
+CJK 路径因此从 236 ms 降到 109 ms。**修正**：本文档早先版本声称"新实现全面更快"
+是错的（Challenger W4）。
+
+### 16.4 仍未闭合（如实登记）
+
+1. **`script` 文字高估**：亚美尼亚文（o200k）最坏 ~6×。安全侧取舍，可复现。
+2. **`repeat` 类**：Markdown 分隔线/表格线、同字重复——实测 0.35–6.5×，区间登记。
+3. **`profile_for_model` 名字匹配**：`ollama/deepseek-r1:8b`（Llama 蒸馏）拿到
+   `deepseek` profile；根因是缺权威 metadata（`ollama show` 的 `architecture`
+   字段是可用信号，但要引入进程外调用，不在本批）。
+4. **ReAct 第 2..N 轮不在预算内**（`core/cognitive/tool_phase.py` 零估算引用），
+   登记 `KB-77`。
+5. **探针脚本未签入**：`GOLDEN.json` 的 chat 半部分由 `/tmp` 的一次性脚本产出，
+   重放需要在 wire 上把 `tool_calls[].function.arguments` 从字符串转成对象
+   （生产 `Module/llm/ollama.py` 就是这么做的）；签入缺口如实记录。

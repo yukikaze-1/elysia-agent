@@ -10,7 +10,8 @@
     cjk_opt  ←  Qwen2.5（HF + 真实 Ollama 双证）、DeepSeek-V3
     generic  ←  Llama-3-8B、Mistral-7B-v0.3、o200k_base、cl100k_base
 
-`generic` 是**未知模型的回退**，而"未知"意味着它迟早会遇到没验证过的家族。本脚本就是
+`generic` 是**未知模型的回退**（全部已验证家族的保守并集），而"未知"意味着它迟早会遇到
+没验证过的家族。本脚本就是
 那条"把新家族纳入/排除验证范围"的可执行入口：给定 HF repo，直接报出该家族在每个
 profile 下的 `min/median/max` 比值与越界样本。
 
@@ -22,11 +23,13 @@ profile 下的 `min/median/max` 比值与越界样本。
 
 | 家族 | profile | min est/actual | 判定 |
 |---|---|---|---|
-| Llama-3 / Mistral / o200k / cl100k | generic | 0.80 | ✅ 已验证（拟合集） |
-| OLMo-7B | generic | 0.80 | ✅ 区间内 |
-| Qwen3-8B | cjk_opt | 0.80 | ✅ 区间内 |
-| Yi-1.5-6B | generic | **0.66** | ⚠️ **未覆盖**（emoji 类） |
-| Phi-3-mini-4k | generic | **0.63** | ⚠️ **未覆盖**（emoji / 繁体中文） |
+| Qwen2.5-3B / DeepSeek-V3 / Llama-3 / Mistral / o200k / cl100k | 各自 profile | ≥0.78 | ✅ 拟合集 |
+| OLMo-7B / Qwen3-8B | `llama` / `qwen` | ≥0.78 | ✅ 区间内 |
+| Yi-1.5-6B / Phi-3-mini-4k | `generic`（名字不匹配任何家族标记） | ≥0.78 | ✅ `generic` 是全部已验证家族的**保守并集**，故覆盖 |
+
+**当前未覆盖的是"内容"而不是"家族"**：婆罗米系/东南亚/希伯来/阿拉伯/希腊/
+亚美尼亚/西里尔这些**文字**跨家族差 3–6×，由固定的保守系数覆盖（只高估，
+TE7）；`repeat` 类同理（只登记区间）。
 
 **未覆盖的含义**：在这些家族上，估算仍可能低估到 0.63–0.66（低于 0.75 硬下限），
 即"预算判装得下而实际超窗"仍可能发生。修它的代价已实测：把这两个家族纳入拟合会把

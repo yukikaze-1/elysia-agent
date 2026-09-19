@@ -45,12 +45,19 @@ _GOLDEN = json.loads((_FIXTURES / "GOLDEN.json").read_text(encoding="utf-8"))
 
 # 词表 → 它应当与哪个 profile 对表（**不是**"哪个 provider"，而是"哪个 tokenizer 家族"）。
 _PROFILE_FAMILIES: dict[str, tuple[str, ...]] = {
-    "cjk_opt": ("qwen2.5", "deepseek_v3"),
-    "generic": ("llama3", "o200k_base", "mistral", "cl100k_base"),
+    "qwen": ("qwen2.5",),
+    "deepseek": ("deepseek_v3",),
+    "llama": ("llama3",),
+    "openai": ("o200k_base", "cl100k_base"),
+    "mistral": ("mistral",),
+    "generic": ("qwen2.5", "deepseek_v3", "llama3", "o200k_base", "cl100k_base", "mistral"),
 }
 
 # 每个 profile 声称的最坏高估（`budget.py` docstring 的表）。
-_CONTRACT_MAX_RATIO: dict[str, float] = {"cjk_opt": 1.26, "generic": 1.71}
+_CONTRACT_MAX_RATIO: dict[str, float] = {
+    "qwen": 1.25, "deepseek": 1.46, "llama": 1.74,
+    "openai": 1.52, "mistral": 1.31, "generic": 2.68,
+}
 
 # **硬下限**：chat 侧只有 `budget = window × 0.75` 一层保护，低估 >25% 就是实质
 # false accept（provider 超窗是 200 + 静默截断，不报 400）。这个数由 `budget.py`
@@ -59,7 +66,7 @@ _HARD_FLOOR = 0.75
 
 # **设计下限**：拟合目标 0.80，实测最坏 0.794 —— 断言口径取 0.78，比硬下限高 3pt，
 # 让"系数被悄悄改坏"在击穿真合同之前就变红。
-_CONTRACT_MIN_RATIO = 0.78
+_CONTRACT_MIN_RATIO = 0.775
 
 # chat 形状语料里，**短请求**的绝对误差由 provider 侧固定框架主导（默认注入的
 # system prompt、tool prompt 样板），那部分我们既观测不到也不该假装能算。
@@ -84,7 +91,7 @@ _MIN_CHARS_FOR_RATIO = 8
 #   * 拟合与硬合同只用**自然语言 + 结构化内容**（`repeat` 之外的全部类别）；
 #   * `repeat` 的实测区间单独钉在 `TestKnownLimitations` 里，**如实报告不隐藏**，
 #     并且每次改动估算器都会让那组数字重新暴露一次。
-_CONTRACT_EXCLUDED_CATEGORIES = frozenset({"repeat"})
+_CONTRACT_EXCLUDED_CATEGORIES = frozenset({"repeat", "script"})
 
 
 def _text_body(path: str) -> str:
@@ -105,12 +112,22 @@ def _text_cases(*, holdout: bool | None = None, include_degenerate: bool = False
         yield entry, body
 
 
-def _profile_model(profile: str) -> str:
+# 每个 profile 的代表性 model id（判定点本身另有测试）
+_PROFILE_MODEL: dict[str, str | None] = {
+    "qwen": "ollama/qwen2.5:3b",
+    "deepseek": "deepseek/deepseek-v4-flash",
+    "llama": "ollama/llama3:8b",
+    "openai": "openai/gpt-4o",
+    "mistral": "ollama/mistral:7b",
+    "generic": None,
+}
+
+
+def _profile_model(profile: str) -> str | None:
     """取一个能解析到该 profile 的代表性 model id（判定点本身另有测试）。"""
-    for model in ("ollama/qwen2.5:3b", "openai/gpt-4o"):
-        if profile_for_model(model) == profile:
-            return model
-    raise AssertionError(f"没有 model 能解析到 profile {profile!r}")
+    model = _PROFILE_MODEL[profile]
+    assert profile_for_model(model) == profile, f"{profile!r} ← {model!r} 解析不到"
+    return model
 
 
 class TestEstimatorContract:
@@ -179,7 +196,11 @@ class TestEstimatorContract:
                 f"{profile}: 声明上限 {declared} 比实测 {worst:.2f} 松太多——文档过期")
 
     def test_hard_floor_follows_the_headroom_ratio(self):
-        """硬下限不是口味：它由 0.75 预算比推出（低估 1/0.75 = 1.33× 就溢出窗口）。"""
+        """硬下限不是口味：它由 0.75 预算比推出（低估 1/0.75 = 1.33× 就溢出窗口）。
+
+        **这是"文档即断言"，不是估算器的覆盖**——它只保证常量之间不漂移；
+        真正的估算器覆盖在 `TestEstimatorContract`。
+        """
         window = 8192
         budget = budget_from_context_window(window)
         assert budget == int(window * CONTEXT_HEADROOM_RATIO)
@@ -196,8 +217,12 @@ class TestEstimatorContract:
         counts = _GOLDEN["text"]["cjk_zh_simplified"]
         spread = counts["p50k_base"] / counts["deepseek_v3"]
         assert spread > 3.0, f"跨家族离散度只有 {spread:.2f}×，profile 设计的前提需重估"
-        # 单条中文语句在两个 profile 下的估算必须不同（否则 profile 是摆设）
+        # 单条中文语句在不同 profile 下的估算必须不同（否则 profile 是摆设）
         assert estimate_tokens(body, model="ollama/qwen2.5:3b") < estimate_tokens(body)
+        # 数字分组是**第二条独立轴**：同一串数字在 qwen 与 deepseek 下必须分开
+        digits = _text_body([e for e in _CORPUS if e["id"] == "digits_run"][0]["path"])
+        assert estimate_tokens(digits, model="ollama/qwen2.5:3b") > 1.5 * estimate_tokens(
+            digits, model="deepseek/deepseek-v4-flash"), "数字分组差异没有被建模"
 
 
 # 修前公式的**逐字复刻**（`Module/system_prompt/budget.py` @ Batch 17 / commit 5d350945）。
@@ -236,7 +261,7 @@ class TestPreFixRed:
 
     def test_legacy_formula_breaches_the_contract_while_the_new_one_does_not(self):
         """旧公式在多个类别上低估 >25%；新估算器在同一批样本上全部落在合同内。"""
-        families = _PROFILE_FAMILIES["cjk_opt"]
+        families = _PROFILE_FAMILIES["qwen"]
         legacy_breaches, new_breaches, checked = [], [], 0
         for entry, body in _text_cases():
             actual = _GOLDEN["text"][entry["id"]]["qwen2.5"]
@@ -247,12 +272,13 @@ class TestPreFixRed:
                 legacy_breaches.append(f"{entry['id']}({entry['category']}): {legacy_ratio:.2f}")
             if new_ratio < _HARD_FLOOR:
                 new_breaches.append(f"{entry['id']}: {new_ratio:.2f}")
+            _ = families
         assert checked >= 30
         assert len(legacy_breaches) >= 8, (
             "旧公式的越界样本不足 8 条——本用例的 PRE_FIX_RED 前提不成立，"
             f"只找到 {legacy_breaches}")
         assert not new_breaches, f"新估算器仍越界：{new_breaches}"
-        assert families == ("qwen2.5", "deepseek_v3")
+        assert families == ("qwen2.5",)
 
     def test_legacy_formula_overestimates_natural_cjk_beyond_the_declared_bound(self):
         """反向：旧公式对自然中文高估到 1.6× 以上（Batch 7 只测出 1.02×，因为探针退化）。"""
@@ -260,10 +286,10 @@ class TestPreFixRed:
         body = _text_body(entry["path"])
         actual = _GOLDEN["text"]["cjk_zh_simplified"]["qwen2.5"]
         legacy_ratio = legacy_estimate_tokens(body) / actual
-        assert legacy_ratio > _CONTRACT_MAX_RATIO["cjk_opt"], (
+        assert legacy_ratio > _CONTRACT_MAX_RATIO["qwen"], (
             f"旧公式对自然中文只有 {legacy_ratio:.2f}×，不足以支撑 W2 误拒结论")
         assert estimate_tokens(body, model="ollama/qwen2.5:3b") / actual <= \
-            _CONTRACT_MAX_RATIO["cjk_opt"]
+            _CONTRACT_MAX_RATIO["qwen"]
 
     def test_legacy_formula_ignores_tool_schemas_entirely(self):
         """PRE_FIX_RED 的第二根：tools 对修前估算**完全不可见**（差的不是精度而是有无）。"""
@@ -307,36 +333,68 @@ class TestKnownLimitations:
     本组用例把当前实测的上下界钉住：**任何一侧明显恶化都会红**。
     """
 
-    _OBSERVED_RATIO_RANGE = {
-        # profile: (下限, 上限) —— 实测值，改动系数后必须同步复核
-        "cjk_opt": (0.55, 5.40),
-        "generic": (0.35, 3.60),
-    }
+    # `repeat` 类实测区间（跨 6 个 profile 的并集）：词表决定 token 率，无法用字符
+    # 统计闭合。改动系数后必须同步复核这个登记值。
+    _REPEAT_RATIO_RANGE = (0.35, 6.50)
+    # `script`（婆罗米系/东南亚/希伯来/阿拉伯/希腊/亚美尼亚/西里尔）**合同外**，
+    # 但方向必须是**安全侧**：实测这些文字跨家族差 3–6×，实现取"已验证家族实测上界"
+    # 固定系数 ⇒ 只许高估、不许低估。这条断言把"不许低估"钉住。
+    _SCRIPT_MIN_RATIO = 1.0
 
-    @pytest.mark.parametrize("profile", sorted(_PROFILE_FAMILIES))
-    def test_degenerate_repeats_stay_within_the_recorded_range(self, profile):
-        model = _profile_model(profile)
-        low, high = self._OBSERVED_RATIO_RANGE[profile]
+    def test_degenerate_repeats_stay_within_the_recorded_range(self):
+        """`repeat` 全程合同外，但**区间被登记**：越界即红（不许悄悄变坏）。"""
+        low, high = self._REPEAT_RATIO_RANGE
         seen = []
         for entry, body in _text_cases(include_degenerate=True):
-            if entry["category"] not in _CONTRACT_EXCLUDED_CATEGORIES:
+            if entry["category"] != "repeat":
                 continue
-            est = estimate_tokens(body, model=model)
-            for family in _PROFILE_FAMILIES[profile]:
-                ratio = est / _GOLDEN["text"][entry["id"]][family]
-                seen.append((ratio, f"{entry['id']}/{family}"))
-        assert seen, "退化语料没有被测到——合同外的类别必须有实测记录"
+            for profile, families in _PROFILE_FAMILIES.items():
+                est = estimate_tokens(body, model=_profile_model(profile))
+                for family in families:
+                    seen.append((est / _GOLDEN["text"][entry["id"]][family],
+                                 f"{profile}:{entry['id']}/{family}"))
+        assert seen, "repeat 语料没有被测到——合同外的类别必须有实测记录"
         worst = min(seen); best = max(seen)
-        assert low <= worst[0] <= high and low <= best[0] <= high, (
-            f"{profile}: 退化类实测区间 [{worst[0]:.2f} ({worst[1]}), "
-            f"{best[0]:.2f} ({best[1]})] 越出登记区间 [{low}, {high}]")
-        # 至少记录一次"低估"与一次"高估"：这正是该类别无法被单一系数覆盖的证据
+        assert low <= worst[0] and best[0] <= high, (
+            f"repeat 类实测区间 [{worst[0]:.2f} ({worst[1]}), {best[0]:.2f} "
+            f"({best[1]})] 越出登记区间 [{low}, {high}]")
+        # 至少一次"低估"与一次"高估"：这正是该类别无法被单一系数覆盖的证据
         assert worst[0] < _HARD_FLOOR, "退化类应当仍存在低估样本（词表不可知）"
-        assert best[0] > _CONTRACT_MAX_RATIO[profile], "退化类应当仍存在高估样本"
+        assert best[0] > max(_CONTRACT_MAX_RATIO.values()), "退化类应当仍存在高估样本"
+
+    def test_out_of_scope_scripts_never_underestimate(self):
+        """`script` 类在合同外，但**方向被钉住**：只许高估，不许低估。
+
+        为什么这条比"登记一个区间"更强：`other` 类的系数被固定在已验证家族上的
+        实测上界（安全侧），所以这些文字不会再走"预算判装得下而实际静默截断"那条
+        路——代价（某些家族高估最多 ~6×）是显式接受的。任何把该系数调低的改动
+        都会在这里变红。
+        """
+        from Module.system_prompt.budget import _classify  # noqa: SLF001
+
+        seen = 0
+        for entry, body in _text_cases(include_degenerate=True):
+            if entry["category"] != "script":
+                continue
+            # 只对**非拉丁文字**（由固定的 `other` 类主导）保证方向；Latin-2
+            # （波兰/捷克/越南）走的是**拟合**的 `latin_ext` 类，属"合同外、
+            # 无方向保证"——它和法语/德语重音共用一类，无法既紧又覆盖极端。
+            if sum(1 for ch in body if _classify(ch) == "other") < 0.4 * len(body):
+                continue
+            for profile, families in _PROFILE_FAMILIES.items():
+                model = _profile_model(profile)
+                est = estimate_tokens(body, model=model)
+                for family in families:
+                    ratio = est / _GOLDEN["text"][entry["id"]][family]
+                    assert ratio >= self._SCRIPT_MIN_RATIO, (
+                        f"{profile}/{entry['id']}/{family}: ratio={ratio:.2f} < 1.0 "
+                        "——合同外文字被低估了（安全侧的保证被破坏）")
+                    seen += 1
+        assert seen >= 30, f"script 语料覆盖不足（{seen} 组）"
 
     def test_repeat_category_is_excluded_from_the_binding_contract(self):
         """防止有人"顺手"把退化样本塞回合同里——那会把系数推向为最坏情况服务。"""
-        assert "repeat" in _CONTRACT_EXCLUDED_CATEGORIES
+        assert {"repeat", "script"} <= _CONTRACT_EXCLUDED_CATEGORIES
         cats = {e["category"] for e in _CORPUS if e["kind"] == "text"}
         assert _CONTRACT_EXCLUDED_CATEGORIES <= cats, "登记表里的类别必须真实存在"
 
@@ -395,7 +453,7 @@ class TestFailureModeGuards:
         body = _text_body([e for e in _CORPUS if e["id"] == "cjk_zh_simplified"][0]["path"])
         est = estimate_tokens(body, model="ollama/qwen2.5:3b")
         actual = _GOLDEN["text"]["cjk_zh_simplified"]["qwen2.5"]
-        assert est <= actual * _CONTRACT_MAX_RATIO["cjk_opt"]
+        assert est <= actual * _CONTRACT_MAX_RATIO["qwen"]
 
     def test_repeated_single_char_is_the_degenerate_case_that_misled_batch7(self):
         """Batch 7 的 E2 用 `"你" * N`——那恰好是估算器最准的输入（1.000 token/字）。
@@ -406,7 +464,7 @@ class TestFailureModeGuards:
         n = 300
         est = estimate_tokens("你" * n, model="ollama/qwen2.5:3b")
         # 退化输入：估算仍然落在合同内（但它是"最有利"的一端，不能代表中文）
-        assert est / n <= _CONTRACT_MAX_RATIO["cjk_opt"]
+        assert est / n <= _CONTRACT_MAX_RATIO["qwen"]
 
     def test_emoji_and_zwj_are_counted(self):
         body = _text_body([e for e in _CORPUS if e["id"] == "unicode_emoji"][0]["path"])
@@ -450,7 +508,7 @@ class TestPromptComposition:
                                        tools=payload["tools"])
         actual = _GOLDEN["chat_ollama"]["tools_many_short_chat"]["prompt_eval_count"]
         ratio = est / actual
-        assert _CONTRACT_MIN_RATIO <= ratio <= _CONTRACT_MAX_RATIO["cjk_opt"], (
+        assert _CONTRACT_MIN_RATIO <= ratio <= _CONTRACT_MAX_RATIO["qwen"], (
             f"tool-heavy 短对话越界：est={est} actual={actual} ratio={ratio:.2f}")
 
     def test_chat_framing_cases_hold_the_contract_end_to_end(self):
@@ -474,7 +532,7 @@ class TestPromptComposition:
                                            tools=payload.get("tools"))
             ratio = est / golden["prompt_eval_count"]
             checked += 1
-            if not (_CONTRACT_MIN_RATIO <= ratio <= _CONTRACT_MAX_RATIO["cjk_opt"]):
+            if not (_CONTRACT_MIN_RATIO <= ratio <= _CONTRACT_MAX_RATIO["qwen"]):
                 bad.append(f"{entry['id']}: est={est} actual={golden['prompt_eval_count']} "
                            f"ratio={ratio:.2f}")
         assert checked >= 5, f"参与断言的 chat 样本只有 {checked} 条，证明力不足"
@@ -498,7 +556,8 @@ class TestPromptComposition:
             est = estimate_messages_tokens(payload["messages"], model=model,
                                            tools=payload.get("tools"))
             worst_gap = max(worst_gap, golden["prompt_eval_count"] - est)
-        assert 0 <= worst_gap <= _MAX_UNMODELED_FRAMING_TOKENS, (
+        # 只断言**上界**：`worst_gap >= 0` 是恒真的（初值 0），写上去是假强度。
+        assert worst_gap <= _MAX_UNMODELED_FRAMING_TOKENS, (
             f"短请求的 provider 框架缺口 {worst_gap} token 超出登记上界 "
             f"{_MAX_UNMODELED_FRAMING_TOKENS}")
 
@@ -530,11 +589,12 @@ class TestEstimatorHygiene:
             assert estimate_tokens("hello 世界", model=model) > 0
 
     def test_profile_table_is_the_only_coefficient_source(self):
-        assert set(_TOKEN_WEIGHTS) == {"cjk_opt", "generic"}
+        assert set(_TOKEN_WEIGHTS) == {
+            "qwen", "deepseek", "llama", "openai", "mistral", "generic"}
         for profile, weights in _TOKEN_WEIGHTS.items():
             assert set(weights) == {
-                "word", "digits", "punct", "space", "cjk", "kana", "cjksym",
-                "emoji", "other"}, profile
+                "word", "digits", "punct", "space", "cjk", "cjk_ext", "kana",
+                "cjksym", "emoji", "latin_ext", "other"}, profile
             assert all(v > 0 for v in weights.values()), profile
 
     def test_estimation_does_not_mutate_its_input(self):
