@@ -644,14 +644,11 @@ USER_INPUT **没有重投**（`_handle_interrupt` 只搬移不复制），`gener
 
 **已知边界（本批登记，未修）**：
 
-- **连发三条时 pending 内的既有乱序**：上一条消息还排在 **EventBus 队列**里
-  （事件消费者尚未把它交给 `_handle_user_input`）时，`process_message` 因
-  `bus.pending_user_inputs > 0` 把新消息**直接** append 进 `_pending_messages`；
-  随后消费者才把旧消息也 append 进去 ⇒ 两条在 pending 里反序（实测 `['M3','M2']`）。
-  与 KB-24 同族（"事件在总线里排队时尚无 pending 归属"）但**不同根**：这里两条都
-  **有** owner（pending），只是次序错了；修法前后行为一致（非本批引入）。
-  由 `test_third_message_arriving_while_second_is_still_on_the_bus` 钉住现状，
-  不在本批修（修它要动 `process_message` 的入队判据与 pending 语义）。
+- ~~**连发三条时 pending 内的既有乱序**~~ → **Batch 13 已确证并修复**（KB-38），
+  见 §4.6。修前：上一条消息还排在 **EventBus 队列**里（事件消费者尚未把它交给
+  `_handle_user_input`）时，`process_message` 因 `bus.pending_user_inputs > 0` 把新消息
+  **直接** append 进 `_pending_messages`；随后消费者才把旧消息也 append 进去 ⇒ 两条在
+  pending 里反序（实测 `['M3','M2']`，处理顺序 `M1 → M3 → M2`）。
 - **终态归因是日志级**：显式终态只存在于运行时日志
   （`disposition=cancelled_pre_ownership` / `failed_pre_ownership` /
   `cancelled_by_interrupt` + source + message/session 身份），**不**产生 wire 帧、
@@ -663,6 +660,91 @@ USER_INPUT **没有重投**（`_handle_interrupt` 只搬移不复制），`gener
 - **`_drain_pending_after_turn` 只在 `is_completely_idle` 时出队**：它刻意**不**越过
   `IDLE 已广播 / 锁未释放`（KB-28）那条边界——若收口仍持锁，新回合会卡在锁上而被
   下一条消息当作在途回合取消。KB-28 未修，故这里也不越过它。
+
+---
+
+### 4.6 Pending input ordering（PO）
+
+KB-38（Batch 13 确证并修复）。缺陷形状：一个用户的连续输入在一个时间段里可能同时
+存在于**两个没有共同顺序**的容器里——"已派发等待"的 `_pending_messages` 与"尚未派发"
+的 EventBus 队列——而**两个 append 权威按写入时刻排序**：
+
+```text
+process_message(M2) → bus.post(UserInputData(M2))        ← 快速路径：M2 的 owner 是总线
+process_message(M3) → _pending_messages.append(M3)       ← 判据 bus.pending_user_inputs > 0
+   ⋮
+消费者派发 M2 → _handle_user_input(M2) → append(M2)      ← M2 到这里才入队 ⇒ ["M3","M2"]
+   ⋮
+出队 pop(0)（FIFO）⇒ 处理顺序 M1 → M3 → M2               ← 与 admission 顺序相反
+```
+
+**根因不在 EventBus**：总线对同优先级事件按 `Event.seq` 严格 FIFO（`post()` 里
+`seq += 1` 与 `put_nowait` 之间没有 await）。根因是**顺序仲裁的信息面不完整**，分两层：
+
+1. **入队顺序依据错了**（写入时刻 ≠ admission 时刻）：`process_message` 在 admission
+   时刻写队列、`_handle_user_input` 在**派发**时刻写队列，两条路径按写入先后排列。
+2. **等待集只数了一半**：真正要回答的是"本条之前还有没有 accepted 的输入在等"，而"在等"
+   有**两个容器**（`_pending_messages` ∪ 总线驻留的 USER_INPUT）。只看 `_pending_messages`
+   会在"队首已 `pop(0)` 交给总线、还没被 claim"的窗口里失明；更晚的输入在这个窗口里能拿到
+   **更小**的总线 `seq`（`ws_handler.py` STT / `ws_v2.py` voice.commit /
+   `voice_sessions.py` REALTIME 直投甚至不经 `process_message`），于是先被派发、先成为
+   active turn。
+
+```text
+T0 已接管、产出中；M2（更早）忙时入队 ⇒ pending=[M2]
+V1（更晚）**直投** ⇒ bus=[V1]                     ← 不经 process_message
+出队口把 M2 交给总线 ⇒ bus=[V1(seq 小), M2(seq 大)]
+派发 V1 时 M2 已不在 pending ⇒ 只看 pending 的判据失明 ⇒ V1 先成为 active turn
+⇒ claim / session / LLM 三层证据全反序
+```
+
+第 2 层是本批 **Challenger A 独立反证**出来的：第一版修复只做了第 1 层 + "只看 pending"的
+越队判据，当时 21 条守卫全绿、顺序仍可被反演。
+
+#### 合同定义（Phase 0，先确认后修）
+
+| 概念 | 定义 |
+|---|---|
+| **ordering domain** | 单个 **Agent 实例**的 accepted 输入流。一个 FSM / 一个 `_pending_messages` / 一个 `_cognitive.current_task` / 一把 `_process_lock` ⇒ 回合在全 Agent 上串行（与 session 无关）。**不**跨进程承诺（`accepted ≠ durable`），也不承诺跨连接到达顺序——合同是"已 accepted 的输入按 admission 顺序处理"，与它来自哪条连接无关。 |
+| **admission order** | `Agent.process_message()` **提交准入决策**的那一刻：`reserve_work`（v2，可能挂起）**之后**、分支判定（直投总线 / 入队）**之前**——两者之间**没有 await**，所以该顺序是全序。`request_id`（`next_request_id()` 的 `{n:03d}` 单调计数器）就是这一时刻的见证，也是排序键——**不新增**第二套 message identity。 |
+| **processing order（canonical）** | **active-turn ownership commit**：`_generation_ctx` 建立（`CognitiveLoop.current_turn_owns_input` 变真，`loop.py::_prepare_turn` 内一次无 await 的赋值）。与 Batch 12 的 admission commit / Batch 10 的 ownership 判据同一点。session 历史追加与 LLM 首轮只作旁证。 |
+| **既有合同证据** | `process_message`（"Agent 忙碌时消息入队（FIFO），IDLE 时出队处理"）、`pending_messages`（"FIFO 队列中暂存的消息"）、`_dispatch_pending_message`（"队首……（FIFO 出队）"）、AD3（"新输入排队（FIFO 不抢）"）、前端按发送顺序渲染且无 priority/reorder 指示。**本批不新增合同**，只把既有 FIFO 承诺贯通到整条 handoff 链。 |
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **PO1** | 在 ordering domain 内，保持可处理的 accepted 输入按 **admission 顺序**获得 active-turn ownership（不论当次走直投总线还是进 pending，也不论两条入队路径谁先写入） | `core/agent/tests/test_pending_input_ordering.py::test_three_message_burst_keeps_admission_order`（PRE_FIX_RED）、`::test_five_message_burst_keeps_admission_order`（PRE_FIX_RED）、`core/agent/tests/test_admission_input_delivery.py::test_third_message_arriving_while_second_is_still_on_the_bus` | `make test-quick` / `test-normal` | **push/backend** |
+| **PO2** | pending 只有**一个**入队权威（`_enqueue_pending`），且队列**始终按 admission 顺序有序**；出队仍是 `pop(0)` = 取最老 | `::test_three_message_burst_keeps_admission_order`（层 2 断言 pending 顺序）、`::test_two_message_boundary_unchanged` | 同上 | **push/backend** |
+| **PO3** | 存在**更早** accepted 的输入在等（等待集 = `_pending_messages` ∪ **总线驻留的 USER_INPUT**）时，新输入（含不经 `process_message` 的直投输入）**不得**直接成为 active turn 越过它 | `::test_newer_direct_input_cannot_bypass_older_pending_input`、`::test_newer_input_cannot_enter_bus_while_older_pending_waits`（Challenger A 反例的 `process_message` 变体）、`::test_direct_input_cannot_overtake_when_older_pending_is_in_flight`（直投变体）——三条均 PRE_FIX_RED | 同上 | **push/backend** |
+| **PO4** | 恢复（出队重投 / admission recovery）**保留原 admission 顺序**：不得给同一条输入分配新顺序，也不得把更老的输入排到更晚的输入之后 | `::test_error_in_admission_window_then_drain_keeps_order`（PRE_FIX_RED：窗口内失败后 M2→M3 原序）、变异 M5（出队重盖 `request_id` → 5 条守卫红） | 同上 | **push/backend** |
+| **PO5** | 显式取消只移除被取消的逻辑输入：停止按钮清空 bus + pending（既有合同，可归因），**幸存者保持相对顺序**，被清除者不得复活 | `::test_stop_button_clears_pending_without_reordering_survivors`、`core/agent/tests/test_admission_input_delivery.py::test_stop_button_clearing_pending_is_attributable` | 同上 | **push/backend** |
+| **PO6** | 顺序修复不得制造**重复 owner**，也不得在停机时**复活**已取消的输入（连回合都不许起） | `::test_shutdown_does_not_drain_pending`（变异 M6a/M6b 各自红）、`core/agent/tests/test_admission_input_delivery.py::test_cancel_after_history_append_does_not_duplicate_processing`、`_assert_full_order` 的 no-duplicate / no-omission 断言 | 同上 | **push/backend** |
+
+**明确不做**（本批取舍）：**不改 EventBus 的优先级 / 派发顺序 / drain 语义**（总线本来就是
+同优先级 FIFO；本批只给它加了一个**只读快照** `pending_user_input_request_ids()`，供顺序仲裁
+看见总线驻留者）、不换 pending 容器（`list` + 有界插入足够）、不新建 scheduler / durable
+queue / priority queue、不把所有输入一律塞进 pending（保持 fast path 与"真忙才排队"两条既有
+路径）、不改输入层三条直投入口的调用形态、不新增 wire 字段或公开 API、不加锁、不用
+`sleep` / task 创建顺序 / lock 公平性碰运气（顺序由 admission 键与 barrier 测试决定）。
+
+**快路径判据收敛为一处**：`not status.is_accepting_input or _has_older_waiting_input(rid)`——
+`process_message` 与 `_handle_user_input` 共用同一个 helper，"更早的等待者"只有一个定义。
+
+**已知边界（本批登记，未修）**：
+
+- **排序键是 `request_id` 的单调性**：本批复用它作为 admission 顺序的见证（§31
+  "优先复用既有 identity"）。它由 `test_admission_order_key_is_monotone` 钉住——将来把
+  它改成 UUID / 每会话计数 / 随机值会让顺序静默错乱，而那条守卫会先红。
+- **停机 / 显式中断不覆盖**：顺序不变量只约束"保持可处理的 accepted 输入"；停止按钮与
+  `Agent.stop()` 清空 bus + pending 是既有终态合同（PO5/PO6 只要求"不复活、不重排幸存者"）。
+- **停止按钮只支持整队取消**：没有"只取消 pending 里某一条"的接口 ⇒ §38 的
+  "cancel 中间项"当前 **N/A**（PO5 只覆盖整队清除后的相对顺序）。
+- **直投输入的抢占语义（保留）**：直投输入在**等待集为空**时仍会走 spawn 分支抢占已接管
+  输入的回合（既有行为，本批未改；§34 Keep-As-Is）。本批只挡住"等待集里有更早输入"时的越队。
+  副作用是"已 claim 但未进历史就被抢占"的丢失形态（→ 新登记 N7，非本批引入）。
+- **排序键读不到时的口径是保守的**：本条读不到 ⇒ 只要等待集非空就排队；等待者读不到 ⇒
+  视为更早。今天 5 个 `UserInputData` 生产者全都带 `next_request_id()`，所以两支都不可达；
+  它们存在的意义是"将来新增入口忘带键时退化成排队，而不是静默越队"（Challenger A/B 各自把
+  这条不可达性变成了可执行事实）。
 
 ---
 

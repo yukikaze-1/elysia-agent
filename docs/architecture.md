@@ -337,6 +337,13 @@ INTERRUPT 处理流程：
 4. FSM: 当前态 → INTERRUPTED → IDLE
 ```
 
+**USER_INPUT 的顺序仲裁（Batch 13 / KB-38）**：总线上未派发 USER_INPUT 的 `request_id`
+快照由 `pending_user_input_request_ids()` 只读暴露——`Agent` 的越队判据据此把
+"还在总线里等派发"的更早输入与 `_pending_messages` 一起算进**等待集**
+（`Agent._has_older_waiting_input`），从而保证同一 Agent 实例内 accepted 的输入按
+admission 顺序获得 active-turn ownership。该访问器**只读**：不改优先级、不改派发顺序、
+不参与 drain。不变量 PO1–PO6 见 [invariants.md](architecture/invariants.md) §4.6。
+
 ### 4.2 AgentStatus 接口层
 
 `AgentStatus` 是 FSM 之上的语义接口，将消费者与底层 `AgentFSM` 解耦。设计详见 [spec](superpowers/specs/archive/2026-07/2026-07-30-agent-status-interface-design.md)。
