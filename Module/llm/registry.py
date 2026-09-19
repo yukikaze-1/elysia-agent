@@ -3,6 +3,8 @@
 import dataclasses
 from typing import TYPE_CHECKING, Any
 
+import logging
+
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
 from Module.llm.ollama import OllamaBackend
@@ -11,6 +13,8 @@ from Module.llm.openai_compat import OpenAICompatBackend
 if TYPE_CHECKING:
     from Module.llm.config import LLMConfig
     from Module.llm.protocol import LLMBackend
+
+logger = logging.getLogger(__name__)
 
 # provider 默认值统一由 Module/config/providers.yaml 管理
 _BACKENDS: dict[str, dict] = load_provider_defaults("llm")
@@ -29,6 +33,56 @@ _BACKENDS: dict[str, dict] = load_provider_defaults("llm")
 # 声明在 providers.yaml 里却不在本集合中的 provider 一律按"已实现"对待——
 # 缺 metadata ≠ 未实现（fail-open，不误拒第三方/插件 provider）。
 _UNIMPLEMENTED_PROVIDERS: frozenset[str] = frozenset({"gemini"})
+
+
+def declared_context_window(raw: Any) -> int | None:
+    """把 provider 条目里的 `context_window` 解析成**正整数或 None**（唯一解析点）。
+
+    ## 为什么需要一个 helper（Batch 17 的 NEW-1）
+
+    同一个值有**两个**消费方：预算侧（`LLMFactory.context_window` → ×0.75）与运行时侧
+    （`OllamaBackend` → `options.num_ctx`）。此前两边各自解析——预算侧 `int(window)`，
+    运行时侧拿到**原样值**再做 `> 0` 比较。于是 `providers.yaml` 里手写成带引号的
+    `context_window: "8192"` 时：预算照常算 6144，而**每一次 ollama 生成**都会在
+    发出请求前抛 `TypeError: '>' not supported between instances of 'str' and 'int'`
+    ——一个纯配置书写差异把 provider 打成 100% 不可用，且日志看不出是配置问题。
+    （Batch 17 之前该值从不离开 `int()` 化后的预算路径，故这是本批新引入的失败模式。）
+
+    ## 规则（非法值与未声明**同视**）
+
+    - `int` / `float` / 数字字符串且 > 0 ⇒ `int(value)`（`"8192"` 与 `8192.0` 都接受：
+      手写 YAML 的常见形态，且与预算侧历史行为一致）；
+    - `None` / `≤ 0` ⇒ `None`（"未声明/非法" ⇒ 预算走保守回退、运行时**不申请分配**，
+      见不变量的 OL2——**绝不**把回退值当分配指令）；
+    - 布尔 ⇒ `None` + warning（YAML `true` 会被 `int()` 悄悄读成 1 ⇒ 预算退化成 1 token、
+      `num_ctx=1` 被 daemon 400 拒；这不是"窗口"的合法写法）；
+    - 其余（非数字字符串 / 列表 / 字典）⇒ `None` + warning（不再抛 `ValueError`）。
+
+    Args:
+        raw: 配置里的原始值（`dict.get("context_window")` 的结果）。
+
+    Returns:
+        token 数（> 0）或 None。
+    """
+    if isinstance(raw, bool):  # bool 是 int 的子类，必须先判
+        logger.warning("context_window 是布尔值（%r），按未声明处理", raw)
+        return None
+    if raw is None:
+        return None
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, float):
+        value = int(raw)
+    elif isinstance(raw, str):
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            logger.warning("context_window 不是数字（%r），按未声明处理", raw)
+            return None
+    else:
+        logger.warning("context_window 类型不受支持（%r），按未声明处理", raw)
+        return None
+    return value if value > 0 else None
 
 
 class LLMFactory:
@@ -107,10 +161,13 @@ class LLMFactory:
                 model=model,
                 api_key=api_key,
                 base_url=base_url,
-                # 显式声明的 effective context window（本 dict 就是 `context_window()`
-                # 读的**同一个**来源 ⇒ 预算与运行时分配不可能分叉）。未声明 ⇒ None
-                # ⇒ backend 不申请分配（OL2：通用预算回退不是分配指令）。
-                context_window=cfg.get("context_window"),
+                # 显式声明的 effective context window（与 `context_window()` 走**同一个**
+                # 解析规则并读**同一个**来源 ⇒ 预算与运行时分配不可能分叉）。未声明/非法
+                # ⇒ None ⇒ backend 不申请分配（OL2：通用预算回退不是分配指令）。
+                # `kwargs` 里的同名键按既有 `base_url`/`api_key` 的覆盖模式优先
+                # （无生产调用方，测试/内部用）。
+                context_window=declared_context_window(
+                    kwargs.pop("context_window", cfg.get("context_window"))),
                 **kwargs,
             )
 
@@ -160,8 +217,7 @@ class LLMFactory:
             上下文窗口 token 数；providers.yaml 未声明时 None。
         """
         provider = model_id.split("/")[0] if "/" in model_id else model_id
-        window = _BACKENDS.get(provider, {}).get("context_window")
-        return int(window) if window else None
+        return declared_context_window(_BACKENDS.get(provider, {}).get("context_window"))
 
     @classmethod
     def supports_multimodal(cls, model_id: str) -> bool:

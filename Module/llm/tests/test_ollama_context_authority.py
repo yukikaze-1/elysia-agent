@@ -265,6 +265,68 @@ class TestGenericFallbackIsNeverAllocated:
         assert _num_ctx(body) is None, f"非法值 {bad} 被发出：{body.get('options')!r}"
 
 
+class TestDeclaredValueCoercion:
+    """同一个声明值有**两个**消费方（预算 ×0.75 / wire `num_ctx`），必须同解析、同结论。
+
+    Challenger（2026-09-19）实测的新失败模式：预算侧 `int(window)` 而运行时侧拿原样值，
+    于是手写成 `context_window: "8192"`（带引号的 YAML）时预算照算 6144、而**每一次
+    ollama 生成**都在发请求前抛 `TypeError: '>' not supported between 'str' and 'int'`
+    ——一个书写差异把 provider 打成 100% 不可用。下面把两侧的结论逐形态钉在一起。
+    """
+
+    @pytest.mark.parametrize("raw, expected", [
+        (8192, 8192),
+        ("8192", 8192),      # 手写 YAML 的常见形态（带引号）
+        (" 8192 ", 8192),
+        (8192.0, 8192),
+        (0, None),
+        (-1, None),
+        (0.5, None),         # int() 截断后 ≤ 0 ⇒ 与"未声明"同视
+        (True, None),        # bool 是 int 子类：int(True)=1 会把预算退化成 1 token
+        (False, None),
+        ("not-a-number", None),
+        ("", None),
+        (None, None),
+        ([], None),
+        ({"window": 8192}, None),
+    ])
+    @pytest.mark.asyncio
+    async def test_both_sides_agree_on_every_value_shape(self, monkeypatch, raw, expected):
+        from Module.llm import registry
+
+        monkeypatch.setitem(registry._BACKENDS["ollama"], "context_window", raw)  # noqa: SLF001
+        server = _CapturingServer()
+        backend = _ollama(server)
+        try:
+            await backend.chat([{"role": "user", "content": "hi"}])
+        finally:
+            await backend.close()
+
+        budget_authority = LLMFactory.context_window("ollama/qwen2.5:3b")
+        assert budget_authority == expected, (
+            f"预算侧解析 {raw!r} 得 {budget_authority}（期望 {expected}）")
+        assert backend.configured_context == expected
+        assert _num_ctx(server.last[1]) == expected, (
+            f"运行时侧对 {raw!r} 得 {_num_ctx(server.last[1])}（期望 {expected}）")
+
+    @pytest.mark.asyncio
+    async def test_explicit_create_override_is_not_a_duplicate_kwarg(self):
+        """Challenger A4：`create(..., context_window=N)` 不得抛重复关键字 TypeError。
+
+        它按既有 `base_url`/`api_key` 的覆盖模式生效（无生产调用方；测试/内部用），
+        且同样过一遍解析规则。
+        """
+        server = _CapturingServer()
+        backend = LLMFactory.create("ollama/qwen2.5:3b", context_window=4096,
+                                    http_client=_client(server))
+        try:
+            await backend.chat([{"role": "user", "content": "hi"}])
+        finally:
+            await backend.close()
+        assert backend.requested_context == 4096
+        assert _num_ctx(server.last[1]) == 4096
+
+
 # ============================================================
 # 3. 非 Ollama 零污染（OL6；M3/M4 的杀手）
 # ============================================================
@@ -358,12 +420,24 @@ class TestOneAuthorityForBudgetAndRuntime:
         """
         from Module.llm import registry
 
-        for provider, cfg in registry._BACKENDS.items():  # noqa: SLF001
+        for provider in registry._BACKENDS:  # noqa: SLF001
             declared = LLMFactory.context_window(provider)
             if provider != "ollama":
-                # 其余 provider 不能显式申请分配（requested=None 是诚实表述），
-                # 其"声明 = 预算输入"由 PW2/PW6 钉住。
-                assert isinstance(cfg, dict)
+                if not LLMFactory.is_implemented(provider) or provider == "custom":
+                    # gemini 仍未实现（本批不动它）；custom 的 create 带 SSRF 守卫
+                    # （解析式判据，离线/无 DNS 环境下会误红）——它的构造路径另有覆盖。
+                    continue
+                # 其余 provider **不能**显式申请分配 ⇒ 它们的 backend 上不存在
+                # Ollama 的运行时语义属性（OL3：generic backend 看不到 num_ctx 概念）。
+                # 只构造、不触网（内置 provider 不做端点校验）。
+                other = LLMFactory.create(f"{provider}/probe-model",
+                                          base_url="https://example.com/v1",
+                                          api_key="k")
+                try:
+                    assert not hasattr(other, "requested_context"), provider
+                    assert not hasattr(other, "probe_runtime_context"), provider
+                finally:
+                    await other.close()
                 continue
             server = _CapturingServer()
             backend = _ollama(server)
