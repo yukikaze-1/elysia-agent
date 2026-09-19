@@ -583,6 +583,7 @@ async def test_ct_t7_synthetic_task_result_turn_is_not_recorded_as_user_history(
 
     真路径：`TaskResultData` 经真 EventBus → `_handle_task_result` → `process(is_task_result=True)`。
     """
+    before = _user_texts(agent)
     gate = _gate_prompt(agent)
     gate.arm()
     agent.bus.post(TaskResultData(
@@ -600,6 +601,11 @@ async def test_ct_t7_synthetic_task_result_turn_is_not_recorded_as_user_history(
         f"合成系统唤醒被写成了用户历史：{_user_texts(agent)}")
     assert "帮我查一下" not in joined, (
         f"合成系统唤醒被写成了用户历史：{_user_texts(agent)}")
+    # ★ 判据必须**按条数双向钉住**，不能只查文案：任务宣告回合的 `user_message` 是
+    # **空串**（唤醒文案在 `_prepare_think_input` 里才生成）⇒ "误记一条空 user 消息"
+    # 这种变异不会被上面的文案断言杀死。合成唤醒按合同**不**产生任何 user 历史。
+    assert _user_texts(agent) == before, (
+        f"合成系统唤醒改变了 user 历史：{before} → {_user_texts(agent)}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -813,4 +819,44 @@ async def test_ct_t13_exception_finalization_cancelled_does_not_double_record(
     assert len(users) == 1, (
         f"W3→W1 叠加后该输入出现 {len(users)} 次（应为恰 1 次；0 = 丢失，>1 = 双写）："
         f"history={_user_texts(agent)}")
+    assert agent.status.is_completely_idle, agent.status.current_name()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# CT-T6b — claim 之前**抛异常**：终态收口会走到 `_handle_interrupt`，
+#          门禁①（已 claim）是唯一防线
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_ct_t6b_pre_claim_exception_creates_no_phantom_history(
+        agent: Agent, llm: _RecordingFakeLLM):
+    """pre-claim 的**异常**路径与取消路径的控制流不同，必须分别钉住。
+
+    取消（CT-T6）：`_prepare_turn` 抛 `CancelledError` ⇒ `_handle_prepare_cancelled()`
+    见 ctx 为 None **直接 return False**，根本不进 `_handle_interrupt` ⇒ 天然不会补写。
+
+    异常（本用例，生产形态 = P0-3 `StorageUnavailableError` fail-closed，与 AD8 同形）：
+    ⇒ `_handle_turn_exception()` ⇒ 它的 `finally:` **一定会** 调 `_handle_interrupt()`
+    —— 而 `_claimed_input_record` 在 `process()` 入口就暂存好了（那时还不知道会不会
+    claim）。所以**门禁①（`_generation_ctx is not None`）是这里唯一的防线**：没有它，
+    一条从未被任何回合接管的输入会被写进会话历史（phantom history），破坏 Batch 12
+    的 admission 边界（CT5）。
+    """
+    from core.storage.base import StorageUnavailableError
+
+    gate = _gate_admission(agent)
+    gate.arm(fail_with=StorageUnavailableError("测试：权威存储不可用"))
+    token = "KB46-未claim就异常结束"
+    assert await agent.process_message(token) is True
+    await asyncio.wait_for(gate.entered.wait(), timeout=_PROBE_S)
+    assert agent._cognitive.current_turn_owns_input is False, (  # noqa: SLF001
+        "用例前提不成立：本回合**已**接管输入（测的不是 claim 之前）")
+
+    gate.open()
+    await _drain(agent)
+
+    assert token not in _user_texts(agent), (
+        f"claim 之前的异常不得制造 phantom history：{_user_texts(agent)}")
+    assert token not in await _archive_texts(agent)
     assert agent.status.is_completely_idle, agent.status.current_name()
