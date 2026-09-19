@@ -124,9 +124,20 @@ class TestLLMFactory:
         assert backend._supports_prefix is True
 
     def test_ollama_no_env_key(self):
-        backend = cast(OpenAICompatBackend, LLMFactory.create("ollama/qwen3:latest"))
+        """ollama 无 env key 也能建出后端（本地服务，`env_key: ""`）。
+
+        Batch 17 起 ollama 走**自己的 native 后端**（`OllamaBackend`；AR-16/KB-13：
+        runtime context 只能在 native 协议表达），故这里不再断言通用后端的
+        `_supports_prefix`。"ollama 不支持 prefix 续写"这条语义仍由
+        `TestPrefixContinuation::test_ollama_prefix_raises` 与
+        `TestPrefixContinuationEdges::test_unsupported_prefix_in_chat_stream_raises`
+        逐入口钉住——新后端在 `_build_payload` 里**显式拒绝**（不是静默丢字段）。
+        """
+        backend = LLMFactory.create("ollama/qwen3:latest")
         assert backend._model == "qwen3:latest"
-        assert backend._supports_prefix is False
+        assert type(backend).__name__ == "OllamaBackend", (
+            "provider=ollama 必须按 canonical provider identity 路由到 native 后端——"
+            "OpenAI 兼容端点无法表达 options.num_ctx（实测 0.24.0 静默忽略）")
 
     def test_custom_base_url(self):
         with patch("Module._common.registry_helpers.os.getenv", return_value="sk-test"):
@@ -786,10 +797,14 @@ class TestThinkingCapabilityGate:
     """
 
     def test_registry_passes_capability_flag(self):
-        """registry 从 providers.yaml 读到能力位并注入后端。"""
+        """registry 从 providers.yaml 读到能力位并注入后端。
+
+        ollama **不在**本用例里：Batch 17 起它走 native 后端（`OllamaBackend`），
+        压根没有 `extra_body` 概念（native 无该字段，整体丢弃 + 一次 warning），
+        其等价行为由 `Module/llm/tests/test_ollama_backend.py` 逐条钉住。
+        """
         assert LLMFactory.create("deepseek/deepseek-v4-pro",
                                  api_key="x")._supports_thinking is True
-        assert LLMFactory.create("ollama/qwen3")._supports_thinking is False
         assert LLMFactory.create("openai/gpt-4o", api_key="x")._supports_thinking is False
 
     @pytest.mark.asyncio
@@ -808,7 +823,7 @@ class TestThinkingCapabilityGate:
     @pytest.mark.asyncio
     async def test_undeclared_provider_drops_thinking_stream(self):
         """流式路径（`_call_api`）同样丢——两条 extra_body 合并点必须一致。"""
-        backend = LLMFactory.create("ollama/qwen3")
+        backend = LLMFactory.create("openai/gpt-4o", api_key="x")
         mock_create = AsyncMock(return_value=_make_stream_chunks("x"))
         with patch.object(backend._client.chat.completions, "create", mock_create):
             async for _ in backend.chat_stream(
@@ -833,7 +848,7 @@ class TestThinkingCapabilityGate:
     @pytest.mark.asyncio
     async def test_gate_is_narrow_other_keys_pass_through(self):
         """门禁只丢 `thinking` 一个键——调用方的其它 extra_body 键必须原样保留。"""
-        backend = LLMFactory.create("ollama/qwen3")
+        backend = LLMFactory.create("openai/gpt-4o", api_key="x")
         mock_create = AsyncMock(return_value=_make_nonstream_response("hi"))
         with patch.object(backend._client.chat.completions, "create", mock_create):
             await backend.chat(
@@ -847,7 +862,7 @@ class TestThinkingCapabilityGate:
         """丢弃只警告一次（每后端实例）——否则每轮刷一条把日志淹没，且要说清怎么改。"""
         import logging
 
-        backend = LLMFactory.create("ollama/qwen3")
+        backend = LLMFactory.create("openai/gpt-4o", api_key="x")
         mock_create = AsyncMock(return_value=_make_nonstream_response("hi"))
         with caplog.at_level(logging.WARNING), \
                 patch.object(backend._client.chat.completions, "create", mock_create):

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
+from Module.llm.ollama import OllamaBackend
 from Module.llm.openai_compat import OpenAICompatBackend
 
 if TYPE_CHECKING:
@@ -93,6 +94,25 @@ class LLMFactory:
 
         if "logger" not in kwargs:
             kwargs["logger"] = inject_logger(__name__)
+
+        # AR-16 / KB-13：**按 canonical provider identity 选后端**（provider 名就是
+        # `model_id` 里 `/` 之前那一段，不是 baseURL 含 11434、也不是模型名前缀等启发式）。
+        # Ollama 的 runtime semantics（native `/api/chat` + `options.num_ctx`）与通用
+        # OpenAI 兼容协议**不可通约**：实测 0.24.0 的 `/v1/chat/completions` 会静默忽略
+        # `options.num_ctx`，所以"在通用后端里加一个 if"表达不出 runtime context。
+        # 选择点**只此一处**——上层（PromptAssembler / CognitiveLoop / preview / debug）
+        # 一律不感知 provider 差异。
+        if provider == "ollama":
+            return OllamaBackend(
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                # 显式声明的 effective context window（本 dict 就是 `context_window()`
+                # 读的**同一个**来源 ⇒ 预算与运行时分配不可能分叉）。未声明 ⇒ None
+                # ⇒ backend 不申请分配（OL2：通用预算回退不是分配指令）。
+                context_window=cfg.get("context_window"),
+                **kwargs,
+            )
 
         return OpenAICompatBackend(
             model=model,
