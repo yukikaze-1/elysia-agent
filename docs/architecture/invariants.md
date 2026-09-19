@@ -353,14 +353,11 @@ PG2 因此把"存储层分页"本身当成不变量：修复的验收判据之�
 真 Mongo 对相等排序键**不作任何顺序保证**——只按 `updated_at` 排序时，相同时间戳
 的记录在页边界可能被重复或漏掉。该不变量由真库用例证明（`push/real-mongo`）。
 
-**已知边界（本批登记，未修）**：缺 `updated_at`（字段缺失/null）的历史文档在
-keyset 谓词下不可达——真库实测（`$lt` 对缺失/null 走 **type bracketing**，与内存
-fake 行为一致）5 正常 + 3 坏文档、每页 2 时只走出 5 条就"收敛"；若某页末尾正好是
-这类文档，`_encode_cursor` 会写出 `updated_at=""` 的游标，下一页谓词匹配不到任何
-字符串文档 ⇒ 该页之后的记录被掐断。本批只保证**它不连坐健康记录**（投影层把非
-`str` 归一为 `""`，避免 `None > str` / `max(None, str)` 让整份列表静默退化）。
-仓内没有任何写入者会产生这种文档。见 [todo.md](../../todo.md)（`KB-15`）与
-`test_missing_updated_at_row_is_unreachable_registered_gap`（xfail 钉住）。
+**已知边界（原登记项已关闭）**：Batch 8 登记的"缺 `updated_at` 的历史文档在 keyset
+谓词下不可达 / 页边界游标被写成 `""` 导致其后记录被掐断"（canonical backlog
+**KB-15**）**已由 [Batch 16](#49-session-data-integritysd) 修复**：排序键改为**全域
+定义**（有序桶 ⊕ legacy 桶，见 SD1–SD3），游标编解码对称（`""` 是合法的 legacy 桶
+Sentinel）。原 xfail 用例已改写为正式断言 `test_missing_updated_at_row_is_reachable`。
 
 ### 4.2 Speaking 生命周期（SP）
 
@@ -922,6 +919,96 @@ process()  取锁**之前**清空 _generation_ctx / _admission_* / _turn_message
 **关机**路径下补写**确实**会被 `save_all()` 落库（实测 `[I3] memory=1
 sessions_hits=2 archive_hits=1`，与正常回合的对照同值）——本批"不承诺 durability"
 指的是**进程硬杀**（`accepted ≠ durable`），不是"取消路径永远不落 `sessions`"。
+
+### 4.9 Session data integrity（SD）
+
+来源：[2026-09-19 Batch 16 执行记录](../review/2026-09-19-Batch16-session-data-integrity-执行记录.md)。
+两个 finding 都是**数据不变量**层面的缺陷，不是"索引看起来不完整"：
+
+- **KB-15（可达性）**：一个**已经持久化**的逻辑会话，可能被正常支持的分页/枚举
+  **永久看不到**。修前 `list_page` 把排序/谓词直接压**原始** `updated_at`，而投影层
+  （`_summary_from_doc`）把"非字符串 / 缺失 / null"归一成 `""` 再交给游标：
+
+  ```text
+  存储侧排序键 ≠ 对外暴露的排序键
+     ├── 静默漏项：{updated_at: {$lt: "<str>"}} 对缺失/null 永不匹配（type bracketing）
+     │             ⇒ 排在末尾却谁也叫不到它（只有"一页装得下"时才露过面）
+     └── 游标毒化：BSON Date 型排在字符串**之前**（BSON 序）而投影归成 ""
+                   ⇒ 它若落在页边界，next_cursor = base64("|sid")
+                     ⇒ 解码端拒绝空时间戳 ⇒ 下一页 400，此后全部不可达
+  ```
+
+- **KB-16（身份唯一性）**：`session_id` 是**逻辑主键**（直读/改名/删除/摘要/级联/缓存键
+  全部按它寻址），但存储层从未有唯一约束。三条写路径都是
+  `update_one({session_id}, …, upsert=True)`——**不是原子的**：两个并发 upsert 都看不到
+  匹配就各自插入。真库实测（Batch 16 / E3）：20 轮 × 两个独立 client 的 `create`
+  有 1–3 轮产出重复文档；把存在性检查卡住可以让它**确定性**复现（2 篇同 ID）。
+
+> **会话持久化合同（Batch 16 Phase 0 裁定）**
+>
+> | 字段 | 地位 |
+> |---|---|
+> | `session_id` | **REQUIRED / 非空字符串 / 逻辑主键**（唯一约束见 SD4）——所有写者恒写，全仓按它寻址 |
+> | `updated_at` | **REQUIRED（写入侧）；读入侧允许缺失**——规范形态是 `now_iso()` 的 UTC ISO 字符串；排序键就是它本身（不做任何格式解析） |
+> | `messages` | OPTIONAL（`create()` 写 `[]`；窗口由 `session_max_messages` 界界） |
+> | `title` / `character_binding` | OPTIONAL（缺省空串 / 空对象） |
+> | `character_state` / `reflector_state` / `service_state` | OPTIONAL（`load()` 缺省构造默认值；`create()` 不写，首次 `save()` 才出现） |
+> | `created_at` | **不存在**——任何版本的写者都没写过（真库审计：7/7 缺失），故**不得**作为 fallback 候选 |
+> | 非空字符串以外的一切 `updated_at` 形态 | **legacy 桶**（可达，排最后，桶内 `session_id ASC`）——不视为 corruption、也不伪造时间戳 |
+> | `session_id` 缺失/null/非字符串/空串 | **corruption**：无身份、不可寻址（唯一索引把它们并入 null 桶，至多一篇） |
+>
+> **不变量落点**：存储层的两个桶判据 `ORDERED_TS_FILTER` / `LEGACY_TS_FILTER` 与投影层
+> 的 Sentinel `""` **必须一致**——"存储顺序 == 投影顺序 == 游标语义"是游标能当位置用的
+> 前提（这正是 KB-15 的根因形状）。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **SD1** | **可达性完备（含 legacy 元数据）**：每一条结构上被接受的持久会话都必须能被**支持的分页语义**走到——`updated_at` 缺失/null/非字符串/空串/**数组**的记录**不得**静默落在可枚举数据集之外（要么可达，要么被显式归类为 corruption） | `core/storage/tests/test_session_repo_pagination.py::TestLegacyOrderingBucket`（N ∈ {0,1,49,50,51,205} × {missing,null,empty,array}；Date/数字型；search；list_all；legacy-only 数据集）、`::TestArrayValuedOrderingMetadata`（挑战者 A 的数组反证）、`core/input/tests/test_sessions_pagination.py::TestLegacyOrderingRowsAreReachable`（route 层 = 用户入口）、`tests/real_mongo/test_real_session_data_integrity.py::TestLegacyOrderingReachabilityRealMongo`（真库 BSON 序/类型括号） | `make test-quick` / `test-normal` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **SD2** | **排序 fallback 必须确定性**：legacy 元数据不得用"读的时刻 / 当前进程时间 / 首次读取时间"来补——排序键只能是**已持久化的事实**（本批：`session_id`）。同一稳定数据集重复遍历顺序逐项一致 | `test_session_repo_pagination.py::TestLegacyOrderingBucket::test_legacy_bucket_is_deterministic_across_runs`、`core/memory/tests/test_session_manager_pagination.py::TestAdversarialRegressions::test_repeated_traversal_with_legacy_rows_is_stable`、`tests/real_mongo/…::test_traversal_order_is_stable_across_runs` | `make test-quick` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **SD3** | **游标遍历全域且终止**：任何由 API 产出的合法游标，继续翻页最终**终止**且不重不漏；`has_more=false` 必须真的意味着"当前查询域没有下一项"（含 legacy 桶） | `test_session_manager_pagination.py::TestAdversarialRegressions::test_legacy_row_on_page_boundary_round_trips_through_the_cursor`（PRE_FIX_RED：修前 400）、`::test_sentinel_cursor_round_trips_and_legacy_cursor_still_decodes`、`test_session_repo_pagination.py::TestLegacyOrderingBucket::test_legacy_row_at_page_boundary_does_not_poison_the_cursor`、`tests/real_mongo/…::test_legacy_row_on_page_boundary_does_not_truncate_the_list` | 同上 | **push/backend** + **push/real-mongo** |
+| **SD4** | **逻辑身份唯一**：权威 `sessions` 集合里，至多一篇文档代表一个逻辑 `session_id`（存储层强制，不只靠应用层检查） | `core/storage/tests/test_session_identity_uniqueness.py`（索引引导/升级/幂等/降级）、`tests/real_mongo/test_real_session_data_integrity.py::test_connect_creates_the_unique_index`、`::test_find_then_upsert_window_cannot_produce_two_authorities`（**确定性** PRE_FIX_RED：修前 2 篇）、`::test_concurrent_same_session_creation_keeps_one_authority` | `make test-quick` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **SD5** | **身份腐化必须显式**：遗留重复文档不得被"随便挑一篇当权威"静默掩盖——启动日志显著告警 + 运行时 `schema_drift` 的 `option_conflicts` 报 error；系统**不自动删数据、不猜赢家** | `test_session_identity_uniqueness.py::TestSessionIdentityIndexBootstrap::test_duplicates_keep_availability_and_skip_unique_build`（caplog 断言告警）、`tests/real_mongo/…::test_duplicates_do_not_destroy_availability`（真库 + `check_schema_drift` 报 option_conflict） | 同上 | **push/backend** + **push/real-mongo** |
+| **SD6** | **约束部署是向后安全的**：加/升级唯一约束必须有**定义的**遗留数据行为，且索引引导**不得意外毁掉可用性**——已有重复 ⇒ 保持现状（非唯一）+ 告警 + 应用照常启动；唯一建不出来 ⇒ 退回非唯一，`connect()` 仍返回 True | `test_session_identity_uniqueness.py::…::test_duplicates_keep_availability_and_skip_unique_build`、`::test_unique_build_failure_falls_back_to_non_unique`、`::test_index_listing_failure_skips_all_changes`、`::test_duplicate_probe_failure_counts_as_possible_duplicates`、`tests/real_mongo/…::test_existing_non_unique_index_is_upgraded_in_place`、`::test_building_unique_index_with_duplicates_fails_loudly`（真库异常码 11000 留证） | 同上 | **push/backend** + **push/real-mongo** |
+
+**实现形状（唯一权威 + 两个桶 + 受守卫的索引升级）**：
+
+- **排序域**（`SessionRepository.list_page`）：`ORDERED_TS_FILTER =
+  {"updated_at": {"$type": "string", "$gt": "", "$not": {"$type": "array"}}}`
+  （恰为"非空字符串**标量**"；`$not: {$type: "array"}` 是承重条件——Mongo 的
+  `$type`/比较算子会**遍历数组元素**，不排除数组就会出现"有序桶文档投影成 Sentinel"
+  与"游标 Sentinel 表示 legacy 桶"撞车，见 §33 挑战者 A）先按
+  `updated_at DESC, session_id ASC` 取；取不满一页时再查
+  `LEGACY_TS_CLAUSE = {"$nor": [ORDERED_TS_FILTER]}`（**真补集**：缺失/null/非字符串/
+  空串/数组/对象…）并按 `session_id ASC` 取剩余。两桶拼接 == 投影层的契约序
+  （`_precedes` / `_after_cursor`：`""` 最小）。真库 `explain` 实测：有序桶仍是
+  `IXSCAN(updated_at_-1_session_id_1)` + 索引序（`docsExamined == nReturned == limit`，
+  与旧谓词逐项相同）；legacy 桶是一次 `session_id` 索引扫描（O(N)、无阻塞排序）——
+  两者都**不是**"全表扫描 + 阻塞排序"的正常路径退化，且 legacy 查询只在有序桶取尽后
+  发生（一次遍历的最后一页）。
+- **游标**（`core/memory/session_manager.py`）：格式不变（`base64url(updated_at|session_id)`），
+  只是解码端接受空时间戳（legacy 桶 Sentinel）。旧游标（非空时间戳）**逐字节兼容**；
+  无 legacy 文档时**永不**产出空时间戳游标 ⇒ 公开 API 零变化。
+- **身份约束**（`SessionRepository._ensure_session_id_index`，S8 同族纪律）：
+  先 `aggregate` 探测重复（**检测失败按"可能有重复"处理**）→ `list_indexes()` 比选项
+  （查询失败 ⇒ 不做任何变更）→ 已唯一则返回（幂等）→ 有重复则保持非唯一 + 告警 →
+  数据干净且选项不同则 `drop_index` 后重建（Mongo **不能原地改选项**，真库实测 code 86）
+  → 建失败退回非唯一且**不抛**（`connect()` 仍 True）。
+- **写路径**（`SessionRepository._upsert_session`）：`non_fatal=is_duplicate_key`
+  保证并发冲突不判死仓储；**经确认**是本集合 `session_id` 约束的 E11000 才收敛
+  （重跑一次 upsert ⇒ 走 update 分支，不可能再次冲突）；别的唯一约束冲突原样冒泡。
+
+**"supported 数据集"的边界（SD1 的判据）**：带**非空字符串 `session_id`** 的文档一律
+属于 supported（其 `updated_at` 无论是什么形态都可达）；`session_id` 缺失/null/非字符串/
+空串的文档没有可寻址身份，属 corruption——本批不隐藏它们（legacy 桶里照样可达，
+`sessionId` 为空串），唯一索引把同类并入 null 桶（至多一篇），`schema_drift` 与启动日志
+负责让操作者看见。**不支持无限兼容**：不为任意 BSON 形态做类型特判、不做 repair-on-read、
+不把 `updated_at` 解析成时间（排序是字符串序）。
+
+**SD1–SD6 的边界（明确不做）**：不做通用迁移框架、不做自动删重复/自动合并 winner
+（重复文档可能各自带着不同消息、标题、归档关联，"取最新的那个"是猜）、不做 repair-on-read、
+不引入聚合排序（`$ifNull` / 哨兵字段）**也不改文档 schema**（零字段变更）、不改公开分页
+API（`sessions[]/has_more/cursor` 与 `SessionSummary` 逐字段不变）、不恢复全量预取
+（PG2 仍然成立）、不为 legacy 数据伪造时间戳（禁止 `now()` / 随机 / 首次读取时间）。
 
 ## 5. 架构与静态面
 

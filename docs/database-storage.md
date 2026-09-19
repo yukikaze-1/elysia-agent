@@ -324,7 +324,7 @@
 | 新增集合 / 新增索引 / 新增字段 | ✅ 自动（`ensure_index` 幂等，每次 connect 生效） |
 | 字段需回填值 | 一次性脚本（`scripts/backfill_*.py`，幂等 + `--dry-run`） |
 | **删/改已有索引** | ⚠️ **需人工**：`ensure_index` 只增不删，旧索引会留着 |
-| **给脏数据加唯一索引** | ⚠️ `character_version_repo` 有降级+告警；其余 8 个唯一索引无防护 |
+| **给脏数据加唯一索引** | ⚠️ `character_version_repo` 与 `session_repo`（批次 16）有「重复探测 + 降级 + 显著告警」；其余 8 个唯一索引无防护 |
 | Milvus 维度/度量变更 | ⚠️ 不可 alter，只能 drop + 重建 + 重嵌（低频高危，未自动化） |
 
 ### 索引删除：`drop_index`
@@ -342,13 +342,46 @@
 只读比对库中索引与代码声明，把**孤儿索引**（库里在、代码不再声明）报为显著 warning
 并给出 `drop_index` 命令；**绝不自动删除**（残留索引可能是有人故意建的）。
 
-`EXPECTED_INDEXES` 是**派生缓存**（24 项 / 12 集合），由
+`EXPECTED_INDEXES` 是**派生缓存**（29 项 / 13 集合），由
 `core/storage/tests/test_schema_drift.py` 用 AST 反向校验钉住——改索引却忘记同步该表时
 单测会失败并指出差异。
 
 **实测教训（该自检的存在理由）**：`sessions` 曾在 2026-07-16 声明
 `[("updated_at",1)], expireAfterSeconds=30*86400`，2026-08-10 从代码删除，**但代码删不掉
 库里已建的索引**——当时只能手工 drop。若漏掉，30 天未更新的会话会**静默过期消失**。
+
+### 索引**选项升级**：`sessions.session_id` 唯一约束（批次 16 / KB-16）
+
+`session_id` 是会话的**逻辑主键**（直读/改名/删除/摘要/级联/缓存键全按它寻址），
+但它的索引自 2026-07-16 起一直是**非唯一**的——而三条写路径都是
+`update_one({session_id}, …, upsert=True)`，upsert 在无唯一索引时**不是原子的**：
+两个并发 upsert 都看不到匹配就各自插入。真库实测：20 轮 × 两个独立 client 并发
+`create` 有 1–3 轮产出同 ID 两篇文档；把存在性检查卡住（`find` 双方放行）可
+**确定性**复现 2 篇。
+
+`ensure_index` **加不了**这个约束：Mongo **不能原地改索引选项**——库里已有非唯一
+`session_id_1`，同键请求 `unique=True` 抛 `OperationFailure`（code 86
+`IndexKeySpecsConflict`，真库实测），而它在 `connect()` 的同一个 `try` 里会被吞成
+「MongoDB 不可用」⇒ **整个 sessions 域 503**。所以升级必须是一次**受守卫的
+drop + 重建**（`SessionRepository._ensure_session_id_index`，S8 同族纪律）：
+
+| 库侧现状 | 行为 |
+|---|---|
+| 已是唯一 `session_id_1` | 直接返回（幂等；重复 `connect()` 零变更） |
+| 非唯一 + **数据干净** | `drop_index` → `ensure_index(..., unique=True)` |
+| 非唯一 + **已有重复** | **保持现状**（不 drop、不建唯一、不删数据）+ 显著告警；`clean → 重启`即自动升级 |
+| `list_indexes()` 查询失败 | 不做任何索引变更（状态未知时不执行破坏性操作） |
+| `aggregate` 重复探测失败 | 按"可能有重复"处理（**检测失败 ≠ 无重复**） |
+| 唯一索引建失败 | 退回非唯一 + error 日志；`connect()` **仍返回 True**（索引引导不得毁掉可用性） |
+
+配套：`EXPECTED_INDEX_OPTIONS["sessions"]` 登记该索引的 `unique`，于是"库侧被降级成
+非唯一"会在启动期 `schema_drift` 报成 `option_conflicts`（error 级），而不是静默通过。
+写路径侧，`_upsert_session` 用 `non_fatal=is_duplicate_key` + 只对**经确认的**
+`session_id` 约束冲突重跑一次 upsert 收敛。
+
+**为什么不做自动清理**：重复文档可能各自带着不同的消息窗口、标题、归档关联与角色绑定，
+"取 `updated_at` 最新的那个"是**猜 winner**——本仓选择把它**显式暴露**给操作者，
+而不是替用户决定删哪一篇。
 
 ### 唯一索引降级不自我修复
 
