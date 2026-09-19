@@ -1120,6 +1120,14 @@ tokenizer 下每字符 token 数相差 **3.6×**（DeepSeek-V3 0.58 / Qwen2.5 0.
 Llama-3 0.86 / o200k 0.84 / Mistral 1.14 / cl100k 1.21 / p50k 2.12）。用单一系数
 同时满足"不低估任何一家"，最坏高估被顶到 **1.72–1.83×**（Batch 18 线性规划实测）。
 
+**已验证范围与已知未覆盖家族**：声明的 `[0.75, T]` 只在拟合验证过的家族上成立
+（`cjk_opt`←Qwen2.5/DeepSeek-V3，外部验证 Qwen3-8B 亦在区间内；`generic`←Llama-3/
+Mistral/o200k/cl100k，外部验证 OLMo-7B 亦在区间内）。Batch 18 实测**未覆盖**：
+**Yi-1.5-6B（min 0.66）/ Phi-3-mini-4k（min 0.63）**，越界样本都是 emoji 类。
+把它们纳入拟合会把 `generic` 的 T 从 1.71 顶到 **2.19**（实测），对所有 custom/未知
+使用者生效 ⇒ **判定不划算，如实登记**（`todo.md` `KB-74`）。验证入口：
+`scripts/token_corpus/validate_families.py`。
+
 **合同外的已知边界（实测登记，不隐藏）**：`repeat` 类（同字符重复）的 token 率
 **完全由词表决定**，字符统计无法区分——实测 `"哈哈"×300` = 0.25 token/字而
 `"呀"×300` = 1.00 token/字，两者字符分布同构。故该类不参与硬合同，其**实测区间**

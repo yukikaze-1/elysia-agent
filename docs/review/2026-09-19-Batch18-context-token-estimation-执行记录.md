@@ -425,7 +425,24 @@ M10/M11 起初 **SURVIVED**（harness 节点写错 + 真的没有接线测试）
 5. **`cjk_opt` 的 `cjksym` 系数（1.33）> 1 token/字**：由共线性导致（标点只在少数
    样本里出现），实测合同成立，但它吸收了一部分其他类的方差。属"数据拟合值"，
    改语料必须重跑标定。
-6. **workflow 子智能体路径**（`Module/workflow_engine/core/executor.py`）自带
+6. **未覆盖的 tokenizer 家族（已实测，已登记 `KB-74`）**：合同只在拟合验证过的家族上
+   成立。Batch 18 用外部 tokenizer 验证（`scripts/token_corpus/validate_families.py`）：
+
+   | 家族 | profile | min est/actual | 判定 |
+   |---|---|---|---|
+   | Qwen2.5-3B / DeepSeek-V3（拟合集） | cjk_opt | 0.79–0.80 | ✅ |
+   | Qwen3-8B（外部验证） | cjk_opt | 0.80 | ✅ |
+   | Llama-3 / Mistral / o200k / cl100k（拟合集） | generic | 0.80 | ✅ |
+   | OLMo-7B（外部验证） | generic | 0.80 | ✅ |
+   | **Yi-1.5-6B** | generic | **0.66**（emoji） | ⚠️ 未覆盖 |
+   | **Phi-3-mini-4k** | generic | **0.63**（emoji / 繁体中文） | ⚠️ 未覆盖 |
+
+   **为什么不用"更保守"敷衍过去**：把 Yi/Phi-3 纳入拟合会把 `generic` 的最坏高估从
+   **1.71 顶到 2.19**（实测），而 `generic` 服务**所有** custom/未知使用者——
+   那是拿全局上下文质量换两个家族的极端输入。**可达性**：越界样本是 emoji 类，
+   要造成实质 false accept 需要上千个 emoji 的极端输入。**残余风险如实登记**，
+   并把"纳入/排除"做成可执行入口而不是一句注释。
+7. **workflow 子智能体路径**（`Module/workflow_engine/core/executor.py`）自带
    `tool_defs` 且**完全没有预算/估算**（`NEW_FINDING_OUT_OF_SCOPE`）。
 
 ---

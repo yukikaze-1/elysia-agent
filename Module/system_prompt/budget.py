@@ -77,7 +77,26 @@ tokenizer 下每字符 token 数相差 **3.6×**（DeepSeek-V3 0.58 / Qwen2.5 0.
 Llama-3 0.86 / o200k 0.84 / Mistral 1.14 / cl100k 1.21 / p50k 2.12）。用单一系数
 同时满足"不低估任何一家"，最坏高估会被顶到 **1.72–1.83×**（Batch 18 用线性规划实测，
 见 `docs/review/2026-09-19-Batch18-*` 执行记录）。分 profile 后，本仓**默认的
-`deepseek/*`** 与本地 `ollama/qwen2.5*` 拿到紧界（≤1.22），未知模型拿到保守回退。
+`deepseek/*`** 与本地 `ollama/qwen2.5*` 拿到紧界（≤1.26），未知模型拿到保守回退。
+
+### 已验证范围与**已知未覆盖**的家族（诚实声明，§113/§196）
+
+声明的 `[M, T]` 只在**拟合时验证过的家族**上成立：
+
+- `cjk_opt`：Qwen2.5-3B（HF tokenizer 与真实 Ollama `prompt_eval_count` 双证）、
+  DeepSeek-V3。**Qwen3-8B 经外部验证也在区间内**（min 0.80）。
+- `generic`：Llama-3-8B、Mistral-7B-v0.3、`o200k_base`、`cl100k_base`。
+  **OLMo-7B 经外部验证也在区间内**（min 0.80）。
+- 已知**未覆盖**（Batch 18 实测，`scripts/token_corpus/validate_families.py` 可复现）：
+  **Yi-1.5-6B（min 0.66）** 与 **Phi-3-mini-4k（min 0.63）**，越界样本都是 emoji 类
+  （Phi-3 另含繁体中文）。即在这两个家族上仍可能低估到 0.63–0.66，低于 0.75 硬下限。
+  **为什么不修**：把它们纳入拟合会把 `generic` 的最坏高估从 **1.71 顶到 2.19**
+  （实测），而 `generic` 服务的是**所有** custom/未知使用者——用全局质量换两个家族的
+  极端输入不划算。已登记为 `KB-74`，并把"纳入/排除"做成可执行入口。
+- `p50k_base`（GPT-3 时代 byte-level BPE）**在合同外**：`providers.yaml` 无对应模型。
+
+新增 provider/model 家族时：跑 `scripts/token_corpus/validate_families.py <repo>`，
+把结论写进执行记录，再决定"纳入拟合"还是"登记为未覆盖"。
 
 ### 系数怎么来的（不是手调 magic number）
 
