@@ -811,7 +811,7 @@ docs(todo): close KB-15/KB-16 and register Batch 16 findings
 | randomized/property | 参数化 N ∈ {0,1,49,50,51,205} × 4 种 malformed（missing/null/empty/array）+ Date/数字型 + 真库 1000 条遍历 + 两次遍历一致性 | ✅（§36） |
 | static gates | `make lint`（ruff 全绿）/ `make pyright`（**0 errors**）/ `make check-arch` / `check-types`（含 17 golden frames）/ `check-compose` / `check-env-lock` / `check-timeouts` / `check-contract` / `check-debug-auth` / `check-secrets` / `check-test-sets` / `check-ci-isolation` | **全部 PASS**（`tmp/b16/main/gate_*.log`） |
 | frontend | `cd frontend && npm run build` | ✅ built（本批未改任何前端代码） |
-| real CI | push 后核对 backend / real-mongo / frontend / static jobs | ⏳ 见本记录落盘后的 CI 结果（`docs/ci.md`） |
+| real CI | push 后核对 backend / real-mongo / frontend / static jobs | ⏳ **待 owner push**：本机没有 GitHub 凭据（`git push` 报 `could not read Username`），三个 commit 已在本地 `main` 就绪（`1fa25939` / `91abe43e` / `19e01078`） |
 
 ---
 
