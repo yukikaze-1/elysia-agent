@@ -46,22 +46,79 @@ def _call(tc_id: str = "tc_1") -> ToolCall:
 
 
 class TestEstimation:
-    def test_cjk_costs_one_token_per_char(self):
-        """中文按 1 字 1 token（保守上界）——低估会让我们以为还在预算内。"""
-        assert estimate_tokens("你好世界") == 4
+    """Batch 18 / KB-12：估算器是**有界近似**，按 resolved model 选 profile。
 
-    def test_ascii_costs_quarter(self):
-        assert estimate_tokens("abcdefgh") == 2
-
-    def test_mixed_is_conservative(self):
-        assert estimate_tokens("你好abcd") == 2 + 1
+    旧的逐字公式断言（`"你好世界" == 4`、`"abcdefgh" == 2`）随实现一起作废——
+    它们钉的是"字符启发式"本身，而那个启发式已被证明双向越界（自然中文高估 57%、
+    JSON 低估 43%）。现在钉的是**合同**：全量语料的 est/actual 区间见
+    `Module/system_prompt/tests/test_token_corpus_contract.py`。
+    """
 
     def test_empty_is_zero(self):
         assert estimate_tokens("") == 0
 
+    def test_nonempty_is_never_zero(self):
+        """一个字符也必须 ≥1：0 会让"短输入"在预算里凭空消失。"""
+        assert estimate_tokens("a") >= 1
+        assert estimate_tokens("，", model="ollama/qwen2.5:3b") >= 1
+
+    def test_cjk_dense_profile_matches_the_cjk_optimized_families(self):
+        """qwen/deepseek 家族：自然中文实测 ≈0.57–0.64 token/字，不再按 1 字 1 token。"""
+        assert estimate_tokens("你好世界", model="ollama/qwen2.5:3b") == 3
+        assert estimate_tokens("你好世界", model="deepseek/deepseek-v4-flash") == 3
+        # 未识别模型走保守 profile：同一串估得更高（不许比紧界更低）
+        assert estimate_tokens("你好世界") > estimate_tokens(
+            "你好世界", model="ollama/qwen2.5:3b")
+
+    def test_profile_selection_has_one_authority(self):
+        from Module.system_prompt.budget import profile_for_model
+
+        assert profile_for_model("ollama/qwen2.5:3b") == "cjk_opt"
+        assert profile_for_model("deepseek/deepseek-v4-flash") == "cjk_opt"
+        # provider 段不参与判定：custom 里跑的 qwen 也该拿紧界
+        assert profile_for_model("custom/qwen2.5-7b-instruct") == "cjk_opt"
+        for unknown in ("openai/gpt-4o", "ollama/llama3:8b", "ollama/mistral:7b",
+                        "mimo/mimo-v2.5", "custom/whatever", None, ""):
+            assert profile_for_model(unknown) == "generic"
+
+    def test_dense_ascii_is_not_underestimated(self):
+        """JSON/代码这类 token-dense 内容：低估 25% 以上就会击穿 0.75 余量。"""
+        dense = '{"a":1,"b":[2,3],"c":{"d":true}}'
+        assert estimate_tokens(dense) >= 10
+
+    def test_emoji_is_not_quarter_token(self):
+        """旧公式把 emoji 按 4 字符 1 token 计（实测低估 75%）。"""
+        assert estimate_tokens("😀🎉🚀") >= 4
+
+    def test_estimator_is_deterministic_and_read_only(self):
+        text = "混合 mixed 内容 123 😀\n\t"
+        first = estimate_tokens(text, model="ollama/qwen2.5:3b")
+        assert [estimate_tokens(text, model="ollama/qwen2.5:3b") for _ in range(3)] == [first] * 3
+        assert text == "混合 mixed 内容 123 😀\n\t"   # 估算不改输入
+
     def test_messages_estimation_counts_roles_and_overhead(self):
         msgs = [{"role": "system", "content": "你好"}, {"role": "user", "content": "在吗"}]
         assert estimate_messages_tokens(msgs) > 4
+
+    def test_tool_definitions_are_never_invisible(self):
+        """Batch 18：provider request = messages + tools，漏算 tools 是 false accept。"""
+        from Module.system_prompt.budget import estimate_tools_tokens
+
+        msgs = [{"role": "user", "content": "在吗"}]
+        tools = [{"type": "function", "function": {
+            "name": "web_search", "description": "执行一次网络搜索并返回摘要。",
+            "parameters": {"type": "object", "properties": {
+                "query": {"type": "string", "description": "检索查询"}},
+                "required": ["query"]}}}]
+        without = estimate_messages_tokens(msgs, model="ollama/qwen2.5:3b")
+        with_tools = estimate_messages_tokens(msgs, model="ollama/qwen2.5:3b", tools=tools)
+        assert estimate_tools_tokens(tools, model="ollama/qwen2.5:3b") > 0
+        assert with_tools > without
+        # 空/None 不改变结果（向后兼容）
+        assert estimate_tools_tokens(None) == 0
+        assert estimate_tools_tokens([]) == 0
+        assert estimate_messages_tokens(
+            msgs, model="ollama/qwen2.5:3b", tools=None) == without
 
     def test_budget_uses_headroom_and_default(self):
         assert budget_from_context_window(1000) == int(1000 * CONTEXT_HEADROOM_RATIO)

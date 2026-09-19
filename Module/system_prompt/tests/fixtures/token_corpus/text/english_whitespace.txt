@@ -1,0 +1,7 @@
+def   spaced(  a ,   b ):
+		return   a	+	b
+
+
+value      =      42          # trailing    comment
+								deep_indent = True
+                                        wide_gap = 1

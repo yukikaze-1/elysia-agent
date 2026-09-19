@@ -1,0 +1,409 @@
+{
+ "category": "chat_framing",
+ "messages": [
+  {
+   "role": "system",
+   "content": "You are a helpful assistant."
+  },
+  {
+   "role": "user",
+   "content": "turn 0"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 1"
+  },
+  {
+   "role": "user",
+   "content": "turn 2"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 3"
+  },
+  {
+   "role": "user",
+   "content": "turn 4"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 5"
+  },
+  {
+   "role": "user",
+   "content": "turn 6"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 7"
+  },
+  {
+   "role": "user",
+   "content": "turn 8"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 9"
+  },
+  {
+   "role": "user",
+   "content": "turn 10"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 11"
+  },
+  {
+   "role": "user",
+   "content": "turn 12"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 13"
+  },
+  {
+   "role": "user",
+   "content": "turn 14"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 15"
+  },
+  {
+   "role": "user",
+   "content": "turn 16"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 17"
+  },
+  {
+   "role": "user",
+   "content": "turn 18"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 19"
+  },
+  {
+   "role": "user",
+   "content": "turn 20"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 21"
+  },
+  {
+   "role": "user",
+   "content": "turn 22"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 23"
+  },
+  {
+   "role": "user",
+   "content": "turn 24"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 25"
+  },
+  {
+   "role": "user",
+   "content": "turn 26"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 27"
+  },
+  {
+   "role": "user",
+   "content": "turn 28"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 29"
+  },
+  {
+   "role": "user",
+   "content": "turn 30"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 31"
+  },
+  {
+   "role": "user",
+   "content": "turn 32"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 33"
+  },
+  {
+   "role": "user",
+   "content": "turn 34"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 35"
+  },
+  {
+   "role": "user",
+   "content": "turn 36"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 37"
+  },
+  {
+   "role": "user",
+   "content": "turn 38"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 39"
+  },
+  {
+   "role": "user",
+   "content": "turn 40"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 41"
+  },
+  {
+   "role": "user",
+   "content": "turn 42"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 43"
+  },
+  {
+   "role": "user",
+   "content": "turn 44"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 45"
+  },
+  {
+   "role": "user",
+   "content": "turn 46"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 47"
+  },
+  {
+   "role": "user",
+   "content": "turn 48"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 49"
+  },
+  {
+   "role": "user",
+   "content": "turn 50"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 51"
+  },
+  {
+   "role": "user",
+   "content": "turn 52"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 53"
+  },
+  {
+   "role": "user",
+   "content": "turn 54"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 55"
+  },
+  {
+   "role": "user",
+   "content": "turn 56"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 57"
+  },
+  {
+   "role": "user",
+   "content": "turn 58"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 59"
+  },
+  {
+   "role": "user",
+   "content": "turn 60"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 61"
+  },
+  {
+   "role": "user",
+   "content": "turn 62"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 63"
+  },
+  {
+   "role": "user",
+   "content": "turn 64"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 65"
+  },
+  {
+   "role": "user",
+   "content": "turn 66"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 67"
+  },
+  {
+   "role": "user",
+   "content": "turn 68"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 69"
+  },
+  {
+   "role": "user",
+   "content": "turn 70"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 71"
+  },
+  {
+   "role": "user",
+   "content": "turn 72"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 73"
+  },
+  {
+   "role": "user",
+   "content": "turn 74"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 75"
+  },
+  {
+   "role": "user",
+   "content": "turn 76"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 77"
+  },
+  {
+   "role": "user",
+   "content": "turn 78"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 79"
+  },
+  {
+   "role": "user",
+   "content": "turn 80"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 81"
+  },
+  {
+   "role": "user",
+   "content": "turn 82"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 83"
+  },
+  {
+   "role": "user",
+   "content": "turn 84"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 85"
+  },
+  {
+   "role": "user",
+   "content": "turn 86"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 87"
+  },
+  {
+   "role": "user",
+   "content": "turn 88"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 89"
+  },
+  {
+   "role": "user",
+   "content": "turn 90"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 91"
+  },
+  {
+   "role": "user",
+   "content": "turn 92"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 93"
+  },
+  {
+   "role": "user",
+   "content": "turn 94"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 95"
+  },
+  {
+   "role": "user",
+   "content": "turn 96"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 97"
+  },
+  {
+   "role": "user",
+   "content": "turn 98"
+  },
+  {
+   "role": "assistant",
+   "content": "turn 99"
+  }
+ ]
+}

@@ -93,7 +93,18 @@ class SafetyProfile:
 # ============================================================================
 
 def _estimate_tokens(text: str) -> int:
-    """粗略 token 估算：英文 ~4 chars/token，中文 ~1 char/token。
+    """工具结果截断用的 token 估算——**委托给仓内唯一估算权威**（Batch 18）。
+
+    此前这里有一份独立公式 `int(latin/4 + cjk)`，`latin` 由
+    `re.findall(r"[a-zA-Z0-9\\s\\W]", text)` 数出。它的分类与预算侧**不同构**，
+    实测三个缺陷：① `_` 是唯一不匹配的 ASCII 字符 ⇒ 蛇形标识符按 1 token/下划线
+    计（4× 膨胀）；② emoji 全部落进 `latin` ⇒ `"😀" * 500` 估成 0 token（截断
+    永不触发）；③ 中文标点落进 `latin` ⇒ 按 1/4 token 计。
+    §"Estimator Single Authority"（TE1）要求同一个模型下所有消费者用同一份算法，
+    故这里改成薄委托（保留私有名以免扩大改动面）。
+
+    profile 取保守默认（不带 model）：工具结果截断**不知道**目标模型，而截断是
+    "宁可多截"的一侧，用宽界 profile 是正确方向。
 
     Args:
         text: 待估算的文本。
@@ -101,9 +112,9 @@ def _estimate_tokens(text: str) -> int:
     Returns:
         估算的 token 数量。
     """
-    latin = len(re.findall(r"[a-zA-Z0-9\s\W]", text))
-    cjk = len(text) - latin
-    return int(latin / 4 + cjk)
+    from Module.system_prompt.budget import estimate_tokens
+
+    return estimate_tokens(text)
 
 
 def _format_validation_error(exc: ValidationError) -> str:

@@ -23,7 +23,9 @@ provider/model（如 `ollama/qwen2.5:3b`，`providers.yaml` 声明 8192）上，
 （严格 OpenAI 风格 API 的真实行为）。**本地 ollama 0.24.0 不这样**：实测超窗输入
 返回 HTTP 200 + **静默截断**（`prompt_tokens` 被压到 `num_ctx`）；两类 provider 都
 会让"超窗照发"变成用户可见的坏结果（一个报错、一个悄悄丢掉人设），故判据仍成立。
-stub 的输入计数用**仓内既有**的 estimator（`estimate_messages_tokens`），
+stub 的输入计数用**仓内既有**的 estimator（`estimate_messages_tokens`，且传
+**resolved model** —— Batch 18 起估算按模型选 profile，不传就落到保守 profile，
+那样 stub 会比真实 provider 更严、把用例变成"证明估算器"而不是"证明本层"），
 `max_tokens` 缺省即 0（本仓 chat/预览都不发该参数）——它不会比"强制窗口"的真实
 provider 更宽松。
 
@@ -79,13 +81,16 @@ class _WindowEnforcingBackend(FakeLLMBackend):
     记录每次 `chat()` 收到的 messages 与 kwargs，供断言"实际发出去的请求装得下"。
     """
 
-    def __init__(self, *, window: int, response: str = _STUB_REPLY) -> None:
+    def __init__(self, *, window: int, model_id: str | None = None,
+                 response: str = _STUB_REPLY) -> None:
         super().__init__(response=response)
         self.window = window
+        self.model_id = model_id
         self.calls: list[dict[str, Any]] = []
 
     async def chat(self, messages: list[dict], **kwargs: Any) -> str:
-        input_tokens = estimate_messages_tokens(messages)
+        # 与真实 provider 同口径：按 resolved model 的估算 profile 计数
+        input_tokens = estimate_messages_tokens(messages, model=self.model_id)
         requested = kwargs.get("max_tokens")
         reserved = int(requested) if isinstance(requested, int) else 0
         self.calls.append({
@@ -205,7 +210,8 @@ def _service(port: Any, store: Any) -> CharacterService:
 
 
 async def _assemble_preview_tokens(
-    draft: CharacterDraft, user_message: str, *, budget: int | None
+    draft: CharacterDraft, user_message: str, *, budget: int | None,
+    model_id: str | None = _OLLAMA_MODEL,
 ) -> int:
     """用**生产组装路径**（PromptAssembler）现算预览 prompt 的估算 token 数。
 
@@ -224,8 +230,9 @@ async def _assemble_preview_tokens(
         user_pronoun_override="她",
         user_timezone_override="Asia/Shanghai",
         prompt_budget_tokens=budget,
+        model_id=model_id,
     )
-    return estimate_messages_tokens(messages)
+    return estimate_messages_tokens(messages, model=model_id)
 
 
 def _preview_profile(draft: CharacterDraft):  # noqa: ANN202
@@ -284,7 +291,7 @@ async def preview_env(aiohttp_client, monkeypatch):
         agent = Agent(config=AppConfig())
         app = create_app(agent, serve_static=False)
         window = _resolved_window(model_id)
-        backend = _WindowEnforcingBackend(window=window)
+        backend = _WindowEnforcingBackend(window=window, model_id=model_id)
         llm = LLMAdapter(model=model_id, _test_backend=backend)
         # 与生产同构的本地身份快照（非权威模式）——权威模式在无 Mongo 的
         # 单测里恒 fail-closed 503，那是另一条已验证的语义（P0-3），不是本文件的对象。
@@ -313,8 +320,11 @@ async def test_preview_fits_small_window_when_trimming_suffices(preview_env) -> 
     """
     harness = await preview_env(_OLLAMA_MODEL)
     window = _resolved_window(_OLLAMA_MODEL)
-    draft = _draft()
-    message = "在吗？" + _cjk(1300, "呀")
+    # Batch 18：尺寸重新校准。旧尺寸（core=3000/emotion=400 + 1300 字）建立在
+    # "CJK 1 字 1 token"的旧估算上；估算修正后它已装得下窗口，本用例失去鉴别力。
+    # 现在把**可丢节**（C3/Emotion）调大，使"裁剪前后"有 ~1900 token 的真实落差。
+    draft = _draft(emotion=3000)
+    message = "在吗？" + _cjk(4000, "呀")
 
     # 前提现算（不写死）：未加预算超窗；加预算装得下 —— 这就把本用例钉在边界上。
     untrimmed = await _assemble_preview_tokens(draft, message, budget=None)
@@ -343,8 +353,8 @@ async def test_preview_large_window_provider_unchanged(preview_env) -> None:
     """PPW-5：大窗口 provider 上同样的（超小窗口）请求必须继续成功。"""
     large_window = _resolved_window(_LARGE_MODEL)
     small_window = _resolved_window(_OLLAMA_MODEL)
-    draft = _draft()
-    message = "在吗？" + _cjk(1300, "呀")
+    draft = _draft(emotion=3000)
+    message = "在吗？" + _cjk(4000, "呀")
 
     harness = await preview_env(_LARGE_MODEL)
     status, body = await harness.preview(_wire_draft_for(draft), message)
@@ -373,25 +383,33 @@ async def test_preview_boundary_sends_when_fits_and_validates_when_not(
     budget = budget_from_context_window(window)
     draft = _draft()
 
-    # 现算边界：系统 prompt（裁剪后）为 base；用户消息是纯 CJK，按 1 字 1 token 增长，
-    # 故 `m* = m0 + (window - t(m0))` 恰好落在 `== 窗口` 上（不写死任何字面量）。
+    # 现算边界：系统 prompt（裁剪后）为 base；用户消息是纯 CJK。Batch 18 起每字符
+    # 成本不再是 1（旧公式被证伪），且估算含向上取整 ⇒ 闭式公式算不准，**二分找**
+    # 最小的 m 使 `est(m) >= window`（这正是被钉住的那条边界）。
     base = await _assemble_preview_tokens(draft, "", budget=budget)
-    probe = await _assemble_preview_tokens(draft, _cjk(10, "呀"), budget=budget)
-    exact = 10 + (window - probe)
-    assert exact > 11, f"边界字面量不合法：{exact}"
+    assert base < window, f"前提不成立：system prompt 自身 {base} >= 窗口 {window}"
+    lo, hi = 1, 40000
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if await _assemble_preview_tokens(draft, _cjk(mid, "呀"), budget=budget) >= window:
+            hi = mid
+        else:
+            lo = mid + 1
+    exact = lo
+    assert exact > 2, f"边界字面量不合法：{exact}"
     low = _cjk(exact - 1, "呀")
     high = _cjk(exact, "呀")
 
     fits = await _assemble_preview_tokens(draft, low, budget=budget)
     over = await _assemble_preview_tokens(draft, high, budget=budget)
-    assert base < window, f"前提不成立：system prompt 自身 {base} >= 窗口 {window}"
-    assert fits == window - 1 and over == window, (
+    assert fits < window <= over, (
         f"边界前提不成立：fits={fits} over={over} window={window}")
+    assert over - fits <= 3, f"边界不够紧：fits={fits} over={over}"
 
     status_fit, body_fit = await harness.preview(_wire_draft_for(draft), low)
     assert status_fit == 200, f"{body_fit}"
     assert len(harness.backend.calls) == 1
-    assert harness.backend.calls[0]["input_tokens"] == window - 1
+    assert window - 3 <= harness.backend.calls[0]["input_tokens"] < window
 
     status_over, body_over = await harness.preview(_wire_draft_for(draft), high)
     assert status_over == 400, f"占满窗口应本地拒绝，实际 {status_over}: {body_over}"
@@ -410,8 +428,10 @@ async def test_preview_impossible_input_fails_locally_without_provider_call(
     """PPW-4：连窗口都装不下的角色档案必须在本地失败，不发已知必 400 的请求。"""
     harness = await preview_env(_OLLAMA_MODEL)
     window = _resolved_window(_OLLAMA_MODEL)
-    draft = _draft(core=6000, relationship=1500, speaking=1500,
-                   emotion=800, initiative=600)
+    # Batch 18：估算修正后旧尺寸（core=6000…）裁剪后已装得下；按角色档案上限
+    # （corePersonality 12000 / relationshipStyle 6000）重新取尺寸。
+    draft = _draft(core=9000, relationship=3000, speaking=3000,
+                   emotion=2000, initiative=2000)
 
     trimmed = await _assemble_preview_tokens(
         draft, "在吗？", budget=budget_from_context_window(window))
@@ -442,8 +462,8 @@ async def test_preview_budget_follows_resolved_model_not_config(preview_env) -> 
     small_window = _resolved_window(_OLLAMA_MODEL)
 
     harness = await preview_env(_OLLAMA_MODEL)
-    draft = _draft()
-    message = "在吗？" + _cjk(1300, "呀")
+    draft = _draft(emotion=3000)
+    message = "在吗？" + _cjk(4000, "呀")
 
     status, body = await harness.preview(_wire_draft_for(draft), message)
 

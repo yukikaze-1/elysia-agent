@@ -1,0 +1,475 @@
+{
+ "entries": [
+  {
+   "id": "ascii_repeat_char",
+   "kind": "text",
+   "category": "repeat",
+   "path": "text/ascii_repeat_char.txt",
+   "chars": 400,
+   "bytes": 400,
+   "set": "te"
+  },
+  {
+   "id": "ascii_repeat_word",
+   "kind": "text",
+   "category": "repeat",
+   "path": "text/ascii_repeat_word.txt",
+   "chars": 500,
+   "bytes": 500,
+   "set": "te"
+  },
+  {
+   "id": "cjk_ja",
+   "kind": "text",
+   "category": "cjk_ja",
+   "path": "text/cjk_ja.txt",
+   "chars": 315,
+   "bytes": 945,
+   "set": "te"
+  },
+  {
+   "id": "cjk_mixed_zh_en",
+   "kind": "text",
+   "category": "mixed_zh_en",
+   "path": "text/cjk_mixed_zh_en.txt",
+   "chars": 370,
+   "bytes": 774,
+   "set": "te"
+  },
+  {
+   "id": "cjk_no_space_long",
+   "kind": "text",
+   "category": "cjk_no_space",
+   "path": "text/cjk_no_space_long.txt",
+   "chars": 480,
+   "bytes": 1440,
+   "set": "te"
+  },
+  {
+   "id": "cjk_punct_heavy",
+   "kind": "text",
+   "category": "cjk_punct",
+   "path": "text/cjk_punct_heavy.txt",
+   "chars": 552,
+   "bytes": 1648,
+   "set": "te"
+  },
+  {
+   "id": "cjk_punct_run",
+   "kind": "text",
+   "category": "repeat",
+   "path": "text/cjk_punct_run.txt",
+   "chars": 300,
+   "bytes": 900,
+   "set": "te"
+  },
+  {
+   "id": "cjk_repeat_bigram",
+   "kind": "text",
+   "category": "repeat",
+   "path": "text/cjk_repeat_bigram.txt",
+   "chars": 600,
+   "bytes": 1800,
+   "set": "te"
+  },
+  {
+   "id": "cjk_repeat_single_char",
+   "kind": "text",
+   "category": "repeat",
+   "path": "text/cjk_repeat_single_char.txt",
+   "chars": 300,
+   "bytes": 900,
+   "set": "te"
+  },
+  {
+   "id": "cjk_zh_simplified",
+   "kind": "text",
+   "category": "cjk_zh",
+   "path": "text/cjk_zh_simplified.txt",
+   "chars": 478,
+   "bytes": 1434,
+   "set": "te"
+  },
+  {
+   "id": "cjk_zh_traditional",
+   "kind": "text",
+   "category": "cjk_zh_tw",
+   "path": "text/cjk_zh_traditional.txt",
+   "chars": 233,
+   "bytes": 699,
+   "set": "te"
+  },
+  {
+   "id": "code_long_identifiers",
+   "kind": "text",
+   "category": "code",
+   "path": "text/code_long_identifiers.txt",
+   "chars": 804,
+   "bytes": 804,
+   "set": "te"
+  },
+  {
+   "id": "code_python",
+   "kind": "text",
+   "category": "code",
+   "path": "text/code_python.txt",
+   "chars": 3657,
+   "bytes": 3657,
+   "set": "te"
+  },
+  {
+   "id": "code_shell",
+   "kind": "text",
+   "category": "code",
+   "path": "text/code_shell.txt",
+   "chars": 983,
+   "bytes": 983,
+   "set": "te"
+  },
+  {
+   "id": "code_sql",
+   "kind": "text",
+   "category": "code",
+   "path": "text/code_sql.txt",
+   "chars": 2055,
+   "bytes": 2055,
+   "set": "te"
+  },
+  {
+   "id": "code_typescript",
+   "kind": "text",
+   "category": "code",
+   "path": "text/code_typescript.txt",
+   "chars": 2148,
+   "bytes": 2148,
+   "set": "te"
+  },
+  {
+   "id": "code_yaml",
+   "kind": "text",
+   "category": "code",
+   "path": "text/code_yaml.txt",
+   "chars": 1709,
+   "bytes": 1709,
+   "set": "te"
+  },
+  {
+   "id": "empty",
+   "kind": "text",
+   "category": "small",
+   "path": "text/empty.txt",
+   "chars": 0,
+   "bytes": 0,
+   "set": "te"
+  },
+  {
+   "id": "english_10k",
+   "kind": "text",
+   "category": "english",
+   "path": "text/english_10k.txt",
+   "chars": 16772,
+   "bytes": 16772,
+   "set": "te"
+  },
+  {
+   "id": "english_1k",
+   "kind": "text",
+   "category": "english",
+   "path": "text/english_1k.txt",
+   "chars": 1712,
+   "bytes": 1712,
+   "set": "te"
+  },
+  {
+   "id": "english_punct_heavy",
+   "kind": "text",
+   "category": "english_punct",
+   "path": "text/english_punct_heavy.txt",
+   "chars": 3168,
+   "bytes": 3168,
+   "set": "te"
+  },
+  {
+   "id": "english_short",
+   "kind": "text",
+   "category": "english",
+   "path": "text/english_short.txt",
+   "chars": 37,
+   "bytes": 37,
+   "set": "te"
+  },
+  {
+   "id": "english_whitespace",
+   "kind": "text",
+   "category": "whitespace",
+   "path": "text/english_whitespace.txt",
+   "chars": 177,
+   "bytes": 177,
+   "set": "te"
+  },
+  {
+   "id": "json_escaped_strings",
+   "kind": "text",
+   "category": "json",
+   "path": "text/json_escaped_strings.txt",
+   "chars": 206,
+   "bytes": 210,
+   "set": "te"
+  },
+  {
+   "id": "json_long_keys",
+   "kind": "text",
+   "category": "json",
+   "path": "text/json_long_keys.txt",
+   "chars": 4557,
+   "bytes": 4557,
+   "set": "te"
+  },
+  {
+   "id": "json_minified",
+   "kind": "text",
+   "category": "json",
+   "path": "text/json_minified.txt",
+   "chars": 3199,
+   "bytes": 3199,
+   "set": "te"
+  },
+  {
+   "id": "json_nested",
+   "kind": "text",
+   "category": "json",
+   "path": "text/json_nested.txt",
+   "chars": 2012,
+   "bytes": 2012,
+   "set": "te"
+  },
+  {
+   "id": "json_numeric_arrays",
+   "kind": "text",
+   "category": "json",
+   "path": "text/json_numeric_arrays.txt",
+   "chars": 3560,
+   "bytes": 3560,
+   "set": "te"
+  },
+  {
+   "id": "json_pretty",
+   "kind": "text",
+   "category": "json",
+   "path": "text/json_pretty.txt",
+   "chars": 2692,
+   "bytes": 2692,
+   "set": "te"
+  },
+  {
+   "id": "json_zh",
+   "kind": "text",
+   "category": "json",
+   "path": "text/json_zh.txt",
+   "chars": 1080,
+   "bytes": 1512,
+   "set": "te"
+  },
+  {
+   "id": "markdown_mixed",
+   "kind": "text",
+   "category": "markdown",
+   "path": "text/markdown_mixed.txt",
+   "chars": 588,
+   "bytes": 594,
+   "set": "te"
+  },
+  {
+   "id": "tiny_greeting",
+   "kind": "text",
+   "category": "small",
+   "path": "text/tiny_greeting.txt",
+   "chars": 2,
+   "bytes": 2,
+   "set": "te"
+  },
+  {
+   "id": "tiny_zh_greeting",
+   "kind": "text",
+   "category": "small",
+   "path": "text/tiny_zh_greeting.txt",
+   "chars": 2,
+   "bytes": 6,
+   "set": "te"
+  },
+  {
+   "id": "unicode_accents_cyrillic",
+   "kind": "text",
+   "category": "unicode",
+   "path": "text/unicode_accents_cyrillic.txt",
+   "chars": 739,
+   "bytes": 994,
+   "set": "te"
+  },
+  {
+   "id": "unicode_emoji",
+   "kind": "text",
+   "category": "unicode",
+   "path": "text/unicode_emoji.txt",
+   "chars": 252,
+   "bytes": 612,
+   "set": "te"
+  },
+  {
+   "id": "unicode_zwj_combining",
+   "kind": "text",
+   "category": "unicode",
+   "path": "text/unicode_zwj_combining.txt",
+   "chars": 464,
+   "bytes": 1152,
+   "set": "te"
+  },
+  {
+   "id": "urls_ids_paths",
+   "kind": "text",
+   "category": "identifiers",
+   "path": "text/urls_ids_paths.txt",
+   "chars": 1423,
+   "bytes": 1423,
+   "set": "te"
+  },
+  {
+   "id": "chat_empty_messages",
+   "kind": "chat",
+   "category": "chat_framing",
+   "path": "chat/chat_empty_messages.json",
+   "set": "te"
+  },
+  {
+   "id": "chat_many_small_messages",
+   "kind": "chat",
+   "category": "chat_framing",
+   "path": "chat/chat_many_small_messages.json",
+   "set": "te"
+  },
+  {
+   "id": "chat_one_large_message",
+   "kind": "chat",
+   "category": "chat_framing",
+   "path": "chat/chat_one_large_message.json",
+   "set": "te"
+  },
+  {
+   "id": "chat_role_mixture",
+   "kind": "chat",
+   "category": "chat_framing",
+   "path": "chat/chat_role_mixture.json",
+   "set": "te"
+  },
+  {
+   "id": "chat_single_turn",
+   "kind": "chat",
+   "category": "chat_framing",
+   "path": "chat/chat_single_turn.json",
+   "set": "te"
+  },
+  {
+   "id": "chat_system_user",
+   "kind": "chat",
+   "category": "chat_framing",
+   "path": "chat/chat_system_user.json",
+   "set": "te"
+  },
+  {
+   "id": "chat_tool_history",
+   "kind": "chat",
+   "category": "chat_framing",
+   "path": "chat/chat_tool_history.json",
+   "set": "te"
+  },
+  {
+   "id": "representative_elysia_prompt",
+   "kind": "chat",
+   "category": "representative",
+   "path": "chat/representative_elysia_prompt.json",
+   "set": "te"
+  },
+  {
+   "id": "tools_many",
+   "kind": "chat",
+   "category": "tools",
+   "path": "chat/tools_many.json",
+   "set": "te"
+  },
+  {
+   "id": "tools_many_short_chat",
+   "kind": "chat",
+   "category": "tools",
+   "path": "chat/tools_many_short_chat.json",
+   "set": "te"
+  },
+  {
+   "id": "tools_medium",
+   "kind": "chat",
+   "category": "tools",
+   "path": "chat/tools_medium.json",
+   "set": "te"
+  },
+  {
+   "id": "tools_small",
+   "kind": "chat",
+   "category": "tools",
+   "path": "chat/tools_small.json",
+   "set": "te"
+  },
+  {
+   "id": "holdout_cjk",
+   "kind": "text",
+   "category": "cjk_zh",
+   "path": "text/holdout_cjk.txt",
+   "chars": 92,
+   "bytes": 276,
+   "set": "holdout"
+  },
+  {
+   "id": "holdout_code",
+   "kind": "text",
+   "category": "code",
+   "path": "text/holdout_code.txt",
+   "chars": 2446,
+   "bytes": 2446,
+   "set": "holdout"
+  },
+  {
+   "id": "holdout_english",
+   "kind": "text",
+   "category": "english",
+   "path": "text/holdout_english.txt",
+   "chars": 317,
+   "bytes": 317,
+   "set": "holdout"
+  },
+  {
+   "id": "holdout_json",
+   "kind": "text",
+   "category": "json",
+   "path": "text/holdout_json.txt",
+   "chars": 1281,
+   "bytes": 1281,
+   "set": "holdout"
+  },
+  {
+   "id": "holdout_markdown",
+   "kind": "text",
+   "category": "markdown",
+   "path": "text/holdout_markdown.txt",
+   "chars": 416,
+   "bytes": 618,
+   "set": "holdout"
+  },
+  {
+   "id": "holdout_mixed",
+   "kind": "text",
+   "category": "mixed_zh_en",
+   "path": "text/holdout_mixed.txt",
+   "chars": 570,
+   "bytes": 910,
+   "set": "holdout"
+  }
+ ]
+}

@@ -1,0 +1,31 @@
+for f in $(find ./data -name '*.json' -type f); do
+  jq -r '.items[] | select(.score > 0) | .name' "$f" >> out_0.txt
+done
+
+for f in $(find ./data -name '*.json' -type f); do
+  jq -r '.items[] | select(.score > 1) | .name' "$f" >> out_1.txt
+done
+
+for f in $(find ./data -name '*.json' -type f); do
+  jq -r '.items[] | select(.score > 2) | .name' "$f" >> out_2.txt
+done
+
+for f in $(find ./data -name '*.json' -type f); do
+  jq -r '.items[] | select(.score > 3) | .name' "$f" >> out_3.txt
+done
+
+for f in $(find ./data -name '*.json' -type f); do
+  jq -r '.items[] | select(.score > 4) | .name' "$f" >> out_4.txt
+done
+
+for f in $(find ./data -name '*.json' -type f); do
+  jq -r '.items[] | select(.score > 5) | .name' "$f" >> out_5.txt
+done
+
+for f in $(find ./data -name '*.json' -type f); do
+  jq -r '.items[] | select(.score > 6) | .name' "$f" >> out_6.txt
+done
+
+for f in $(find ./data -name '*.json' -type f); do
+  jq -r '.items[] | select(.score > 7) | .name' "$f" >> out_7.txt
+done

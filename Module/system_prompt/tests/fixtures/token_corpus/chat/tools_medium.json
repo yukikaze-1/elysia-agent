@@ -1,0 +1,115 @@
+{
+ "category": "tools",
+ "messages": [
+  {
+   "role": "user",
+   "content": "现在几点？"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "get_time",
+    "description": "获取当前时间。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "timezone": {
+       "type": "string",
+       "description": "IANA 时区名"
+      }
+     },
+     "required": [
+      "timezone"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_memory",
+    "description": "在长期记忆中检索相关条目。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string",
+       "description": "检索查询"
+      },
+      "limit": {
+       "type": "integer",
+       "description": "返回条数上限",
+       "default": 5
+      },
+      "memory_type": {
+       "type": "string",
+       "enum": [
+        "fact",
+        "preference",
+        "note"
+       ]
+      }
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "read_file",
+    "description": "读取工作目录下的文本文件。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string",
+       "description": "相对路径"
+      },
+      "max_bytes": {
+       "type": "integer",
+       "default": 65536
+      }
+     },
+     "required": [
+      "path"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "web_search",
+    "description": "执行一次网络搜索并返回摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      },
+      "top_k": {
+       "type": "integer",
+       "default": 5
+      },
+      "language": {
+       "type": "string",
+       "enum": [
+        "zh",
+        "en",
+        "ja"
+       ]
+      }
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,96 @@
+service_0:
+  image: registry.example.com/app:0.0
+  replicas: 1
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+    - name: RETRIES
+      value: "0"
+  resources:
+    limits:
+      cpu: "100m"
+      memory: "0Mi"
+service_1:
+  image: registry.example.com/app:1.0
+  replicas: 2
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+    - name: RETRIES
+      value: "1"
+  resources:
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+service_2:
+  image: registry.example.com/app:2.0
+  replicas: 3
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+    - name: RETRIES
+      value: "2"
+  resources:
+    limits:
+      cpu: "300m"
+      memory: "256Mi"
+service_3:
+  image: registry.example.com/app:3.0
+  replicas: 4
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+    - name: RETRIES
+      value: "3"
+  resources:
+    limits:
+      cpu: "400m"
+      memory: "384Mi"
+service_4:
+  image: registry.example.com/app:4.0
+  replicas: 5
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+    - name: RETRIES
+      value: "4"
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+service_5:
+  image: registry.example.com/app:5.0
+  replicas: 6
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+    - name: RETRIES
+      value: "5"
+  resources:
+    limits:
+      cpu: "600m"
+      memory: "640Mi"
+service_6:
+  image: registry.example.com/app:6.0
+  replicas: 7
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+    - name: RETRIES
+      value: "6"
+  resources:
+    limits:
+      cpu: "700m"
+      memory: "768Mi"
+service_7:
+  image: registry.example.com/app:7.0
+  replicas: 8
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+    - name: RETRIES
+      value: "7"
+  resources:
+    limits:
+      cpu: "800m"
+      memory: "896Mi"

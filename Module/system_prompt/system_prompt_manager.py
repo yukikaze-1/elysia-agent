@@ -55,7 +55,8 @@ class SystemPromptManager:
         order_map = {name: i for i, name in enumerate(_RENDER_ORDER)}
         self._sections = sorted(sections, key=lambda s: order_map.get(s.name, 999))
 
-    async def render(self, *, budget_tokens: int | None = None) -> str:
+    async def render(self, *, budget_tokens: int | None = None,
+                     model_id: str | None = None) -> str:
         """渲染完整 system prompt（可选按预算截断，S2-H9）。
 
         截断优先级（owner 2026-09-16 裁定）：**F1/F2 永不截断 → C4 记忆逐条截 →
@@ -79,6 +80,8 @@ class SystemPromptManager:
 
         Args:
             budget_tokens: system prompt 的 token 预算；None = 不设预算（预览/测试）。
+            model_id: 已解析模型 id —— 估算 profile 由它决定（与 chat/预览同一个
+                估算权威；None → 保守 profile）。
 
         Returns:
             所有 section 拼接后的完整 system prompt 字符串（超预算时已按上述优先级裁剪）。
@@ -97,7 +100,7 @@ class SystemPromptManager:
         def _joined(items: list[tuple[str, str]]) -> str:
             return "\n\n".join(text for _n, text in items)
 
-        total = estimate_tokens(_joined(rendered))
+        total = estimate_tokens(_joined(rendered), model=model_id)
         if total <= budget_tokens:
             return _joined(rendered)
 
@@ -114,7 +117,7 @@ class SystemPromptManager:
             finally:
                 self._restore_overrides(restores)
             rendered = retry
-            total = estimate_tokens(_joined(rendered))
+            total = estimate_tokens(_joined(rendered), model=model_id)
             if total <= budget_tokens:
                 memory_text = next((text for name, text in rendered if name == "Memory"), "")
                 if limit == 0:
@@ -141,7 +144,7 @@ class SystemPromptManager:
             if any(n == name for n, _t in rendered):
                 continue  # 该节本来就没渲染出内容
             dropped.append(name)
-            total = estimate_tokens(_joined(rendered))
+            total = estimate_tokens(_joined(rendered), model=model_id)
             if total <= budget_tokens:
                 break
         logger.warning(

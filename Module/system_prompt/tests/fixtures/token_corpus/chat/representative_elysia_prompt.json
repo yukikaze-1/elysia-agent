@@ -1,0 +1,135 @@
+{
+ "category": "representative",
+ "messages": [
+  {
+   "role": "system",
+   "content": "你是 Elysia，一个长期陪伴用户的桌面 AI 伙伴。\n\n## 冲突规则\n当指令冲突时，安全边界优先于一切，其次是输出格式，再次是人格表达。\n\n## 输出格式\n每次回复必须包含一个 <inner_voice> 区块，用一到两句话说明当前感受与本次回应意图。\n\n清晨的光线穿过窗帘，在地板上留下一道道淡淡的条纹。她打开笔记本，开始把还能记起来的事情一件件写下来。所有人都离开之后，屋子里会沉下一种特别的安静。工程师把故障追溯到一个解析器里未经检查的假设。雨从黎明前就开始下，街道亮得像打磨过的石板。他更愿意慢慢地解决问题，因为图快曾经让他付出过代价。好的界面会消失，使用者只是做了他本来想做的事。旧图书馆里是纸张、灰尘和胶水缓慢变质的气味。\n\n## 长期记忆\n工程师把故障追溯到一个解析器里未经检查的假设。雨从黎明前就开始下，街道亮得像打磨过的石板。他更愿意慢慢地解决问题，因为图快曾经让他付出过代价。好的界面会消失，使用者只是做了他本来想做的事。旧图书馆里是纸张、灰尘和胶水缓慢变质的气味。他们说好等事情做完再见面，尽管两个人都不太相信。\n\n## 环境\n当前时间：2026-09-19 21:04，用户正在使用桌面客户端。"
+  },
+  {
+   "role": "user",
+   "content": "我们上次聊到哪里了？"
+  },
+  {
+   "role": "assistant",
+   "content": "上次我们在聊你那个解析器的故障定位。"
+  },
+  {
+   "role": "user",
+   "content": "对，后来我改了那段代码，你帮我看看现在的写法有没有问题："
+  },
+  {
+   "role": "user",
+   "content": "def parse(payload: str) -> dict:\n    return json.loads(payload) if payload else {}"
+  },
+  {
+   "role": "user",
+   "content": "另外这是接口返回：{\"status\": \"ok\", \"items\": [{\"id\": 0, \"name\": \"n0\"}, {\"id\": 1, \"name\": \"n1\"}, {\"id\": 2, \"name\": \"n2\"}, {\"id\": 3, \"name\": \"n3\"}, {\"id\": 4, \"name\": \"n4\"}, {\"id\": 5, \"name\": \"n5\"}, {\"id\": 6, \"name\": \"n6\"}, {\"id\": 7, \"name\": \"n7\"}, {\"id\": 8, \"name\": \"n8\"}, {\"id\": 9, \"name\": \"n9\"}, {\"id\": 10, \"name\": \"n10\"}, {\"id\": 11, \"name\": \"n11\"}, {\"id\": 12, \"name\": \"n12\"}, {\"id\": 13, \"name\": \"n13\"}, {\"id\": 14, \"name\": \"n14\"}, {\"id\": 15, \"name\": \"n15\"}, {\"id\": 16, \"name\": \"n16\"}, {\"id\": 17, \"name\": \"n17\"}, {\"id\": 18, \"name\": \"n18\"}, {\"id\": 19, \"name\": \"n19\"}]}"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "get_time",
+    "description": "获取当前时间。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "timezone": {
+       "type": "string",
+       "description": "IANA 时区名"
+      }
+     },
+     "required": [
+      "timezone"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_memory",
+    "description": "在长期记忆中检索相关条目。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string",
+       "description": "检索查询"
+      },
+      "limit": {
+       "type": "integer",
+       "description": "返回条数上限",
+       "default": 5
+      },
+      "memory_type": {
+       "type": "string",
+       "enum": [
+        "fact",
+        "preference",
+        "note"
+       ]
+      }
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "read_file",
+    "description": "读取工作目录下的文本文件。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string",
+       "description": "相对路径"
+      },
+      "max_bytes": {
+       "type": "integer",
+       "default": 65536
+      }
+     },
+     "required": [
+      "path"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "web_search",
+    "description": "执行一次网络搜索并返回摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      },
+      "top_k": {
+       "type": "integer",
+       "default": 5
+      },
+      "language": {
+       "type": "string",
+       "enum": [
+        "zh",
+        "en",
+        "ja"
+       ]
+      }
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  }
+ ]
+}

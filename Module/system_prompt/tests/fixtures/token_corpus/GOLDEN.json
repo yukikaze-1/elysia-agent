@@ -1,0 +1,523 @@
+{
+ "provenance": {
+  "note": "Batch 18 / KB-12 估算合同的真值来源；只由 _build_golden.py 生成",
+  "text_tokenizers": {
+   "qwen2.5": {
+    "source": "huggingface",
+    "repo": "Qwen/Qwen2.5-3B",
+    "file": "tokenizer.json",
+    "usage": "encode(add_special_tokens=False)"
+   },
+   "deepseek_v3": {
+    "source": "huggingface",
+    "repo": "deepseek-ai/DeepSeek-V3",
+    "file": "tokenizer.json",
+    "usage": "encode(add_special_tokens=False)"
+   },
+   "llama3": {
+    "source": "huggingface",
+    "repo": "NousResearch/Meta-Llama-3-8B",
+    "file": "tokenizer.json",
+    "usage": "encode(add_special_tokens=False)"
+   },
+   "mistral": {
+    "source": "huggingface",
+    "repo": "mistralai/Mistral-7B-v0.3",
+    "file": "tokenizer.json",
+    "usage": "encode(add_special_tokens=False)"
+   },
+   "cl100k_base": {
+    "source": "tiktoken",
+    "usage": "encode()"
+   },
+   "o200k_base": {
+    "source": "tiktoken",
+    "usage": "encode()"
+   },
+   "p50k_base": {
+    "source": "tiktoken",
+    "usage": "encode()"
+   }
+  },
+  "ollama": {
+   "model": "qwen2.5:3b",
+   "endpoint": "native /api/chat",
+   "metric": "prompt_eval_count",
+   "num_ctx_primary": 8192,
+   "num_ctx_contamination_check": 16384,
+   "framing_baseline_single_user_message": 29,
+   "note": "count 在 8192 与 16384 下相同才视为未截断；contaminated 的样本不得当真值"
+  },
+  "framing": {
+   "n0": 9,
+   "n1": 16,
+   "n2": 18,
+   "n5": 44,
+   "n10": 74,
+   "n50": 394
+  }
+ },
+ "text": {
+  "ascii_repeat_char": {
+   "deepseek_v3": 50,
+   "qwen2.5": 50,
+   "llama3": 50,
+   "mistral": 53,
+   "cl100k_base": 50,
+   "o200k_base": 50,
+   "p50k_base": 100
+  },
+  "ascii_repeat_word": {
+   "deepseek_v3": 101,
+   "qwen2.5": 101,
+   "llama3": 101,
+   "mistral": 101,
+   "cl100k_base": 101,
+   "o200k_base": 101,
+   "p50k_base": 101
+  },
+  "cjk_ja": {
+   "deepseek_v3": 235,
+   "qwen2.5": 229,
+   "llama3": 242,
+   "mistral": 366,
+   "cl100k_base": 364,
+   "o200k_base": 274,
+   "p50k_base": 451
+  },
+  "cjk_mixed_zh_en": {
+   "deepseek_v3": 172,
+   "qwen2.5": 183,
+   "llama3": 208,
+   "mistral": 292,
+   "cl100k_base": 282,
+   "o200k_base": 208,
+   "p50k_base": 500
+  },
+  "cjk_no_space_long": {
+   "deepseek_v3": 270,
+   "qwen2.5": 348,
+   "llama3": 414,
+   "mistral": 517,
+   "cl100k_base": 528,
+   "o200k_base": 402,
+   "p50k_base": 1050
+  },
+  "cjk_punct_heavy": {
+   "deepseek_v3": 352,
+   "qwen2.5": 408,
+   "llama3": 424,
+   "mistral": 553,
+   "cl100k_base": 584,
+   "o200k_base": 424,
+   "p50k_base": 1104
+  },
+  "cjk_punct_run": {
+   "deepseek_v3": 75,
+   "qwen2.5": 150,
+   "llama3": 150,
+   "mistral": 301,
+   "cl100k_base": 150,
+   "o200k_base": 150,
+   "p50k_base": 300
+  },
+  "cjk_repeat_bigram": {
+   "deepseek_v3": 300,
+   "qwen2.5": 300,
+   "llama3": 600,
+   "mistral": 601,
+   "cl100k_base": 600,
+   "o200k_base": 300,
+   "p50k_base": 1200
+  },
+  "cjk_repeat_single_char": {
+   "deepseek_v3": 300,
+   "qwen2.5": 300,
+   "llama3": 300,
+   "mistral": 901,
+   "cl100k_base": 600,
+   "o200k_base": 300,
+   "p50k_base": 600
+  },
+  "cjk_zh_simplified": {
+   "deepseek_v3": 279,
+   "qwen2.5": 305,
+   "llama3": 412,
+   "mistral": 543,
+   "cl100k_base": 579,
+   "o200k_base": 400,
+   "p50k_base": 1011
+  },
+  "cjk_zh_traditional": {
+   "deepseek_v3": 162,
+   "qwen2.5": 175,
+   "llama3": 216,
+   "mistral": 294,
+   "cl100k_base": 342,
+   "o200k_base": 229,
+   "p50k_base": 510
+  },
+  "code_long_identifiers": {
+   "deepseek_v3": 201,
+   "qwen2.5": 148,
+   "llama3": 148,
+   "mistral": 255,
+   "cl100k_base": 148,
+   "o200k_base": 149,
+   "p50k_base": 264
+  },
+  "code_python": {
+   "deepseek_v3": 1032,
+   "qwen2.5": 1031,
+   "llama3": 1020,
+   "mistral": 1197,
+   "cl100k_base": 1020,
+   "o200k_base": 1020,
+   "p50k_base": 1210
+  },
+  "code_shell": {
+   "deepseek_v3": 400,
+   "qwen2.5": 384,
+   "llama3": 384,
+   "mistral": 423,
+   "cl100k_base": 384,
+   "o200k_base": 384,
+   "p50k_base": 415
+  },
+  "code_sql": {
+   "deepseek_v3": 656,
+   "qwen2.5": 656,
+   "llama3": 616,
+   "mistral": 928,
+   "cl100k_base": 616,
+   "o200k_base": 624,
+   "p50k_base": 847
+  },
+  "code_typescript": {
+   "deepseek_v3": 570,
+   "qwen2.5": 540,
+   "llama3": 540,
+   "mistral": 648,
+   "cl100k_base": 540,
+   "o200k_base": 540,
+   "p50k_base": 668
+  },
+  "code_yaml": {
+   "deepseek_v3": 592,
+   "qwen2.5": 598,
+   "llama3": 568,
+   "mistral": 725,
+   "cl100k_base": 568,
+   "o200k_base": 568,
+   "p50k_base": 679
+  },
+  "empty": {
+   "deepseek_v3": 0,
+   "qwen2.5": 0,
+   "llama3": 0,
+   "mistral": 0,
+   "cl100k_base": 0,
+   "o200k_base": 0,
+   "p50k_base": 0
+  },
+  "english_10k": {
+   "deepseek_v3": 3213,
+   "qwen2.5": 3240,
+   "llama3": 3240,
+   "mistral": 3458,
+   "cl100k_base": 3240,
+   "o200k_base": 3246,
+   "p50k_base": 3258
+  },
+  "english_1k": {
+   "deepseek_v3": 321,
+   "qwen2.5": 324,
+   "llama3": 324,
+   "mistral": 350,
+   "cl100k_base": 324,
+   "o200k_base": 324,
+   "p50k_base": 324
+  },
+  "english_punct_heavy": {
+   "deepseek_v3": 1465,
+   "qwen2.5": 1489,
+   "llama3": 1441,
+   "mistral": 1585,
+   "cl100k_base": 1441,
+   "o200k_base": 1441,
+   "p50k_base": 1489
+  },
+  "english_short": {
+   "deepseek_v3": 9,
+   "qwen2.5": 9,
+   "llama3": 9,
+   "mistral": 9,
+   "cl100k_base": 9,
+   "o200k_base": 9,
+   "p50k_base": 9
+  },
+  "english_whitespace": {
+   "deepseek_v3": 45,
+   "qwen2.5": 45,
+   "llama3": 44,
+   "mistral": 61,
+   "cl100k_base": 44,
+   "o200k_base": 44,
+   "p50k_base": 56
+  },
+  "json_escaped_strings": {
+   "deepseek_v3": 86,
+   "qwen2.5": 87,
+   "llama3": 83,
+   "mistral": 99,
+   "cl100k_base": 84,
+   "o200k_base": 83,
+   "p50k_base": 97
+  },
+  "json_long_keys": {
+   "deepseek_v3": 1352,
+   "qwen2.5": 1082,
+   "llama3": 1052,
+   "mistral": 1658,
+   "cl100k_base": 1052,
+   "o200k_base": 1102,
+   "p50k_base": 1653
+  },
+  "json_minified": {
+   "deepseek_v3": 1122,
+   "qwen2.5": 1220,
+   "llama3": 1042,
+   "mistral": 1339,
+   "cl100k_base": 1042,
+   "o200k_base": 1082,
+   "p50k_base": 1046
+  },
+  "json_nested": {
+   "deepseek_v3": 580,
+   "qwen2.5": 668,
+   "llama3": 580,
+   "mistral": 749,
+   "cl100k_base": 580,
+   "o200k_base": 580,
+   "p50k_base": 649
+  },
+  "json_numeric_arrays": {
+   "deepseek_v3": 2329,
+   "qwen2.5": 3518,
+   "llama3": 2328,
+   "mistral": 3530,
+   "cl100k_base": 2328,
+   "o200k_base": 2328,
+   "p50k_base": 2377
+  },
+  "json_pretty": {
+   "deepseek_v3": 1002,
+   "qwen2.5": 1082,
+   "llama3": 1002,
+   "mistral": 1263,
+   "cl100k_base": 1002,
+   "o200k_base": 1002,
+   "p50k_base": 1143
+  },
+  "json_zh": {
+   "deepseek_v3": 442,
+   "qwen2.5": 450,
+   "llama3": 446,
+   "mistral": 625,
+   "cl100k_base": 458,
+   "o200k_base": 445,
+   "p50k_base": 865
+  },
+  "markdown_mixed": {
+   "deepseek_v3": 233,
+   "qwen2.5": 241,
+   "llama3": 235,
+   "mistral": 267,
+   "cl100k_base": 236,
+   "o200k_base": 235,
+   "p50k_base": 248
+  },
+  "tiny_greeting": {
+   "deepseek_v3": 1,
+   "qwen2.5": 1,
+   "llama3": 1,
+   "mistral": 1,
+   "cl100k_base": 1,
+   "o200k_base": 1,
+   "p50k_base": 1
+  },
+  "tiny_zh_greeting": {
+   "deepseek_v3": 1,
+   "qwen2.5": 1,
+   "llama3": 2,
+   "mistral": 3,
+   "cl100k_base": 2,
+   "o200k_base": 1,
+   "p50k_base": 4
+  },
+  "unicode_accents_cyrillic": {
+   "deepseek_v3": 226,
+   "qwen2.5": 237,
+   "llama3": 223,
+   "mistral": 269,
+   "cl100k_base": 276,
+   "o200k_base": 197,
+   "p50k_base": 470
+  },
+  "unicode_emoji": {
+   "deepseek_v3": 289,
+   "qwen2.5": 289,
+   "llama3": 290,
+   "mistral": 361,
+   "cl100k_base": 290,
+   "o200k_base": 217,
+   "p50k_base": 325
+  },
+  "unicode_zwj_combining": {
+   "deepseek_v3": 473,
+   "qwen2.5": 448,
+   "llama3": 562,
+   "mistral": 833,
+   "cl100k_base": 618,
+   "o200k_base": 473,
+   "p50k_base": 793
+  },
+  "urls_ids_paths": {
+   "deepseek_v3": 688,
+   "qwen2.5": 808,
+   "llama3": 672,
+   "mistral": 888,
+   "cl100k_base": 672,
+   "o200k_base": 668,
+   "p50k_base": 764
+  },
+  "holdout_cjk": {
+   "deepseek_v3": 63,
+   "qwen2.5": 66,
+   "llama3": 81,
+   "mistral": 103,
+   "cl100k_base": 109,
+   "o200k_base": 79,
+   "p50k_base": 205
+  },
+  "holdout_code": {
+   "deepseek_v3": 688,
+   "qwen2.5": 608,
+   "llama3": 608,
+   "mistral": 902,
+   "cl100k_base": 608,
+   "o200k_base": 624,
+   "p50k_base": 918
+  },
+  "holdout_english": {
+   "deepseek_v3": 63,
+   "qwen2.5": 64,
+   "llama3": 64,
+   "mistral": 70,
+   "cl100k_base": 64,
+   "o200k_base": 63,
+   "p50k_base": 63
+  },
+  "holdout_json": {
+   "deepseek_v3": 456,
+   "qwen2.5": 424,
+   "llama3": 395,
+   "mistral": 486,
+   "cl100k_base": 395,
+   "o200k_base": 408,
+   "p50k_base": 416
+  },
+  "holdout_markdown": {
+   "deepseek_v3": 219,
+   "qwen2.5": 217,
+   "llama3": 209,
+   "mistral": 277,
+   "cl100k_base": 223,
+   "o200k_base": 209,
+   "p50k_base": 381
+  },
+  "holdout_mixed": {
+   "deepseek_v3": 270,
+   "qwen2.5": 280,
+   "llama3": 260,
+   "mistral": 316,
+   "cl100k_base": 320,
+   "o200k_base": 240,
+   "p50k_base": 495
+  }
+ },
+ "chat_ollama": {
+  "chat_empty_messages": {
+   "prompt_eval_count": 8,
+   "count_at_16384": 8,
+   "contaminated": false,
+   "category": "chat_framing"
+  },
+  "chat_many_small_messages": {
+   "prompt_eval_count": 899,
+   "count_at_16384": 899,
+   "contaminated": false,
+   "category": "chat_framing"
+  },
+  "chat_one_large_message": {
+   "prompt_eval_count": 1637,
+   "count_at_16384": 1637,
+   "contaminated": false,
+   "category": "chat_framing"
+  },
+  "chat_role_mixture": {
+   "prompt_eval_count": 104,
+   "count_at_16384": 104,
+   "contaminated": false,
+   "category": "chat_framing"
+  },
+  "chat_single_turn": {
+   "prompt_eval_count": 36,
+   "count_at_16384": 36,
+   "contaminated": false,
+   "category": "chat_framing"
+  },
+  "chat_system_user": {
+   "prompt_eval_count": 34,
+   "count_at_16384": 34,
+   "contaminated": false,
+   "category": "chat_framing"
+  },
+  "chat_tool_history": {
+   "prompt_eval_count": 96,
+   "count_at_16384": 96,
+   "contaminated": false,
+   "category": "chat_framing"
+  },
+  "representative_elysia_prompt": {
+   "prompt_eval_count": 1005,
+   "count_at_16384": 1005,
+   "contaminated": false,
+   "category": "representative"
+  },
+  "tools_many": {
+   "prompt_eval_count": 2870,
+   "count_at_16384": 2870,
+   "contaminated": false,
+   "category": "tools"
+  },
+  "tools_many_short_chat": {
+   "prompt_eval_count": 2869,
+   "count_at_16384": 2869,
+   "contaminated": false,
+   "category": "tools"
+  },
+  "tools_medium": {
+   "prompt_eval_count": 346,
+   "count_at_16384": 346,
+   "contaminated": false,
+   "category": "tools"
+  },
+  "tools_small": {
+   "prompt_eval_count": 154,
+   "count_at_16384": 154,
+   "contaminated": false,
+   "category": "tools"
+  }
+ }
+}

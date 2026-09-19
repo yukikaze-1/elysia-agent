@@ -1,0 +1,40 @@
+{
+ "category": "chat_framing",
+ "messages": [
+  {
+   "role": "system",
+   "content": "你是 Elysia。"
+  },
+  {
+   "role": "user",
+   "content": "北京今天天气怎么样？"
+  },
+  {
+   "role": "assistant",
+   "content": null,
+   "tool_calls": [
+    {
+     "id": "call_1",
+     "type": "function",
+     "function": {
+      "name": "web_search",
+      "arguments": "{\"query\": \"北京天气\"}"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_1",
+   "content": "晴，24°C，微风。"
+  },
+  {
+   "role": "assistant",
+   "content": "北京今天晴，24 度，有微风。"
+  },
+  {
+   "role": "user",
+   "content": "那明天呢？"
+  }
+ ]
+}

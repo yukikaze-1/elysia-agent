@@ -1,0 +1,1075 @@
+{
+ "category": "tools",
+ "messages": [
+  {
+   "role": "user",
+   "content": "在吗"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "get_time",
+    "description": "获取当前时间。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "timezone": {
+       "type": "string",
+       "description": "IANA 时区名"
+      }
+     },
+     "required": [
+      "timezone"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_memory",
+    "description": "在长期记忆中检索相关条目。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string",
+       "description": "检索查询"
+      },
+      "limit": {
+       "type": "integer",
+       "description": "返回条数上限",
+       "default": 5
+      },
+      "memory_type": {
+       "type": "string",
+       "enum": [
+        "fact",
+        "preference",
+        "note"
+       ]
+      }
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "read_file",
+    "description": "读取工作目录下的文本文件。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string",
+       "description": "相对路径"
+      },
+      "max_bytes": {
+       "type": "integer",
+       "default": 65536
+      }
+     },
+     "required": [
+      "path"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "web_search",
+    "description": "执行一次网络搜索并返回摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      },
+      "top_k": {
+       "type": "integer",
+       "default": 5
+      },
+      "language": {
+       "type": "string",
+       "enum": [
+        "zh",
+        "en",
+        "ja"
+       ]
+      }
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_0",
+    "description": "第 0 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_1",
+    "description": "第 1 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_2",
+    "description": "第 2 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_3",
+    "description": "第 3 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_4",
+    "description": "第 4 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_5",
+    "description": "第 5 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_6",
+    "description": "第 6 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_7",
+    "description": "第 7 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_8",
+    "description": "第 8 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_9",
+    "description": "第 9 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_10",
+    "description": "第 10 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_11",
+    "description": "第 11 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_12",
+    "description": "第 12 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_13",
+    "description": "第 13 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_14",
+    "description": "第 14 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_15",
+    "description": "第 15 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_16",
+    "description": "第 16 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_17",
+    "description": "第 17 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_18",
+    "description": "第 18 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_19",
+    "description": "第 19 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_20",
+    "description": "第 20 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_21",
+    "description": "第 21 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_22",
+    "description": "第 22 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "plugin_action_23",
+    "description": "第 23 号插件动作：对目标对象执行声明式变更并返回执行结果摘要。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "target": {
+       "type": "string",
+       "description": "目标标识"
+      },
+      "payload": {
+       "type": "object",
+       "description": "结构化载荷",
+       "properties": {
+        "key": {
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       }
+      },
+      "dry_run": {
+       "type": "boolean",
+       "default": false
+      },
+      "timeout_seconds": {
+       "type": "integer",
+       "default": 30
+      }
+     },
+     "required": [
+      "target",
+      "payload"
+     ]
+    }
+   }
+  }
+ ]
+}

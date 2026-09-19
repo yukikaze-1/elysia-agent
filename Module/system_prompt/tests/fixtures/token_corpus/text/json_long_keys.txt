@@ -1,0 +1,127 @@
+[
+  {
+    "user_preferred_display_name_override": "name_0",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 0
+  },
+  {
+    "user_preferred_display_name_override": "name_1",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 1
+  },
+  {
+    "user_preferred_display_name_override": "name_2",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 2
+  },
+  {
+    "user_preferred_display_name_override": "name_3",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 3
+  },
+  {
+    "user_preferred_display_name_override": "name_4",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 4
+  },
+  {
+    "user_preferred_display_name_override": "name_5",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 5
+  },
+  {
+    "user_preferred_display_name_override": "name_6",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 6
+  },
+  {
+    "user_preferred_display_name_override": "name_7",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 7
+  },
+  {
+    "user_preferred_display_name_override": "name_8",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 8
+  },
+  {
+    "user_preferred_display_name_override": "name_9",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 9
+  },
+  {
+    "user_preferred_display_name_override": "name_10",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 10
+  },
+  {
+    "user_preferred_display_name_override": "name_11",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 11
+  },
+  {
+    "user_preferred_display_name_override": "name_12",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 12
+  },
+  {
+    "user_preferred_display_name_override": "name_13",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 13
+  },
+  {
+    "user_preferred_display_name_override": "name_14",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 14
+  },
+  {
+    "user_preferred_display_name_override": "name_15",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 15
+  },
+  {
+    "user_preferred_display_name_override": "name_16",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 16
+  },
+  {
+    "user_preferred_display_name_override": "name_17",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 17
+  },
+  {
+    "user_preferred_display_name_override": "name_18",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 18
+  },
+  {
+    "user_preferred_display_name_override": "name_19",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 19
+  },
+  {
+    "user_preferred_display_name_override": "name_20",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 20
+  },
+  {
+    "user_preferred_display_name_override": "name_21",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 21
+  },
+  {
+    "user_preferred_display_name_override": "name_22",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 22
+  },
+  {
+    "user_preferred_display_name_override": "name_23",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 23
+  },
+  {
+    "user_preferred_display_name_override": "name_24",
+    "notification_delivery_channel_preference": "websocket",
+    "maximum_retry_attempts_before_permanent_failure": 24
+  }
+]

@@ -1,0 +1,29 @@
+{
+ "category": "chat_framing",
+ "messages": [
+  {
+   "role": "system",
+   "content": "你是 Elysia，一个桌面 AI 伙伴。回答要简短。"
+  },
+  {
+   "role": "user",
+   "content": "帮我看看这段配置有什么问题。"
+  },
+  {
+   "role": "assistant",
+   "content": "好的，请把配置贴出来。"
+  },
+  {
+   "role": "user",
+   "content": "retries: -1\nworkers: 0\ntimeout: 0"
+  },
+  {
+   "role": "assistant",
+   "content": "retries 不能为负，workers 至少为 1，timeout 不能为 0。"
+  },
+  {
+   "role": "user",
+   "content": "那应该怎么改？"
+  }
+ ]
+}

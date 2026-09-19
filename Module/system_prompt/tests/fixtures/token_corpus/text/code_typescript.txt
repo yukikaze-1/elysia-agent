@@ -1,0 +1,49 @@
+export interface Record0 { id: string; value: number; tags: readonly string[] }
+export function select0(rows: readonly Record0[]): Record0[] {
+  return rows.filter((r) => r.value > 0 && r.tags.includes('keep'));
+}
+
+export interface Record1 { id: string; value: number; tags: readonly string[] }
+export function select1(rows: readonly Record1[]): Record1[] {
+  return rows.filter((r) => r.value > 1 && r.tags.includes('keep'));
+}
+
+export interface Record2 { id: string; value: number; tags: readonly string[] }
+export function select2(rows: readonly Record2[]): Record2[] {
+  return rows.filter((r) => r.value > 2 && r.tags.includes('keep'));
+}
+
+export interface Record3 { id: string; value: number; tags: readonly string[] }
+export function select3(rows: readonly Record3[]): Record3[] {
+  return rows.filter((r) => r.value > 3 && r.tags.includes('keep'));
+}
+
+export interface Record4 { id: string; value: number; tags: readonly string[] }
+export function select4(rows: readonly Record4[]): Record4[] {
+  return rows.filter((r) => r.value > 4 && r.tags.includes('keep'));
+}
+
+export interface Record5 { id: string; value: number; tags: readonly string[] }
+export function select5(rows: readonly Record5[]): Record5[] {
+  return rows.filter((r) => r.value > 5 && r.tags.includes('keep'));
+}
+
+export interface Record6 { id: string; value: number; tags: readonly string[] }
+export function select6(rows: readonly Record6[]): Record6[] {
+  return rows.filter((r) => r.value > 6 && r.tags.includes('keep'));
+}
+
+export interface Record7 { id: string; value: number; tags: readonly string[] }
+export function select7(rows: readonly Record7[]): Record7[] {
+  return rows.filter((r) => r.value > 7 && r.tags.includes('keep'));
+}
+
+export interface Record8 { id: string; value: number; tags: readonly string[] }
+export function select8(rows: readonly Record8[]): Record8[] {
+  return rows.filter((r) => r.value > 8 && r.tags.includes('keep'));
+}
+
+export interface Record9 { id: string; value: number; tags: readonly string[] }
+export function select9(rows: readonly Record9[]): Record9[] {
+  return rows.filter((r) => r.value > 9 && r.tags.includes('keep'));
+}

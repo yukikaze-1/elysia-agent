@@ -1,0 +1,30 @@
+{
+ "category": "tools",
+ "messages": [
+  {
+   "role": "user",
+   "content": "现在几点？"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "get_time",
+    "description": "获取当前时间。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "timezone": {
+       "type": "string",
+       "description": "IANA 时区名"
+      }
+     },
+     "required": [
+      "timezone"
+     ]
+    }
+   }
+  }
+ ]
+}

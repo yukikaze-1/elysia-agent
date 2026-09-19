@@ -1151,6 +1151,21 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             # 会退化成"超 context 变 provider 400、该会话永久失败"的原始缺陷。
             prompt_budget = budget_from_context_window(
                 LLMFactory.context_window(self._llm.model))
+            # Batch 18：工具定义必须在**预算之前**算出来。provider request 是
+            # `messages + tools` 一起发的，而估算/裁剪此前只看得见 messages ⇒
+            # 12 个内置工具的 schema 实测 1126 token（占 6144 预算的 18%）完全漏算，
+            # 只在超窗后由 provider 静默截断（false accept）。顺序调整只为把
+            # tool_defs 传进 `build_messages`；内容与过滤规则逐字未变。
+            tool_defs = self._tool_adapter.definitions() if self._tool_adapter else None
+            # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
+            if tool_defs and supports_mm:
+                tool_defs = [t for t in tool_defs
+                             if t.get("function", {}).get("name") != "describe_image"]
+            if tool_defs is None:
+                tool_defs = []
+            # 附加 submit_task（如果 WorkflowEngine 和 DelegationPreparer 都已注入）
+            if self._task_system is not None and self._delegation_preparer is not None:
+                tool_defs = list(tool_defs) + [self._submit_task_definition()]
             tts_provider = self._tts.provider_name if self._tts else ""
             messages = await self._prompt.build_messages(
                 user_message=user_message, user_name=user_name,
@@ -1159,6 +1174,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 supports_multimodal=supports_mm,
                 tts_provider=tts_provider,
                 prompt_budget_tokens=prompt_budget,
+                model_id=self._llm.model,
+                tools=tool_defs,
             )
         user_content = content if content else [{"type": "text", "content": user_message}]
         # 系统唤醒消息不写入 session（Step 4: 唤醒模板不需要存放在 session 中）
@@ -1170,15 +1187,6 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             # KB-46：本标志是 recovery 的门禁② —— 此后即使终态路径拿着同一份载荷
             # 再来一次（W3→W1 叠加），`_record_claimed_input` 也必然短路，不会双写。
             self._turn_message_persisted = True
-        tool_defs = self._tool_adapter.definitions() if self._tool_adapter else None
-        # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
-        if tool_defs and supports_mm:
-            tool_defs = [t for t in tool_defs if t.get("function", {}).get("name") != "describe_image"]
-        if tool_defs is None:
-            tool_defs = []
-        # 附加 submit_task（如果 WorkflowEngine 和 DelegationPreparer 都已注入）
-        if self._task_system is not None and self._delegation_preparer is not None:
-            tool_defs = list(tool_defs) + [self._submit_task_definition()]
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs))
         return messages, tool_defs
 

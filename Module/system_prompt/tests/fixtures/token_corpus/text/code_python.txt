@@ -1,0 +1,95 @@
+def transform_0(items: list[dict], *, limit: int = 1) -> dict[str, int]:
+    """Aggregate 0 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 2
+    return {'total': total, 'count': len(items)}
+
+def transform_1(items: list[dict], *, limit: int = 2) -> dict[str, int]:
+    """Aggregate 1 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 3
+    return {'total': total, 'count': len(items)}
+
+def transform_2(items: list[dict], *, limit: int = 3) -> dict[str, int]:
+    """Aggregate 2 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 4
+    return {'total': total, 'count': len(items)}
+
+def transform_3(items: list[dict], *, limit: int = 4) -> dict[str, int]:
+    """Aggregate 3 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 5
+    return {'total': total, 'count': len(items)}
+
+def transform_4(items: list[dict], *, limit: int = 5) -> dict[str, int]:
+    """Aggregate 4 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 6
+    return {'total': total, 'count': len(items)}
+
+def transform_5(items: list[dict], *, limit: int = 6) -> dict[str, int]:
+    """Aggregate 5 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 7
+    return {'total': total, 'count': len(items)}
+
+def transform_6(items: list[dict], *, limit: int = 7) -> dict[str, int]:
+    """Aggregate 6 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 8
+    return {'total': total, 'count': len(items)}
+
+def transform_7(items: list[dict], *, limit: int = 8) -> dict[str, int]:
+    """Aggregate 7 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 9
+    return {'total': total, 'count': len(items)}
+
+def transform_8(items: list[dict], *, limit: int = 9) -> dict[str, int]:
+    """Aggregate 8 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 10
+    return {'total': total, 'count': len(items)}
+
+def transform_9(items: list[dict], *, limit: int = 10) -> dict[str, int]:
+    """Aggregate 9 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 11
+    return {'total': total, 'count': len(items)}
+
+def transform_10(items: list[dict], *, limit: int = 11) -> dict[str, int]:
+    """Aggregate 10 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 12
+    return {'total': total, 'count': len(items)}
+
+def transform_11(items: list[dict], *, limit: int = 12) -> dict[str, int]:
+    """Aggregate 11 values."""
+    total = 0
+    for idx, item in enumerate(items):
+        if item.get('active', False) and idx < limit:
+            total += int(item['score']) * 13
+    return {'total': total, 'count': len(items)}

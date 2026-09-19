@@ -203,6 +203,8 @@ class MessageBuilder:
         *,
         supports_multimodal: bool = False,
         prompt_budget_tokens: int | None = None,
+        model_id: str | None = None,
+        tools: list[dict] | None = None,
     ) -> list[dict]:
         """组装完整 messages[]。
 
@@ -212,9 +214,12 @@ class MessageBuilder:
             user_content: 当前用户消息（str 或多模态 content list）
             supports_multimodal: LLM 是否支持多模态图片
             prompt_budget_tokens: prompt 总预算（token，S2-H9）。None = 不做预算
-                （预览等拿不到模型上下文的调用点）。超预算时**由旧到新丢历史**，
-                按不可拆单元（见 `core.prompt.budget.history_units`）；当前用户
-                消息与 system 永不丢。
+                （预览等拿不到模型上下文的调用点）。超预算时**由旧到新丢历史**；
+                当前用户消息与 system 永不丢。
+            model_id: 已解析模型 id —— 决定估算 profile（Batch 18）。估算权威仍是
+                `Module.system_prompt.budget`；这里只透传，不做第二套算法。
+            tools: 同一次 provider request 的 `tools=[...]`（Batch 18）。**必须计入
+                总量**：它和 messages 一起占窗口，漏算就是 false accept。
 
         Returns:
             [{"role": "system", "content": system_prompt},
@@ -233,7 +238,8 @@ class MessageBuilder:
                 messages.append(entry)
 
         if prompt_budget_tokens is not None:
-            _apply_prompt_budget(messages, prompt_budget_tokens)
+            _apply_prompt_budget(messages, prompt_budget_tokens,
+                                 model_id=model_id, tools=tools)
         return messages
 
 
@@ -279,11 +285,16 @@ def _format_image_history_hint(count: int) -> str:
     return f"[用户曾发送{count}张图片] "
 
 
-def _apply_prompt_budget(messages: list[dict], budget_tokens: int) -> None:
+def _apply_prompt_budget(messages: list[dict], budget_tokens: int, *,
+                         model_id: str | None = None,
+                         tools: list[dict] | None = None) -> None:
     """超预算时由旧到新丢历史（**原地**修改 messages）。
 
     位置在**组装完成之后**：只有拿到全部消息才算得准总量（inner_voice 注入、
     工具摘要、媒体占位都会改变长度）。
+
+    Batch 18：总量 = messages **+ tools**（`estimate_messages_tokens` 一次算全），
+    因为 provider request 是两者一起发的；只裁 messages 而不计 tools 会系统性漏算。
 
     不变式：
     - system 恒为 `[0]`、当前用户消息恒为最后一条，两者都不参与丢弃；
@@ -297,7 +308,7 @@ def _apply_prompt_budget(messages: list[dict], budget_tokens: int) -> None:
     """
     from Module.system_prompt.budget import estimate_messages_tokens
 
-    total = estimate_messages_tokens(messages)
+    total = estimate_messages_tokens(messages, model=model_id, tools=tools)
     if total <= budget_tokens:
         if total >= budget_tokens * 0.8:
             logger.info(
@@ -306,11 +317,12 @@ def _apply_prompt_budget(messages: list[dict], budget_tokens: int) -> None:
         return
 
     dropped = 0
-    while len(messages) > 2 and estimate_messages_tokens(messages) > budget_tokens:
+    while len(messages) > 2 and estimate_messages_tokens(
+            messages, model=model_id, tools=tools) > budget_tokens:
         del messages[1]          # 恒删"最旧的历史"（[0]=system，[-1]=当前消息）
         dropped += 1
 
-    after = estimate_messages_tokens(messages)
+    after = estimate_messages_tokens(messages, model=model_id, tools=tools)
     logger.warning(
         "prompt 超预算：估算 %d > 预算 %d token → 由旧到新丢弃 %d 条历史"
         "（消息 %d 条，截后估算 %d）",

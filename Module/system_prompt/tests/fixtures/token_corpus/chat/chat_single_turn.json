@@ -1,0 +1,9 @@
+{
+ "category": "chat_framing",
+ "messages": [
+  {
+   "role": "user",
+   "content": "What is the capital of France?"
+  }
+ ]
+}

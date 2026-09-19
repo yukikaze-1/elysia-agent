@@ -121,6 +121,7 @@ class PromptCharacterPreviewAdapter:
             user_pronoun_override=user_identity.pronouns,
             user_timezone_override=user_identity.timezone,
             prompt_budget_tokens=budget_from_context_window(window),
+            model_id=model_id,
         )
         # PPW-4：裁完仍装不下 → 本地拒绝。发送一个已知必失败的请求只会把确定性的
         # 输入问题伪装成"provider 暂时不可用"（503 + retryable）。
@@ -130,11 +131,14 @@ class PromptCharacterPreviewAdapter:
         # 输出的余量（本仓 chat 与预览都不发 max_tokens，余量全靠 provider 默认 +
         # 预算的 25% headroom）。`== 窗口` 属于"装得下但生成不出东西"，同样不该发。
         #
-        # **判据的诚实边界**：估算器是字符启发式（CJK 1 字 1 token、其余 4 字符
-        # 1 token），不是 provider 的 tokenizer ⇒ 这条本地判定有双向误差带
-        # （CJK 偏高、JSON/代码偏低）。它是"绝不发出*明显*必失败的请求"的保守近似，
-        # 不是精确计数；精确计数需要真 tokenizer，属独立决策（见执行记录 §24）。
-        estimated_input = estimate_messages_tokens(messages)
+        # **判据的诚实边界（Batch 18 更新）**：估算器是**有界近似**（不是 provider
+        # tokenizer），误差带按 resolved model 的 profile 声明在
+        # `Module/system_prompt/budget.py` 的 docstring 里：`cjk_opt`（qwen/deepseek）
+        # 实测 est/actual ∈ [0.78, 1.22]，`generic` ∈ [0.78, 1.66]。
+        # ⇒ 本判据的 false reject 只可能发生在"真实输入已占满窗口的
+        # [1/T, 1] 区间"（cjk_opt ≤18%、generic ≤40%），且绝不发出真实超窗的请求。
+        # 两个 profile 的**方向保证**都成立：低估不超过 22%，故 chat 侧 25% 余量仍有余。
+        estimated_input = estimate_messages_tokens(messages, model=model_id)
         effective_window = effective_context_window(window)
         if estimated_input >= effective_window:
             logger.warning(
