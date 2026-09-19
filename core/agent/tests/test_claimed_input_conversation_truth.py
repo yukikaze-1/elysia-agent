@@ -860,3 +860,46 @@ async def test_ct_t6b_pre_claim_exception_creates_no_phantom_history(
         f"claim 之前的异常不得制造 phantom history：{_user_texts(agent)}")
     assert token not in await _archive_texts(agent)
     assert agent.status.is_completely_idle, agent.status.current_name()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# CT-T14 — 直投输入抢占（生产形态）与 `_process_lock` 等待者的竞争
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_ct_t14_direct_injection_preemption_still_records_claimed_input(
+        agent: Agent, llm: _RecordingFakeLLM):
+    """M1 卡在 CLAIMED→RECORDED 窗口时被**直投输入**（STT/voice）抢占。
+
+    这是 KB-46 最宽的生产触发面（Batch 14 实测三条直投入口绕过忙判定）。它比停止
+    按钮多一层竞争：抢占方经 `_turns.spawn` 起**新回合**，而新回合的 `process()`
+    入口会在**取锁之前**清空 `_generation_ctx` 并覆盖 `_claimed_input_record`
+    （Batch 12 的有意设计：ownership 判据必须只描述本回合）。
+
+    因此本用例真正检验的是那条设计约束：**补写必须发生在任何 await 之前**
+    （`_handle_interrupt` 的零 await prologue）——否则等待锁的新回合一旦先跑一步，
+    被抢占回合的 ctx 已被清空，门禁①就会把这条已 claim 的输入判成"未 claim"。
+    """
+    from core.schema.event import UserInputData
+
+    gate = _gate_prompt(agent)
+    gate.arm()
+    m1 = "KB46-抢占-M1"
+    await _at_claim_window(agent, gate, m1)
+
+    # 直投输入（不经 process_message ⇒ 绕过忙判定）——生产里是 STT 转写 / voice.commit。
+    agent.bus.post(UserInputData(
+        text="KB46-抢占-M2", user_name=agent.user_name,
+        request_id="b15-ct-t14"))
+    gate.open()
+    await _drain(agent)
+
+    texts = _user_texts(agent)
+    m1_hits = [t for t in texts if t == m1]
+    m2_hits = [t for t in texts if t == "KB46-抢占-M2"]
+    assert len(m1_hits) == 1, (
+        f"被直投输入抢占的已 claim 输入必须恰一条（0 = 静默丢失，>1 = 双写）：{texts}")
+    assert len(m2_hits) == 1, f"抢占方必须恰一条：{texts}"
+    assert texts.index(m1) < texts.index("KB46-抢占-M2"), f"顺序错误：{texts}"
+    assert agent.status.is_completely_idle, agent.status.current_name()
