@@ -165,7 +165,15 @@ class TestQueryShape:
 
     @pytest.mark.asyncio
     async def test_sort_and_cursor_predicate_are_pushed_down(self):
-        """排序（含 tie-break）与游标谓词必须在**查询**里——fake 的稳定排序掩盖不了。"""
+        """排序（含 tie-break）与游标谓词必须在**查询**里——fake 的稳定排序掩盖不了。
+
+        批次 16 / KB-15 起，有序桶的查询还带**桶判据**（`ORDERED_TS_FILTER`：
+        `$type: "string"` + `$gt: ""` + `$not: {$type: "array"}`）——它是排序键
+        **全域定义**的一部分，必须和谓词一起下推，不能在 Python 里筛。
+        `$not: {$type: "array"}` 是承重条件：Mongo 的 `$type`/比较算子会遍历数组
+        元素，不排除数组就会出现"有序桶文档投影成 Sentinel"与"游标 Sentinel 表示
+        legacy 桶"撞车（Challenger A 的数组反证）。
+        """
         backend = FakeDocumentDBBackend()
         repo = SessionRepository(db=backend)
         await _seed(backend, 5, prefix="conv_push")
@@ -181,11 +189,15 @@ class TestQueryShape:
         await repo.list_page(limit=2, after=("2026-08-01T00:00:02+00:00", "conv_push_02"))
 
         assert calls[0]["sort"] == [("updated_at", -1), ("session_id", 1)]
-        assert calls[0]["filter"] == {"$or": [
-            {"updated_at": {"$lt": "2026-08-01T00:00:02+00:00"}},
-            {"updated_at": "2026-08-01T00:00:02+00:00",
-             "session_id": {"$gt": "conv_push_02"}},
-        ]}
+        assert calls[0]["filter"] == {
+            "updated_at": {"$type": "string", "$gt": "",
+                           "$not": {"$type": "array"}},
+            "$or": [
+                {"updated_at": {"$lt": "2026-08-01T00:00:02+00:00"}},
+                {"updated_at": "2026-08-01T00:00:02+00:00",
+                 "session_id": {"$gt": "conv_push_02"}},
+            ],
+        }
 
     @pytest.mark.asyncio
     async def test_search_clause_is_pushed_down_escaped(self):
@@ -304,3 +316,257 @@ class TestFailClosed:
 
         assert await repo.list_page(limit=0) == []
         assert await repo.list_page(limit=-5) == []
+
+
+# ── 批次 16 / KB-15：排序键的 legacy 桶（无可用 updated_at 的文档） ─────────
+
+
+def _legacy_docs() -> list[dict]:
+    """"没有可用排序键"的历史文档（真库 E3 里各形态的代表）。
+
+    **数组型是承重用例**（Challenger A 反证）：Mongo 的比较/`$type` 算子会**遍历
+    数组元素**，`updated_at: ["1990-…","2040-…"]` 因此既匹配 `$gt: ""`（按最大元素
+    排序）又被投影成 Sentinel `""` —— 桶判据必须用 `$not: {$type: "array"}` 把它
+    挡在有序桶之外，否则游标 Sentinel 会与"legacy 桶位置"撞车。
+    """
+    return [
+        {"session_id": "conv_leg_missing", "title": "缺字段", "messages": []},
+        {"session_id": "conv_leg_null", "title": "null", "messages": [],
+         "updated_at": None},
+        {"session_id": "conv_leg_empty", "title": "空串", "messages": [],
+         "updated_at": ""},
+        {"session_id": "conv_leg_array", "title": "数组", "messages": [],
+         "updated_at": ["1990-01-01T00:00:00+00:00", "2040-01-01T00:00:00+00:00"]},
+    ]
+
+
+class TestLegacyOrderingBucket:
+    """`updated_at` 不是非空字符串的文档，必须在**同一套排序契约**里可达。
+
+    修前：`(updated_at < U)` 对缺失/null 永不匹配（类型括号）⇒ 静默漏项；
+    BSON Date 型又排在字符串之前 ⇒ 落在页边界时游标解码不了（下一页 400）。
+    现在两个桶拼起来覆盖整个集合，且桶内顺序只依赖持久化的 `session_id`。
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("count", [0, 1, 49, 50, 51, 205])
+    async def test_legacy_rows_are_reachable_for_every_dataset_size(self, count: int):
+        """N ∈ {0,1,49,50,51,205} 有序列 + 3 条 legacy：完整遍历不重不漏。"""
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        seeded = await _seed(backend, count, prefix=f"conv_leg{count}")
+        for doc in _legacy_docs():
+            await backend.insert_one("sessions", dict(doc))
+
+        seen = [str(s) for s in await _walk(repo, page_size=50)]
+        legacy_ids = [str(d["session_id"]) for d in _legacy_docs()]
+
+        assert set(seen) == set(seeded) | set(legacy_ids)
+        assert len(seen) == len(set(seen)), "遍历出现重复"
+        # legacy 桶整体排在有序桶之后，桶内 `session_id ASC`
+        assert seen[-len(legacy_ids):] == sorted(legacy_ids)
+
+    @pytest.mark.asyncio
+    async def test_legacy_bucket_is_deterministic_across_runs(self):
+        """同一数据集连续两次完整遍历：顺序必须逐项一致（禁止 now() 之类 fallback）。"""
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        await _seed(backend, 120, prefix="conv_det")
+        for doc in reversed(_legacy_docs()):     # 插入序与目标序相反
+            await backend.insert_one("sessions", dict(doc))
+
+        first = [str(s) for s in await _walk(repo, page_size=25)]
+        second = [str(s) for s in await _walk(repo, page_size=25)]
+
+        assert first == second
+
+    @pytest.mark.asyncio
+    async def test_legacy_row_at_page_boundary_does_not_poison_the_cursor(self):
+        """页边界正好落在一篇"无排序键"的文档上时，续页不得漏项/报错（KB-15 核心）。"""
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        seeded = await _seed(backend, 2, prefix="conv_pb")
+        for doc in _legacy_docs():
+            await backend.insert_one("sessions", dict(doc))
+
+        # limit=3：有序列只有 2 条 ⇒ 第 3 条正好是 legacy 桶的第一条
+        # （Sentinel 键 "" 落在页边界上——修前这里会产生解码不了的游标）
+        page1 = await repo.list_page(limit=3)
+        assert [str(s.session_id) for s in page1] == [
+            "conv_pb_001", "conv_pb_000", "conv_leg_array"]
+        boundary = page1[-1]
+        assert boundary.updated_at == "", "legacy 文档的排序键必须是 Sentinel ''"
+
+        page2 = await repo.list_page(
+            limit=3, after=(boundary.updated_at, str(boundary.session_id)))
+
+        seen = [str(s.session_id) for s in page1 + page2]
+        assert seen == [
+            "conv_pb_001", "conv_pb_000",
+            "conv_leg_array", "conv_leg_empty", "conv_leg_missing", "conv_leg_null"]
+        assert set(seen) == set(seeded) | {str(d["session_id"]) for d in _legacy_docs()}
+        assert len(seen) == len(set(seen))
+
+    @pytest.mark.asyncio
+    async def test_wrong_bson_type_rows_join_the_legacy_bucket(self):
+        """BSON Date / 数字型 `updated_at`（外部工具可能写出）同样可达且排最后。
+
+        修前它们更危险：Date 在 BSON 序里**排在字符串之前**，会占住第一页的
+        边界并把游标写成解码不了的空时间戳。
+        """
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        seeded = await _seed(backend, 60, prefix="conv_type")
+        from datetime import datetime, timezone
+        await backend.insert_one("sessions", {
+            "session_id": "conv_type_date", "title": "Date 型", "messages": [],
+            "updated_at": datetime(2026, 9, 1, tzinfo=timezone.utc)})
+        await backend.insert_one("sessions", {
+            "session_id": "conv_type_int", "title": "数字型", "messages": [],
+            "updated_at": 1756735200})
+
+        seen = [str(s) for s in await _walk(repo, page_size=16)]
+
+        assert set(seen) == set(seeded) | {"conv_type_date", "conv_type_int"}
+        assert seen[-2:] == ["conv_type_date", "conv_type_int"]
+        assert len(seen) == len(set(seen))
+
+    @pytest.mark.asyncio
+    async def test_legacy_rows_are_reachable_through_search(self):
+        """搜索路径同样覆盖 legacy 桶（§73：search 不得只覆盖有序桶）。
+
+        命中数必须**多于一页**：只有一条命中时它天然落在第一页，修前的缺陷看不见。
+        """
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        hits = await _seed(backend, 30, prefix="conv_s")
+        for sid in hits:
+            await backend.update_one("sessions", {"session_id": sid},
+                                     {"$set": {"title": "找得到我"}})
+        await backend.insert_one("sessions", {
+            "session_id": "conv_leg_hit", "title": "找得到我", "messages": []})
+
+        seen = [str(s) for s in await _walk(repo, page_size=7, search="找得到我")]
+
+        assert set(seen) == set(hits) | {"conv_leg_hit"}
+        assert seen[-1] == "conv_leg_hit"
+
+    @pytest.mark.asyncio
+    async def test_ordered_bucket_order_is_unchanged_for_healthy_data(self):
+        """ALREADY_GREEN_GUARD：全部健康时顺序与修前**逐项相同**（不许顺手改序）。"""
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        await _seed(backend, 205, prefix="conv_same")
+
+        seen = [str(s) for s in await _walk(repo, page_size=50)]
+
+        assert seen == [f"conv_same_{i:03d}" for i in range(204, -1, -1)]
+
+    @pytest.mark.asyncio
+    async def test_list_all_includes_legacy_rows_without_exceeding_cap(self):
+        """诊断读同样不把 legacy 文档藏起来，且上界仍是 200（两件事分开断言）。"""
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        await _seed(backend, 30, prefix="conv_diag2")
+        for doc in _legacy_docs():
+            await backend.insert_one("sessions", dict(doc))
+
+        listed = [str(s.session_id) for s in await repo.list_all()]
+
+        assert listed[-3:] == ["conv_leg_empty", "conv_leg_missing", "conv_leg_null"]
+
+        big = FakeDocumentDBBackend()
+        big_repo = SessionRepository(db=big)
+        await _seed(big, 205, prefix="conv_cap")
+        for doc in _legacy_docs():
+            await big.insert_one("sessions", dict(doc))
+
+        capped = await big_repo.list_all()
+
+        assert len(capped) == 200
+        assert [str(s.session_id) for s in capped][:2] == ["conv_cap_204", "conv_cap_203"]
+
+    @pytest.mark.asyncio
+    async def test_small_dataset_shows_legacy_rows_in_the_same_page(self):
+        """数据集装得下一页时（修前唯一能看到它们的形态）：顺序仍是"有序列+legacy 尾"。"""
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        seeded = await _seed(backend, 3, prefix="conv_small")
+        for doc in _legacy_docs():
+            await backend.insert_one("sessions", dict(doc))
+
+        page = await repo.list_page(limit=50)
+
+        assert [str(s.session_id) for s in page] == [
+            "conv_small_002", "conv_small_001", "conv_small_000",
+            "conv_leg_array", "conv_leg_empty", "conv_leg_missing", "conv_leg_null",
+        ]
+        assert set(seeded) <= {str(s.session_id) for s in page}
+
+    @pytest.mark.asyncio
+    async def test_legacy_only_dataset_terminates_deterministically(self):
+        """Challenger Attack B：**全部**都是 legacy 文档也必须确定性收敛，不空转。"""
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        ids = [f"conv_only_{i:02d}" for i in range(7)]
+        for sid in reversed(ids):
+            await backend.insert_one("sessions", {"session_id": sid, "messages": []})
+
+        first = [str(s) for s in await _walk(repo, page_size=2)]
+        second = [str(s) for s in await _walk(repo, page_size=2)]
+
+        assert first == sorted(ids)
+        assert first == second
+
+
+class TestArrayValuedOrderingMetadata:
+    """Challenger A 反证：**数组型** `updated_at` 必须落 legacy 桶（承重用例）。
+
+    Mongo 的比较/`$type` 算子会**遍历数组元素**：`updated_at: ["1990-…","2040-…"]`
+    既匹配 `$gt: ""`（并按**最大元素**排序，于是排在最前），又被投影层归一成
+    Sentinel `""`。若不排除数组，游标里的 `""` 就会被误读成"已在 legacy 桶"
+    ⇒ **整个有序桶被跳过**（漏项 + 重复 + `has_more` 撒谎），比修前的 400 更隐蔽。
+    """
+
+    @pytest.mark.asyncio
+    async def test_array_row_goes_to_the_legacy_bucket(self):
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        await _seed(backend, 3, prefix="conv_arr")
+        await backend.insert_one("sessions", {
+            "session_id": "conv_arr_bad", "title": "数组型", "messages": [],
+            "updated_at": ["1990-01-01T00:00:00+00:00", "2040-01-01T00:00:00+00:00"]})
+
+        page = await repo.list_page(limit=50)
+
+        assert [str(s.session_id) for s in page] == [
+            "conv_arr_002", "conv_arr_001", "conv_arr_000", "conv_arr_bad"]
+        assert page[-1].updated_at == "", "数组型必须投影成 Sentinel 且排在最后"
+
+    @pytest.mark.asyncio
+    async def test_array_row_at_page_boundary_does_not_skip_the_ordered_bucket(self):
+        """页边界正好落在数组型文档上时：续页必须为空，且有序桶**已经全部拿到**。
+
+        修前（Challenger A 实测）：`limit=1` 只拿到数组型文档、`has_more` 撒谎；
+        本用例把它钉死——有序桶的三条必须在前，数组型必须最后。
+        """
+        backend = FakeDocumentDBBackend()
+        repo = SessionRepository(db=backend)
+        seeded = await _seed(backend, 3, prefix="conv_ab")
+        await backend.insert_one("sessions", {
+            "session_id": "conv_ab_bad", "messages": [],
+            "updated_at": ["1990-01-01T00:00:00+00:00", "2040-01-01T00:00:00+00:00"]})
+
+        seen: list[str] = []
+        after: tuple[str, str] | None = None
+        for _ in range(10):
+            page = await repo.list_page(limit=1, after=after)
+            seen.extend(str(s.session_id) for s in page)
+            if not page:
+                break
+            last = page[-1]
+            after = (last.updated_at, str(last.session_id))
+
+        assert seen == ["conv_ab_002", "conv_ab_001", "conv_ab_000", "conv_ab_bad"]
+        assert set(seen) == set(seeded) | {"conv_ab_bad"}
+        assert len(seen) == len(set(seen)), "数组型文档不得让记录重复出现"

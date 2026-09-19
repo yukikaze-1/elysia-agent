@@ -319,3 +319,118 @@ class TestScopeAndFilterStability:
                 assert item["character"]["characterInstanceId"].startswith("chi_")
         assert seen == 205, "跨页读取丢了记录"
         assert len(shapes) == 1, f"同类记录逐页字段集不一致：{shapes}"
+
+
+# ── 批次 16 / KB-15：无排序键的历史文档（route 层 = 用户入口） ─────────────
+
+
+def _legacy_doc(sid: str, kind: str) -> dict:
+    """三种"没有可用 updated_at"的历史文档形态。"""
+    doc: dict = {"session_id": sid, "title": f"标题{sid}", "messages": [],
+                 "character_binding": {}}
+    if kind == "null":
+        doc["updated_at"] = None
+    elif kind == "empty":
+        doc["updated_at"] = ""
+    elif kind == "array":
+        # Mongo 的 `$type`/比较算子会遍历数组元素 ⇒ 桶判据必须显式排除数组
+        doc["updated_at"] = ["1990-01-01T00:00:00+00:00", "2040-01-01T00:00:00+00:00"]
+    # kind == "missing"：整个字段不存在
+    return doc
+
+
+class TestLegacyOrderingRowsAreReachable:
+    """KB-15：`updated_at` 缺失/null/非字符串的历史会话必须在**用户分页**里可达。
+
+    修前两个出口都会伤到用户：
+      1. 它们排在末尾却永不匹配 keyset 谓词 ⇒ 静默漏项（`has_more=false` 撒谎）；
+      2. 若其中一篇落在页边界，`next_cursor` 是 `base64("|sid")`，
+         下一请求被判 400 `CONTRACT_VALIDATION` ⇒ **该页之后全部不可达**。
+    """
+
+    @pytest.mark.asyncio
+    async def test_legacy_rows_are_reachable_beyond_the_first_page(self):
+        """205 条健康 + 3 条无排序键：完整翻页必须覆盖全部（§15 的核心断言）。"""
+        agent = SessionTestAgent()
+        seeded = await seed_session_docs(agent, 205, prefix="conv_lg")
+        for kind in ("missing", "null", "empty", "array"):
+            await agent.backend.insert_one(
+                "sessions", _legacy_doc(f"conv_lg_{kind}", kind))
+        client = await _client_for(agent)
+        try:
+            result = await paginate_sessions(client)
+        finally:
+            await client.close()
+
+        legacy = {"conv_lg_missing", "conv_lg_null", "conv_lg_empty", "conv_lg_array"}
+        assert set(result["ids"]) == _expected_ids(seeded) | legacy
+        assert len(result["ids"]) == len(set(result["ids"])), "遍历出现重复"
+        # 无排序键的记录整体排在最后（桶内 `session_id ASC`）
+        assert result["ids"][-4:] == ["conv_lg_array", "conv_lg_empty",
+                                      "conv_lg_missing", "conv_lg_null"]
+
+    @pytest.mark.asyncio
+    async def test_cursor_on_legacy_row_is_not_rejected_by_the_route(self):
+        """游标毒化回归：坏文档当页边界时，回传游标必须继续翻页（修前 400）。"""
+        agent = SessionTestAgent()
+        seeded = await seed_session_docs(agent, 4, prefix="conv_cp")
+        for kind in ("missing", "null", "empty"):
+            await agent.backend.insert_one("sessions", _legacy_doc(f"conv_cp_{kind}", kind))
+        client = await _client_for(agent)
+        try:
+            # limit=6 ⇒ 契约序为 default + 4 健康 + 3 legacy，边界落在第一条 legacy 上
+            first = await (await client.get("/api/sessions?limit=6")).json()
+            assert first["has_more"] is True
+            assert first["sessions"][-1]["conversationId"] == "conv_cp_empty"
+            assert first["sessions"][-1]["updatedAt"] == "", "legacy 记录的排序键是 Sentinel"
+
+            resp = await client.get(f"/api/sessions?limit=6&cursor={first['cursor']}")
+            assert resp.status == 200, "legacy 边界游标不得被判 400（修前正是如此）"
+            second = await resp.json()
+            assert [s["conversationId"] for s in second["sessions"]] == [
+                "conv_cp_missing", "conv_cp_null"]
+            assert second["has_more"] is False and second.get("cursor") is None
+        finally:
+            await client.close()
+
+        seen = [s["conversationId"] for s in first["sessions"] + second["sessions"]]
+        assert set(seen) == _expected_ids(seeded) | {
+            "conv_cp_missing", "conv_cp_null", "conv_cp_empty"}
+
+    @pytest.mark.asyncio
+    async def test_legacy_rows_are_searchable(self):
+        """搜索路径同样覆盖 legacy 桶（§73）——命中数多于一页时也不能漏。"""
+        agent = SessionTestAgent()
+        hits = await seed_session_docs(agent, 30, prefix="conv_s")
+        for sid in hits:
+            await agent.backend.update_one(
+                "sessions", {"session_id": sid}, {"$set": {"title": "唯一关键词喵"}})
+        await agent.backend.insert_one("sessions", {
+            "session_id": "conv_s_legacy", "title": "唯一关键词喵", "messages": [],
+            "character_binding": {}})
+        client = await _client_for(agent)
+        try:
+            result = await paginate_sessions(client, limit=7, search="唯一关键词喵")
+        finally:
+            await client.close()
+
+        assert set(result["ids"]) == set(hits) | {"conv_s_legacy"}
+        assert result["ids"][-1] == "conv_s_legacy"
+
+    @pytest.mark.asyncio
+    async def test_legacy_only_dataset_terminates_with_truthful_has_more(self):
+        """Challenger Attack B：**全部**都是 legacy 时也必须确定性收敛且 has_more 真实。"""
+        agent = SessionTestAgent()
+        for i in range(7):
+            await agent.backend.insert_one(
+                "sessions", _legacy_doc(f"conv_only_{i}", "missing"))
+        client = await _client_for(agent)
+        try:
+            result = await paginate_sessions(client, limit=2)
+            again = await paginate_sessions(client, limit=2)
+        finally:
+            await client.close()
+
+        assert result["ids"] == [DEFAULT_SESSION] + [f"conv_only_{i}" for i in range(7)]
+        assert result["ids"] == again["ids"], "顺序必须稳定"
+        assert all(page["has_more"] is bool(page.get("cursor")) for page in result["pages"])

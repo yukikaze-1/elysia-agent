@@ -81,6 +81,12 @@ EXPECTED_INDEX_OPTIONS: dict[str, dict[str, dict[str, object]]] = {
     # 运行期定点回归见
     # `test_schema_drift.py::TestIndexOptionConflicts::test_idempotency_ttl_option_is_gauged`。
     "idempotency": {"expires_at_1": {"expireAfterSeconds": 0}},
+    # 批次 16 / KB-16：`session_id` 是逻辑主键（全仓按它直读/改名/删除/摘要/级联），
+    # 唯一性由 `SessionRepository._ensure_session_id_index()` 强制——**可用性优先**：
+    # 库里有重复文档时降级为非唯一并在启动日志显著告警。登记在这里，运行期自检才会
+    # 把"库侧非唯一"报成 option_conflicts；否则 `sessions` 一个选项都不比
+    # （= 扫了、没比、报健康——正是本表 docstring 反复警告的那种假绿）。
+    "sessions": {"session_id_1": {"unique": True}},
     "user_identity_profiles": {"user_id_1": {"unique": True}},
 }
 

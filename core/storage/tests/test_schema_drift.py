@@ -603,6 +603,30 @@ async def connect(db):
         assert _static_option_value(calls[1].keywords[0]) is True
 
 
+def _live_indexes_satisfying_declaration(coll: str) -> list[dict]:
+    """派生"选项**完全达标**"的落库形态（供"不该报漂移"的用例使用）。
+
+    **为什么必须派生而不是手写**：`EXPECTED_INDEX_OPTIONS` 是唯一真相，
+    测试再手写一份"哪些索引是 unique"就等于第二张表——新增一条唯一索引
+    （批次 16 的 `sessions.session_id_1`）时，运行期自检是对的，测试却会因为
+    自己那份没更新而报假红（这正是本文件反复警告的"两张手写表共同漂移"）。
+    """
+    from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+    declared = EXPECTED_INDEX_OPTIONS.get(coll, {})
+    live: list[dict] = [{"name": _ID_INDEX}]
+    for name in sorted(EXPECTED_INDEXES[coll]):
+        want = declared.get(name, {})
+        doc: dict = {"name": name}
+        if "unique" in want:
+            doc["unique"] = bool(want["unique"])
+        if "expireAfterSeconds" in want:
+            # 秒数刻意与声明不同：只比"有没有"，不比秒数（调大保留期属正常改动）
+            doc["expireAfterSeconds"] = 999999
+        live.append(doc)
+    return live
+
+
 @pytest.mark.unit
 class TestCheckSchemaDrift:
     """漂移判定语义。"""
@@ -805,29 +829,8 @@ class TestIndexOptionConflicts:
         （该集合从此真的被比对），这条用例会因为 mock 自己没给 TTL 而变红：
         测试与被测对象各持一份真相。派生式写法则对未来新增的 TTL 索引自动成立。
         """
-        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
-
         backend = MagicMock()
-        backend.list_indexes = AsyncMock(side_effect=lambda coll: [
-            {"name": _ID_INDEX},
-            *[
-                {"name": n,
-                 # 声明了 TTL 的索引，库里就有 TTL（秒数刻意与声明不同：
-                 # 只比"有没有"，不比秒数）
-                 **({"expireAfterSeconds": 999999}
-                    if "expireAfterSeconds"
-                    in EXPECTED_INDEX_OPTIONS.get(coll, {}).get(n, {}) else {}),
-                 **({"unique": True} if n == "character_id_1" and coll == "characters" else {}),
-                 **({"unique": True} if n == "attachment_id_1" and coll == "attachments" else {}),
-                 **({"unique": True} if n == "instance_id_1" and coll == "character_instances" else {}),
-                 **({"unique": True} if n == "user_id_1" and coll == "user_identity_profiles" else {}),
-                 **({"unique": True} if n == "character_id_1_revision_-1" and coll == "character_revisions" else {}),
-                 **({"unique": True} if n == "session_id_1_content_type_1_version_-1" and coll == "character_versions" else {}),
-                 **({"unique": True} if n == "task_id_1" and coll == "background_task_results" else {}),
-                 }
-                for n in EXPECTED_INDEXES[coll]
-            ],
-        ])
+        backend.list_indexes = AsyncMock(side_effect=_live_indexes_satisfying_declaration)
         report = await check_schema_drift(backend)
         assert not report.option_conflicts, report.option_conflicts
 
@@ -968,3 +971,35 @@ class TestHotQueryIndexes:
         doc = src[idx:idx + 900]
         assert "S3-20" in doc and "有意不为" in doc, (
             "list_definitions 未加索引这件事必须**在代码里**写明理由")
+
+
+@pytest.mark.unit
+class TestSessionIdentityOptionIsRegistered:
+    """批次 16 / KB-16：`sessions.session_id_1` 的 unique 声明必须**登记在案**。
+
+    为什么这条要单独钉：`SessionRepository._ensure_session_id_index()` 里的唯一性
+    是**动态**值（`unique=desired_unique`——库里有重复文档时降级为非唯一，可用性
+    优先）。AST 守卫把动态值折叠成 `_DYNAMIC` 并**跳过覆盖断言**（R3/R5 都不要求
+    登记），于是"整条登记被删掉"不会报红——而运行期后果正是本表最警惕的那种假绿：
+    `sessions` 一个选项都不比（扫了、没比、报健康），"库侧非唯一"再也没人报。
+    """
+
+    def test_registered_with_unique_true(self):
+        from core.storage.schema_drift import EXPECTED_INDEX_OPTIONS
+
+        assert EXPECTED_INDEX_OPTIONS.get("sessions", {}).get("session_id_1") == {
+            "unique": True}
+
+    def test_code_still_declares_unique_true(self):
+        """另一半方向：**代码**里那条声明必须仍是静态 `unique=True`。
+
+        为什么需要这一半：R3（代码→表）只在"代码声明了选项"时要求登记，R5 在
+        `code_opts is None` 时直接跳过——所以有人把
+        `ensure_index(..., unique=True)` 悄悄改回不带选项（或 `unique=False`），
+        表里那条登记仍在、R1/R2/R3/R5 **全绿**，而唯一约束已经从产品里消失。
+        本用例把代码侧的值也钉住。
+        """
+        declared, _dynamic, unresolved = _derive_option_table_from_code()
+
+        assert not unresolved
+        assert declared.get("sessions", {}).get("session_id_1") == {"unique": True}

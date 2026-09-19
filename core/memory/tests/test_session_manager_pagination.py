@@ -406,13 +406,13 @@ class TestAdversarialRegressions:
         # 有本地覆盖层的 null 时间戳文档：有效键取 max("", now) → 可达（不再是"漏项"）
         assert "conv_bad_null" in result["ids"]
 
-    @pytest.mark.xfail(reason="已登记缺口（NEW_FINDING）：缺 updated_at 的历史文档在 "
-                             "keyset 谓词下不可达；本批只保证它不连坐其余记录，"
-                             "修它需要数据归一化或查询形态变更",
-                       strict=False)
     @pytest.mark.asyncio
-    async def test_missing_updated_at_row_is_unreachable_registered_gap(self):
-        """把"坏文档不可达"这一**已知缺口**显式钉住（修好时本用例会 XPASS）。"""
+    async def test_missing_updated_at_row_is_reachable(self):
+        """批次 16 / KB-15（原 xfail，现已修复）：缺 `updated_at` 的历史文档可达。
+
+        修前它在 keyset 谓词下永不匹配（`$lt` 对缺失走类型括号），只有"一页装得下"
+        时才露过面；本用例用 limit=10 × 40 条健康记录的形态把它钉在**翻页途中**。
+        """
         manager, _repo, backend = _make_manager()
         await _seed(backend, 40, prefix="conv_ok")
         await backend.insert_one("sessions", {
@@ -423,6 +423,77 @@ class TestAdversarialRegressions:
         result = await _paginate(manager, limit=10)
 
         assert "conv_bad_missing" in result["ids"]
+        assert result["ids"][-1] == "conv_bad_missing", "无排序键的记录必须排在最后"
+
+    @pytest.mark.asyncio
+    async def test_legacy_row_on_page_boundary_round_trips_through_the_cursor(self):
+        """KB-15 的**游标毒化**出口：坏文档当页边界时，下一页必须能继续（修前 400）。
+
+        修前 `_encode_cursor` 会为它写出 `base64("|sid")`，而 `_decode_cursor`
+        拒绝空时间戳 ⇒ 路由把它折成 400 `CONTRACT_VALIDATION`，**该页之后的记录
+        全部不可达**。本用例要求：拿到的游标回传后仍能推进，且最终集合完整。
+        """
+        manager, _repo, backend = _make_manager()
+        seeded = await _seed(backend, 4, prefix="conv_cb")
+        for sid in ("conv_leg_c", "conv_leg_a", "conv_leg_b"):
+            await backend.insert_one("sessions", {
+                "session_id": sid, "title": sid, "messages": [],
+                "character_binding": {}, "updated_at": None})
+        # 数组型（Challenger A 反证）：Mongo 的 $type/$gt 会遍历数组元素 ⇒ 必须
+        # 由 `$not: {$type: "array"}` 挡在有序桶之外，否则游标 Sentinel 会撞车。
+        await backend.insert_one("sessions", {
+            "session_id": "conv_leg_arr", "title": "数组", "messages": [],
+            "character_binding": {},
+            "updated_at": ["1990-01-01T00:00:00+00:00", "2040-01-01T00:00:00+00:00"]})
+
+        # 契约序：default(本地最新) → 4 条有序列 → legacy 桶（session_id ASC）。
+        # limit=6 ⇒ 页边界正好落在 legacy 桶第一条上，而桶内还有 2 条在后面。
+        items1, more1, cursor1 = await manager.list(limit=6)
+        boundary = items1[-1]
+        assert str(boundary.session_id) == "conv_leg_a"
+        assert boundary.updated_at == "", "页边界应落在无排序键的文档上"
+        assert more1 and cursor1
+
+        # 回传游标：修前这里抛 ValueError（→ 400），修后必须正常续页
+        items2, more2, cursor2 = await manager.list(cursor=cursor1, limit=6)
+        assert [str(s.session_id) for s in items2] == ["conv_leg_arr", "conv_leg_b",
+                                                       "conv_leg_c"]
+        assert more2 is False and cursor2 is None
+
+        result = await _paginate(manager, limit=6)
+        assert set(seeded) | {"conv_leg_a", "conv_leg_arr", "conv_leg_b",
+                              "conv_leg_c"} <= set(result["ids"])
+        assert len(result["ids"]) == len(set(result["ids"]))
+
+    @pytest.mark.asyncio
+    async def test_sentinel_cursor_round_trips_and_legacy_cursor_still_decodes(self):
+        """游标编码/解码必须**对称**，且旧格式（非空时间戳）逐字节兼容。"""
+        from core.memory.session_manager import _decode_cursor, _encode_cursor
+
+        assert _decode_cursor(_encode_cursor("", "conv_x")) == ("", "conv_x")
+        legacy = _encode_cursor(_ts(3), "conv_y")
+        assert _decode_cursor(legacy) == (_ts(3), "conv_y")
+        assert _decode_cursor(_encode_cursor("", "conv|with|pipes")) == (
+            "", "conv|with|pipes")
+        for bad in ("garbage", _encode_cursor("", ""), _encode_cursor("ts", "")):
+            with pytest.raises(ValueError):
+                _decode_cursor(bad)
+
+    @pytest.mark.asyncio
+    async def test_repeated_traversal_with_legacy_rows_is_stable(self):
+        """同一稳定数据集两次完整遍历：顺序逐项一致（禁止读时 now() 之类 fallback）。"""
+        manager, _repo, backend = _make_manager()
+        await _seed(backend, 30, prefix="conv_st")
+        for sid in ("conv_st_zzz", "conv_st_aaa"):
+            await backend.insert_one("sessions", {
+                "session_id": sid, "title": sid, "messages": [],
+                "character_binding": {}, "updated_at": None})
+
+        first = await _paginate(manager, limit=7)
+        second = await _paginate(manager, limit=7)
+
+        assert first["ids"] == second["ids"]
+        assert first["ids"][-2:] == ["conv_st_aaa", "conv_st_zzz"]
 
     @pytest.mark.asyncio
     async def test_mid_walk_storage_failure_is_not_reported_as_end_of_list(self):

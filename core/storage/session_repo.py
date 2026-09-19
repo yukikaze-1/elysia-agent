@@ -15,7 +15,12 @@ from core.schema.part import TextPart
 from core.schema.service_state import ServiceState
 from core.schema.types import IsoTimestamp, SessionId
 
-from core.storage.base import Repository, StorageUnavailableError, search_regex_filter
+from core.storage.base import (
+    Repository,
+    StorageUnavailableError,
+    is_duplicate_key,
+    search_regex_filter,
+)
 from core.storage.character_write_guard import (
     count_assistant_without_character,
     warn_missing_character_snapshot,
@@ -30,6 +35,54 @@ CONFIRM_TOKEN = "sessions"
 
 AUTO_TITLE_MAX_LEN = 20
 """自动标题最大长度（首条 UserMessage 文本截取字符数）。"""
+
+SESSION_ID_INDEX = "session_id_1"
+"""`session_id` 唯一约束的规范索引名（Mongo 按键自动命名，与声明键一致）。"""
+
+_LIST_ALL_LIMIT = 200
+"""`list_all` 的窗口上界（诊断成本上界，不是产品语义——见该方法 docstring）。"""
+
+ORDERED_TS_FILTER: dict = {
+    "updated_at": {"$type": "string", "$gt": "", "$not": {"$type": "array"}},
+}
+"""**有序桶**判据：`updated_at` 是**非空字符串标量**（排序键可用且与投影一致）。
+
+为什么三个条件缺一不可（真库 mongo:8 实测，`tmp/b16/main/probe_array_bucket.py`）：
+
+  - `$gt: ""` —— 类型括号（type bracketing）让它只匹配字符串里字典序大于空串的值；
+  - `$type: "string"` —— 补上"字段必须**真的存在**且是字符串"这一半（`$gt` 对缺失
+    字段也不匹配，但显式写出来语义更完整，也让 fake 端无歧义）；
+  - `$not: {"$type": "array"}` —— **承重条件**：Mongo 的比较/`$type` 算子会**遍历
+    数组元素**，于是 `updated_at: ["1990-…","2040-…"]` 这样的文档**既**匹配
+    `$type: "string"` **也**匹配 `$gt: ""`（按最大元素排序）——但投影层
+    （`_summary_from_doc`）把它归一成 Sentinel `""`。若不排除数组，"有序桶文档
+    投影成 Sentinel"就会与"游标里的 Sentinel 表示 legacy 桶"撞车：游标一旦落在
+    数组文档上，后续请求会被误判为"已在 legacy 桶"而**跳过整个有序桶**
+    （静默漏项 + 重复 + `has_more` 撒谎）。排除数组后本判据恰为"非空字符串标量"，
+    "存储侧排序键 == 投影侧排序键"对**每一篇**文档成立（这是游标能当位置用的前提）。
+
+真库计划实测：加这三个条件后正常路径仍是 `IXSCAN(updated_at_-1_session_id_1)` +
+索引序、`docsExamined == nReturned == limit`（与非多键数据集上的旧谓词逐项相同）。
+"""
+
+LEGACY_TS_CLAUSE: dict = {"$nor": [ORDERED_TS_FILTER]}
+"""**legacy 桶**子句：`ORDERED_TS_FILTER` 的**真补集**（顶层 `$nor`，含字段缺失）。
+
+判据必须真的是补集，否则两桶拼起来覆盖不了整个集合——这正是数组型 `updated_at`
+踩到的坑（`{"$not": {"$gt": ""}}` 不匹配"数组里含非空字符串"的文档，于是它既不在
+有序桶、也不在 legacy 桶 ⇒ 不可达）。
+
+`$nor` 的代价：它拿不到索引范围（真库实测：整条 `session_id` 索引扫描
+`keysExamined == 集合大小`、无阻塞排序），而旧写法 `$not: {$gt: ""}` 能拿到精确
+indexBounds（`[MaxKey,"{}"] ∪ ["",MinKey]`）。两者只在**有序桶取尽之后**才被调用
+（即一次遍历的最后一页，或小数据集上的每次请求），因此用 O(N) 索引扫描换
+"补集正确性"是划算的；**有序桶（正常路径）的计划不受任何影响**。
+
+这类文档没有可用的排序键，投影层把它们的 `updated_at` 归一为 `""`（Sentinel），
+因此它们在契约序中**排在所有有序记录之后**，桶内以 `session_id ASC` 定序。
+**不伪造时间戳**：桶内顺序只依赖持久化的 `session_id`，与"何时被读到"无关
+（禁止 `now()` / 随机值 / 首次读取时间做排序 authority）。
+"""
 
 INCOMPLETE_CHARACTER_BINDING_FILTER: dict = {
     "$or": [
@@ -68,6 +121,65 @@ def derive_session_title(messages: Sequence[Message]) -> str:
     return ""
 
 
+def _warn_session_identity_not_enforced(reason: str) -> None:
+    """把"`session_id` 唯一性未强制"这一降级状态**显著**报出来（不静默）。
+
+    KB-16 的部署策略是"可用性优先"：库里有重复文档时不建唯一索引、也不删任何
+    数据，应用照常启动。代价是逻辑主键在存储层不再唯一——这个代价必须看得见，
+    处置步骤也必须写清楚（本仓不做自动删除/自动合并：重复文档可能各自带着不同的
+    消息、标题、归档关联，"取更新时间最新的那个"是猜 winner）。
+    """
+    logger.warning(
+        "\n"
+        "==================================================================\n"
+        "  SessionRepository：`session_id` **唯一性未强制**（可用性优先）\n"
+        "    原因  : %s\n"
+        "    影响  : 同一 session_id 对应多份文档，而各读路径**命中不同的那一份**：\n"
+        "            `load`/`get_summary` 取 natural order 的第一篇、列表按\n"
+        "            `updated_at DESC` 取另一篇（`repo.list_page`/`list_all` 不去重，\n"
+        "            debug 面板会显示两条同 ID；只有 `SessionManager.list` 去重），\n"
+        "            `rename` 只改一篇且不改 `updated_at`（列表里可能看不到新名字），\n"
+        "            只有 `delete` 是 `delete_many`（两份一起删）\n"
+        "    处置  : 人工确认并清理重复文档后**重启**——数据干净后 connect()\n"
+        "            会自动把该索引升级为唯一（本方法只在数据干净时升级，\n"
+        "            绝不自动删数据、也不猜谁是赢家）\n"
+        "==================================================================",
+        reason,
+    )
+
+
+def _same_key_session_id_index(live: list[dict]) -> tuple[str, bool] | None:
+    """库中键模式恰为 `{session_id: 1}` 的索引 → `(名字, 是否唯一)`；没有则 None。
+
+    **按键模式而不是名字识别**：`ensure_index` 的规范名是 `session_id_1`，但操作者
+    完全可能手工建过**非规范名**的同键索引（如 `session_id_unique`，Mongo 允许同键
+    不同选项并存——真库实测）。只认规范名会对它视而不见，转而去建第二个同键索引
+    （真库抛 code 85），再退回非唯一 ⇒ 留下两个同键索引 + 每次 connect 都注定重试
+    失败 + `schema_drift` 永久报 option_conflict。
+    """
+    for idx in live:
+        key = idx.get("key")
+        if key is not None and dict(key) == {"session_id": 1}:
+            return str(idx.get("name") or ""), bool(idx.get("unique", False))
+    return None
+
+
+def _is_session_identity_conflict(exc: BaseException) -> bool:
+    """该 E11000 是否**确实**是本集合的 `session_id` 唯一约束（§60）。
+
+    为什么不能"任何 DuplicateKeyError 都当身份冲突"：集合将来可能出现别的唯一
+    索引，盲目吞掉会把无关的约束违规伪装成"并发同键收敛"。故要求驱动给出约束
+    上下文（`details.keyPattern`）且它**恰好**是 `{"session_id": 1}`；拿不到
+    上下文时一律不认（宁可让异常冒泡，也不猜）。
+    """
+    if not is_duplicate_key(exc):
+        return False
+    details = getattr(exc, "details", None)
+    if not isinstance(details, dict):
+        return False
+    return details.get("keyPattern") == {"session_id": 1}
+
+
 @dataclass
 class SessionSummary:
     """会话摘要信息，用于列表展示。"""
@@ -89,8 +201,13 @@ def _summary_from_doc(d: dict) -> SessionSummary:
 
     `updated_at` 强制收成 `str`：它是分页的**排序键**，历史/损坏文档可能缺字段或为
     null，而 `str` 与 `None` 比较会抛 `TypeError`（在归并里表现为"整个列表静默退化"）。
-    投影层归一后，下游所有键比较都是 str vs str。**注意**：归一不等于可达——缺
-    `updated_at` 的文档在 keyset 谓词下仍可能被漏掉（见 todo.md 的登记项）。
+    投影层归一后，下游所有键比较都是 str vs str。
+
+    **归一值 `""` 是 Sentinel，不是"空时间戳"**（批次 16 / KB-15）：它表示"该文档
+    没有可用的排序键"，在契约序里排最后、桶内按 `session_id ASC` 定序。存储层的
+    `list_page` 用同一个判据把文档分桶（`ORDERED_TS_FILTER` / `LEGACY_TS_CLAUSE`），
+    因此**存储顺序 == 投影顺序 == 游标语义**，这类文档同样可达（修前它们会被
+    keyset 谓词静默漏掉，或把游标写成解码不了的空时间戳）。
     """
     raw_ts = d.get("updated_at")
     return SessionSummary(
@@ -128,6 +245,11 @@ class SessionRepository(Repository):
     async def connect(self) -> bool:
         """建立 MongoDB 连接并创建索引（sessions 无 Mongo TTL——删除走显式级联删除）。
 
+        索引**引导**分两段：普通索引直接 `ensure_index`（幂等只增）；`session_id`
+        唯一约束走 `_ensure_session_id_index()`——它是一次**选项升级**（库里普遍
+        已存在非唯一的 `session_id_1`），需要先探测重复数据、必要时 drop 重建，
+        且任何失败都不得让仓储不可用（见该方法的纪律清单）。
+
         Returns:
             True 表示连接成功，False 表示连接失败。
         """
@@ -139,19 +261,137 @@ class SessionRepository(Repository):
                 f"mongodb/{self._database_name}",
                 base_url=self._base_url,
             )
-            await self._db.ensure_index(COLLECTION, [("session_id", 1)])
             await self._db.ensure_index(COLLECTION, [("updated_at", -1)])
             # 批次 8 / P2-01r：keyset 分页的排序是 (updated_at DESC, session_id ASC)，
             # 单键 updated_at 索引无法提供该顺序（真 Mongo 会退化成扫描 + 阻塞排序，
             # 实测 20k 会话 23.3ms/页 vs 有复合索引 1.2ms/页）。新增索引由 ensure_index
             # 幂等覆盖（ARCH-INC-P1-04：不做迁移框架），并已在 schema_drift 登记。
             await self._db.ensure_index(COLLECTION, [("updated_at", -1), ("session_id", 1)])
+            # 批次 16 / KB-16：session_id 是**逻辑主键**（全仓按它直读/改名/删除/
+            # 摘要/级联），唯一性必须在存储层强制——不是一行 unique=True（见方法）。
+            await self._ensure_session_id_index()
             logger.info("SessionRepository: MongoDB connected")
             return True
         except Exception as e:
             logger.warning("SessionRepository: MongoDB unavailable (%s)", e)
             self._db = None
             return False
+
+    async def _probe_duplicate_session_ids(self) -> tuple[bool, str]:
+        """探测 `session_id` 重复（决定唯一索引可不可以建）。
+
+        Returns:
+            `(是否可以建唯一索引, 人类可读的原因/重复样本)`。检测失败时返回
+            `(False, 原因)`——**不**把「查不到」当作「无重复」（S8 纪律 1）：
+            检测失败时若照建唯一索引，真库会以 `DuplicateKeyError` 拒绝，
+            升级路径已经把非唯一索引 drop 掉，集合会退化成**没有任何
+            `session_id` 索引**（真库实测：build 失败后只剩 `_id_`）。
+        """
+        assert self._db is not None
+        pipeline = [
+            {"$group": {"_id": "$session_id", "n": {"$sum": 1}}},
+            {"$match": {"n": {"$gt": 1}}},
+            {"$limit": 5},
+        ]
+        try:
+            dup_docs = list(await self._db.aggregate(COLLECTION, pipeline))
+        except Exception as e:
+            return False, f"重复检测失败：{type(e).__name__}: {e}"
+        if not dup_docs:
+            return True, ""
+        # 只报**数量**，不输出会话内容（数据审计纪律：不泄漏用户数据）。
+        return False, f"存在 {len(dup_docs)}{'+' if len(dup_docs) >= 5 else ''} 组重复 session_id"
+
+    async def _ensure_session_id_index(self) -> None:
+        """建立 `session_id` **唯一**约束（可用性优先，S8 同族纪律）。
+
+        为什么不是一行 `ensure_index(COLLECTION, [("session_id", 1)], unique=True)`：
+
+        1. **Mongo 不能原地改索引选项**。库里普遍已有非唯一 `session_id_1`
+           （2026-07-16 起就声明着）；同键请求 unique 会抛
+           `OperationFailure`(86 IndexKeySpecsConflict)——真库实测。而它在
+           `connect()` 的同一个 `try` 里会被吞成"仓储不可用"（`_db = None`），
+           即**整个 sessions 域 503**。故先 `list_indexes()` 比选项，
+           需要升级时**显式 `drop_index()` 后重建**（`drop_index` 是本仓唯一的
+           索引删除出路，这是它在生产代码里的第一个调用点）。
+        2. **有重复数据时绝不建唯一索引，也绝不 drop 现有索引**：真库实测
+           "已有重复 + build unique" → `DuplicateKeyError`(11000)，而 drop 已经发生
+           ⇒ 集合只剩 `_id_`。检测到重复 ⇒ 保持现状 + 显著告警（可用性优先）。
+           唯一性据此**降级为显式**：库侧由运行时 `schema_drift` 的
+           `option_conflicts` 报 error，启动日志同时给出处置命令。
+        3. **检测失败 ≠ 无重复**（`_probe_duplicate_session_ids` 纪律）。
+        4. **索引引导不得毁掉可用性**：本方法**不抛**——建索引失败只告警；
+           `connect()` 仍返回 True（对比：让异常冒泡会把一次索引故障升级成
+           "MongoDB 不可用"，正是 S2-B1 的故障形态）。
+        5. **幂等**：已建成的唯一索引直接返回；重复 `connect()`（含健康重连）
+           不产生任何变更——**幂等判定在昂贵的重复探测之前**（探测是全集合
+           `$group`：真库实测 20k 文档 71ms / 100k 351ms，健康重连每轮都会
+           `connect()`，不该为"已经对了"的库反复付这个代价）。
+        6. **按**键模式**而不是名字**识别现状（`_same_key_session_id_index`）：
+           操作者可能手工建过非规范名的同键索引。
+        """
+        assert self._db is not None
+        db = self._db
+        try:
+            live = await db.list_indexes(COLLECTION)
+        except Exception:
+            # 后端违约抛异常（而非按协议返回 None）时同样按"状态未知"处理：
+            # 本方法承诺不抛，`connect()` 的可信度不该取决于后端的异常风格。
+            logger.warning("SessionRepository：list_indexes 抛异常，跳过 session_id "
+                           "唯一约束保障（保持现状，下次 connect() 重试）", exc_info=True)
+            return
+        if live is None:
+            # S2-B1 三态：查询失败 ≠ 没有索引。状态未知时不做任何索引变更
+            # （create_index 在同名不同选项时会抛，drop 更不该在未知状态执行）。
+            logger.warning(
+                "SessionRepository：list_indexes 查询失败，跳过 session_id 唯一约束保障"
+                "（保持现状，下次 connect() 重试）")
+            return
+        existing = _same_key_session_id_index(live)
+        if existing is not None and existing[1]:
+            if existing[0] != SESSION_ID_INDEX:
+                logger.warning(
+                    "SessionRepository：`session_id` 唯一约束由**非规范名**索引 %s 提供"
+                    "（规范名 %s）——约束已生效，本方法不做任何变更；"
+                    "但 schema_drift 会把规范名报成 missing、把该索引报成 orphan"
+                    "（人工处置：drop_index('%s') 后重启，由本方法重建规范名索引）",
+                    existing[0], SESSION_ID_INDEX, existing[0])
+            return  # 已建成唯一约束（幂等：重复 connect() 不做任何变更）
+        desired_unique, reason = await self._probe_duplicate_session_ids()
+        if not desired_unique:
+            # 库里有重复 ⇒ 唯一约束**不强制**（可用性优先）。这是显式降级：
+            # 启动日志 + 运行时 schema_drift 的 option_conflicts 都会报出来。
+            _warn_session_identity_not_enforced(reason)
+            if existing is None:
+                # 现状连非唯一索引都没有（上次升级中途失败留下的形态）：补回来，
+                # 保证 session_id 至少还有索引可用。
+                try:
+                    await db.ensure_index(COLLECTION, [("session_id", 1)])
+                except Exception:
+                    logger.error("SessionRepository：补建非唯一 session_id 索引失败",
+                                 exc_info=True)
+            return
+        if existing is not None:
+            # 数据干净且选项不同 ⇒ 升级。Mongo 不支持原地改选项（真库实测 code 86），
+            # 只能先删后建；drop 失败（状态未知/权限不足）就保持现状，绝不硬来。
+            if not await db.drop_index(COLLECTION, existing[0]):
+                logger.warning(
+                    "SessionRepository：drop_index(%s) 未成功，跳过唯一约束升级"
+                    "（保持现状，下次 connect() 重试）", existing[0])
+                return
+        try:
+            await db.ensure_index(COLLECTION, [("session_id", 1)], unique=True)
+        except Exception:
+            logger.error(
+                "SessionRepository：session_id 唯一索引创建失败——仓储保持可用，"
+                "唯一性未强制；下次 connect() 会重试", exc_info=True)
+            # 唯一建不出来时退回非唯一：宁可降级唯一性，也不让 session_id
+            # 完全没有索引（升级路径已经把旧的删掉了）。
+            try:
+                await db.ensure_index(COLLECTION, [("session_id", 1)])
+            except Exception:
+                logger.error("SessionRepository：session_id 非唯一索引恢复也失败",
+                             exc_info=True)
 
     async def close(self) -> None:
         """关闭数据库连接，释放资源。"""
@@ -166,6 +406,44 @@ class SessionRepository(Repository):
             True 表示可用，False 表示不可用。
         """
         return await self._health_check()
+
+    async def _upsert_session(self, filter_expr: dict, update: dict, *,
+                              reason: str) -> None:
+        """`{session_id}` upsert，并把并发同键冲突**收敛**到既有文档上（§58/§59/§60）。
+
+        `session_id` 唯一索引（`_ensure_session_id_index`）下，三条写路径的
+        "先 find 再 upsert"仍可能同时走插入分支。真库实测（20 并发 × 5 轮 ×
+        create/ensure_exists/save/load+create）：服务端会把 loser 的插入
+        **自动重试为 update**，因此正常路径**看不到异常**（0 例外、最终恒 1 篇）。
+
+        本方法是那条路径的兜底，三条纪律：
+
+        - `non_fatal=is_duplicate_key`：即使冲突冒出来也不 `_mark_unavailable()`
+          判死仓储（那会把一次正常并发升级成全站 sessions 503，直到下一轮健康重连）。
+        - 只对**经确认的** `session_id` 约束冲突收敛（`_is_session_identity_conflict`）；
+          别的唯一约束异常原样冒泡，不猜。
+        - 收敛 = 重跑同一个 upsert：此时文档已存在 ⇒ 走 update 分支，而
+          `$set` / `$setOnInsert` 都不修改 `session_id` ⇒ **不可能再次冲突**
+          （最多重试一次，无循环）。
+        """
+        assert self._db is not None
+        db = self._db
+
+        async def _run_once() -> None:
+            await self._call(
+                lambda: db.update_one(COLLECTION, filter_expr, update, upsert=True),
+                reason=reason, non_fatal=is_duplicate_key,
+            )
+
+        try:
+            await _run_once()
+        except Exception as exc:
+            if not _is_session_identity_conflict(exc):
+                raise
+            logger.info(
+                "SessionRepository：并发同键 upsert 冲突，收敛到既有 session 文档（%s）",
+                filter_expr.get("session_id"))
+            await _run_once()
 
     async def save(self, session_id: SessionId, messages: Sequence[Message],
                    character_state: CharacterState,
@@ -215,10 +493,8 @@ class SessionRepository(Repository):
         )
         existing_title = existing[0].get("title", "") if existing else ""
         doc["title"] = existing_title if existing_title else derive_session_title(messages)
-        await self._call(
-            lambda: db.update_one(
-                COLLECTION, {"session_id": session_id}, {"$set": doc}, upsert=True,
-            ),
+        await self._upsert_session(
+            {"session_id": session_id}, {"$set": doc},
             reason="SessionRepository.save 写入失败",
         )
 
@@ -250,10 +526,8 @@ class SessionRepository(Repository):
             "character_binding": normalize_character_binding(character_binding) or {},
             "updated_at": now_iso(),
         }
-        await self._call(
-            lambda: db.update_one(
-                COLLECTION, {"session_id": session_id}, {"$set": doc}, upsert=True,
-            ),
+        await self._upsert_session(
+            {"session_id": session_id}, {"$set": doc},
             reason="SessionRepository.create 写入失败",
         )
 
@@ -294,19 +568,15 @@ class SessionRepository(Repository):
         )
         if existing:
             return False
-        await self._call(
-            lambda: db.update_one(
-                COLLECTION,
-                {"session_id": session_id},
-                {"$setOnInsert": {
-                    "session_id": session_id,
-                    "title": "",
-                    "messages": [],
-                    "character_binding": normalize_character_binding(character_binding) or {},
-                    "updated_at": now_iso(),
-                }},
-                upsert=True,
-            ),
+        await self._upsert_session(
+            {"session_id": session_id},
+            {"$setOnInsert": {
+                "session_id": session_id,
+                "title": "",
+                "messages": [],
+                "character_binding": normalize_character_binding(character_binding) or {},
+                "updated_at": now_iso(),
+            }},
             reason="SessionRepository.ensure_exists 写入失败",
         )
         return True
@@ -339,6 +609,13 @@ class SessionRepository(Repository):
                 upsert=False,
             ),
             reason="SessionRepository.rename 写入失败",
+            # 写路径纪律（与 `_upsert_session` 同）：**任何**唯一约束冲突都是业务
+            # 冲突而不是存储故障。不带 `non_fatal` 时 `_call` 会 `_mark_unavailable()`
+            # 判死整个仓储（直到下一轮健康重连），而 `SessionManager.rename` 还会把
+            # 它吞成"改名成功"⇒ 用户看到 200、随后整个 sessions 域 503。
+            # 冲突本身仍**原样冒泡**（不猜、不吞）——今天 sessions 上没有第二个唯一
+            # 索引，这条路不可达；装护栏是为了它将来仍然只是"一次失败的改名"。
+            non_fatal=is_duplicate_key,
         )
         return result > 0
 
@@ -426,9 +703,35 @@ class SessionRepository(Repository):
             记录继续翻页，直到拿不满一页为止。**不得**用"预取全量再切片"替代
             （那正是 P2-01r：`limit=200` 预取把单页上限变成了数据集上限）。
 
+        ## 批次 16 / KB-15：排序键的**全域**定义（两个桶）
+
+        修前本方法把排序/谓词直接压在**原始** `updated_at` 上，而投影层
+        （`_summary_from_doc`）把"非字符串 / 缺失 / null"归一成 `""` 再交给游标。
+        存储侧的排序键与**对外暴露的**排序键因此不一致，后果有二（真库 E3 实测）：
+
+          1. **静默漏项**：缺/`null` 的文档在 `updated_at: {$lt: <str>}` 下**永不匹配**
+             （类型括号），排在末尾却谁也叫不到它 ⇒ 只有"一页装得下"时才露过面；
+          2. **游标毒化**：BSON Date 型的 `updated_at` 排在字符串**之前**（BSON 序），
+             投影却把它归成 `""` ⇒ 它若落在页边界，`next_cursor` 会是
+             `base64("|sid")`，而解码端拒绝空时间戳 ⇒ **下一页直接 400**，
+             该页之后的全部记录不可达。
+
+        现在把排序域写成两个**显式**桶，二者合起来覆盖集合中的每一篇文档：
+
+        | 桶 | 判据 | 排序键 | 桶内顺序 |
+        |---|---|---|---|
+        | 有序 | `ORDERED_TS_FILTER`（非空字符串**标量**） | `updated_at` | `updated_at DESC, session_id ASC` |
+        | legacy | `LEGACY_TS_CLAUSE`（**真补集**：缺失/null/非字符串/空串/数组/对象…） | Sentinel `""` | `session_id ASC` |
+
+        两个桶拼接后的顺序与投影层给出的契约序（`_precedes` / `_after_cursor`：
+        `updated_at DESC, session_id ASC`，`""` 最小）**逐项相等**——这正是游标
+        能当"位置"用的前提。legacy 桶只在有序桶取不满一页时才被查询（每请求至多
+        两次 `find`，仍是 O(limit)，没有回到"预取全量"）。
+
         Args:
             limit: 单页最多返回多少条（<=0 返回空列表，不落到后端）。
             after: 上一页最后一条的 `(updated_at, session_id)`；None = 第一页。
+                `after[0] == ""` 表示"已进入 legacy 桶"（Sentinel 只由该桶产生）。
             search: title 子串（大小写不敏感）；空串不过滤。
 
         Returns:
@@ -450,18 +753,40 @@ class SessionRepository(Repository):
                 logger.warning("会话搜索词超长（%d 字符）——按无匹配处理", len(search))
                 return []
             filt["title"] = clause
-        if after is not None:
-            after_ts, after_sid = after
-            filt["$or"] = [
-                {"updated_at": {"$lt": after_ts}},
-                {"updated_at": after_ts, "session_id": {"$gt": after_sid}},
-            ]
         db = self._db
-        docs = await self._call(
-            lambda: db.find(COLLECTION, filt,
-                            sort=[("updated_at", -1), ("session_id", 1)], limit=limit),
-            reason="SessionRepository.list_page 查询失败",
-        )
+        docs: list[dict] = []
+        # 有序桶：首页，或游标停在有序桶内（`updated_at` 非空）时继续读它。
+        if after is None or after[0]:
+            ordered = dict(filt)
+            ordered.update(ORDERED_TS_FILTER)
+            if after is not None:
+                after_ts, after_sid = after
+                ordered["$or"] = [
+                    {"updated_at": {"$lt": after_ts}},
+                    {"updated_at": after_ts, "session_id": {"$gt": after_sid}},
+                ]
+            docs = await self._call(
+                lambda: db.find(COLLECTION, ordered,
+                                sort=[("updated_at", -1), ("session_id", 1)], limit=limit),
+                reason="SessionRepository.list_page 查询失败",
+            )
+            if len(docs) >= limit:
+                return [_summary_from_doc(d) for d in docs]
+        # legacy 桶：有序桶已取尽（或游标已在桶内）——按 `session_id ASC` 续读。
+        # 排序键**只用** session_id：这些文档没有可用的 updated_at，若仍按
+        # `(updated_at DESC, session_id ASC)` 排，桶内顺序会由 BSON 类型序决定
+        # （Date > String > Number > Null），与投影出来的 `""` 序不一致。
+        legacy = dict(filt)
+        legacy.update(LEGACY_TS_CLAUSE)
+        if after is not None and not after[0]:
+            legacy["session_id"] = {"$gt": after[1]}
+        remaining = limit - len(docs)
+        if remaining > 0:
+            docs.extend(await self._call(
+                lambda: db.find(COLLECTION, legacy, sort=[("session_id", 1)],
+                                limit=remaining),
+                reason="SessionRepository.list_page 查询失败",
+            ))
         return [_summary_from_doc(d) for d in docs]
 
     async def get_summary(self, session_id: SessionId) -> SessionSummary | None:
@@ -531,8 +856,15 @@ class SessionRepository(Repository):
         会话列表走 `list_page()`；把本方法的 200 当成分页取数，正是 P2-01r 的成因：
         单页上限变成了数据集上限，第 201+ 条不可达。
 
+        排序域与 `list_page` **同一套桶**（批次 16 / KB-15）：先按
+        `updated_at DESC, session_id ASC` 取有序桶，不足 200 时再按
+        `session_id ASC` 补 legacy 桶。修前这里只 `sort=updated_at DESC`，
+        于是一篇 BSON Date 型的坏文档会**占掉有序窗口的一个名额**并排在最前
+        （BSON 序把 Date 排在字符串之前），而它在投影里根本没有排序键。
+
         Returns:
-            会话摘要列表，按更新时间降序，最多 200 条（**上界是诊断成本，不是产品语义**）。
+            会话摘要列表，按更新时间降序（无排序键的 legacy 记录排在最后，
+            桶内 `session_id ASC`），最多 200 条（**上界是诊断成本，不是产品语义**）。
 
         Raises:
             StorageUnavailableError: 数据库未连接（决策 #8：本仓储整仓读 fail-closed
@@ -545,7 +877,14 @@ class SessionRepository(Repository):
             raise StorageUnavailableError(
                 "SessionRepository 未连接（MongoDB 不可用），会话列表无法判定")
         db = self._db
-        docs = await db.find(COLLECTION, {}, sort=[("updated_at", -1)], limit=200)
+        limit = _LIST_ALL_LIMIT
+        docs = await db.find(
+            COLLECTION, ORDERED_TS_FILTER,
+            sort=[("updated_at", -1), ("session_id", 1)], limit=limit)
+        remaining = limit - len(docs)
+        if remaining > 0:
+            docs.extend(await db.find(
+                COLLECTION, LEGACY_TS_CLAUSE, sort=[("session_id", 1)], limit=remaining))
         return [_summary_from_doc(d) for d in docs]
 
     async def clear_all(self, *, confirm: str) -> int:

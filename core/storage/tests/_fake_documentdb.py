@@ -27,6 +27,10 @@ Mongo 在「filter 命中但写入值未变」时返回 0——`cas_revision_poi
 repo 层按类名匹配）。`partialFilterExpression` 也支持（仅对满足过滤子句的文档生效）。
 
 注意：只有在**测试真的声明了索引**时才会强制——这与真 Mongo 一致（无索引即无约束）。
+**批次 16 补强**：`ensure_index(unique=True)` 现在会校验**既有文档**是否已违反该键
+（冲突抛 `DuplicateKeyError`，对齐真库 build 期行为），因为 `aggregate()` 是 stub
+（恒返回 `[]`）⇒"用 fake 验证『库里有重复 ⇒ 唯一索引建不起来/需降级』"若不补这一条，
+会得到**假绿**（fake 报 `unique=True`，真库会 code 11000 降级）。
 若干生产 repo 的 `connect()` 在**注入 db**（测试 fake）时 early-return，不声明索引
 （character/instance/generation/desktop/attachment 等），因此这些 repo 的既有测试
 默认不受唯一约束影响；需要验证唯一性的测试应显式 `await db.ensure_index(...)`
@@ -42,6 +46,18 @@ repo 层按类名匹配）。`partialFilterExpression` 也支持（仅对满足�
    需要显式验证 TTL 逻辑的测试主动调用。TTL 索引声明仍会被记录（`ttl_indexes`）。
 2. `aggregate` 为 stub（返回 []），`$unset`/`$rename`/`$push` 等更新操作符未实现。
 3. 查询操作符仅覆盖 subset（见模块顶说明）；未知操作符被忽略而非报错。
+   **批次 16 补强**：`$not`（缺失/null 也命中）、`$nor`（顶层）、`$type`（**含数组
+   元素遍历**）已实现，比较算子按 **BSON 类型括号**判据（跨类型不匹配，不再抛
+   `TypeError`）——这些是 KB-15 的桶查询（有序 `{"$type":"string","$gt":"",
+   "$not":{"$type":"array"}}` ⊕ legacy `{"$nor":[有序]}`）能在 fake 上被**真正执行**
+   的前提；否则未知算子会被静默忽略成 match-all（假绿）。
+   仍未实现：`$nin` / `$all` / `$size` / `$expr` / `$where`（同样是静默忽略，
+   新增查询算子前必须先在这里实现）。
+   `$type: "null"` 对**缺失字段**与真库不一致（fake 的 `_get_field` 把缺失与显式
+   null 都返回 None ⇒ 缺失也会命中 `null`）；本批的桶判据只用到 `"string"`/`"array"`，
+   不受影响。）
+4. `$exists` 对**显式 null** 与真库相反（fake 把缺失与 null 都当"不存在"）——
+   既有缺口，本批未动（无生产查询依赖它区分这两者）。
 """
 
 import copy
@@ -71,6 +87,78 @@ def _get_field(doc: dict, key: str) -> Any:
     return cur
 
 
+def _bson_type_rank(value: Any) -> int:
+    """BSON 类型序（Mongo 比较算子与排序的**类型括号**判据）。
+
+    真 Mongo 的比较算子只与**同类型**操作数比较（numeric 类型之间互通），跨类型
+    一律不匹配——修复前 fake 直接 `field_val > arg`，混类型数据集会抛 `TypeError`
+    或给出真库不会给的结果（批次 16 / KB-15 的 `updated_at` 正是混类型数据集）。
+
+    这里只实现判据需要的粗分类（rank 值本身无意义，只用于"是否同类型"）。
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool):     # 注意：bool 必须先于 int 判断（bool 是 int 子类）
+        return 1
+    if isinstance(value, (int, float)):
+        return 2
+    if isinstance(value, str):
+        return 3
+    if isinstance(value, datetime):
+        return 4
+    if isinstance(value, ObjectId):
+        return 5
+    if isinstance(value, dict):
+        return 6
+    if isinstance(value, list):
+        return 7
+    return 8
+
+
+def _comparable(a: Any, b: Any) -> bool:
+    """两个值是否可比较（同 BSON 类型；None 只与 None 同类）。"""
+    return _bson_type_rank(a) == _bson_type_rank(b)
+
+
+#: `$type` 的 BSON 类型名 → 判据（真库语义：
+#: **数组字段按元素遍历**——`{f: {$type: "string"}}` 对 `f: ["a"]` 同样命中）。
+_TYPE_CHECKS: dict[str, tuple[type, ...]] = {
+    "double": (float,),
+    "int": (int,),
+    "long": (int,),
+    "number": (int, float),
+    "decimal": (float,),
+    "string": (str,),
+    "object": (dict,),
+    "array": (list,),
+    "bool": (bool,),
+    "date": (datetime,),
+    "objectId": (ObjectId,),
+    "null": (type(None),),
+}
+
+
+def _type_matches(field_val: Any, type_name: str) -> bool:
+    """单个值是否是该 BSON 类型（`bool` 必须先于 `int` 判断）。"""
+    if type_name == "bool":
+        return isinstance(field_val, bool)
+    if type_name in ("int", "long", "number", "double", "decimal"):
+        return isinstance(field_val, (int, float)) and not isinstance(field_val, bool)
+    expected = _TYPE_CHECKS.get(type_name)
+    if expected is None:
+        return False
+    return isinstance(field_val, expected)
+
+
+def _field_type_matches(field_val: Any, arg: Any) -> bool:
+    """`$type`（含数组元素遍历；arg 可以是类型名或类型名列表）。"""
+    names = arg if isinstance(arg, list) else [arg]
+    if any(_type_matches(field_val, str(n)) for n in names):
+        return True
+    return isinstance(field_val, list) and any(
+        _type_matches(el, str(n)) for el in field_val for n in names)
+
+
 def _field_matches(field_val: Any, expected: Any) -> bool:
     """字段值 vs 查询条件（标量或操作符 dict）。"""
     if isinstance(expected, dict) and any(str(k).startswith("$") for k in expected):
@@ -78,12 +166,15 @@ def _field_matches(field_val: Any, expected: Any) -> bool:
             if op == "$options":
                 continue
             if op in ("$lt", "$lte", "$gt", "$gte"):
-                if field_val is None:
+                if not _comparable(field_val, arg):
                     return False
                 import operator
                 cmp_op = {"$lt": operator.lt, "$lte": operator.le,
                           "$gt": operator.gt, "$gte": operator.ge}[op]
-                if not cmp_op(field_val, arg):
+                if field_val is None:      # null vs null：相等（`$lte`/`$gte` 命中）
+                    if op in ("$lt", "$gt"):
+                        return False
+                elif not cmp_op(field_val, arg):
                     return False
             elif op == "$ne":
                 # 数组字段按 Mongo 语义：无任何元素等于 arg 才算 $ne 命中
@@ -91,6 +182,17 @@ def _field_matches(field_val: Any, expected: Any) -> bool:
                     if arg in field_val:
                         return False
                 elif field_val == arg:
+                    return False
+            elif op == "$type":
+                # 真库语义：数组字段**按元素遍历**（`{f: {$type: "string"}}` 命中
+                # `f: ["a"]`）。批次 16 的桶判据依赖这一条来排除数组型 `updated_at`。
+                if not _field_type_matches(field_val, arg):
+                    return False
+            elif op == "$not":
+                # Mongo `$not`：字段**不满足**子表达式即命中——**缺失/null 同样命中**
+                # （这正是 KB-15 legacy 桶判据依赖的语义；未知操作符被忽略的实现
+                # 会把 `$not` 变成 match-all，那是假绿）。
+                if _field_matches(field_val, arg):
                     return False
             elif op == "$exists":
                 if bool(arg) != (field_val is not None):
@@ -106,7 +208,9 @@ def _field_matches(field_val: Any, expected: Any) -> bool:
             elif op == "$elemMatch":
                 if not any(_matches(el, arg) for el in (field_val or [])):
                     return False
-            # 未知操作符：忽略（demo subset）
+            # 未知操作符：忽略（demo subset）——**这是已知保真度缺口**：
+            # `$type`/`$nin`/`$all`/`$size` 会被静默忽略成 match-all。新增查询算子前
+            # 先在这里实现，别让假绿进测试（批次 16 §115/Fidelity Gap 登记）。
         return True
     # 标量等值：数组字段按 Mongo 语义做元素包含匹配（{field: value} 命中含 value 的数组）
     if isinstance(field_val, list):
@@ -114,6 +218,11 @@ def _field_matches(field_val: Any, expected: Any) -> bool:
             return field_val == expected
         return expected in field_val
     return field_val == expected
+
+
+def _index_key(value: Any) -> Any:
+    """索引键形态（数组字段在真库里是**多键**——展开成排序后的元组做等价比较）。"""
+    return tuple(value) if isinstance(value, list) else value
 
 
 def _matches(doc: dict, cond: dict | None) -> bool:
@@ -127,6 +236,11 @@ def _matches(doc: dict, cond: dict | None) -> bool:
             continue
         if key == "$and":
             if not all(_matches(doc, sub) for sub in value):
+                return False
+            continue
+        if key == "$nor":
+            # 真库语义：**没有一条**子条件命中才算命中（含字段缺失）。
+            if any(_matches(doc, sub) for sub in value):
                 return False
             continue
         if not _field_matches(_get_field(doc, key), value):
@@ -214,19 +328,48 @@ class FakeDocumentDBBackend(DocumentDBBackend):
             索引名（沿用真 driver 的 `<field>_<dir>` 拼接约定）。
         """
         name = kwargs.get("name") or "_".join(f"{k}_{d}" for k, d in keys)
+        unique = bool(kwargs.get("unique", False))
+        partial = kwargs.get("partialFilterExpression")
         spec = {
             "name": name,
             "keys": list(keys),
-            "unique": bool(kwargs.get("unique", False)),
-            "partial": kwargs.get("partialFilterExpression"),
+            "unique": unique,
+            "partial": partial,
             # TTL：expireAfterSeconds 显式给出（含 0）才算 TTL 索引
             "ttl": kwargs.get("expireAfterSeconds"),
         }
+        existing = [s for s in self.indexes.get(collection, []) if s["name"] == name]
+        if existing:
+            # 同名同选项 → 幂等 no-op；同名**不同选项** → 真库抛
+            # `OperationFailure`(86 IndexKeySpecsConflict)。fake 不模拟完整选项
+            # 比对（`sparse` 等未建模），但至少让"unique 变了"这条可见。
+            if bool(existing[0].get("unique", False)) != unique:
+                raise RuntimeError(
+                    "IndexKeySpecsConflict: 同名索引已存在且选项不同 "
+                    f"({collection}.{name}: unique {existing[0].get('unique')} → {unique})")
+            return name
+        if unique:
+            # **已有的重复文档**会让真库的 unique build 失败（`DuplicateKeyError`
+            # 11000），且失败后索引不存在。fake 必须同样报错，否则"用 fake 验证
+            # 重复分支"会得到假绿（真库会降级为非唯一、fake 会报 unique=True）。
+            self._assert_buildable_unique(collection, keys, partial)
         specs = self.indexes.setdefault(collection, [])
-        # create_index 幂等：同名索引不重复追加
-        if not any(s["name"] == name for s in specs):
-            specs.append(spec)
+        specs.append(spec)
         return name
+
+    def _assert_buildable_unique(self, collection: str, keys: list[tuple[str, int]],
+                                 partial: dict | None) -> None:
+        """校验既有文档满足该唯一键（对齐真库的 build 期 `DuplicateKeyError`）。"""
+        seen: set[tuple] = set()
+        for doc in self._coll(collection):
+            if partial is not None and not _matches(doc, partial):
+                continue
+            key = tuple(_index_key(_get_field(doc, field)) for field, _ in keys)
+            if key in seen:
+                raise DuplicateKeyError(
+                    f"E11000 duplicate key error index build ({collection}, {keys})", 11000,
+                    {"keyPattern": {field: direction for field, direction in keys}})
+            seen.add(key)
 
     async def list_indexes(self, collection: str) -> list[dict]:
         """列出已声明索引（含内建 _id），与真 driver 的返回形状对齐。

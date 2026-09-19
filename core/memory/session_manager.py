@@ -75,10 +75,23 @@ def _encode_cursor(updated_at: str, session_id: str) -> str:
 
 
 def _decode_cursor(cursor: str) -> tuple[str, str]:
-    """解码 keyset 游标 → (updated_at, session_id)。格式非法抛 ValueError。"""
+    """解码 keyset 游标 → (updated_at, session_id)。格式非法抛 ValueError。
+
+    `updated_at` **允许为空串**（批次 16 / KB-15）：`""` 是 legacy 桶的 Sentinel
+    ——缺 / `null` / 非字符串 `updated_at` 的历史文档在契约序里排最后，桶内按
+    `session_id ASC` 定序（见 `SessionRepository.list_page` 的两桶表）。
+
+    为什么编码端（`_encode_cursor`）能产出 `""` 而这里必须收：修前解码端要求
+    `updated_at` 非空，于是**只要有一篇 legacy 文档落在页边界**，客户端拿到的
+    `next_cursor` 就会在下一次请求被判 400 `CONTRACT_VALIDATION`，
+    **该页之后的全部记录不可达**（真库 E3 实测）。编码/解码必须对称。
+
+    格式与旧版**逐字节兼容**：仍是 base64url(`updated_at|session_id`)，
+    旧游标（非空时间戳）语义不变；`""` 只可能由 legacy 桶产生。
+    """
     raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
-    updated_at, _, sid = raw.partition("|")
-    if not updated_at or not sid:
+    updated_at, sep, sid = raw.partition("|")
+    if not sep or not sid:
         raise ValueError("游标格式非法")
     return updated_at, sid
 

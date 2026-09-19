@@ -218,3 +218,99 @@ class TestTtl:
         assert removed == 1
         docs = await db.find("t", {})
         assert [d["id"] for d in docs] == ["new"]
+
+
+@pytest.mark.unit
+class TestQueryOperatorFidelity:
+    """查询算子保真度（批次 16 补强）：`$not` 与 **BSON 类型括号**。
+
+    为什么这两条是"证据完整性"问题而不是实现细节：KB-15 的 legacy 桶判据是
+    `{"updated_at": {"$not": {"$gt": ""}}}`，而 fake 对**未知算子**是一律忽略
+    （match-all）——`$not` 若不被实现，所有基于 fake 的用例都会在错误的结果集上
+    通过（假绿）；混类型数据集若不实现类型括号，则直接抛 `TypeError`，
+    被 `Repository._call` 吞成 `StorageUnavailableError` 后还会伪装成"降级"。
+    真库语义见 `tmp/b16/main/probe_kb15_e3.py`（mongo:8 实测）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_not_operator_matches_missing_and_null(self):
+        db = FakeDocumentDBBackend()
+        await db.insert_one("t", {"id": "valid", "ts": "2026-08-01T00:00:00+00:00"})
+        await db.insert_one("t", {"id": "empty", "ts": ""})
+        await db.insert_one("t", {"id": "null", "ts": None})
+        await db.insert_one("t", {"id": "missing"})
+        await db.insert_one("t", {"id": "date", "ts": datetime(2026, 9, 1, tzinfo=timezone.utc)})
+
+        not_gt = await db.find("t", {"ts": {"$not": {"$gt": ""}}})
+        gt = await db.find("t", {"ts": {"$gt": ""}})
+
+        assert sorted(d["id"] for d in not_gt) == ["date", "empty", "missing", "null"]
+        assert sorted(d["id"] for d in gt) == ["valid"]
+
+    @pytest.mark.asyncio
+    async def test_comparison_operators_are_type_bracketed(self):
+        """跨 BSON 类型不匹配（真库类型括号）——且**不得抛 TypeError**。"""
+        db = FakeDocumentDBBackend()
+        await db.insert_one("t", {"id": "date", "ts": datetime(2026, 9, 1, tzinfo=timezone.utc)})
+        await db.insert_one("t", {"id": "int", "ts": 1756735200})
+        await db.insert_one("t", {"id": "bool", "ts": True})
+        await db.insert_one("t", {"id": "str", "ts": "2026-08-01T00:00:00+00:00"})
+
+        assert [d["id"] for d in await db.find("t", {"ts": {"$lt": "2026-09-01T00:00:00+00:00"}})] == ["str"]
+        assert [d["id"] for d in await db.find("t", {"ts": {"$gt": 0}})] == ["int"]
+        assert [d["id"] for d in await db.find("t", {"ts": {"$gt": ""}})] == ["str"]
+
+    @pytest.mark.asyncio
+    async def test_null_compares_equal_to_null_only(self):
+        """`null` vs `null`：相等（`$lte`/`$gte` 命中，`$lt`/`$gt` 不命中），且不抛错。"""
+        db = FakeDocumentDBBackend()
+        await db.insert_one("t", {"id": "null", "ts": None})
+        await db.insert_one("t", {"id": "missing"})
+        await db.insert_one("t", {"id": "str", "ts": "x"})
+
+        assert sorted(d["id"] for d in await db.find("t", {"ts": {"$lte": None}})) == [
+            "missing", "null"]
+        assert await db.find("t", {"ts": {"$lt": None}}) == []
+
+
+@pytest.mark.unit
+class TestUniqueIndexBuildFidelity:
+    """`ensure_index(unique=True)` 必须像真库一样校验**既有文档**（批次 16 补强）。
+
+    为什么这是"证据完整性"问题：fake 的 `aggregate()` 是 stub（恒 `[]`）⇒
+    "库里有重复 ⇒ 唯一索引建不起来 / 必须降级"这条分支如果用 fake 验证，不补这一条
+    就会得到**假绿**（fake 报 `unique=True`，真库抛 `DuplicateKeyError` 11000 后降级）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_build_with_existing_duplicates_raises(self):
+        from core.storage.tests._fake_documentdb import DuplicateKeyError
+
+        db = FakeDocumentDBBackend()
+        for _ in range(2):
+            await db.insert_one("t", {"session_id": "dup"})
+
+        with pytest.raises(DuplicateKeyError):
+            await db.ensure_index("t", [("session_id", 1)], unique=True)
+
+        # 与真库一致：失败后索引**不存在**（不是"建了个非唯一的"）
+        assert [s["name"] for s in db.indexes.get("t", [])] == []
+
+    @pytest.mark.asyncio
+    async def test_clean_data_builds_and_is_idempotent(self):
+        db = FakeDocumentDBBackend()
+        await db.insert_one("t", {"session_id": "a"})
+        await db.insert_one("t", {"session_id": "b"})
+
+        for _ in range(2):
+            assert await db.ensure_index("t", [("session_id", 1)], unique=True) == "session_id_1"
+        assert [s["name"] for s in db.indexes["t"]] == ["session_id_1"]
+
+    @pytest.mark.asyncio
+    async def test_same_name_with_different_options_raises(self):
+        """同名不同选项：真库抛 `OperationFailure`(86)，fake 至少不得静默改选项。"""
+        db = FakeDocumentDBBackend()
+        await db.ensure_index("t", [("session_id", 1)])
+
+        with pytest.raises(RuntimeError, match="IndexKeySpecsConflict"):
+            await db.ensure_index("t", [("session_id", 1)], unique=True)
