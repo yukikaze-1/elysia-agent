@@ -282,14 +282,6 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # `session.add_message` 之后置 True）。它是"commit point 之后、历史之前"这个
         # 窄窗口的判据——在那里用户可见的帧一个都没发，输入却已经不可能被重来。
         self._turn_message_persisted: bool = False
-        # KB-46（Batch 15）：本回合"**已 claim 却还没进历史**"时用来补写的用户输入载荷
-        # `(content, message_id)`。由 `process()` 在取锁**之前**的同步段暂存（那里才知道
-        # `is_task_result`——合成系统唤醒不进 user history，故直接存 None），由
-        # `_handle_interrupt()` 的零 await prologue 一次性消费。
-        # 为什么不在 `_prepare_turn` 暂存：那样要给该私有方法加 `is_task_result` 形参，
-        # 而消费侧的门禁（`_generation_ctx is not None`）已经保证"只有已 claim 的回合
-        # 才可能消费它"——pre-claim 取消与 `_prepare_turn` 之前的一切都不受影响。
-        self._claimed_input_record: tuple[list[dict], MessageId | None] | None = None
         # 预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。
         # 注意：此前注释写「保留供 agent.py stop() 读取」，但全仓无任何读写点；
         # TTS 取消实际走 _tts_mgr.cancel_all()（见 agent/_lifecycle_tools.py）。
@@ -727,7 +719,10 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             runtime=runtime,
         )
 
-    async def _handle_prepare_cancelled(self) -> bool:
+    async def _handle_prepare_cancelled(
+        self,
+        record: tuple[list[dict], MessageId | None] | None = None,
+    ) -> bool:
         """回合在 THINKING 入口之后、`_think_loop` 之前被取消时的收口（KB-22）。
 
         **判据是"本回合是否真的开始过"，不是 `fsm.state == THINKING`**
@@ -807,10 +802,14 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 self._admission_session_id or "-",
             )
         logger.info("<<< 准备阶段被取消（THINKING 入口之后）— 经 canonical 中断路径收口")
-        await self._handle_interrupt()
+        await self._handle_interrupt(record=record)
         return True
 
-    async def _handle_turn_exception(self, e: BaseException) -> None:
+    async def _handle_turn_exception(
+        self,
+        e: BaseException,
+        record: tuple[list[dict], MessageId | None] | None = None,
+    ) -> None:
         """process 异常收口：区分 LLM 层错误 / 依赖不可用 / 内部错误并发射 generation.failed。
 
         Batch 11（§33/CF1）：这是与 `_handle_interrupt` **同一个 logical boundary** 的
@@ -881,7 +880,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                         logger.debug("generation mark failed 失败", exc_info=True)
         finally:
             # ★ CF1/CF2：终态收口必须完成（`_handle_interrupt` 自身也是取消安全的）。
-            await self._handle_interrupt()
+            await self._handle_interrupt(record=record)
 
     async def process(self, user_message: str = "", user_name: str = "妖梦",
                        stt_emotion: str = "", stt_events: list[str] | None = None,
@@ -906,11 +905,16 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._admission_message_id = None
         self._admission_session_id = ""
         self._turn_message_persisted = False
-        # KB-46（Batch 15）：本回合那条输入的"待补写载荷"。`is_task_result`（合成系统
-        # 唤醒）按既有合同**不进** user history（`_build_turn_prompt` 的唯一豁免），
-        # 所以在这里就存 None——recovery 因此不可能把系统事件写成用户历史。
-        # 存 None ≠ 会补写：消费侧还要求"本回合已 claim"（见 `_record_claimed_input`）。
-        self._claimed_input_record = (
+        # KB-46（Batch 15）：本回合那条输入的"待补写载荷"——**协程局部量**，随 `process()`
+        # 的调用栈走，沿终态路径显式下传（`_handle_prepare_cancelled` /
+        # `_handle_turn_exception` → `_handle_interrupt` → `_record_claimed_input`）。
+        # 为什么**不**放实例属性（Challenger W1 反证 + 主 Agent 独立复现 `N2`）：两个
+        # `process()` 体重叠时（新回合在锁上等待、旧回合尚未收口——生产实测 in-flight
+        # 峰值 = 2），入口的同步前缀会把旧回合的载荷覆盖成新回合的；此时若旧回合随后
+        # **claim**，它的 recovery 三门禁全过，就会把**新回合的正文**写进历史，而新回合
+        # 再正常写一次 ⇒ 一条重复、一条丢失（实测 `A_count=2 B_count=0`）。局部量让
+        # "载荷属于哪个回合"在结构上不可能搞错，不需要任何身份配对。
+        record = (
             None if is_task_result
             else (content if content else [{"type": "text", "content": user_message}],
                   message_id)
@@ -953,7 +957,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                         message_id, conversation_id, protocol_version,
                         origin_connection_id)
                 except (CharacterBusyError, StorageUnavailableError) as exc:
-                    await self._handle_turn_exception(exc)
+                    await self._handle_turn_exception(exc, record)
                     return
                 except Exception as exc:
                     # KB-22 同根的另一半（Challenger I3/I3b）：窗口里抛出的**普通异常**
@@ -963,7 +967,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                     # 保持既有语义（原样向外抛，不做任何相位收口）。
                     if self._generation_ctx is None:
                         raise
-                    await self._handle_turn_exception(exc)
+                    await self._handle_turn_exception(exc, record)
                     return
             except asyncio.CancelledError:
                 # 入口之前落下的取消：本回合没有任何状态需要收口 ⇒ **保持取消语义**
@@ -971,7 +975,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 # `test_process_start_clears_stale_generation_ctx`）。
                 # 入口之后：canonical 收口已把状态交给中断路径，与 `_think_loop`
                 # 窗口的取消一致地由回合自己消费，不再向外抛。
-                if not await self._handle_prepare_cancelled():
+                if not await self._handle_prepare_cancelled(record):
                     raise
                 return
             if setup is None:
@@ -1002,10 +1006,10 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             except asyncio.CancelledError:
                 logger.info("<<< 用户打断")
                 await self._archive_partial_reply(setup.target, reason="interrupted")
-                await self._handle_interrupt()
+                await self._handle_interrupt(record=record)
             except Exception as e:
                 await self._archive_partial_reply(setup.target, reason="error")
-                await self._handle_turn_exception(e)
+                await self._handle_turn_exception(e, record)
             finally:
                 self._clock = None
                 # BE-STAGEH-01：释放本回合 generation lease（异常/取消路径同样走到）。
@@ -1035,7 +1039,11 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             timestamp=_now_iso(),
         ))
 
-    def _record_claimed_input(self, source: str | None = None) -> bool:
+    def _record_claimed_input(
+        self,
+        source: str | None = None,
+        record: tuple[list[dict], MessageId | None] | None = None,
+    ) -> bool:
         """KB-46：把本回合**已 claim 但尚未进历史**的用户输入补写进会话历史。
 
         调用点是 `_handle_interrupt()` 的**零 await prologue**——那是被取消/失败回合的
@@ -1049,14 +1057,16 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
            的 admission 边界：claim **之前**的取消不得制造 phantom history（CT5）。
         ② `not _turn_message_persisted` —— 尚未由 normal path 写进历史。已写 ⇒ no-op，
            保证 AD4/CT3（同一条逻辑输入不得在 history/archive/prompt 里出现两次）。
-        ③ `_claimed_input_record is not None` —— 是**用户**输入。`is_task_result`
-           （合成系统唤醒）在 `process()` 入口就没暂存（§43）。
+        ③ `record is not None` —— 是**用户**输入。`is_task_result`（合成系统唤醒）在
+           `process()` 里就没构造载荷（§43）；载荷由 `process()` 沿终态路径**显式下传**，
+           因此它是**协程局部量**：不存在"跨回合串味"的可能（Challenger W1 / 实测 N2）。
 
-        **幂等**：除②③之外，只要拿到稳定身份（v2 预分配 messageId）就再核一次
-        "会话里是否已有这条身份"——判据落在**既有 identity**上，不是新增一个平行布尔
-        truth source（§36/§38/§90）；payload 在消费时立即清空，同回合内 W3→W1 叠加
-        （`_handle_turn_exception` 的 `finally` 先跑收口，`CancelledError` 继续冒泡被外层
-        `except CancelledError` 接住）也不会写第二次。
+        **幂等**：判据是②（`_turn_message_persisted`，normal path 与 recovery 共用）——
+        同回合内 W3→W1 叠加（`_handle_turn_exception` 的 `finally` 先跑收口，
+        `CancelledError` 继续冒泡被外层 `except CancelledError` 接住）时第二次必然短路。
+        另在拿到稳定身份（v2 预分配 messageId）时再核一次"会话里是否已有这条身份"
+        作为**防御纵深**——判据落在**既有 identity**上，不是新增平行布尔 truth source
+        （§36/§38/§90）。
 
         **不阻塞终态**：`SessionMemory.add_message` 是**同步、零 await** 的
         （deque append + fire-and-forget 归档，`core/memory/session.py`），因此本方法不
@@ -1076,10 +1086,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                 return False
             if self._turn_message_persisted:        # ② 已记录
                 return False
-            pending = self._claimed_input_record    # ③ 非用户输入
-            if pending is None:
+            if record is None:                      # ③ 非用户输入
                 return False
-            self._claimed_input_record = None       # 一次性消费
             # 目标会话：`self._session` 全仓只由 `_prepare_turn` 在 claim **之前**赋值
             # （`self._session = target`，紧随会话解析），且本回合全程持 `_process_lock`
             # ⇒ 已 claim 时它必然是本回合解析出的那个会话。recovery 路径不得再调 async
@@ -1091,7 +1099,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             target: SessionMemory | None = getattr(self, "_session", None)
             if target is None:                      # pragma: no cover — 防御
                 return False
-            content, message_id = pending
+            content, message_id = record
             if message_id is not None and _session_has_message_id(target, message_id):
                 self._turn_message_persisted = True   # 身份已在历史里 ⇒ 只对账
                 return False
@@ -1159,10 +1167,9 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             # cancellation/failure recovery 共用同一权威，不复制构造逻辑。
             self._record_user_input(self._session, user_content, user_message_id)
             # KB-24：输入已进历史 —— 此后用户至少能在历史里看到"我说过这句"。
+            # KB-46：本标志是 recovery 的门禁② —— 此后即使终态路径拿着同一份载荷
+            # 再来一次（W3→W1 叠加），`_record_claimed_input` 也必然短路，不会双写。
             self._turn_message_persisted = True
-            # KB-46：载荷由**本权威**消费——两个权威（normal / recovery）共享同一份
-            # 一次性载荷，谁先写谁消费，另一个必然在门禁②上短路，不可能双写。
-            self._claimed_input_record = None
         tool_defs = self._tool_adapter.definitions() if self._tool_adapter else None
         # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
         if tool_defs and supports_mm:
@@ -1600,7 +1607,12 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         except Exception:
             logger.debug("取消在途 desktop 调用失败（桥不可用/断连竞态）", exc_info=True)
 
-    async def _handle_interrupt(self, source: str | None = None) -> None:
+    async def _handle_interrupt(
+        self,
+        source: str | None = None,
+        *,
+        record: tuple[list[dict], MessageId | None] | None = None,
+    ) -> None:
         """中断后的清理：取消 TTS 任务、回到 IDLE 状态。
 
         Batch 11（KB-25）：本方法是**被取消回合的终态 owner**，因此它的"逻辑终态"
@@ -1630,7 +1642,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # 同样要补），也必须在任何 await 之前（第二发取消打不到它）。一处覆盖三个落点：
         # W1 `_prepare_turn` / W2 `_build_turn_prompt` / W3 `_handle_turn_exception`。
         # 它是同步的（见 `_record_claimed_input`），不新增挂起点、不做 DB 往返。
-        self._record_claimed_input(source)
+        self._record_claimed_input(source, record)
         self._interrupt_source = None
         if self.status.is_completely_idle:
             return

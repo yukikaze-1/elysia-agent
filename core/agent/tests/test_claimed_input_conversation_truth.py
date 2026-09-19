@@ -247,6 +247,14 @@ def _user_texts(agent: Agent) -> list[str]:
     return out
 
 
+def _msg_text(msg: object) -> str:
+    """单条消息的纯文本（`content` 是 Part 列表，`str()` 会给 repr——必须逐 Part 取）。"""
+    parts = getattr(msg, "content", None)
+    if not isinstance(parts, list):
+        return str(parts or "")
+    return "".join(str(getattr(p, "content", "")) for p in parts)
+
+
 def _roles(agent: Agent) -> list[str]:
     return [str(m.role) for m in agent.session.messages]
 
@@ -633,9 +641,14 @@ async def test_ct_t8_cancelled_then_normal_keeps_history_order(
     assert texts.count(m1) == 1 and texts.count(m2) == 1, texts
     assert texts.index(m1) < texts.index(m2), f"history 顺序错误：{texts}"
     roles = _roles(agent)
-    # M2 有正常回复 ⇒ 末条是 assistant；M1 与 M2 之间没有 assistant（M1 未被回复）
     assert roles[-1] == "assistant", roles
-    assert roles[texts.index(m1) + 1] != "assistant" or texts.index(m2) == texts.index(m1) + 1, roles
+    # M1 与 M2 之间**没有** assistant（M1 未被回复）——按 `session.messages` 的**真实**
+    # 下标判断，不用 user 文本下标去索引 roles（Challenger：原写法在实测形状下恒真）。
+    msgs = list(agent.session.messages)
+    idx_m1 = next(i for i, m in enumerate(msgs)
+                  if str(m.role) == "user" and m1 in _msg_text(m))
+    assert str(msgs[idx_m1 + 1].role) != "assistant", (
+        f"被取消的 M1 之后不得出现 assistant 消息：{[str(m.role) for m in msgs]}")
     # 下一回合的 prompt 里两条各自恰一次
     flat = llm.prompt_flat(-1)
     assert flat.count(m1) == 1 and flat.count(m2) == 1, (
@@ -726,26 +739,35 @@ async def test_ct_t11_record_recovery_is_idempotent_across_repeated_finalization
         agent: Agent, llm: _RecordingFakeLLM):
     """`_handle_interrupt` 是被取消回合的 canonical 终态 owner，**幂等**（Batch 11）。
 
-    KB-46 的 recovery 挂在它里面 ⇒ 必须继承这条幂等性：第二次调用不得再 append
-    一条。判据落在**既有身份**（预分配 `message_id`）与一次性消费的载荷上，
-    不是新增平行布尔。
+    KB-46 的 recovery 挂在它里面 ⇒ 必须继承这条幂等性：**同一份载荷被喂第二次时
+    必须短路**。判据是门禁②（`_turn_message_persisted`，normal 与 recovery 共用），
+    另以既有身份（预分配 `message_id`）作防御纵深。
+
+    ⚠️ 载荷在实现上由 `process()` **沿终态路径显式下传**（不是实例状态），所以本用例
+    在窗口内以 `process()` 的同一构造形状直接喂两次 —— 这才是能杀"去掉门禁②"变异的
+    判据；只调一次 `_handle_interrupt()` 是无载荷的 no-op，会退化成恒真（Challenger 指出）。
     """
     gate = _gate_prompt(agent)
     gate.arm()
     token = "KB46-终态重复调用"
     await _at_claim_window(agent, gate, token)
 
+    loop = agent._cognitive  # noqa: SLF001
+    record = ([{"type": "text", "content": token}], None)   # = process() 的构造形状
+    assert loop._record_claimed_input("websocket", record) is True, (  # noqa: SLF001
+        "窗口内（已 claim、未 recorded）第一次喂载荷应当写入")
+    assert loop._record_claimed_input("websocket", record) is False, (  # noqa: SLF001
+        "同一份载荷第二次喂入必须短路（门禁②）——否则会双写会话真相")
+    assert _user_texts(agent).count(token) == 1, _user_texts(agent)
+
+    # 终态路径拿着同一条载荷再走一次（W3→W1 叠加的同形）——仍须短路
     _stop(agent, source="websocket")
     gate.open()
     await _drain(agent)
-    assert _user_texts(agent).count(token) == 1, _user_texts(agent)
 
-    # 再调一次 canonical 终态 owner（生产形态：收口期间第二发取消 / 迟到中断）
-    await agent._cognitive._handle_interrupt("websocket")  # noqa: SLF001
-    await _drain(agent)
-
-    assert _user_texts(agent).count(token) == 1, (
-        f"重复收口不得双写会话真相：{_user_texts(agent)}")
+    users = [t for t in _user_texts(agent) if t == token]
+    assert len(users) == 1, (
+        f"重复收口不得双写会话真相：出现 {len(users)} 次 / {_user_texts(agent)}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -772,11 +794,18 @@ async def test_ct_t12_shutdown_in_window_stays_bounded_and_starts_no_new_turn(
     await asyncio.sleep(0)
 
     assert agent._state.name == "STOPPED", agent._state.name  # noqa: SLF001
+    # ① 有界 + 不得在 STOPPED 之后再开回合/调用 LLM
     assert llm.stream_calls == calls_before, (
         f"停机后不得再开启回合/调用 LLM：{calls_before} → {llm.stream_calls}")
-    assert agent.pending_messages == [] or agent.pending_messages is not None
-    # 不新增 user 输入：停机本身不制造新回合
     assert agent._cognitive.current_task is None or agent._cognitive.current_task.done()  # noqa: SLF001
+    assert not agent.pending_messages, (
+        f"停机后不得残留 pending：{[p.text for p in agent.pending_messages]}")
+    # ② 真相层（Challenger 指出旧写法只有恒真式、对"功能缺失"零判别力）：
+    #    停机是**受支持的**取消源 ⇒ 按 CT1 这条已 claim 的输入必须恰一条。
+    hits = [t for t in _user_texts(agent) if t == token]
+    assert len(hits) == 1, (
+        f"停机窗口内被取消的已 claim 输入必须恰一条（0 = 丢失，>1 = 双写）："
+        f"{_user_texts(agent)}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -902,4 +931,71 @@ async def test_ct_t14_direct_injection_preemption_still_records_claimed_input(
         f"被直投输入抢占的已 claim 输入必须恰一条（0 = 静默丢失，>1 = 双写）：{texts}")
     assert len(m2_hits) == 1, f"抢占方必须恰一条：{texts}"
     assert texts.index(m1) < texts.index("KB46-抢占-M2"), f"顺序错误：{texts}"
+    assert agent.status.is_completely_idle, agent.status.current_name()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# CT-T15 — 两个 process() 体重叠时，载荷不得跨回合串味
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_ct_t15_payload_never_leaks_across_overlapping_process_bodies(
+        agent: Agent, llm: _RecordingFakeLLM):
+    """Challenger W1 反证 / 主 Agent 独立复现 N2 —— **载荷与 claim 必须同源**。
+
+    时序（直接并发调用 `CognitiveLoop.process`，绕过 `Agent._handle_user_input` 的
+    cancel-before-spawn，把重叠摆到确定的位置上）：
+
+    ```text
+    B = process("B") 钉在 claim **之前**（registry.get_or_load）→ 持锁、ctx=None
+    A = process("A") 进入同步前缀 → 清 ctx / persisted，暂存/构造 A 的载荷，停在锁上
+    放行 B ⇒ B 走完 _prepare_turn 并 **claim**（此时 ctx = B 的）
+    cancel B ⇒ B 的终态 recovery
+    ```
+
+    修前（载荷是**实例属性**）：B 的 recovery 三门外禁全过，把 **A 的正文**写进历史，
+    A 随后走正常路径再写一次 ⇒ 实测 `A_count=2 B_count=0`（一条重复 + 一条丢失）。
+    修后（载荷是 `process()` 的**协程局部量**，沿终态路径显式下传）：B 写自己的、
+    A 写自己的 ⇒ 各恰一条。
+
+    生产可达性诚实声明（Challenger §W1）：三个 spawn 点都是 cancel-before-spawn，
+    因此今天**没有**复现出生产路径；但实测两个 `process()` 体在窗口内重叠时
+    in-flight 峰值 = 2 ⇒ 这条不变量必须以**机制**（局部量）而非调度次序保证。
+    """
+    gate = _gate_admission(agent)
+    gate.arm()
+    loop = agent._cognitive  # noqa: SLF001
+
+    task_b = asyncio.create_task(loop.process("KB46-N2-B"))
+    task_b.set_name("cognitive-N2-B")
+    await asyncio.wait_for(gate.entered.wait(), timeout=_PROBE_S)
+    assert loop.current_turn_owns_input is False, "用例前提：B 停在 claim 之前"
+
+    task_a = asyncio.create_task(loop.process("KB46-N2-A"))
+    task_a.set_name("cognitive-N2-A")
+    for _ in range(200):        # 让 A 跑完同步前缀、停在锁上
+        await asyncio.sleep(0)
+        if loop.process_lock.locked() and await _turn_tasks():
+            break
+    gate.open()                 # 放行 B ⇒ B 继续 claim
+    for _ in range(400):
+        await asyncio.sleep(0)
+        if loop.current_turn_owns_input:
+            break
+    assert loop.current_turn_owns_input is True, "用例前提：B 必须已越过 claim"
+
+    loop.cancel_current(source="websocket")
+    gate.open()
+    await _settle(task_b)
+    await _settle(task_a)
+    await _drain(agent)
+
+    texts = _user_texts(agent)
+    a_hits = [t for t in texts if t == "KB46-N2-A"]
+    b_hits = [t for t in texts if t == "KB46-N2-B"]
+    assert len(a_hits) == 1, (
+        f"A 的输入必须恰一条（2 = 被 B 的恢复路径重复写入，0 = 丢失）：{texts}")
+    assert len(b_hits) == 1, (
+        f"B 的输入必须恰一条（0 = 被 A 的载荷顶掉）：{texts}")
     assert agent.status.is_completely_idle, agent.status.current_name()
