@@ -21,16 +21,16 @@ Module/config/
 └── tests/
 ```
 
-### `providers.yaml` 的能力位（**扩展点先看这里**）
+### `providers.yaml` 的 provider 声明（**扩展点先看这里**）
 
-llm 段的四个键是"这个 provider 能接受什么"的**唯一声明处**，工厂按它们决定请求体形状：
+llm 段的这四个键**不是同一类东西**（Batch 17 更正）：前三个是**能力位**（"这个 provider 能接受什么"），`context_window` 是**运行时窗口声明**（"Elysia 要求/相信这个 provider 服务多少"）——对能显式申请分配的 provider（当前仅 ollama native）它是**请求值**，不只是预算提示。工厂按它们决定请求体形状：
 
 | 键 | 谁消费 | 语义 |
 |---|---|---|
 | `supports_prefix` | `LLMFactory.create` → 后端 | prefix continuation（DeepSeek beta 端点）；调用方带 `prefix` 消息而 provider 未声明 → 抛错 |
 | `supports_multimodal` | `LLMFactory.supports_multimodal` | 图片输入；决定历史/当前消息走 image_url 块还是降级成 describe_image 提示 |
 | `supports_thinking` | 后端 `_gate_extra_body` | DeepSeek 风格顶层 `thinking` 字段。**未声明（或 false）= 丢弃该键 + 一次 warning**——严格 OpenAI 风格 API 遇未知顶层参数直接 400，会让该 provider 上 100% 回合失败（S2-H3） |
-| `context_window` | `LLMFactory.context_window` → prompt 预算 | 模型上下文（token）；预算 = 本值 × 0.75，未声明则用保守默认 32K（S2-H9）。数值是**估算值**，只影响截断时机 |
+| `context_window` | `LLMFactory.context_window` → prompt 预算 **＋**（ollama）`OllamaBackend` → 运行时 `options.num_ctx` | Elysia 声明的 **effective runtime window**（token）：预算 = 本值 × 0.75，未声明/非法则预算走保守默认 32K（S2-H9）。**Batch 17 起它不再只是估算值**：对 ollama 同一个值会作为 native `/api/chat` 的 `num_ctx` **真的去申请分配**（改它 = 改显存分配与 serving window）；缺失/≤0 则**不发**该字段（OL2：预算回退 32768 **绝不**当分配指令）。其余 provider 不能申请分配，仍是"声明即信任"。见 [Module/llm/README.md](../llm/README.md) 与 [不变量 §3.4](../../docs/architecture/invariants.md) |
 
 新增 provider 专属字段时，优先落在这里而不是调用点硬编码——调用点硬编码 provider 知识正是
 S2-H3 的成因（主链与另外 ~10 个调用点都写着 DeepSeek 专属的 `thinking`）。

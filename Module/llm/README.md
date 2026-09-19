@@ -11,8 +11,9 @@ llm/
 ├── __init__.py          # 导出 LLMBackend, LLMFactory
 ├── __main__.py          # 真实 API 集成测试 (python -m Module.llm)
 ├── protocol.py          # LLMBackend ABC
-├── registry.py          # 后端注册表 + LLMFactory.create() / from_config()
-├── openai_compat.py     # OpenAICompatBackend — OpenAI 兼容协议 (DeepSeek/OpenAI/Ollama)
+├── registry.py          # 后端选择 + LLMFactory.create() / from_config()
+├── openai_compat.py     # OpenAICompatBackend — OpenAI 兼容协议 (DeepSeek/OpenAI/MiMo/custom)
+├── ollama.py            # OllamaBackend — Ollama **native** /api/chat（Batch 17 / AR-16）
 ├── config.py            # LLMConfig — dataclass 配置
 ├── tests/              # 单元测试
 
@@ -81,7 +82,7 @@ async for chunk in backend.stream_think(messages):
 |----------|---------|-------------|
 | `deepseek` | `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash` | `DEEPSEEK_API_KEY` 环境变量 |
 | `openai` | `openai/gpt-5` | `OPENAI_API_KEY` 环境变量 |
-| `ollama` | `ollama/qwen3:latest` | 不需要 |
+| `ollama` | `ollama/qwen3:latest` | 不需要（**native `/api/chat`**，见下节） |
 | `mimo` | 多模态，与 OpenAI 协议兼容 | `MIMO_API_KEY` 环境变量 |
 | `custom` | 用户自定义 OpenAI-compatible 端点 | 按端点配置 |
 | `gemini` | 占位，未实现 | `GEMINI_API_KEY` |
@@ -91,6 +92,54 @@ async for chunk in backend.stream_think(messages):
 ```python
 backend = LLMFactory.create("openai/gpt-5", base_url="https://my-proxy.com/v1")
 ```
+
+## Ollama：为什么它有自己的后端（Batch 17 / KB-13 / AR-16）
+
+`LLMFactory.create("ollama/<model>")` 返回 **`OllamaBackend`**（native `POST /api/chat`），
+而不是通用 OpenAI 兼容后端。理由不是"每个 provider 都该有类"，而是**语义不可通约**：
+
+Ollama 的 serving context 是**运行时分配**（`options.num_ctx`），而实测（Ollama 0.24.0 /
+`qwen2.5:3b`，冷启动 A/B）**OpenAI 兼容端点 `/v1/chat/completions` 会静默忽略该字段**：
+
+| 请求 | `GET /api/ps context_length` |
+|---|---|
+| `/v1/chat/completions`（无 `options`） | 4096 |
+| `/v1/chat/completions` + `options.num_ctx=8192` | **4096（被忽略）** |
+| native `/api/chat` + `options.num_ctx=8192` | **8192** |
+
+于是"声明 8192 但实际只服务 4096"会**静默**发生（超窗是 HTTP 200 + 截断，不报错），
+而 `providers.yaml::llm.ollama.context_window` 就是 Elysia 的 prompt 预算权威 ⇒
+预算装得下 ≠ provider 真的服务这么多（KB-13）。修法是把 runtime context 的**请求**
+与预算权威绑在同一个值上：
+
+```text
+providers.yaml::llm.ollama.context_window = N（>0）
+      ↓ LLMFactory.create() 解析（预算侧读的是同一条目：LLMFactory.context_window）
+OllamaBackend(context_window=N)
+      ↓ request translation（后端内部，上层不可见）
+POST /api/chat { "options": { "num_ctx": N } }
+```
+
+三条硬边界（有测试与不变量钉住，见 `docs/architecture/invariants.md` §3.4 OL1–OL6）：
+
+1. **只有显式声明才请求分配**。未声明/`≤0` ⇒ **不发** `num_ctx`（由 daemon 默认管辖，
+   诊断面如实报 `requested=None` = "runtime context not controlled by Elysia"）。
+   通用预算回退（`budget.DEFAULT_CONTEXT_WINDOW = 32768`）是**上层预算兼容行为**，
+   **绝不**当分配指令发出——那是真实显存分配（实测 32768 已需 ~4.3GB VRAM），
+   而 `num_ctx=0/-1` 在真实 daemon 上会得到一个 **4 token** 的畸形 runner。
+2. **`/api/ps` 不在热路径**。正常路径保持 **1 user generation → 1 provider request**；
+   `backend.probe_runtime_context()` 是**显式**诊断调用（configured / requested /
+   observed 三分真值），失败不抛且不影响 generation。
+3. **`raw_client` 保持 OpenAI 兼容侧车**（懒创建、指向 `<root>/v1`）：它的消费方是
+   `WorkflowEngine` Planner/Executor（`chat.completions.create(...)`，OpenAI SDK 形状），
+   属本批范围外 ⇒ **工作流路径仍不受 Elysia runtime context 控制**（已知边界）。
+
+其它行为差异（都与 native 的真实语义对齐）：`max_tokens` → `options.num_predict`、
+`temperature` → `options.temperature`；`tools` 原样透传，native 的
+`message.tool_calls`（`arguments` 是**对象**）被归一成通用 delta 契约（JSON 字符串 +
+`index`）；`tool_choice` / `stream_options` / `response_format` / `extra_body` 无 native
+对应语义，**丢弃并警告一次**；`prefix: True` **显式拒绝**（静默丢字段会把"续写"变成
+"重新回答"，两者都返回 200）。
 
 ## Prefix Continuation
 
@@ -209,6 +258,10 @@ class YourBackend(LLMBackend):
 ```bash
 # 单元测试（mock，不需要 API key）
 python -m pytest Module/llm/tests/ -v
+
+# 真实 Ollama 的 runtime context 旁证（**opt-in**：需要本地 daemon，会卸载测试模型；
+# 不进 quick/normal/full，CI 不依赖 Ollama）
+RUN_EXTERNAL_TESTS=1 python -m pytest Module/llm/tests/test_ollama_real.py -q -s
 
 # 真实 API 集成测试（需要 .env 中的 DEEPSEEK_API_KEY）
 python -m Module.llm

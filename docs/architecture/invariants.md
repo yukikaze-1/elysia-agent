@@ -65,7 +65,7 @@
 | **PW3** | **能裁进窗口的预览必须能预览**：本地拒绝的阈值是**窗口**而非预算（预算含 25% 输出余量，保护节自身就可能超过它） | `::test_preview_boundary_sends_when_fits_and_validates_when_not`、`::test_small_window_model_can_preview_a_small_request` | 同上 | **push/backend** |
 | **PW4** | 估算输入**占满或超过**窗口（`>=`，含"装得下但无输出余量"）→ **本地**拒绝（400 `CHARACTER_VALIDATION`，非重试）且**零 provider 请求**；不得发送已知必失败的请求、不得自动缩预算重试 | `::test_preview_impossible_input_fails_locally_without_provider_call`、`::test_preview_boundary_sends_when_fits_and_validates_when_not` | 同上 | **push/backend** |
 | **PW5** | **大窗口行为不回归**；未声明窗口的第三方 provider 维持既有兼容 fail-open（与预算同源的保守默认，不是"无限大"、也不是 0） | `::test_preview_large_window_provider_unchanged`、`::test_preview_undeclared_window_keeps_compat_policy` | 同上 | **push/backend** |
-| **PW6** | 预览预算**不改变正常生成策略**：回退规则只有一份（`Module.system_prompt.budget.effective_context_window`）；**现有配置下 chat 路径逐字不变** | `core/prompt/tests/test_prompt_budget.py::TestEstimation::test_effective_window_is_the_shared_fallback`、`::test_budget_uses_headroom_and_default` | 同上 | **push/backend** |
+| **PW6** | 预览预算**不改变正常生成策略**：回退规则只有一份（`Module.system_prompt.budget.effective_context_window`）；**预算换算与回退规则逐字不变**（⚠️ 措辞更正：Batch 17 起，`llm.model: ollama/*` 时**出站请求**确有变化——协议、options 形状、tool_call 归一、prefix 拒绝——那是 §3.4 的领域；本条只声称**预算层**不变） | `core/prompt/tests/test_prompt_budget.py::TestEstimation::test_effective_window_is_the_shared_fallback`、`::test_budget_uses_headroom_and_default` | 同上 | **push/backend** |
 
 **为什么拒绝用 400 而不是 503**：产品契约（Stage H §4.5）把 503
 `CHARACTER_PREVIEW_FAILED` 定义为"provider/运行时**暂时**不可用"。裁完仍占满窗口是
@@ -96,11 +96,16 @@ metadata，本批不新造（"限制输入长度和输出 token" 那句设计稿
    **双向误差带**：可能误拒一个勉强装得下的预览，也可能漏放一个在**强制窗口**的
    provider 上必 400 的请求。修它需要真 tokenizer（`§15/§16` 明确不在本批范围），
    已登记 `KB-12`。
-3. **声明窗口 ≠ 服务窗口**：`providers.yaml` 的 `context_window` 是**手写估算值**
-   （`ollama` 声明 8192，实测 ollama 0.24.0 默认 `num_ctx` = 4096，且**超窗时静默
-   截断并返回 200**，不报 400）⇒ "装得下声明窗口"是必要条件而非充分条件。属既有
-   条目 `OBS-2` 的家族，Batch 7 用真实 provider 补了证据，见 `KB-13`；改它会全局
-   改变 chat 的截断时机，**不在本批范围**。
+3. **声明窗口 ≠ 服务窗口（Batch 17 起在 Ollama 上被绑定，云端仍是"声明即信任"）**：
+   `providers.yaml` 的 `context_window` 是**手写声明值**。对 **Ollama**，Batch 17 起
+   该值会同时成为 native `/api/chat` 的 `options.num_ctx`（见 §3.4 OL1/OL2），
+   故"声明多少就请求多少"成立——但仍有两条残余边界：①Ollama 自身对超大值有夹取上限
+   （0.24.0 实测 32768），声明高于它会再次分叉，只有诊断（`probe_runtime_context`）
+   能看见；②**超窗仍是 HTTP 200 + 静默截断**，而估算器是字符启发式（见下条），
+   所以"估算装得下"依然不是"provider 一定完整消费"。对**云端** provider（deepseek /
+   openai / mimo / custom）Elysia 无法申请分配，其"声明 = 实际服务窗口"仍是**信任**，
+   `requested` 如实记为 None。属既有条目 `OBS-2` 的家族，证据见 `KB-13` /
+   [Batch 17 执行记录](../review/2026-09-19-Batch17-ollama-provider-adapter-执行记录.md)。
 4. **窗口小于保护节下界**：若 `context_window` ≤ 保护节规模（实测 ~2.1K 起），
    任何预览都会被本地拒绝（PPW-3 在该区间退化为"明确拒绝"而非"永不 400"）。
    这是诚实的结果：不具备可预览性时应报"内容超窗"，而不是发一个必然被截断/拒绝的
@@ -304,6 +309,82 @@ freshness（E1：外部写入者改库后热缓存不自动刷新 ⇒ `GET` 可�
 bump 版本；没有去掉 revision filter、没有 last-write-wins、没有"取最新 revision
 静默重试"。本批只改**报告真相**，不改并发保护强度。
 
+
+### 3.4 Ollama runtime context authority（OL）
+
+来源：[2026-09-19 Batch 17 执行记录](../review/2026-09-19-Batch17-ollama-provider-adapter-执行记录.md)。
+canonical finding：**KB-13**（Ollama runtime context authority mismatch）、
+architecture debt：**AR-16**（Ollama Provider Adapter）、product decision：**PD-12**（已裁决）。
+
+**合同（PD-12 → A）**：`providers.yaml::llm.<provider>.context_window` 是 Elysia 对该
+provider 的 **effective runtime window** 声明——**既**是 prompt 预算的来源（×0.75），
+**也**是"能显式申请分配的 provider 必须按它申请"的运行时意图。它**不是**模型理论
+capability（全仓没有任何 consumer 这么读它：没有 model 级 capability 表、没有 UI 展示、
+没有 min(capability, config) 逻辑，而预算与预览拒绝两处都把它当**实际可服务窗口**用）。
+
+**三分真值**（不得互相冒充）：
+
+```text
+configured  providers.yaml::llm.<provider>.context_window（唯一来源：
+            LLMFactory.context_window() 与 LLMFactory.create() 读同一条目）
+requested   wire 上的 options.num_ctx（ollama native）；不申请 ⇒ None
+observed    GET /api/ps context_length（**只在显式诊断/集成测试里**读）
+```
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **OL1** | 对**显式声明**了有效窗口的 Ollama 模型，Elysia 的 prompt 预算与向 Ollama 请求的 `num_ctx` 取**同一个值**；两者不是"两次调用同一个函数"，而是同一个 `_BACKENDS` 条目 | `Module/llm/tests/test_ollama_context_authority.py::TestConfiguredContextReachesTheWire::test_configured_context_is_requested_on_the_native_wire`、`::TestOneAuthorityForBudgetAndRuntime::test_declared_window_is_the_single_source_for_both_sides` | `make test-quick` / `test-normal` | **push/backend** |
+| **OL2** | **通用预算回退绝不是运行时分配指令**：`context_window` 缺失或 ≤0 ⇒ 请求体**不含** `num_ctx`（由 daemon 默认管辖），尤其不得把 `DEFAULT_CONTEXT_WINDOW`（32768）当分配发出 | `::TestGenericFallbackIsNeverAllocated::test_missing_context_is_not_promoted_to_generic_fallback`、`::test_zero_or_negative_context_is_never_sent[0/-1/-8192]`、`::TestOneAuthorityForBudgetAndRuntime::test_missing_declaration_yields_no_allocation_on_both_sides` | 同上 | **push/backend** |
+| **OL3** | Ollama 特有语义**只在 provider backend 边界内**：`CognitiveLoop` / `PromptAssembler` / preview / preflight / API 路由 / UI 里不得出现 `num_ctx`、`keep_alive`、`/api/ps`（`LLMFactory.create` 的 canonical-provider 选择是唯一例外，且是**选择**不是**语义**） | `Module/llm/tests/test_ollama_context_authority.py`（全模块只经 `LLMFactory.create` + `LLMBackend` 协议断言，不 import ollama 专用类）；`make check-arch` | 同上 | **push/backend** |
+| **OL4** | configured / requested / observed **可区分**，且 observed **不是**热路径依赖：正常路径 1 user generation → 1 provider request；`probe_runtime_context()` 失败不影响 generation | `Module/llm/tests/test_ollama_backend.py::TestHotPathDiscipline::test_no_generation_entry_point_probes_the_runner`、`::test_diagnostics_failure_never_breaks_generation` | 同上 | **push/backend** |
+| **OL5** | Ollama 原生 usage 字段**恰好一次**归一进通用 usage 契约（`prompt_eval_count`→input、`eval_count`→output），流式不得每 chunk 累加；终帧缺失时**不编造** | `Module/llm/tests/test_ollama_backend.py::TestStreamNormalization::test_usage_is_normalized_exactly_once_on_the_final_frame`、`::test_stream_without_final_frame_fabricates_no_usage`、`core/adapter/tests/test_ollama_stream_contract.py::TestOllamaUsageThroughAdapter::test_final_usage_is_recorded_exactly_once` | 同上 | **push/backend** |
+| **OL6** | Ollama 相关改动**不得改变**非 Ollama provider 的请求体与语义（逐字段断言：`options`/`num_ctx`/`keep_alive` 一律不得出现） | `::TestNonOllamaIsolation::test_openai_payload_is_byte_free_of_ollama_fields`、`::test_deepseek_payload_is_byte_free_of_ollama_fields`、`::TestBackendSelection::test_an_ollama_looking_url_does_not_change_the_protocol` | 同上 | **push/backend** |
+
+**协议决策（native vs OpenAI-compatible）**：`bash` 层面实测（Ollama 0.24.0 / `qwen2.5:3b`，
+冷启动 A/B）`/v1/chat/completions` **带与不带** `options.num_ctx` 都是 `context_length=4096`
+（静默忽略），native `/api/chat` 才生效 ⇒ "在通用后端里加个字段"**物理上不成立**，必须走
+native（§33 协议切换门：native 确实需要 / 通用端点不能表达 / streaming·tools·multimodal
+实测可保持 / 本批补了 wire 级确定性用例 + 真实 daemon 旁证）。**反过来也钉住**：指向
+`localhost:11434` 的 OpenAI 兼容 provider **不会**被 URL 启发式劫持成 native 语义
+（`test_an_ollama_looking_url_does_not_change_the_protocol`）。
+
+**silent truncation 的真实形态（独立复核 2026-09-19，load-bearing）**：Ollama 超窗时
+**丢中间**——只保留最前 `num_keep` 个 token（**默认 4**）+ 最近 `num_ctx - num_keep`。
+而 Elysia 的预算保护的是 **system prompt + 当前消息**、丢的是最老的历史：两边保护的
+正好相反 ⇒ 一旦 budget 与 `num_ctx` 分叉，**最先静默劣化的是人设/system prompt**。
+这就是"预算 == `num_ctx`"（OL1）为什么是承重条款，而不是整洁偏好。
+
+**warm runner 行为（实测，决定"要不要自动 unload/retry"）**：Ollama 0.24.0 会按请求的
+`num_ctx` **重载** runner（4096→8192→4096 观测均跟随；同值请求复用，`load_duration`
+0.11s vs ~2.2s）⇒ **不需要**任何自动卸载/重试（§70 禁止的方向），本批也不实现。
+
+**已知边界（诚实列出，不是"已覆盖"）**：
+
+1. **Ollama 自身上限夹取**：`num_ctx=100000000` 在 0.24.0 上实测被夹到 `32768`（
+   HTTP 200，无错误）。故若把 `context_window` 声明到高于 Ollama 的夹取上限，
+   configured > observed 会**再次**分叉——本批按 §41 **不新增硬编码上限**，
+   该分歧只由 `probe_runtime_context()` 的诊断暴露（`observed != configured`），
+   已登记为 follow-up。
+2. **工作流（task LLM）路径不受控**：`raw_client` 仍是 OpenAI 兼容侧车
+   （`WorkflowEngine` Planner/Executor 的 SDK 形状契约，本批范围外）⇒ 后台任务在
+   ollama 上仍按 daemon 默认窗口服务。已登记。
+3. **探活的分配语义要分清（独立复核 2026-09-19 纠正了本节初稿）**：
+   `test()`（`POST /api/providers/test` 的 **connectivity** 级）刻意不带 `num_ctx`
+   ——它问的是"远端此刻可用吗"（PC 家族），不是一次预算过的 generation。
+   但 **usable** 级会走真实 `chat()` ⇒ **会申请分配**（`core/input/provider_routes.py`
+   的 `_run_usable_test`）；而 `--full` 对 ollama 是**直接跳过**连通性检查
+   （`Module/config/preflight.py`）。故 `requested_context` 的语义准确表述是
+   "**generation 请求会带的值**"，不是"所有出站请求都不带"。
+4. **`observed` 不是 allocation 的精确账本**：`/api/ps` 是 **daemon 级、最后写入者胜**
+   的视图，且小值会被夹（独立复核实测 `num_ctx=0/1/4` 在 ps 上读作 4，而 llama 实际
+   分配 **256** 格；`257` → ps 257 而实际 512）。故它只能作"紧接着我们自己的请求之后"
+   的旁证；任何并发客户端（`ollama run`、另一个应用）都能改写它。
+5. **Ollama daemon 默认窗口随显存变化**：二进制口径是"按显存取 4k/32k/256k"
+   （`OLLAMA_CONTEXT_LENGTH` / `--context-length`），本机 6GB 实测 4096。
+   所以"未声明 ⇒ 不申请"这一支的**实际窗口是机器相关的**，本批不把它写成常数。
+6. **runtime observation 不进任何自动档位**：真实 daemon 旁证
+   (`Module/llm/tests/test_ollama_real.py`) 只标 `external`（`make test-external`），
+   CI 不依赖本机 Ollama/GPU（§114）。它属于 §7 的"有测试但自动化跑不到"家族。
 
 ---
 
@@ -1061,6 +1142,7 @@ API（`sessions[]/has_more/cursor` 与 `SessionSummary` 逐字段不变）、不
 | **T1/T2 并发攻击扫描**（`probe_t2_race.py`，20 例） | 探针在 `/tmp`，**未入库** | 并发竞态回归不会被自动发现 | 见 [todo.md](../../todo.md) 的 Batch 2.3 follow-up |
 | **`make test-full`（含 slow）无自动执行点** | 只在 `nightly.yml` 手工 `workflow_dispatch` 触发 | slow 层回归只在人工注意时才发现 | 若需覆盖，须先有隔离 runner 或接受 push 成本；见 `docs/ci.md` |
 | **`external` 层（真实 LLM/DB）无自动执行点** | 同上（`nightly.yml` 的 `external` 输入） | 外部集成回归不自动发现 | 同上；**刻意 opt-in**（真实费用） |
+| **Ollama runtime context 的真实 daemon 旁证**（`Module/llm/tests/test_ollama_real.py`，7 例：冷启动 configured=requested=observed、downshift、warm 4096→8192→4096、静默截断、诊断失败不影响 generation） | 只标 `external`：需要本地 Ollama daemon（非凭据） | 换 Ollama 版本/换模型后 runtime 语义漂移不会被自动发现（本批实测版本 = 0.24.0） | **接受**（CI 不依赖本机 Ollama/GPU，§114）；手工 `RUN_EXTERNAL_TESTS=1 make test-external`；见 §3.4 |
 | ~~`external` opt-in 门禁只覆盖 `Module/`~~ | **已修**（2026-09-17）：门禁并入根 `conftest.py`，现覆盖全仓；`core/tests/test_external_optin_gate.py` 钉住范围 | 修前 `core/` 的 external 用例**未 opt-in 也真跑**（真实 DeepSeek 调用、计费） | — |
 | **`real-mongo` 层** | push 侧有 job（`ci.yml:real-mongo`） | ✅ 有覆盖 | — |
 | **私有守卫的"同名遮蔽"**（Challenger 2026-09-17 实测） | 在**访问方包内**定义一个同名 `def _x` 即可让该属性名全仓免检（9 处违规塌成 1 处）；扫描面也只含 `core`+`Module` | 守卫被当成"完备"时会漏掉真实穿透 | **接受**（属"按属性名归属近似"的固有代价，模块 docstring 已记载）；定位仍是**回归网**，见 [todo.md](../../todo.md) |
@@ -1094,6 +1176,8 @@ API（`sessions[]/has_more/cursor` 与 `SessionSummary` 逐字段不变）、不
 | [2026-09-18 Batch 4 执行记录](../review/2026-09-18-Batch4-runtime-health-truthfulness-执行记录.md) | R5/R6 的来源 |
 | [2026-09-18 Batch 5 执行记录](../review/2026-09-18-Batch5-provider-capability-truthfulness-执行记录.md) | PC1–PC6 的来源（N-10 / F6 / F7） |
 | [2026-09-18 Batch 6 执行记录](../review/2026-09-18-Batch6-conflict-metadata-truthfulness-执行记录.md) | CM1–CM5 的来源（N-3：409 冲突元数据真值） |
+| [2026-09-19 Batch 17 执行记录](../review/2026-09-19-Batch17-ollama-provider-adapter-执行记录.md) | OL1–OL6 + PD-12 裁决（KB-13 / AR-16）的来源 |
+| [2026-09-18 Ollama runtime context authority 记录](../review/2026-09-18-ollama-runtime-context-authority-记录.md) | KB-13 / AR-16 / PD-12 的登记与 E3 证据 |
 | [2026-09-16 Batch 1 执行记录](../review/2026-09-16-Batch1-correctness-durability-执行记录.md) | P1/P2/R 的来源 |
 | [2026-09-17 Batch 1.7 执行记录](../review/2026-09-17-Batch1.7-background-task-terminal-state-执行记录.md) | T1–T4 的来源 |
 | [2026-09-17 Batch 1.8 执行记录](../review/2026-09-17-Batch1.8-user-visible-terminal-semantics-执行记录.md) | U1–U5 的来源 |

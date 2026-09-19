@@ -45,9 +45,17 @@ llm:
     supports_prefix: false
     supports_multimodal: false
     supports_thinking: false
-    # S2-H9：prompt 预算的来源（token）。预算 = 本值 × 0.75（留输出/工具/
-    # 估算误差的余量）。**估算值**（本地模型常见默认（qwen2.5:3b 的 num_ctx 默认 8K））——若与实际不符请直接改这里，
-    # 它只影响截断时机，不影响正确性。
+    # S2-H9 + Batch 17（KB-13 / AR-16）：本值**同时**是两件事——
+    #   ① prompt 预算来源（预算 = 本值 × 0.75）；
+    #   ② **Ollama 运行时分配请求**（native `/api/chat` 的 `options.num_ctx`）。
+    # 即"Elysia 承诺可用的 effective serving context"，**不是**模型理论极限，
+    # 也不再是"只影响截断时机"的估算值：Ollama 的 serving window 是**运行时分配**，
+    # 声明它而不同时请求它就会出现"预算 8192 / 实际 4096"，且超窗是 **HTTP 200 +
+    # 静默截断**（provider error 不会替我们发现 mismatch）。未声明（或 ≤0）时
+    # Elysia **不请求分配**，由 daemon 默认管辖（诚实表述："runtime context not
+    # controlled by Elysia"，见 Module/llm/ollama.py）。改小/改大会**真的**改小/改大
+    # 运行时窗口（warm runner 按请求重载）；Ollama 0.24.0 自身对超大值有上限
+    # （实测 num_ctx=100000000 → 实际分配 32768 ⇒ 声明值高于该上限时仍会被夹）。
     context_window: 8192
     models: ["qwen2.5:3b"]
   gemini:

@@ -223,9 +223,11 @@ _BACKENDS: dict[str, dict] = load_provider_defaults("llm")
 
 | 模块 | Backend | 协议 | 说明 |
 |------|---------|------|------|
-| `Module.llm` | `deepseek`, `openai`, `ollama`, `mimo`, `gemini*`, `custom` | OpenAI-compatible | `stream_think()` 结构化流式 (content + tool_calls 并行检测) |
+| `Module.llm` | `deepseek`, `openai`, `mimo`, `custom` | OpenAI-compatible | `stream_think()` 结构化流式 (content + tool_calls 并行检测) |
+| `Module.llm` | `ollama` | **Ollama native `/api/chat`**（Batch 17 / AR-16） | 唯一能表达 runtime context（`options.num_ctx`）的协议——OpenAI 兼容端点实测**静默忽略**它，会让 budgeting 权威与 serving window 分叉（KB-13）；语义收口在 `Module/llm/ollama.py` |
+| `Module.llm` | `gemini*` | — | 已注册但 `NotImplementedError` |
 
-> \* gemini 已注册但抛出 NotImplementedError
+> \* gemini 已注册但抛出 NotImplementedError（`_UNIMPLEMENTED_PROVIDERS` 是唯一权威）
 | `Module.stt` | `sensevoice`, `custom` | HTTP API | SenseVoice: localhost:20042，返回文本 + 情绪标签 + 音频事件；Custom: OpenAI-compatible。`openai`/`deepgram` 已注册但抛出 NotImplementedError |
 | `Module.tts` | `gpt-sovits`, `minimax`, `custom` | HTTP API | `synthesize_stream()` 异步生成器，逐 chunk WAV；MiniMax: speech-2.8-hd，hex 编码音频 |
 | `Module.embedding` | `huggingface`, `openai` | 本地模型 / API | HF 离线加载 + GPU 兼容 (sm_<70 → CPU fallback) |
