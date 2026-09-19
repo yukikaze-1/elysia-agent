@@ -274,6 +274,87 @@ class TestPayloadTranslation:
         assert message["images"] == ["QUJD"]
 
 
+class TestToolRoundReplay:
+    """工具轮**回放**方向：Elysia 把上一轮的 tool_calls 原样塞回 messages。
+
+    这里是 Batch 17 的第一处 P0：native 对 `function.arguments` 是**字符串**的请求体
+    直接 **HTTP 400**（`Value looks like object, but can't find closing '}' symbol`），
+    而 `ToolCall.model_dump()` 给的正是 JSON 字符串 ⇒ 不翻译就是"工具已经真的执行了、
+    第二轮必 400、且 400 不可重试"。响应方向的归一化（`_to_openai_tool_calls`）**不能**
+    覆盖这一侧——两个方向必须各自有守卫。
+    """
+
+    @staticmethod
+    def _round2_messages(server: _FakeOllama) -> list[dict]:
+        """真实形状：`core/cognitive/tool_phase.py::_prepare_tool_round` 的 messages。"""
+        from core.adapter.tool_call_parser import normalize_tool_calls
+
+        normalized = normalize_tool_calls([{
+            "id": "call_1", "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'}}])
+        return [
+            {"role": "user", "content": "巴黎天气？"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [tc.model_dump(mode="json") for tc in normalized]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "晴，24°C"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_round2_replay_sends_arguments_as_an_object(self):
+        server = _FakeOllama(payload=_full_response("ok"))
+        backend = _backend(server)
+        await backend.chat(self._round2_messages(server))
+
+        assistant = server.last_body["messages"][1]
+        arguments = assistant["tool_calls"][0]["function"]["arguments"]
+        assert isinstance(arguments, dict), (
+            f"native 对字符串 arguments 直接 400；实测发的是 {arguments!r}")
+        assert arguments == {"city": "Paris"}
+        assert assistant["tool_calls"][0]["id"] == "call_1"
+
+    @pytest.mark.asyncio
+    async def test_round2_replay_keeps_tool_result_identity(self):
+        """`tool_call_id`（以及存在时的 `tool_name`）必须透传，不能被翻译丢掉。"""
+        server = _FakeOllama(payload=_full_response("ok"))
+        backend = _backend(server)
+        messages = self._round2_messages(server)
+        messages[2]["tool_name"] = "get_weather"
+        await backend.chat(messages)
+        tool_message = server.last_body["messages"][2]
+        assert tool_message == {"role": "tool", "content": "晴，24°C",
+                                "tool_call_id": "call_1", "tool_name": "get_weather"}
+
+    @pytest.mark.parametrize("arguments, expected", [
+        ('{"city": "Paris"}', {"city": "Paris"}),
+        ('{"a": {"b": [1, 2]}}', {"a": {"b": [1, 2]}}),
+        ("{}", {}),
+        ("", {}),          # 无参工具的常见形态
+        ("   ", {}),
+        ("not json", {}),  # 解不开 ⇒ 空对象 + warning（不打死回合）
+        ("[1, 2]", {}),    # 非对象 JSON ⇒ 空对象 + warning（native 拒绝数组）
+    ])
+    @pytest.mark.asyncio
+    async def test_arguments_shapes_are_normalized_to_objects(self, arguments, expected):
+        server = _FakeOllama(payload=_full_response("ok"))
+        backend = _backend(server)
+        await backend.chat([{"role": "assistant", "content": None, "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "f", "arguments": arguments}}]}])
+        sent = server.last_body["messages"][0]["tool_calls"][0]["function"]["arguments"]
+        assert sent == expected and isinstance(sent, dict)
+
+    @pytest.mark.asyncio
+    async def test_malformed_arguments_are_warned_not_silently_accepted(self, caplog):
+        import logging
+
+        server = _FakeOllama(payload=_full_response("ok"))
+        backend = _backend(server)
+        with caplog.at_level(logging.WARNING):
+            await backend.chat([{"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c1", "function": {"name": "f", "arguments": "not json"}}]}])
+        assert any("不是合法 JSON" in r.message for r in caplog.records)
+
+
 # ============================================================
 # 3. 流式归一化：文本顺序 / tool_calls / usage 恰好一次
 # ============================================================
@@ -346,13 +427,34 @@ class TestStreamNormalization:
         assert [d["function"]["name"] for d in deltas] == ["get_weather", "get_time"]
 
     @pytest.mark.asyncio
-    async def test_stream_error_frame_is_raised_not_swallowed(self):
+    async def test_stream_error_frame_is_raised_and_attributed_to_the_provider(self):
+        """流内错误帧必须抛，且**归因正确**（provider 层，不是 INTERNAL）。
+
+        `core/cognitive/loop.py::_is_llm_layer_error` 按模块前缀判 provider 层
+        （httpx/openai/OSError/TimeoutError/json）——裸 `RuntimeError` 会被归成
+        "内部错误"（`code=INTERNAL`，不可重试），那是**归因错误**：这是 provider
+        在协议内报的错（真实形态：`model requires more system memory`）。
+        """
+        from core.cognitive.loop import _is_llm_layer_error
+
         frames = [{"error": "model requires more system memory"}]
         server = _FakeOllama(frames=frames)
         backend = _backend(server)
-        with pytest.raises(RuntimeError, match="model requires more system memory"):
+        with pytest.raises(httpx.HTTPError, match="model requires more system memory") as ei:
             async for _ in backend.stream_think([{"role": "user", "content": "hi"}]):
                 pass
+        assert _is_llm_layer_error(ei.value), (
+            "in-stream provider 错误必须被归为 LLM/provider 层，否则用户看到 INTERNAL")
+
+    @pytest.mark.asyncio
+    async def test_200_with_error_body_is_attributed_to_the_provider(self):
+        from core.cognitive.loop import _is_llm_layer_error
+
+        server = _FakeOllama(payload={"error": "model requires more system memory"})
+        backend = _backend(server)
+        with pytest.raises(httpx.HTTPError) as ei:
+            await backend.chat([{"role": "user", "content": "hi"}])
+        assert _is_llm_layer_error(ei.value)
 
 
 # ============================================================
@@ -494,6 +596,78 @@ class TestHotPathDiscipline:
         info = await backend.probe_runtime_context()
         assert info["observed"] is None
 
+    @pytest.mark.asyncio
+    async def test_diagnostics_never_returns_another_tag_of_the_same_family(self):
+        """Challenger A2：`qwen2.5:14b` 不得拿到已加载的 `qwen2.5:3b` 的窗口。
+
+        观测值是唯一能暴露 configured≠served 的真值——认错模型比"没有观测值"更糟
+        （会伪造一次匹配或伪造一次 mismatch）。
+        """
+        from Module.llm.ollama import _observed_context
+
+        loaded = [{"name": "qwen2.5:3b", "context_length": 4096}]
+        assert _observed_context(loaded, "qwen2.5:14b") is None
+        assert _observed_context(loaded, "qwen2.5:3b") == 4096
+        assert _observed_context(loaded, "qwen2.5") is None, (
+            "请求侧带 tag 时必须精确匹配；不带 tag 只接受 :latest")
+
+    @pytest.mark.asyncio
+    async def test_diagnostics_accepts_the_default_latest_tag(self):
+        from Module.llm.ollama import _observed_context
+
+        loaded = [{"name": "qwen2.5:latest", "context_length": 8192}]
+        assert _observed_context(loaded, "qwen2.5") == 8192
+        assert _observed_context(loaded, "qwen2.5:latest") == 8192
+        assert _observed_context(loaded, "qwen2.5:3b") is None
+
+
+class TestStreamClosure:
+    """Challenger B3：提前取消必须**当场**关掉 HTTP 流，不能等 asyncgen finalizer。"""
+
+    @staticmethod
+    def _server() -> tuple[_FakeOllama, list]:
+        closed: list[bool] = []
+
+        class _Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for frame in (_chunk("a"), _chunk("b"), _done()):
+                    yield (json.dumps(frame) + "\n").encode()
+
+            async def aclose(self) -> None:
+                closed.append(True)
+
+        server = _FakeOllama()
+        server.handler = lambda request: httpx.Response(  # type: ignore[method-assign]
+            200, stream=_Stream(), headers={"content-type": "application/x-ndjson"})
+        return server, closed
+
+    @pytest.mark.asyncio
+    async def test_aclose_releases_the_stream_immediately(self):
+        server, closed = self._server()
+        backend = _backend(server)
+        stream = backend.stream_think([{"role": "user", "content": "hi"}])
+        first = await anext(stream)
+        assert first["content"] == "a"
+        await stream.aclose()
+        assert closed, "aclose() 之后 HTTP 流必须已关闭（不能等 GC/finalizer）"
+
+    @pytest.mark.asyncio
+    async def test_task_cancellation_releases_the_stream(self):
+        import asyncio
+
+        server, closed = self._server()
+        backend = _backend(server)
+
+        async def consume() -> None:
+            async for _ in backend.stream_think([{"role": "user", "content": "hi"}]):
+                await asyncio.sleep(10)  # 挂住，等着被取消
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert closed, "取消后 HTTP 流必须已关闭"
+
 
 # ============================================================
 # 6. 生命周期 + 连通性探活（不得触发大额分配）
@@ -531,6 +705,32 @@ class TestLifecycleAndHealth:
         assert str(client.base_url) == "http://localhost:11434/v1/"
         await backend.close()
         assert backend._compat_client is None  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_raw_client_is_not_recreated_after_close(self):
+        """Challenger C4：`close()` 之后取 `raw_client` 不得偷偷新建一个无人持有的连接。
+
+        语义用既有契约「不可用 ⇒ None」（`LLMBackend.raw_client` 的文档），
+        调用方（DelegationPreparer）据此走既有降级路径；`reconnect()` 解除该状态。
+        """
+        server = _FakeOllama(payload=_full_response("ok"))
+        backend = _backend(server)
+        await backend.close()
+        assert backend.raw_client is None
+        await backend.reconnect()
+        assert backend.raw_client is not None
+        await backend.close()
+
+    @pytest.mark.asyncio
+    async def test_reconnect_rebuilds_the_sidecar(self):
+        """sidecar 也必须在 reconnect 里被换掉（否则工作流握着旧连接）。"""
+        server = _FakeOllama(payload=_full_response("ok"))
+        backend = _backend(server)
+        first = backend.raw_client
+        await backend.reconnect()
+        second = backend.raw_client
+        assert second is not None and second is not first
+        await backend.close()
 
     @pytest.mark.asyncio
     async def test_close_and_reconnect_are_idempotent(self):

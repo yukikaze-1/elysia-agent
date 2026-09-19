@@ -15,20 +15,43 @@
 | OpenAI-compatible `/v1/chat/completions` + `options.num_ctx=8192` | **4096（静默忽略）** |
 | native `/api/chat` + `options.num_ctx=8192` | **8192** ✅ |
 
+> **"4096" 是本机（6GB 显存）的 daemon 默认，不是 Ollama 的固定事实**：二进制文档里
+> `OLLAMA_CONTEXT_LENGTH` 的默认是"按显存取 4k/32k/256k"。所以别把 4096 当常数写进
+> 断言或文档结论——本批钉住的是**请求侧能不能表达**（compat 不能 / native 能），
+> 以及"**不声明就不申请**"（OL2）。独立复核还试过 12 条 compat 旁路
+> （顶层 `num_ctx`、`options.options`、query/header、`/v1/completions`、模型名后缀…）
+> **全部无效**，其中模型名后缀直接 400 `invalid model name`。
+
 ⇒ **通用后端所用的 OpenAI-compatible 端点根本无法表达 runtime context**。
 所以修复不是"多传一个字段"，而是把 Ollama 的 wire/runtime 语义移到 native 协议上收口
 （协议切换判据见执行记录 §Protocol decision；`raw_client` 例外见下）。
 
 ## 职责边界（**只做**这些）
 
-- request / wire translation：OpenAI 形状 messages → native `messages`（含 `images` 转写）；
+- request / wire translation（**双向**都必须做，这是 AR-16 的核心职责）：
+  - messages：OpenAI 形状 → native（`content` 块列表 → `content` + `images`）；
+  - **回放的 `tool_calls`**：`function.arguments` 从 JSON **字符串**（通用契约）转回
+    native 要求的**对象**——不转则工具轮第二次请求必 400（见 `_native_tool_arguments`）；
+  - `tool_call_id` / `tool_name` 透传（native 认得，丢掉等于删信息）；
 - 运行时选项：`num_ctx`（**唯一**分配权威，来自显式声明的 `context_window`）、
   `num_predict`（`max_tokens` 的 native 对应）、`temperature`、`keep_alive`（内部钩子）；
-- response / usage normalization：`prompt_eval_count`/`eval_count` → 通用 usage 契约；
-- runtime diagnostics：`probe_runtime_context()`（configured / requested / observed）。
+- response / usage normalization：native 的 `tool_calls`（对象 + `function.index`）→
+  通用 delta 契约（JSON 字符串 + 顶层 `index`）；`prompt_eval_count`/`eval_count` →
+  通用 usage 契约（**终帧恰好一次**）；
+- runtime diagnostics：`probe_runtime_context()`（configured / requested / observed，
+  opt-in、失败不抛）。
 
 **不做**：对话策略、prompt 预算、记忆、人格、会话生命周期——那些在上层，且本后端
 不感知（它只看到最终的 `messages[]`）。也**不**把 `num_ctx` 暴露给 `CognitiveLoop`。
+
+## 为什么"预算 == `num_ctx`"是**承重**的（而不是好看）
+
+Ollama 超窗时的截断策略是"**丢中间**"：只保留最前面 `num_keep` 个 token（默认 **4**）
++ 最近 `num_ctx - num_keep`，中间全部丢弃（独立复核用"头部标记 + `num_keep` 三档"实测：
+`num_keep=4`/`0` 时模型回忆不起头部标记，`num_keep=64` 时能）。而 Elysia 的预算裁剪
+保护的是 **system prompt + 当前消息**（丢的是最老的历史）——**两边保护的正好相反**。
+所以一旦 budget 与 `num_ctx` 分叉，**最先静默劣化的是人设/system prompt**，
+而不是最老的历史：这正是把两者绑在同一个值上的理由（OL1）。
 
 ## 三条硬边界
 
@@ -38,6 +61,9 @@
    `context_length=4` 的畸形 runner，而"不发"至少得到 daemon 的正常默认。
 2. **`/api/ps` 不在热路径（OL4）**：正常运行保持 1 user generation → 1 provider request；
    `probe_runtime_context()` 是**显式**诊断调用，失败不抛、也绝不被 generation 依赖。
+   ⚠️ `observed` 是**daemon 级、最后写入者胜**的视图，且小值会被夹（实测 `num_ctx=0/1/4`
+   在 ps 上读作 4，而 llama 实际分配 256 格）。故它只能作"**紧接着我们自己的请求之后**"
+   的旁证，**不是** allocation 的精确账本（诊断文档如此表述，集成测试也如此使用）。
 3. **`raw_client` 保持 OpenAI 兼容侧车**：`WorkflowEngine` Planner/Executor 消费的是
    OpenAI SDK 形状（`chat.completions.create(...)`），属本批范围外的消费面；为不打断它，
    侧车**懒创建**、只在有人取 `raw_client` 时才建连接。⇒ 工作流路径（task LLM）
@@ -48,12 +74,16 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any, AsyncIterator, Callable
 
 import httpx
 
 from Module._common.test_helpers import make_test_method
 from Module.llm.protocol import LLMBackend
+
+logger = logging.getLogger(__name__)
 
 # native API 的默认根（providers.yaml 的 ollama base_url 是 OpenAI 兼容形态 .../v1）
 _DEFAULT_NATIVE_BASE = "http://localhost:11434"
@@ -138,7 +168,63 @@ def _to_openai_tool_calls(raw: Any) -> list[dict] | None:
     return converted
 
 
-def _to_native_message(message: dict) -> dict:
+def _native_tool_arguments(arguments: Any, *, model: str) -> dict:
+    """OpenAI 形状的 tool_call `arguments` → native 要求的**对象**。
+
+    ## 为什么必须转（P0：不转 = 每一轮工具调用的第二次请求必 400）
+
+    实测（Ollama 0.24.0，用不存在的模型名只触发 body 解码）：
+
+    | wire 上的 `arguments` | 结果 |
+    |---|---|
+    | 对象 `{"city": "Paris"}` / 缺省 / `null` | body 通过（随后 404 model not found） |
+    | **任何字符串**（含 `""`、`'{"city": "Paris"}'`、`'{}'`） | **HTTP 400** `Value looks like object, but can't find closing '}' symbol` |
+    | 数组 `[1, 2]` | 同上 400 |
+
+    Elysia 回放工具轮时带的是 OpenAI 形状：`core/cognitive/tool_phase.py` 把
+    `ToolCall.model_dump()`（`arguments` 是 **JSON 字符串**，见 `core/schema/tool.py`）
+    原样 append 进 messages ⇒ 不翻译就是"工具已经真的执行了、第二轮必然 400"，
+    且 400 不在 `_RETRYABLE_STATUS` 里 ⇒ 该回合永久失败。
+
+    转写规则（有序，越靠前越保真）：
+
+    1. 已是 dict ⇒ 原样；
+    2. `str`：空串 ⇒ `{}`；否则 `json.loads` ⇒ 是 dict 就用；
+    3. 其余（非 dict 的 JSON 值 / 解不开的串 / None）⇒ `{}` + 一次 warning。
+
+    第 3 条刻意"降级而**不**打死回合"：仓库对畸形 tool_call 的既有处置是
+    「跳过并 warning」（`normalize_tool_calls` 的同名先例），而这条消息只是**上下文回放**
+    （工具结果文本在紧随其后的 `role="tool"` 消息里，模型仍能看到）。把 `{}` 发出去
+    语义上等于"这个调用没带参数"，比"整轮 400、用户永远拿不到回复"更轻。
+    """
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        stripped = arguments.strip()
+        if not stripped:
+            return {}
+        try:
+            parsed = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(
+                "tool_call arguments 不是合法 JSON，已按空对象回放（model=%s）：%.120s",
+                model, stripped)
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+        logger.warning(
+            "tool_call arguments 是 %s 而非对象，已按空对象回放（model=%s）：%.120s",
+            type(parsed).__name__, model, stripped)
+        return {}
+    if arguments is None:
+        return {}
+    logger.warning(
+        "tool_call arguments 类型意外（%s），已按空对象回放（model=%s）",
+        type(arguments).__name__, model)
+    return {}
+
+
+def _to_native_message(message: dict, *, model: str = "") -> dict:
     """OpenAI 形状的一条 message → native 形状。
 
     - `content` 是字符串：原样。
@@ -146,7 +232,13 @@ def _to_native_message(message: dict) -> dict:
       收进 native 的 `images[]`。当前 `providers.yaml::llm.ollama.supports_multimodal`
       为 `false`，上层因此**不会**把图片块发到这里——本函数只是**忠实转写**，
       不声称新增多模态能力。
-    - `prefix`（DeepSeek 续写专用）与其它非 native 字段**丢弃**：native 无对应语义。
+    - `tool_calls`：**必须**把 `function.arguments` 从 JSON 字符串转回对象
+      （native 对字符串直接 400，见 `_native_tool_arguments`）；`id` / `type` / `index`
+      原样保留（native 忽略多余键，实测）。
+    - `tool_call_id` / `tool_name`（`role="tool"` 的结果消息）**透传**——native 认得这两键
+      （实测 body 解码通过），丢掉它们等于把"哪次调用的结果"这一信息删掉。
+    - `prefix`（DeepSeek 续写专用）与其它非 native 字段**丢弃**：native 无对应语义
+      （`prefix` 在此之前已被 `_build_payload` 显式拒绝）。
     """
     role = message.get("role") or "user"
     content = message.get("content")
@@ -179,7 +271,18 @@ def _to_native_message(message: dict) -> dict:
         native["images"] = images
     tool_calls = message.get("tool_calls")
     if tool_calls:
-        native["tool_calls"] = tool_calls
+        translated: list[dict] = []
+        for call in tool_calls:
+            function = dict(call.get("function") or {})
+            function["arguments"] = _native_tool_arguments(
+                function.get("arguments"), model=model)
+            entry = dict(call)
+            entry["function"] = function
+            translated.append(entry)
+        native["tool_calls"] = translated
+    for key in ("tool_call_id", "tool_name"):
+        if message.get(key):
+            native[key] = message[key]
     return native
 
 
@@ -231,6 +334,7 @@ class OllamaBackend(LLMBackend):
             self._injected_client = http_client_factory()
         self._extra_drop_warned = False
         self._compat_client: Any | None = None  # OpenAI 兼容侧车（懒创建，raw_client 用）
+        self._closed = False
         self.last_usage: dict | None = None  # 最近一次调用的归一化 token 消耗
         self._create_clients()
 
@@ -312,22 +416,26 @@ class OllamaBackend(LLMBackend):
 
     async def chat_stream(self, messages: list[dict], **kwargs: Any) -> AsyncIterator[str]:
         """流式对话 — 逐 chunk 产出文本（tool_calls 由 `stream_think` 消费）。"""
-        async for chunk in self._stream_structured(messages, **kwargs):
-            if chunk.get("content"):
-                yield chunk["content"]
+        # `aclosing`：消费者提前 `aclose()` / 任务取消时，**当场**把内层生成器关掉
+        # （否则要等 asyncgen finalizer，HTTP 流会晚一拍才释放——Challenger B3）。
+        async with aclosing(self._stream_structured(messages, **kwargs)) as stream:
+            async for chunk in stream:
+                if chunk.get("content"):
+                    yield chunk["content"]
 
     async def stream_think(
         self, messages: list[dict], **kwargs: Any
     ) -> AsyncIterator[dict]:
         """流式思考 — 结构化 chunk（text / tool_calls / 终帧 usage），保持既有契约。"""
-        async for chunk in self._stream_structured(messages, **kwargs):
-            yield chunk
+        async with aclosing(self._stream_structured(messages, **kwargs)) as stream:
+            async for chunk in stream:
+                yield chunk
 
     # ---- 内部：请求构造与传输 ----
 
     def _build_payload(self, messages: list[dict], *, stream: bool,
                        kwargs: dict) -> dict:
-        """构造 native `/api/chat` 请求体（**唯一的wire 构造点**，便于单测）。
+        """构造 native `/api/chat` 请求体（**唯一的 wire 构造点**，便于单测）。
 
         转写规则（每条都有实测依据，见模块 docstring）：
 
@@ -362,7 +470,7 @@ class OllamaBackend(LLMBackend):
 
         payload: dict[str, Any] = {
             "model": self._model,
-            "messages": [_to_native_message(m) for m in messages],
+            "messages": [_to_native_message(m, model=self._model) for m in messages],
             "stream": stream,
         }
         if options:
@@ -401,13 +509,17 @@ class OllamaBackend(LLMBackend):
         response.raise_for_status()
         data = response.json()
         if data.get("error"):
-            # 极少数形态：200 + {"error": ...}（流式错误帧也是这个形状）
-            raise RuntimeError(f"Ollama 返回错误：{data['error']}")
+            # 极少数形态：200 + {"error": ...}（流式错误帧也是这个形状）。
+            # 用 httpx 家族异常而**不是**裸 RuntimeError：`core/cognitive/loop.py::_is_llm_layer_error`
+            # 按模块前缀把 httpx/openai 判为 provider 层，裸 RuntimeError 会被归成
+            # INTERNAL（"内部错误"，不可重试）——那是**归因错误**（§61：映射到既有
+            # generic 错误契约，不重做 taxonomy）。语义也贴切：服务端在协议内报了错。
+            raise httpx.RemoteProtocolError(f"Ollama 返回错误：{data['error']}")
         return data
 
     async def _stream_structured(
         self, messages: list[dict], **kwargs: Any
-    ) -> AsyncIterator[dict]:
+    ) -> AsyncGenerator[dict, None]:
         """NDJSON 流式调用 —— 逐帧翻译成通用 chunk。
 
         帧契约（实测 0.24.0）：
@@ -430,7 +542,9 @@ class OllamaBackend(LLMBackend):
                     continue
                 data = json.loads(line)
                 if data.get("error"):
-                    raise RuntimeError(f"Ollama 返回错误：{data['error']}")
+                    # 同上：provider 在流内报错 ⇒ provider 层归因（不是 INTERNAL）
+                    raise httpx.RemoteProtocolError(
+                        f"Ollama 返回错误：{data['error']}")
                 message = data.get("message") or {}
                 tool_calls = _to_openai_tool_calls(message.get("tool_calls"))
                 content = message.get("content") or None
@@ -459,6 +573,12 @@ class OllamaBackend(LLMBackend):
         形状与地址（从同一个 native 根派生的 `{root}/v1`）。懒创建：正常 generation
         路径不产生第二个 HTTP client，也不影响 1 generation → 1 provider request。
         """
+        if self._closed:
+            # `close()` 之后再取 raw_client 不得**新建**一个无人持有的连接
+            # （Challenger C4：旧行为会让它一直活到下一次 close）。语义用既有的
+            # "不可用 ⇒ None"（`LLMBackend.raw_client` 的文档契约），调用方
+            # （DelegationPreparer）据此走既有降级路径。
+            return None
         if self._compat_client is None:
             from openai import AsyncOpenAI
 
@@ -479,9 +599,11 @@ class OllamaBackend(LLMBackend):
         if self._compat_client is not None:
             await self._compat_client.close()
             self._compat_client = None
+        self._closed = True
 
     async def reconnect(self) -> None:
-        """重建 HTTP 客户端（服务重启后恢复）——幂等。"""
+        """重建 HTTP 客户端（服务重启后恢复）——幂等，并解除 close 状态。"""
+        self._closed = False
         try:
             await self._client.aclose()
         except Exception:
@@ -505,15 +627,23 @@ class OllamaBackend(LLMBackend):
 
 
 def _observed_context(models: list[dict], model: str) -> int | None:
-    """从 `/api/ps` 的 models[] 里取出该模型的 `context_length`（找不到 ⇒ None）。
+    """从 `/api/ps` 的 models[] 里取出**这个**模型的 `context_length`（找不到 ⇒ None）。
 
-    名字匹配同时接受精确名与去 tag 的短名（`qwen2.5:3b` vs `qwen2.5:3b`/`qwen2.5`），
-    但**不**做模糊匹配——观测值必须是这个模型的，宁可 None 也不认错模型。
+    匹配规则（Challenger 2026-09-19 的 A2：此前的"去 tag 比家族名"过松——
+    `_observed_context([{"name": "qwen2.5:3b", ...}], "qwen2.5:14b")` 会返回 **3b 的窗口**，
+    于是一个"看起来匹配/看起来不匹配"的观测值都可能是别人的）：
+
+    - 精确同名 ⇒ 命中；
+    - **仅当**请求侧模型名不带 tag 时，接受 `"<同族>:latest"`（Ollama 的默认 tag 语义：
+      `qwen2.5` ≡ `qwen2.5:latest`）；
+    - 其余一律 None——**宁可没有观测值，也不认错模型**（观测值是唯一能暴露
+      configured≠served 的真值，认错模型比没有更糟）。
     """
-    short = model.split(":", 1)[0]
+    family, _, tag = model.partition(":")
     for entry in models:
         name = str(entry.get("name") or "")
-        if name == model or name.split(":", 1)[0] == short:
+        entry_family, _, entry_tag = name.partition(":")
+        if name == model or (not tag and entry_family == family and entry_tag == "latest"):
             value = entry.get("context_length")
             return int(value) if value else None
     return None

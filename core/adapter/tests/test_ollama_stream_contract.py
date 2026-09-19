@@ -77,9 +77,15 @@ class TestOllamaUsageThroughAdapter:
 
 class TestOllamaToolCallsThroughAdapter:
     @pytest.mark.asyncio
-    async def test_tool_call_roundtrip_stays_semantically_identical(self):
-        """OL-T8：native 的完整 tool_call（arguments 是对象）经既有合并/归一化后
-        仍是合法 `ToolCall`，且 `arguments` 是 JSON 字符串。"""
+    async def test_native_tool_call_response_is_consumable_by_the_adapter(self):
+        """OL-T8（**响应方向**）：native 的完整 tool_call（`arguments` 是对象）经既有
+        合并/归一化后仍是合法 `ToolCall`，且 `arguments` 是 JSON 字符串。
+
+        ⚠️ 本用例**只**覆盖 native → 通用这一侧。反向（把归一化后的 `ToolCall` 回放
+        进下一轮请求）由 `Module/llm/tests/test_ollama_backend.py::TestToolRoundReplay`
+        钉住——Batch 17 的 Challenger 正是从"名字叫 roundtrip、实际只测了一个方向"
+        这条缝隙里找出了 P0（字符串 arguments ⇒ native 400）。改名是为了不再高估覆盖。
+        """
         call = {"id": "call_1", "function": {"index": 0, "name": "get_weather",
                                              "arguments": {"city": "Paris"}}}
         server = _Server([{"model": "m", "message": {"role": "assistant", "content": "",
@@ -120,3 +126,50 @@ class TestOllamaStreamCancellation:
             [{"role": "user", "content": "again"}]) if c.get("content")]
         assert got == ["z"]
         assert len(server.requests) == 2
+
+
+class TestOllamaToolRoundReplayThroughAdapter:
+    @pytest.mark.asyncio
+    async def test_round2_replay_from_normalized_calls_is_native_safe(self):
+        """端到端回环：第 1 轮的产出 → `_prepare_tool_round` 的 messages → 第 2 轮出站体。
+
+        这是 P0 的消费端判据：Elysia 回放的 `tool_calls[].function.arguments` 必须是
+        **对象**，否则真实 daemon 对第 2 轮直接 400（工具已执行、回复永不出现）。
+        """
+        from core.schema.tool import ToolCall, ToolCallFunction
+        from core.schema.types import ToolCallId
+
+        call = {"id": "call_1", "function": {"index": 0, "name": "get_weather",
+                                             "arguments": {"city": "Paris"}}}
+        server = _Server([{"model": "m", "message": {"role": "assistant", "content": "",
+                                                     "tool_calls": [call]}, "done": False},
+                          _done()])
+        adapter = _adapter(server)
+        accumulated: list[dict] = []
+        async for chunk in adapter.stream_think(
+                [{"role": "user", "content": "weather?"}],
+                tools=[{"type": "function", "function": {"name": "get_weather"}}]):
+            if chunk.get("tool_calls"):
+                merge_stream_tool_calls(accumulated, chunk["tool_calls"])
+        normalized = normalize_tool_calls(accumulated)
+
+        # `core/cognitive/tool_phase.py::_prepare_tool_round` 的真实形状
+        round2 = [
+            {"role": "user", "content": "weather?"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [tc.model_dump(mode="json") for tc in normalized]},
+            {"role": "tool", "tool_call_id": normalized[0].id, "content": "晴，24°C"},
+        ]
+        server.frames = [_chunk("巴黎晴，24°C"), _done()]
+        async for _ in adapter.stream_think(round2, tools=[]):
+            pass
+
+        sent = server.requests[-1]["messages"][1]["tool_calls"][0]["function"]["arguments"]
+        assert isinstance(sent, dict), (
+            f"回放的 arguments 必须是对象（native 对字符串 400）：{sent!r}")
+        assert sent == {"city": "Paris"}
+        # 反证（防空转）：归一化产出的 ToolCall 本身仍是通用契约（字符串）
+        assert isinstance(normalized[0].function.arguments, str)
+        assert isinstance(normalized[0], ToolCall)
+        assert isinstance(normalized[0].function, ToolCallFunction)
+        assert normalized[0].id == ToolCallId("call_1")

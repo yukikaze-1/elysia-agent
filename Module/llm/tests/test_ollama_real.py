@@ -11,6 +11,13 @@
 只动 `ELYSIA_TEST_OLLAMA_MODEL`（默认 `qwen2.5:3b`）这一个模型，不 pull 任何模型、
 不改 daemon 级配置（§36/§117）。daemon 不可达时**显式 skip**（附原因），不假装通过。
 
+⚠️ **本模块要求"该模型此刻没有别的客户端在用"**：`/api/ps` 是 **daemon 级、最后写入者胜**
+的视图（另一个 `ollama run`／另一个应用发一次请求就会改写 `context_length`，甚至换成别的
+模型），而本模块的判据正是"我们请求之后 ps 是多少"。独立复核实测过这种串扰
+（跑测期间有并发客户端把 runner reload 成别的值/别的模型）。所以：**独占跑**；
+若在 CI/共享机上跑出 `observed` 不匹配，先确认没有第二个客户端，再当回归处理。
+自有的 `requested`（我们发出去的值）不受串扰影响，故每条断言都同时钉它。
+
 ## 它证的是什么
 
 ```text
@@ -58,13 +65,60 @@ def _unload() -> None:
 
 
 def _observed(model: str = _MODEL) -> int | None:
-    short = model.split(":", 1)[0]
+    """`/api/ps` 上该模型的窗口（**精确同名**；不带 tag 时只接受 `:latest`）。"""
+    family, _, tag = model.partition(":")
     for entry in _ps():
         name = str(entry.get("name") or "")
-        if name == model or name.split(":", 1)[0] == short:
+        entry_family, _, entry_tag = name.partition(":")
+        if name == model or (not tag and entry_family == family and entry_tag == "latest"):
             value = entry.get("context_length")
             return int(value) if value else None
     return None
+
+
+def _require_cold(attempts: int = 3) -> None:
+    """拿到**真正冷**的 runner；拿不到就显式 skip（不假装通过）。
+
+    为什么不是硬断言：`/api/ps` 是 daemon 级、最后写入者胜的视图——另一个客户端
+    （`ollama run`、另一个应用、并行的验证者）可以在我们 `stop` 之后一秒内把模型
+    重新加载，此时"冷启动前提"这条**环境判据**无从成立。仓库既有约定：
+    无从判定处用显式 `pytest.skip` 写明原因；**行为判据**（observed == configured）
+    仍然只在冷启动成立时才断言，绝不削弱。
+    """
+    import time
+
+    for _ in range(attempts):
+        _unload()
+        time.sleep(1.0)
+        if _observed() is None:
+            return
+    pytest.skip(
+        f"环境无法提供 cold runner：{_MODEL} 在 stop 后仍被加载（疑似并发客户端）"
+        f"—— observed={_observed()}；请在独占环境下重跑本模块")
+
+
+async def _observed_with_retry(backend: object, *, expected: int,
+                               attempts: int = 3) -> int | None:
+    """读 observed；不符时**重发一次我们自己的请求**再读，容忍瞬时外部串扰。
+
+    为什么需要：`/api/ps` 是 daemon 级视图，另一个客户端一次请求就可能把它改写。
+    判据强度不变——把这次请求重发一遍（同参数、同 `num_ctx`）后仍不符 ⇒ 按失败处理
+    （真实回归是稳定错值，不会靠重试消失）。重发用的是同一个已经建好的 backend
+    （`chat()`，与流式同一条 wire），不新建第二个后端。
+    """
+    observed = await _probe(backend)
+    for _ in range(max(0, attempts - 1)):
+        if observed == expected:
+            return observed
+        await backend.chat([{"role": "user", "content": "只回复两个字：收到"}])  # type: ignore[attr-defined]
+        observed = await _probe(backend)
+    return observed
+
+
+async def _probe(backend: object) -> int | None:
+    """`probe_runtime_context()` 的 observed（诊断面；失败 ⇒ None）。"""
+    info = await backend.probe_runtime_context()  # type: ignore[attr-defined]
+    return info["observed"]
 
 
 async def _generate(messages: list[dict], model_id: str):
@@ -95,8 +149,7 @@ class TestColdRuntimeContext:
         configured = LLMFactory.context_window(model_id)
         assert configured, "providers.yaml 必须为 ollama 声明 context_window"
 
-        _unload()
-        assert _observed() is None, "冷启动前提：模型必须未加载"
+        _require_cold()
 
         text, usage, backend = await _generate(
             [{"role": "user", "content": "只回复两个字：收到"}], model_id)
@@ -108,12 +161,13 @@ class TestColdRuntimeContext:
             assert backend.requested_context == configured
 
             info = await backend.probe_runtime_context()
+            observed = await _observed_with_retry(backend, expected=configured)
             print(f"\n[OLL-E] model={_MODEL} configured={configured} "
-                  f"requested={backend.requested_context} observed={info['observed']} "
+                  f"requested={backend.requested_context} observed={observed} "
                   f"usage={usage} error={info['error']}")
             assert info["error"] is None, info["error"]
-            assert info["observed"] == configured, (
-                f"runtime observed={info['observed']} != configured={configured}"
+            assert observed == configured, (
+                f"runtime observed={observed} != configured={configured}"
                 "——budgeting authority 与 serving window 分叉（KB-13）")
         finally:
             await backend.close()
@@ -132,9 +186,9 @@ class TestColdRuntimeContext:
         _text, _usage, backend = await _generate(
             [{"role": "user", "content": "只回复两个字：收到"}], model_id)
         try:
-            info = await backend.probe_runtime_context()
-            print(f"\n[OLL-E downshift] requested=4096 observed={info['observed']}")
-            assert info["observed"] == 4096, info
+            observed = await _observed_with_retry(backend, expected=4096)
+            print(f"\n[OLL-E downshift] requested=4096 observed={observed}")
+            assert observed == 4096, f"observed={observed}"
         finally:
             await backend.close()
 
@@ -186,8 +240,9 @@ class TestWarmContextChange:
             _text, _usage, backend = await _generate(
                 [{"role": "user", "content": "只回复两个字：收到"}], model_id)
             try:
-                info = await backend.probe_runtime_context()
-                seen.append(info["observed"])
+                # 自有真值（不受其他客户端串扰）：每一步都真的请求了声明的窗口
+                assert backend.requested_context == window
+                seen.append(await _observed_with_retry(backend, expected=window))
             finally:
                 await backend.close()
         print(f"\n[OLL-E warm] observed sequence = {seen}")
@@ -216,10 +271,10 @@ class TestSilentTruncationContract:
 
         _text, usage, backend = await _generate(messages, model_id)
         try:
-            info = await backend.probe_runtime_context()
+            observed = await _observed_with_retry(backend, expected=512)
             print(f"\n[OLL-E truncation] estimated_prompt={estimated} "
-                  f"usage={usage} observed={info['observed']}")
-            assert info["observed"] == 512
+                  f"usage={usage} observed={observed}")
+            assert observed == 512
             assert usage is not None and usage["input_tokens"] <= 512, (
                 f"prompt_eval_count 应被 runtime window 截住：{usage}")
             assert usage["input_tokens"] > 0
@@ -261,5 +316,65 @@ class TestDiagnosticsDoNotTouchTheHotPath:
         try:
             with pytest.raises((httpx.ConnectError, httpx.HTTPError)):
                 await backend.chat([{"role": "user", "content": "hi"}])
+        finally:
+            await backend.close()
+
+
+class TestRealToolRoundReplay:
+    """P0（Challenger 2026-09-19）：工具轮的**第二发**请求必须真的能过 native wire。
+
+    实测过的缺陷形态：回放的 `tool_calls[].function.arguments` 是 JSON **字符串**
+    （OpenAI 契约，`ToolCall.model_dump()` 的产出）时，native `/api/chat` 直接
+    **HTTP 400** `Value looks like object, but can't find closing '}' symbol`——
+    工具**已经执行**、回复永不出现，且 400 不可重试。本用例走真实 daemon 证明修复生效。
+    """
+
+    _TOOLS = [{
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the current weather for a city",
+            "parameters": {"type": "object",
+                           "properties": {"city": {"type": "string"}},
+                           "required": ["city"]},
+        },
+    }]
+
+    @pytest.mark.asyncio
+    async def test_second_round_survives_the_real_wire(self):
+        _require_daemon()
+        from core.adapter.llm_adapter import LLMAdapter
+        from core.adapter.tool_call_parser import normalize_tool_calls
+
+        model_id = f"ollama/{_MODEL}"
+        adapter = LLMAdapter(model_id)
+        backend = adapter._backend  # noqa: SLF001 — 诊断/证据脚本读的就是"哪个后端"
+        try:
+            first = [{"role": "user",
+                      "content": "What is the weather in Paris? Use the tool."}]
+            accumulated: list[dict] = []
+            async for chunk in adapter.stream_think(first, tools=self._TOOLS):
+                if chunk.get("tool_calls"):
+                    from core.adapter.tool_call_parser import merge_stream_tool_calls
+
+                    merge_stream_tool_calls(accumulated, chunk["tool_calls"])
+            calls = normalize_tool_calls(accumulated)
+            assert calls, "第 1 轮必须真的产生 tool_call（否则本用例证明不了什么）"
+
+            # `core/cognitive/tool_phase.py::_prepare_tool_round` 的真实回放形状
+            second = [
+                *first,
+                {"role": "assistant", "content": None,
+                 "tool_calls": [c.model_dump(mode="json") for c in calls]},
+                {"role": "tool", "tool_call_id": calls[0].id,
+                 "content": "晴，24°C"},
+            ]
+            text = ""
+            async for chunk in adapter.stream_think(second, tools=self._TOOLS):
+                if chunk.get("content"):
+                    text += chunk["content"]
+            print(f"\n[OLL-E tool round 2] call={calls[0].function.name}"
+                  f"({calls[0].function.arguments}) → reply={text[:80]!r}")
+            assert text.strip(), "第二发必须拿到回复（400 时这里为空/抛错）"
         finally:
             await backend.close()
