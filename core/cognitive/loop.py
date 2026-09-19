@@ -150,6 +150,23 @@ from core.cognitive.finalize import CognitiveFinalize
 from core.cognitive.streaming import CognitiveStreaming, _apply_mood  # noqa: F401
 
 
+def _session_has_message_id(session: "SessionMemory", message_id: "MessageId") -> bool:
+    """会话历史里是否已有该 **message identity**（KB-46 幂等判据）。
+
+    判据落在既有稳定身份上（v2 预分配的 `messageId`），**不**新增平行布尔 truth
+    source；也**不**按文本相等判断——两条内容相同的用户消息是合法的，按文本判重会
+    把真实的第二条吞掉。窗口 ≤ `max_messages`（20）条，纯内存扫描。
+
+    Args:
+        session: 目标会话。
+        message_id: 待核对的稳定身份。
+
+    Returns:
+        True = 该身份已在会话窗口中。
+    """
+    return any(getattr(m, "message_id", None) == message_id for m in session.messages)
+
+
 class TurnPhase(str, Enum):
     """CognitiveLoop 单轮处理阶段 — 内部追踪，不暴露给 FSM 外部消费者。"""
     BUILD_PROMPT = "build_prompt"
@@ -265,6 +282,14 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         # `session.add_message` 之后置 True）。它是"commit point 之后、历史之前"这个
         # 窄窗口的判据——在那里用户可见的帧一个都没发，输入却已经不可能被重来。
         self._turn_message_persisted: bool = False
+        # KB-46（Batch 15）：本回合"**已 claim 却还没进历史**"时用来补写的用户输入载荷
+        # `(content, message_id)`。由 `process()` 在取锁**之前**的同步段暂存（那里才知道
+        # `is_task_result`——合成系统唤醒不进 user history，故直接存 None），由
+        # `_handle_interrupt()` 的零 await prologue 一次性消费。
+        # 为什么不在 `_prepare_turn` 暂存：那样要给该私有方法加 `is_task_result` 形参，
+        # 而消费侧的门禁（`_generation_ctx is not None`）已经保证"只有已 claim 的回合
+        # 才可能消费它"——pre-claim 取消与 `_prepare_turn` 之前的一切都不受影响。
+        self._claimed_input_record: tuple[list[dict], MessageId | None] | None = None
         # 预留（P3-01-RESERVED）：2026-09-12 决策保留作扩展储备，非死代码，勿按引用审计删除。
         # 注意：此前注释写「保留供 agent.py stop() 读取」，但全仓无任何读写点；
         # TTS 取消实际走 _tts_mgr.cancel_all()（见 agent/_lifecycle_tools.py）。
@@ -764,13 +789,19 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             # KB-24（Batch 12，§9.2 的第二形态）：本回合已越过 admission commit point
             # （相位收口因此是安全的，Batch 10 的成果），但那条输入**还没进会话历史**
             # ——`session.add_message` 在 `_build_turn_prompt` 里，即 `_think_loop` 之内。
-            # 此刻取消：本回合没有产出过任何用户可见帧（typing / generation.started /
-            # TTS 都在更后面），所以"以取消收场"是对的；但用户手里的 `accepted` 需要
-            # 一个**可归因的终点**，否则它与"从未被处理"在观测面上无法区分。
+            # 此刻取消：**typing / generation.started / TTS 都还没发**（它们全在
+            # `_start_turn_tracking` 里，即 record 之后），所以"以取消收场"是对的。
+            # ⚠️ 更正（Batch 15 §Audit）：此前这里写"没有产出过**任何**用户可见帧"不准确
+            # ——`enter_thinking()` 的 `bus.post(StateChangeData)`（`fsm.py`）是**同步**的，
+            # 事件消费者随后经 `output.notify_state` 发出的 `state: THINKING` 帧**在**
+            # record 之前。实测取消前已发出的帧 = ['notify_state']。
+            # KB-46（Batch 15）起，这条输入由 `_handle_interrupt()` 的零 await prologue
+            # 补写进会话历史（`_record_claimed_input`）——用户手里的 `accepted` 因此不再
+            # 与"从未被处理"在**会话真相**上无法区分；本日志保留为 admission 层的可归因终点。
             logger.info(
                 "<<< 已接受的输入在写进历史前被取消 — admission disposition="
                 "cancelled_pre_ownership source=%s message_id=%s conversation_id=%s"
-                "（未产生回复；不进 session/pending，也不会被重投）",
+                "（未产生回复；不进 pending、也不会被重投；用户输入本身按 KB-46 已进会话历史）",
                 self._interrupt_source or "unknown",
                 self._admission_message_id or "-",
                 self._admission_session_id or "-",
@@ -875,6 +906,15 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         self._admission_message_id = None
         self._admission_session_id = ""
         self._turn_message_persisted = False
+        # KB-46（Batch 15）：本回合那条输入的"待补写载荷"。`is_task_result`（合成系统
+        # 唤醒）按既有合同**不进** user history（`_build_turn_prompt` 的唯一豁免），
+        # 所以在这里就存 None——recovery 因此不可能把系统事件写成用户历史。
+        # 存 None ≠ 会补写：消费侧还要求"本回合已 claim"（见 `_record_claimed_input`）。
+        self._claimed_input_record = (
+            None if is_task_result
+            else (content if content else [{"type": "text", "content": user_message}],
+                  message_id)
+        )
         async with self._process_lock:
             # #43：与 `Agent.process_message` 同一判定点（生命周期 + 相位）。
             # CR-08 之后这里曾是两处独立的检查，新增入口很容易只问一半。
@@ -974,6 +1014,102 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
 
     # ---- Core loop: prompt construction ----
 
+    def _record_user_input(self, session: SessionMemory,
+                           content: list[dict],
+                           message_id: MessageId | None) -> None:
+        """把一条用户输入写进会话历史的**唯一权威**（KB-46 / CT2）。
+
+        normal path（`_build_turn_prompt`）与 cancellation/failure recovery
+        （`_record_claimed_input`）共用本方法——**不**允许两套构造逻辑各自
+        `session.add_message(UserMessage(...))`，否则同一个 ownership 状态会长出
+        两种会话真相（Batch 14 §20.2 的 W1/W2 分裂）。
+
+        Args:
+            session: 目标 SessionMemory（本回合 `_prepare_turn` 解析出的那个）。
+            content: 已归一化的多模态内容数组（至少一项 text）。
+            message_id: 稳定身份（v2 预分配 messageId）；None ⇒ 现分配（v1/REST/STT）。
+        """
+        session.add_message(UserMessage(
+            content=parts_from_dicts(content),
+            message_id=message_id or new_message_id(),
+            timestamp=_now_iso(),
+        ))
+
+    def _record_claimed_input(self, source: str | None = None) -> bool:
+        """KB-46：把本回合**已 claim 但尚未进历史**的用户输入补写进会话历史。
+
+        调用点是 `_handle_interrupt()` 的**零 await prologue**——那是被取消/失败回合的
+        canonical 终态 owner，一处即覆盖三个落点：W1（`_prepare_turn` 的 `register`
+        /`enter_thinking` 挂起点）、W2（`_build_turn_prompt` 的 `build_messages`）、
+        W3（`_handle_turn_exception` 的 `finally`）。
+
+        三条门禁（缺一不可）：
+
+        ① `_generation_ctx is not None` —— 本回合**已 claim** 这条输入。这是 Batch 12
+           的 admission 边界：claim **之前**的取消不得制造 phantom history（CT5）。
+        ② `not _turn_message_persisted` —— 尚未由 normal path 写进历史。已写 ⇒ no-op，
+           保证 AD4/CT3（同一条逻辑输入不得在 history/archive/prompt 里出现两次）。
+        ③ `_claimed_input_record is not None` —— 是**用户**输入。`is_task_result`
+           （合成系统唤醒）在 `process()` 入口就没暂存（§43）。
+
+        **幂等**：除②③之外，只要拿到稳定身份（v2 预分配 messageId）就再核一次
+        "会话里是否已有这条身份"——判据落在**既有 identity**上，不是新增一个平行布尔
+        truth source（§36/§38/§90）；payload 在消费时立即清空，同回合内 W3→W1 叠加
+        （`_handle_turn_exception` 的 `finally` 先跑收口，`CancelledError` 继续冒泡被外层
+        `except CancelledError` 接住）也不会写第二次。
+
+        **不阻塞终态**：`SessionMemory.add_message` 是**同步、零 await** 的
+        （deque append + fire-and-forget 归档，`core/memory/session.py`），因此本方法不
+        引入新的挂起点 ⇒ 不破坏 Batch 11 的 CF1/CF2（终态收口对重复取消免疫），也不给
+        terminal 临界区塞无界持久化 I/O（§61/§100）。它只写 **runtime conversation
+        truth**（内存窗口 + 既有归档路径）；`sessions` 集合仍由既有的 `save()` 在下一个
+        成功回合 / 关机 `save_all()` 落库——本批**不**承诺 crash durability（§56）。
+
+        **绝不外抛**：本方法在 `except` 子句与 `finally` 里被调用；抛出去会让 canonical
+        收口（`_handle_interrupt`）永不执行 ⇒ 相位永停 THINKING。任何异常都吞成 warning。
+
+        Returns:
+            True = 本次调用确实补写了一条；False = 未补写（门禁不满足或已记录）。
+        """
+        try:
+            if self._generation_ctx is None:        # ① 未 claim
+                return False
+            if self._turn_message_persisted:        # ② 已记录
+                return False
+            pending = self._claimed_input_record    # ③ 非用户输入
+            if pending is None:
+                return False
+            self._claimed_input_record = None       # 一次性消费
+            # 目标会话：`self._session` 全仓只由 `_prepare_turn` 在 claim **之前**赋值
+            # （`self._session = target`，紧随会话解析），且本回合全程持 `_process_lock`
+            # ⇒ 已 claim 时它必然是本回合解析出的那个会话。recovery 路径不得再调 async
+            # 的 resolve/load（那会给终态收口新增挂起点）。
+            # `getattr` 而非直接取属性：`_session` 按设计**不在 `__init__` 初始化**
+            # （见那里的注释——它在 `process()` 里按 resolver 动态赋值），因此最小构造
+            # 的 CognitiveLoop 没有该属性；门禁①已保证这里只会在"本回合已 claim"时走到，
+            # 但取值本身不得依赖"属性一定存在"。
+            target: SessionMemory | None = getattr(self, "_session", None)
+            if target is None:                      # pragma: no cover — 防御
+                return False
+            content, message_id = pending
+            if message_id is not None and _session_has_message_id(target, message_id):
+                self._turn_message_persisted = True   # 身份已在历史里 ⇒ 只对账
+                return False
+            self._record_user_input(target, content, message_id)
+            self._turn_message_persisted = True
+            logger.info(
+                "<<< 已 claim 的输入在进历史前被取消/失败 — admission disposition="
+                "cancelled_after_claim_persisted source=%s message_id=%s conversation_id=%s"
+                "（用户输入已进会话历史；assistant 侧不伪造，回合仍以取消/失败收场）",
+                source or "unknown",
+                self._admission_message_id or message_id or "-",
+                self._admission_session_id or "-")
+            return True
+        except Exception:
+            logger.warning(
+                "已 claim 输入的会话真相补写失败（不阻塞终态收口）", exc_info=True)
+            return False
+
     async def _build_turn_prompt(
         self, user_message: str, user_name: str,
         content: list[dict] | None,
@@ -1019,13 +1155,14 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         user_content = content if content else [{"type": "text", "content": user_message}]
         # 系统唤醒消息不写入 session（Step 4: 唤醒模板不需要存放在 session 中）
         if not is_task_result:
-            self._session.add_message(UserMessage(
-                content=parts_from_dicts(user_content),
-                message_id=user_message_id or new_message_id(),
-                timestamp=_now_iso(),
-            ))
+            # KB-46（Batch 15）：本构造已收口到 `_record_user_input`——normal path 与
+            # cancellation/failure recovery 共用同一权威，不复制构造逻辑。
+            self._record_user_input(self._session, user_content, user_message_id)
             # KB-24：输入已进历史 —— 此后用户至少能在历史里看到"我说过这句"。
             self._turn_message_persisted = True
+            # KB-46：载荷由**本权威**消费——两个权威（normal / recovery）共享同一份
+            # 一次性载荷，谁先写谁消费，另一个必然在门禁②上短路，不可能双写。
+            self._claimed_input_record = None
         tool_defs = self._tool_adapter.definitions() if self._tool_adapter else None
         # 多模态 LLM 可直接看图，排除 describe_image 避免 LLM 只调用一次
         if tool_defs and supports_mm:
@@ -1488,6 +1625,12 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         """
         if source is None:
             source = self._interrupt_source
+        # ★ KB-46（Batch 15）：**在零 await 的 prologue 里**先补写"已 claim 却还没进历史"
+        # 的用户输入——必须在下面 `is_completely_idle` 早退**之前**（相位已 IDLE 的场合
+        # 同样要补），也必须在任何 await 之前（第二发取消打不到它）。一处覆盖三个落点：
+        # W1 `_prepare_turn` / W2 `_build_turn_prompt` / W3 `_handle_turn_exception`。
+        # 它是同步的（见 `_record_claimed_input`），不新增挂起点、不做 DB 往返。
+        self._record_claimed_input(source)
         self._interrupt_source = None
         if self.status.is_completely_idle:
             return
