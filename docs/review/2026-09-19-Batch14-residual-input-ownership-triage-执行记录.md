@@ -810,11 +810,11 @@ registry / WAL。停机清扫是**纯内存**操作；被丢弃的输入本就�
 
 | Commit | 内容 |
 |---|---|
-| `test(agent): pin runtime epoch input ownership guards`（与生产改动同一 commit 亦可） | 见下 |
-| **`fix(agent): discard abandoned user input across runtime restart`** | 生产改动（`core/monitoring/event_bus.py` 新增按类型分类的 `discard_user_inputs()`；`core/agent/lifecycle.py` 增加停机边界清扫与 pending 归因）＋ PRE_FIX_RED 守卫（`core/agent/tests/test_runtime_epoch_input_ownership.py`（4 例）＋ `core/monitoring/tests/test_event_bus_ownership.py`（4 例）） |
-| `docs(architecture): record runtime epoch ownership invariants` | `docs/architecture/invariants.md` §4.5/§4.6 更正 + §4.7 RO1–RO3 |
-| `docs(review): record Batch 14 residual input ownership triage` | 本文件 |
-| `docs(todo): register KB-46..KB-48 and reclassify KB-26/28/29` | `todo.md`（含 AR-8 缓解说明更正） |
+| `e63ff66b` | `fix(agent): discard abandoned user input across runtime restart` —— 生产改动（`core/monitoring/event_bus.py` 新增按类型分类的 `discard_user_inputs()`；`core/agent/lifecycle.py` 停机边界清扫 ＋ pending 归因 ＋ 组合面类型声明）＋ PRE_FIX_RED 守卫（`core/agent/tests/test_runtime_epoch_input_ownership.py` 4 例、`core/monitoring/tests/test_event_bus_ownership.py` 4 例） |
+| `9f5daf73` | `docs(architecture): record runtime epoch ownership invariants` —— `docs/architecture/invariants.md` §4.7 RO1–RO3 ＋ §4.5/§4.6 已知边界更正 |
+| `4b9fb70b` | `docs(review): record Batch 14 residual input ownership triage` —— 本文件（含 Challenger Findings 定稿） |
+| `3f753ad7` | `docs(todo): register KB-46..KB-50 and reclassify KB-26/28/29` —— `todo.md`（含 AR-8 缓解说明更正） |
+| *（本条）* | `docs(review): pin Batch 14 commit hashes` |
 
 （生产 + PRE_FIX_RED 同 commit；triage/reclassify 文档独立 commit。）
 
@@ -833,6 +833,7 @@ registry / WAL。停机清扫是**纯内存**操作；被丢弃的输入本就�
 | targeted（新增守卫） | `test_runtime_epoch_input_ownership.py` 修前 **3 failed / 1 passed**（总线清扫 2 条 + pending 归因 1 条）→ 修后 **4 passed**；`test_event_bus_ownership.py` **4 passed** |
 | Batch 12 regressions（AD） | `test_admission_input_delivery.py` + `test_pending_input_ordering.py` + `test_turn_finalization_cancellation_safety.py`：**30 passed**（subA）；主 Agent 合并跑 508 passed（见下） |
 | Batch 13 regressions（PO） | 同上（PO1–PO6 / PO-L 全绿） |
+| SP（SPEAKING lifecycle） | `core/cognitive/tests/test_speaking_lifecycle.py` + `core/adapter/tests/test_tts_adapter.py`：**29 passed in 1.05s**（显式回归；§61 要求的相邻边界） |
 | ownership perturbation | 独立探针：`probe_kb26`(5) / `probe_kb28`(4) / `probe_kb29`(2) / `probe_n7`(5) / `probe_n8`(6) 全部在 HEAD 上复现或证伪（`tmp/b14/**`） |
 | shutdown / restart | `test_shutdown_resilience` / `test_shutdown_steps_matrix` / `test_shutdown_mailbox_delivery` / `test_restart_rebuild` / `test_lifecycle_idempotency` / `test_lifecycle_flush` / `test_task_result_interrupt_delivery` / `test_task_result_durability`：**105 passed**（修前/修后各一次，subD） |
 | 合并相邻套件（主 Agent 实跑） | AD+PO+CF+TH+shutdown+restart+lifecycle+task-result+`core/cognitive/tests`：**508 passed / 1 warning in 68.6s** |
