@@ -96,7 +96,7 @@ from core.storage.character_instance_repo import CharacterInstanceRepository
 from core.storage.character_repo import CharacterRepository
 from core.storage.character_revision_repo import CharacterRevisionRepository
 from core.storage.character_version_repo import CharacterVersionRepository
-from core.schema.types import IsoTimestamp, MessageId, SessionId
+from core.schema.types import IsoTimestamp, MessageId, RequestId, SessionId
 from core.schema.utils import now_iso
 from core.schema.character import CharacterRuntimeState
 from core.profile.profile_store import UserIdentityStore
@@ -620,6 +620,13 @@ class Agent(AgentLifecycle, AgentServer):
         Agent 忙碌时消息入队（FIFO），IDLE 时出队处理。
         显式中断（停止按钮、VAD）仍通过 EventBus INTERRUPT 机制生效。
 
+        **顺序合同（Batch 13 / KB-38 确认并贯通）**：本实例内，凡是保持可处理的
+        accepted 输入，都按 **admission 顺序**（本方法提交准入决策的顺序，见证 =
+        此时分配的 `request_id`）获得 active-turn ownership——不论它当次走的是
+        "直投总线"还是"进 pending"、也不论两条路径谁先写入队列。见
+        `_enqueue_pending` / `_has_older_waiting_input` 与
+        `docs/architecture/invariants.md` 的 PO1–PO6。
+
         Args:
             text: 纯文本消息（兼容旧调用）。
             user_name: 发送者名称，为空时使用配置中的默认用户名。
@@ -672,11 +679,21 @@ class Agent(AgentLifecycle, AgentServer):
 
         self._idle.touch()
 
-        if not self.status.is_accepting_input or self._bus.pending_user_inputs > 0:
+        if not self.status.is_accepting_input or self._has_older_waiting_input(rid):
             # 排队消息而不是打断当前流程。review 复核 #4：bus 中已有未派发的
             # USER_INPUT（同 tick 突发，FSM 仍 accepting）同样视为 busy——否则多次
             # process_message 都走直接 post 返回 True，事件派发时才做 pre-start 队列
             # 容量检查并静默丢弃（先 ACK 后丢弃）。接受时即做容量检查。
+            #
+            # Batch 13（KB-38，Challenger A 反证）：`or self._pending_messages` 也不能少。
+            # 队列非空 ⇒ **已经有更早 accepted 的输入在等**，本条不得再走快速路径：
+            # 快速路径会拿到**更小**的总线 `seq`，而出队口随时可能把那条更早的输入
+            # （`pop(0)` 后）投到它**后面**——于是总线顺序变成 [更晚, 更早]，那个更早的
+            # 输入在 `_handle_user_input` 时已经不在 `_pending_messages` 里
+            # （只看 pending 的判据看不见"正在 pending→bus 交接"的那一条），越队判据
+            # 因此失效、更晚者先成为 active turn（实测四层证据全反序）。判据必须覆盖
+            # **整个等待集**（pending ∪ 总线驻留）——`_has_older_waiting_input` 就是
+            # 那唯一一处定义，本条只是它的第一个调用点（第二个在 `_handle_user_input`）。
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
                 logger.warning("消息队列已满 (%d) — 丢弃消息", max_queue)
@@ -685,7 +702,7 @@ class Agent(AgentLifecycle, AgentServer):
                 return False
             logger.debug("Agent busy — 消息排队 (state=%s, queue=%d)",
                        self.status.current_name(), len(self._pending_messages) + 1)
-            self._pending_messages.append(_PendingMessage(
+            self._enqueue_pending(_PendingMessage(
                 text=text, user_name=user_name, request_id=rid,
                 content=content, emotion=emotion, events=list(events or []),
                 message_id=message_id_nt,
@@ -895,6 +912,125 @@ class Agent(AgentLifecycle, AgentServer):
         if reserved and conversation_id is not None:
             self._session_manager.release_work(conversation_id)
 
+    # ---- pending 队列：单一入队权威 + admission 顺序（Batch 13 / KB-38）----
+
+    @staticmethod
+    def _pending_request_id(pending: _PendingMessage | dict) -> str:
+        """读排队项的 admission 顺序见证（兼容 `_PendingMessage` 与 dict 队列项）。
+
+        与 `_pending_message_id` 同构：少量旧代码/测试仍在用 dict 队列项。
+        """
+        if isinstance(pending, dict):
+            return str(pending.get("request_id") or "")
+        return str(pending.request_id or "")
+
+    @staticmethod
+    def _admission_order(request_id: object) -> int | None:
+        """把 admission 顺序读成可比较的整数；读不到返回 None。
+
+        顺序键**复用既有** `request_id`，不新增第二套 message identity：
+        `next_request_id()` 在 `process_message` 的 **admission 提交点**分配它
+        （`reserve_work` 之后、分支判定之前——两者之间**没有 await**，所以分配顺序
+        严格等于准入决策顺序），格式 `f"{counter:03d}"`、实例内单调、不持久化、
+        不进 public API。因此 `int(request_id)` 就是"谁先被 accepted"的现成见证。
+        它的单调性由 `test_admission_order_key_is_monotone` 钉住——将来有人把它换成
+        UUID / 每会话计数 / 随机值，那条守卫会红，而不是让顺序静默错乱。
+
+        读不到（None / 空 / 非数字）时返回 None，由调用方各自决定口径：
+        `_enqueue_pending` 回退到写入顺序（追尾），`_has_older_waiting_input` 取**保守**
+        方向（本条读不到就排队、等待者读不到就视为更早）。
+
+        Args:
+            request_id: `RequestId` / 裸字符串 / None（见 `_pending_request_id`）。
+
+        Returns:
+            可比较的整数顺序键；无法解析时 None。
+        """
+        if not request_id:
+            return None
+        try:
+            return int(request_id)          # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    def _enqueue_pending(self, pending: _PendingMessage) -> None:
+        """**唯一**入队点：按 admission 顺序插入 `_pending_messages`（KB-38）。
+
+        修前有两个"append 权威"，各自按**写入时刻**排序：
+
+        ```text
+        process_message(M2) → bus.post(M2)                  ← M2 的 owner 是总线（快速路径）
+        process_message(M3) → append(M3)                    ← 判据 bus.pending_user_inputs > 0
+        消费者派发 M2     → _handle_user_input(M2) → append(M2)   ← M2 到这里才入队
+        ⇒ pending = ["M3", "M2"]     出队是 pop(0) ⇒ 处理顺序 M1 → M3 → M2
+        ```
+
+        这里把排序依据从"谁先写入"换成"谁先被 accepted"：插入位置由顺序键决定，
+        于是**无论两条路径以什么次序写入**，队列始终按 admission 顺序有序，
+        `_dispatch_pending_message` 的 `pop(0)` 仍然是"取出最老的那条"。
+        等键（含读不到键的项）按稳定插入保持先来先占位——队列本身就是那个 FIFO，
+        所以不换容器（`list` + O(n ≤ max_pending_messages) 插入足够）。
+
+        Args:
+            pending: 待入队的排队消息（携带 admission 时的 `request_id`）。
+        """
+        order = self._admission_order(self._pending_request_id(pending))
+        if order is None:
+            self._pending_messages.append(pending)
+            return
+        index = len(self._pending_messages)
+        while index > 0:
+            prev_order = self._admission_order(
+                self._pending_request_id(self._pending_messages[index - 1]))
+            if prev_order is None or prev_order <= order:
+                break
+            index -= 1
+        self._pending_messages.insert(index, pending)
+
+    def _has_older_waiting_input(self, request_id: RequestId | None) -> bool:
+        """**等待集**（pending ∪ 总线驻留 USER_INPUT）里是否有比本条更早 accepted 的输入。
+
+        这是"本条能否直接成为 active turn"的唯一判据（PO3）。等待集必须是**两个容器
+        的并集**，只看其中一个都会漏（Challenger A 反证）：
+
+        - 更早者在 `_pending_messages`（还没被出队）⇒ 只看 pending 就够；
+        - 更早者**已被 `pop(0)` 交给总线**、但还没被 claim ⇒ 它已不在 pending 里，
+          只有读总线才能看见它。这个窗口真实存在：出队口（`_handle_state_change` /
+          `_drain_pending_after_turn`）与事件消费者是**异步**推进的，而更晚的输入可以在
+          这中间被 admitted（`wc_handler`/voice 直投甚至不经 `process_message`）——
+          总线按 `(priority, seq)` FIFO，更晚者若先入总线就会先被派发，于是"更早的输入
+          反而排在后面"（实测四层证据全反序）。
+
+        更晚 accepted 的输入有三条越队路径，都被这条挡住：
+        ① 快速路径（`process_message` 直投总线）；② **直投输入**
+        （`core/input/ws_handler.py` STT / `core/input/ws_v2.py` voice.commit /
+        `core/input/voice_sessions.py` REALTIME，不经 `process_message`）；
+        ③ `_handle_user_input` 的 spawn 分支。
+
+        顺序键读不到时的口径（保守方向）：**本条读不到 ⇒ 只要还有人在等就排队**
+        （宁可多等一轮，也不能越过更早的输入）；**等待者读不到 ⇒ 视为更早**。
+        两者都不会造成停滞：队首/最老者被派发时它自己必然"不更早"，判据放行。
+
+        Args:
+            request_id: 本条的 admission 顺序见证（`UserInputData.request_id`）。
+
+        Returns:
+            True = 等待集里存在更早 accepted 的输入，本条必须排队。
+        """
+        incoming = self._admission_order(request_id)
+        if incoming is None:
+            return bool(self._pending_messages) or self._bus.pending_user_inputs > 0
+        if self._pending_messages:
+            head = self._admission_order(
+                self._pending_request_id(self._pending_messages[0]))
+            if head is None or head < incoming:
+                return True
+        for rid in self._bus.pending_user_input_request_ids():
+            order = self._admission_order(rid)
+            if order is None or order < incoming:
+                return True
+        return False
+
     @staticmethod
     def _pending_message_id(pending: _PendingMessage | dict) -> str:
         """读排队项的身份（兼容 `_PendingMessage` 与少量旧代码/测试用的 dict）。"""
@@ -945,10 +1081,19 @@ class Agent(AgentLifecycle, AgentServer):
         #
         # 修法与 C1/P1-06 同构、只是补全判据：**没接管输入的在途回合不得被抢占**
         # （新输入排队，FIFO 不抢），只有真正接管了的回合并发新输入才允许打断。
+        #
+        # Batch 13（KB-38）：**再加一条越队判据**。上面这条只覆盖"在途回合还没接管"，
+        # 于是更晚 accepted 的输入仍可能先被处理——① 直投输入（STT/voice 不经
+        # `process_message`，见 `_has_older_waiting_input` 的调用点清单）会走到下面的
+        # spawn 分支抢占当前回合并越过已排队的输入；② 快速路径同理。既有合同是
+        # FIFO（见 `process_message` / `pending_messages` / `_dispatch_pending_message`
+        # 的 docstring 与 AD3"新输入排队"）⇒ 只要队列里有**更早** accepted 的输入在等，
+        # 本条就必须排队，不得直接成为当前回合。
         prev = self._cognitive.current_task
-        if (prev is not None and not prev.done()
-                and (prev not in self._started_cognitive_tasks
-                     or not self._cognitive.current_turn_owns_input)):
+        not_owning = (prev is not None and not prev.done()
+                      and (prev not in self._started_cognitive_tasks
+                           or not self._cognitive.current_turn_owns_input))
+        if not_owning or self._has_older_waiting_input(data.request_id):
             max_queue = self._config.agent.max_pending_messages
             if len(self._pending_messages) >= max_queue:
                 # KB-24：这里静默 `return` 会让调用方以为事件已处置（它没有任何返回
@@ -959,9 +1104,11 @@ class Agent(AgentLifecycle, AgentServer):
                     max_queue, data.message_id or "-")
                 self._release_session_work(data.conversation_id, data.session_work_reserved)
                 return
-            logger.debug("Agent 尚未接管输入（pre-start / prepare）——新消息排队 (queue=%d)",
-                       len(self._pending_messages) + 1)
-            self._pending_messages.append(_PendingMessage(
+            logger.debug(
+                "新消息排队 (queue=%d, 原因=%s)",
+                len(self._pending_messages) + 1,
+                "更早的输入仍在等待" if not not_owning else "在途回合尚未接管输入")
+            self._enqueue_pending(_PendingMessage(
                 text=data.text, user_name=data.user_name, request_id=data.request_id,
                 content=data.content, emotion=data.emotion, events=list(data.events or []),
                 message_id=data.message_id,
@@ -1020,6 +1167,29 @@ class Agent(AgentLifecycle, AgentServer):
         task.add_done_callback(_lease_release_done)
         self._cognitive.current_task = task
 
+    def _on_auxiliary_turn_done(self, _task: asyncio.Task) -> None:
+        """**非用户输入**来源的回合（主动搭话 / 后台任务唤醒）落定后的兜底出队。
+
+        Batch 13（KB-38，Challenger A 第二轮实测的停滞）：pending 的非空状态**没有自己的
+        触发器**——它只靠两个出队口（`STATE_CHANGE→IDLE` 与回合任务的 done callback）。
+        而 `_handle_system_tick` / `_handle_task_result` 这两条回合来源此前**不带任何
+        done callback**，于是一个"停在 admission 窗口里失败、从未离开 IDLE"的回合结束时：
+
+        - `handle_interrupt()` 见 FSM 已 IDLE 直接 return（`fsm.py` 的幂等早退）⇒ 不投
+          `STATE_CHANGE(IDLE)` ⇒ 出队口 ① 不触发；
+        - 该回合没有 done callback ⇒ 出队口 ② 不触发。
+
+        修前这不致命（新输入仍能走快速路径起一个回合，顺带把队列排空 = 自愈），但 Batch 13
+        的越队判据会把后续输入也算成"更晚"而排队 ⇒ **整条输入流永久静音**（已 accepted 的
+        输入留在 pending，而 Agent 对外显示完全空闲）。所以"兜底出队"必须挂在**每一个**回合
+        spawn 点上，而不只是 `_handle_user_input` 那一条。这里复用既有 helper（不新增调度器 /
+        轮询 / 计时器）；helper 自身的条件（`is_completely_idle` + 无在途回合）保证不会重复出队。
+
+        Args:
+            _task: 落定的回合任务（回调签名要求；本方法只用既有状态，不读该参数）。
+        """
+        self._drain_pending_after_turn()
+
     def _handle_system_tick(self, data: SystemTickData) -> None:
         """处理 SYSTEM_TICK 事件——silence_timeout 时主动开启话题。
 
@@ -1044,6 +1214,7 @@ class Agent(AgentLifecycle, AgentServer):
                 ),
                 name="cognitive-proactive"
             )
+            task.add_done_callback(self._on_auxiliary_turn_done)
             self._cognitive.current_task = task
         else:
             logger.warning("SYSTEM_TICK 未知 proactive reason=%s（暂未消费）", data.reason)
@@ -1083,6 +1254,7 @@ class Agent(AgentLifecycle, AgentServer):
             ),
             name=f"task-result-{data.task_id}",
         )
+        task.add_done_callback(self._on_auxiliary_turn_done)
         self._cognitive.current_task = task
         # 所有权已转移（宣告回合被接受）→ 现在才允许写投递确认。
         # 这一行**必须**留在 spawn 之后：放到它前面（或放回入队处）就是 Issue B 原缺陷。
@@ -1110,6 +1282,12 @@ class Agent(AgentLifecycle, AgentServer):
 
         搬移而非复制：`pop(0)` 与 `bus.post` 之间**没有 await** ⇒ 不存在"取出后还没
         放回就被抢占"的窗口，一条消息也不可能同时属于 pending 与总线。
+
+        Batch 13（KB-38）：`pop(0)` 之所以仍是"取出最老的"，是因为入队侧
+        （`_enqueue_pending`）保证队列**按 admission 顺序有序**——修前两个 append
+        权威按写入次序排列，最老的输入可能排在队尾。落定前若被 `_handle_user_input`
+        按越队判据挡回（`_has_older_waiting_input`），仍由 `_enqueue_pending` 放回
+        **它原来的位置**。见 `docs/architecture/invariants.md` 的 PO2。
 
         提取为独立方法（KB-24 / Batch 12），因为现在有**两个**调用点：
         ① `_handle_state_change`（`STATE_CHANGE → IDLE`，既有机制）；

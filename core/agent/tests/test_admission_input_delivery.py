@@ -421,40 +421,42 @@ async def test_admission_gap_preserves_fifo_order(
 @pytest.mark.asyncio
 async def test_third_message_arriving_while_second_is_still_on_the_bus(
         agent: Agent, admission_gate: _Gate, llm: _RecordingFakeLLM):
-    """FALSIFICATION_GUARD（Batch 12 新发现，非本批修法引入）：连发三条时的既有乱序。
+    """AD1/AD3（**Batch 13 已修**）：连发三条时 pending 里不得反序。
 
-    这条**不**断言"顺序正确"——它钉住并公开一个本批审计发现的**既有**缺陷：
-    当上一条消息还排在 **EventBus 队列**里（事件消费者尚未把它交给
+    Batch 12 登记为 `FALSIFICATION_GUARD`（钉住既有乱序）。**KB-38 已由 Batch 13
+    确证并修复**：当上一条消息还排在 **EventBus 队列**里（事件消费者尚未把它交给
     `_handle_user_input`）时，`process_message` 因 `bus.pending_user_inputs > 0`
     走队列分支、把**新**消息直接 append 到 `_pending_messages`；随后消费者才把
     **旧**消息经 `_handle_user_input` 也 append 进去 ⇒ 两条在 pending 里**反序**
-    （实测 `['M3','M2']`）。
+    （修前实测 `['M3','M2']`，处理顺序 `M1 → M3 → M2`）。
 
-    根因与 KB-24 同族（"事件在总线里排队时没有 pending 归属"）但**不同根**：
-    KB-24 是"已接受输入无 owner"，这里两条都**有** owner（pending），只是**次序**错了；
-    且它在修法前后完全一致（不是本批引入）。按 §1/§102 只登记（→ 回归守卫 + 新登记），
-    不在本批修（修它会动 `process_message` 的入队判据与 pending 语义，属 Batch 12 明确
-    排除的范围）。
+    Batch 13 把入队收敛到 `_enqueue_pending`（按 admission 顺序插入）并加了
+    "更早的输入仍在等待 ⇒ 不得越队"判据，于是本用例按它自己当初写下的指示
+    （"若这里红了，说明有人修好了它——请把本用例改成断言正确顺序并更新 todo"）
+    改成断言**正确顺序**。完整的四层证据（admission/pending/claim/session/LLM）
+    在新文件 `core/agent/tests/test_pending_input_ordering.py`。
     """
     first = await _arm_admission_gap(agent, admission_gate, "M1")
     assert await agent.process_message("M2") is True
     assert await agent.process_message("M3") is True
     await _wait_pending(agent, 2)
 
-    # 现状（缺陷形状）：pending 里 M3 在 M2 之前 —— 既有行为，本批不修。
-    assert _pending_texts(agent) == ["M3", "M2"], (
-        "既有乱序行为发生变化：若这里红了，说明有人修好了它——"
-        f"请把本用例改成断言正确顺序并更新 todo。pending={_pending_texts(agent)}")
+    # 修后：pending 按 admission 顺序（Batch 13 / KB-38）
+    assert _pending_texts(agent) == ["M2", "M3"], (
+        f"pending 顺序 != admission 顺序：{_pending_texts(agent)}")
 
     admission_gate.open()
     await _settle(first)
     await _drain_turns(agent)
 
-    # 不论 pending 里的次序如何，三条都不得丢失（AI1：每条都有 owner）。
+    # 三条都不得丢失（AD1：每条都有 owner），且处理顺序 == admission 顺序
     users = _user_texts(agent)
     for text in ("M1", "M2", "M3"):
         assert any(text in u for u in users), (
             f"{text} 丢失（已 ACK 的输入无 owner）：messages={users}")
+    ordered = [t for u in users for t in ("M1", "M2", "M3") if t in u]
+    assert ordered == ["M1", "M2", "M3"], (
+        f"处理顺序被破坏（应为 M1→M2→M3，实为 {ordered}）：messages={users}")
 
 
 @pytest.mark.asyncio
