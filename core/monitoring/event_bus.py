@@ -100,6 +100,44 @@ class EventBus:
         self._note_removed(event)
         return event
 
+    def discard_user_inputs(self) -> list[Event]:
+        """移除队列中**尚未派发**的 USER_INPUT；其余事件**原位保留**（Batch 14 / KB-47）。
+
+        为什么需要它（而不是 `drain()` 或"清空"）：本总线的生命周期与 `Agent` 实例相同
+        （`EventBus()` 在 `Agent.__init__` 构造），而同一实例的 `stop() → start()` 是
+        **新的 runtime epoch**——`start()` 会 `fsm.reset()`、`reset_lifecycle_state()`、
+        重新 spawn `_process_events`。停机时仍驻留的 USER_INPUT 是**非 durable** 的
+        accepted work（`accepted ≠ durable`），它的 ownership 必须在 epoch 边界结束；
+        否则新 epoch 的消费者会把它当**新输入**处理（复活）：进会话历史、喂给 LLM、
+        整条 ReAct 回合连同工具副作用重跑一遍——这违反 AD5（"停机不得复活本应保持
+        取消的输入"），也正是输入层 S2-R2-4 判据所说的"残留事件跨运行被消费本身就是
+        缺陷族"。
+
+        **只按 event type 分类，不是 `clear()`**：`TaskResultData` 等 durable 终态
+        （§T3/T6、`_redeliver_pending_task_results` 的补投语义）必须原位保留——调用方
+        不得把本方法当作"停机清空总线"使用。
+
+        实现：`drain()` 取出全部 → 分拣 → 幸存者按**原 priority/type** 重投。整段是
+        同步代码（无 `await`），所以既不会与任何并发 `post` 交错，也不会改变幸存者之间
+        的相对顺序（重投按原出队顺序分配新的 `seq`，单调性保持）。调用点必须在事件
+        消费者**已经停止之后**——否则重投的事件会被同一个消费者再取走。
+
+        已知边界：`data is None` 的事件（`post()` 无法构造，纯防御分支）会被**丢弃**
+        而不是重投——`post()` 的签名要求 `EventData`。它今天不可达；写在这里是为了不让
+        "其余事件原位保留"被读成绝对承诺。
+
+        Returns:
+            被移除的 USER_INPUT 事件（按原出队顺序），供调用方逐条归因/释放引用。
+        """
+        dropped: list[Event] = []
+        kept: list[Event] = []
+        for event in self.drain():
+            (dropped if event.type == EventType.USER_INPUT else kept).append(event)
+        for event in kept:
+            if event.data is not None:
+                self.post(event.data, priority=event.priority, type=event.type)
+        return dropped
+
     def drain(self) -> list[Event]:
         """排空队列中所有待处理事件。非阻塞。
 

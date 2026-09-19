@@ -187,6 +187,8 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         _poll_mailboxes: Callable[[], Coroutine[Any, Any, None]]
         _release_session_work: Callable[[SessionId | None, bool], None]
         _release_pending_session_work: Callable[[_PendingMessage | dict], None]
+        # KB-47：停机归因要读排队项身份（`Agent` 上的 staticmethod，组合后即存在）
+        _pending_message_id: Callable[[_PendingMessage | dict], str]
 
     async def start(self) -> None:
         """启动 agent：连接持久化层、空闲监视器、事件循环。
@@ -268,6 +270,18 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         """
         logger.info("Agent stopping...")
         self._state = RunState.STOPPED
+        # KB-47（Batch 14，Challenger 反证补全）：**停机清空 pending 必须可归因**。
+        # 修前这里静默 `clear()`——而"停机窗口内被放弃的已排队输入"与停止按钮路径
+        # （`_handle_interrupt`）属同一条既有合同（AD2"必须落一个**可归因**的显式终态"、
+        # PO5/PO6"停机不复活"），那条路径记 `disposition=cancelled_by_interrupt`，
+        # 这里却什么都不记 ⇒ 同一类处置在观测面上一半可归因、一半不可归因。
+        # 归因口径与总线侧（`_discard_abandoned_user_inputs`）一致：`cancelled_by_shutdown`。
+        if self._pending_messages:
+            logger.info(
+                "停机清空排队消息 %d 条 — disposition=cancelled_by_shutdown source=shutdown "
+                "message_ids=%s",
+                len(self._pending_messages),
+                [self._pending_message_id(p) for p in self._pending_messages])
         for pending in self._pending_messages:
             self._release_pending_session_work(pending)
         self._pending_messages.clear()
@@ -297,6 +311,10 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         if leftover:
             logger.warning("Agent 关停后仍有 %d 个后台任务未落定", leftover)
 
+        # KB-47（Batch 14）：**runtime epoch 边界**——结束"非 durable 未接管输入"的
+        # ownership（放在最后一步之后的理由见 `_discard_abandoned_user_inputs`）。
+        self._discard_abandoned_user_inputs()
+
         # 当前 cognitive task 已取消并完成 shutdown；清掉 EventBus 中未消费事件可能
         # 留下的引用，保证同一 Agent 实例 restart 后无陈旧删除门禁。
         self._session_manager.clear_work()
@@ -308,6 +326,55 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
             raise pending_exc
 
     # ---- stop() sub-methods ----
+
+    def _discard_abandoned_user_inputs(self) -> None:
+        """停机边界：丢弃总线里**没有任何回合接管**的已接受用户输入（KB-47 / 原 N8）。
+
+        为什么必须有这一步：`Agent.stop()` 此前只清 `_pending_messages`，而"等待被处理
+        的 accepted 输入"有**两个**容器（`_pending_messages` ∪ **总线驻留**）。总线的
+        生命周期 = Agent 实例的生命周期，于是同一实例重启时那条输入会被新 epoch 的
+        消费者当作**新输入**处理：进 session 历史、喂给 LLM、可能再次触发工具副作用。
+        既有合同早已声明它是缺陷（`core/input/ws_handlers/chat.py` 与
+        `voice_sessions.py` 的 S2-R2-4 判据："残留事件跨运行被消费本身就是缺陷族"），
+        `docs/architecture/invariants.md` §4.6 也已把"`Agent.stop()` 清空 bus + pending"
+        写成既有终态合同——**代码只做了 pending 那一半**。
+
+        为什么放在 `_SHUTDOWN_STEPS` **之后**（而不是紧跟 `stop_event_task`）：
+
+        - 所有权在 stop 时结束（不是留到 `start()` 再过滤）——在 `start()` 侧过滤会
+          误伤**合法**的新 epoch 输入：`start()` 在 spawn 消费者之前就已 `_state =
+          RUNNING`（`lifecycle.py` 里 `_state` 赋值在 `_start_persistence` 之前），
+          那期间被接受的输入属于新 epoch，任何 start 侧清扫都会把它们一起丢掉；
+        - 放在最后，输入层的残留投递也被覆盖：停机窗口内 `stop()` 要跑几十秒，而
+          `do_transcription` / `voice.commit` 两条直投入口**不查** `is_service_running`
+          （残留缺口，已单独登记），它们在窗口内投进总线的事件同样必须被清掉。
+          放在这一步之前清扫则会漏掉它们。
+
+        为什么**不能**直接 `clear()`：`TaskResultData` 是 durable 终态（§T3/T6），
+        用户正等着它；清它等于永久丢失。分类由 `EventBus.discard_user_inputs` 按
+        event type 完成——本方法只负责归因与引用释放（与 `_handle_interrupt` 对
+        已接受输入的同口径处置：`disposition=cancelled_by_shutdown`）。
+        """
+        try:
+            discarded = self._bus.discard_user_inputs()
+        except Exception:      # 清理不得让停机半途而废（CR-02 的"进入 stop() 就走完"）
+            logger.warning("停机清扫总线残留输入失败", exc_info=True)
+            return
+        for event in discarded:
+            data = event.data
+            # 归因必须与丢弃同时发生（AD2 同口径：`accepted` 允许被放弃，但不允许静默）
+            logger.info(
+                "停机丢弃已接受但未派发的输入 — disposition=cancelled_by_shutdown "
+                "source=shutdown message_id=%s conversation_id=%s",
+                getattr(data, "message_id", None) or "-",
+                getattr(data, "conversation_id", None) or "-")
+            self._release_session_work(
+                getattr(data, "conversation_id", None),
+                bool(getattr(data, "session_work_reserved", False)),
+            )
+        if discarded:
+            logger.info("停机边界共丢弃 %d 条未接管的已接受输入（不得跨 epoch 复活）",
+                        len(discarded))
 
     async def _drain_cognitive_turns(self) -> None:
         """等待被取消的回合任务真正跑完收尾，再让后续步骤关掉它们依赖的资源。
