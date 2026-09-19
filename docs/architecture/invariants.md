@@ -832,6 +832,86 @@ pending 容器 / 不改 `_process_lock` / 不加 watchdog 或轮询、不触碰 
 
 ---
 
+### 4.8 Claimed input conversation truth（CT）
+
+来源：[2026-09-19 Batch 15 执行记录](../review/2026-09-19-Batch15-claimed-input-conversation-truth-执行记录.md)。
+缺陷形状（canonical backlog **KB-46**，Batch 13 登记为 **N7**、Batch 14 确证为
+USER/HIGH）：一条用户输入已完成 accepted admission、且 active-turn claim 已成立
+（`_generation_ctx` 非 None），但**还没**被写进 session 历史时，cancellation / failure
+会让它在 **session history、`message_archive`、未来 LLM context** 三层**同时消失**：
+
+```text
+process()  取锁**之前**清空 _generation_ctx / _admission_* / _turn_message_persisted
+  _prepare_turn():
+      await session_resolver(...)                        ← 真挂起点（claim 之前）
+      await registry.get_or_load(...)                    ← 真挂起点（claim 之前）
+      self._generation_ctx = GenerationContext(...)      ← ★ CLAIM commit point（与下一行无 await）
+      await self.phases.enter_thinking()                 ← W1 挂起点 A（_notify 订阅者挂起时）
+      await generation_registry.register(...)            ← W1 挂起点 B（Mongo upsert）
+      runtime.try_begin_generation()                     ← 同步
+  _think_loop() → _build_turn_prompt():
+      await self._prompt.build_messages(...)             ← W2 挂起点 C（Milvus ANN + 12 段渲染）
+      self._session.add_message(UserMessage(...))        ← ★ RECORD commit point（同步）
+      self._turn_message_persisted = True
+  _start_turn_tracking() → LLM                           ← MODEL_CONSUMED
+```
+
+**W1**（取消落在 A/B，走 `_handle_prepare_cancelled` 的 ctx 非 None 分支）与 **W2**
+（取消落在 C，走 `process()` 的 `except asyncio.CancelledError` 臂）是**同一个 ownership
+状态**，却都让输入三层皆无；另有 **W3** = 同一窗口内的**普通异常**（走
+`_handle_turn_exception`，与取消同 root，§33）。
+
+> **会话历史合同（本批 Phase 0 裁定）**：`session history` 记录
+> **"用户真的提交过、且被 runtime 接管过的每一条输入"**（**Contract A**，实现上是
+> **混合语义**：user 消息在模型调用**之前**写、assistant 消息在生成**之后**写）。
+> 证据：`loop.py` 记录点紧邻注释"此后用户至少能在历史里看到'我说过这句'"，唯一豁免是
+> `is_task_result`（合成系统唤醒）；反证 B（"只记模型消费过的"）——record 早于 LLM 首轮，
+> provider 从未被调用时它已在历史里；反证 C（"只记完成的回合"）——`_archive_partial_reply`
+> 会把被打断的**半截** assistant 回复照样归档。客户端把服务端历史当**权威转写稿**
+> （`chatStore.ts::addUserMessage` 乐观渲染 → `restoreFromServer` **整体替换** `messages.value`）
+> ⇒ 历史里缺一条，用户刷新/重连后自己刚发的消息就**消失**。
+>
+> **停止按钮语义**：前端只发 `{type:'interrupt'}`（无 payload）且**不回收** user 气泡
+> ⇒ 它是"停止 assistant 当前生成"，**不是**"撤销我刚发出的 user message"。因此
+> CLAIMED 之后的取消必须保留用户输入。
+>
+> **本批的保证范围**：**runtime conversation truth**（存活 runtime 生命周期内的
+> session 窗口 + 既有归档路径 ⊕ 未来 LLM context）。**不**含进程崩溃后的恢复
+> （`accepted ≠ durable`，与 §4.5 同一条既有合同）。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **CT1** | 一条 user input 一旦被 active turn **claim**（`_generation_ctx` 非 None），受支持的 cancellation / failure **不得**让它从 runtime conversation truth 中静默消失 | `core/agent/tests/test_claimed_input_conversation_truth.py::test_ct_t1_w1_cancel_in_prepare_after_claim_keeps_input_in_history`（PRE_FIX_RED：修前 `history=['（暖场）']`、archive 同样没有）、`::test_ct_t1_w2_cancel_in_prompt_build_after_claim_keeps_input_in_history`（PRE_FIX_RED，W2 落点）、`::test_ct_t2_ordinary_exception_after_claim_keeps_input_in_history`（PRE_FIX_RED，W3） | `make test-quick` / `test-normal` | **push/backend** |
+| **CT2** | claim / record / model-consume / terminal 四个边界**各有独立 owner**，不得混为一谈；user message 进会话历史**只有一个 canonical 权威**（normal path 与 recovery 共用） | `::test_ct_t3_next_turn_llm_context_contains_cancelled_claimed_input`（PRE_FIX_RED：判据落在**真实** `LLMAdapter.stream_think` 收到的 messages）、`tests/real_mongo/test_real_claimed_input_truth.py::test_rm1_recovered_claimed_input_is_really_persisted_once`（真库三处各恰一条） | 同上 + `make test-real-mongo` | **push/backend** |
+| **CT3** | conversation-truth 的补写**幂等**：同一条逻辑输入不得在 history / archive / model context 里出现两次。判据落在**既有身份**（`(session, message_id)`）与一次性载荷上，不新增平行布尔 truth source | `::test_ct_t11_record_recovery_is_idempotent_across_repeated_finalization`、`::test_ct_t5_cancel_after_record_does_not_duplicate`、`::test_ct_t13_exception_finalization_cancelled_does_not_double_record`（W3→W1 叠加）、`::test_ct_t4_normal_turn_records_input_exactly_once`（prompt 侧恰一次） | 同上 | **push/backend** |
+| **CT4** | 保留 user-input truth **不得伪造 assistant 产出或"回合已完成"**：被取消回合的 history shape 是 `user`（无 assistant 消息），generation 行仍如实落 `cancelled` / `interrupted` | `::test_ct_t1_w1_…`（`roles[-1] == "user"` + `generations.status ∈ {cancelled, interrupted}`）、`::test_ct_t8_cancelled_then_normal_keeps_history_order` | 同上 | **push/backend** |
+| **CT5** | **claim 之前**被取消/失败的输入**不得**被 conversation-truth 补写提升进会话历史（Batch 12 的 admission 边界不得被本批破坏） | `::test_ct_t6_pre_claim_cancel_creates_no_phantom_history`（取消路径：`_handle_prepare_cancelled` 见 ctx 为 None 直接返回，**不进**收口）、`::test_ct_t6b_pre_claim_exception_creates_no_phantom_history`（异常路径：`_handle_turn_exception` 的 `finally` **一定**进收口 ⇒ 此处"已 claim"门禁是**唯一**防线） | 同上 | **push/backend** |
+| **CT6** | conversation-truth 保护**不得**阻塞取消安全的终态收口与停机：补写必须是**同步零 await**（不新增挂起点、不做 DB 往返），任何异常都不得外抛——否则第二发取消会让相位永停 THINKING（CF1/CF2 回归） | `::test_ct_t10_session_write_failure_does_not_block_terminal_finalization`（§64：写失败仍须回 IDLE）、`::test_ct_t12_shutdown_in_window_stays_bounded_and_starts_no_new_turn`（§67：停机有界且不得在 STOPPED 后开新回合）、`::test_ct_t11_…`（重复收口） | 同上 | **push/backend** |
+
+**实现形状（唯一权威 + 一次性载荷 + 三条门禁）**：
+
+- `CognitiveLoop._record_user_input()` —— user message 进会话历史的**唯一权威**
+  （normal path 与 recovery 共用；Batch 14 的 W1/W2"两种会话真相"因此不会再出现）。
+- `process()` 取锁**之前**的同步段暂存 `_claimed_input_record = (content, message_id)`；
+  `is_task_result=True` 直接存 `None` ⇒ 合成系统唤醒**不可能**被写成用户历史。
+- `CognitiveLoop._record_claimed_input()` 在 `_handle_interrupt()` 的**零 await prologue**
+  一次性消费（在 `is_completely_idle` 早退**之前**）——一处覆盖 W1/W2/W3。三条门禁：
+  ① 已 claim（`_generation_ctx is not None`）、② 未 recorded（`_turn_message_persisted`）、
+  ③ 是用户输入（载荷非 None）；另在拿到稳定身份时核对 `_session_has_message_id()`。
+
+**CT1–CT6 的边界（明确不做）**：不引入事务 / 回滚 / durable inbox / unit-of-work
+（**KB-30 保持独立**——本批只挪动**一个** user-input truth commit point，不建立整个回合的
+原子提交）；不新增 schema / migration；不改 wire 契约（不新增 `message.cancelled` /
+`turn_status`）；不改 EventBus / FSM / `_process_lock` / admission 与 pending 排序；
+不承诺 crash durability；不为持久化新增每回合 read-before-write。
+
+**诚实声明（本批的保证不是"三层恒等"）**：三层 truth 的**写入时机本就不同构**——
+`add_message` 同一步写内存 deque（经 fire-and-forget 任务写 `message_archive`），而
+`sessions` 文档由既有的 `save()` 在**下一个成功回合的 after_response** / 关机
+`save_all()` 落库。因此取消路径上的补写**不**立即进 `sessions` 文档；
+`test_rm1` 显式 `save()` 后经真 `SessionRepository.load()` 读回才断言（→ 新登记
+**KB-51**）。这是**既有**语义，不是本批引入的。
+
 ## 5. 架构与静态面
 
 | Invariant | Test / Gate | Gate 命令 | CI |
