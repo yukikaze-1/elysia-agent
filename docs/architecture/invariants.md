@@ -90,12 +90,17 @@ metadata，本批不新造（"限制输入长度和输出 token" 那句设计稿
    25% 输出余量 ⇒ 预览只保证"输入 < 窗口"，不保证"输入 ≤ 预算"。不是静默降级：
    `SystemPromptManager.render` 会 warning 报出保护节规模，`build_messages` 会
    warning 报出"裁尽历史后仍超预算"。
-2. **判据是启发式估算，不是 provider tokenizer**：`estimate_tokens` 按 CJK 1 字
-   1 token、其余 4 字符 1 token。它对 CJK 偏高（实测 est 8329 vs qwen 真值 7921，
-   ~5%），对 JSON/代码偏低（实测 est 7302 vs 真值 12212，约 0.6×）⇒ 本地判定有
-   **双向误差带**：可能误拒一个勉强装得下的预览，也可能漏放一个在**强制窗口**的
-   provider 上必 400 的请求。修它需要真 tokenizer（`§15/§16` 明确不在本批范围），
-   已登记 `KB-12`。
+2. **判据是有界近似估算，不是 provider tokenizer**（**Batch 18 重写**）：`estimate_tokens`
+   按 9 个字符类加权、按 resolved model 选 profile，合同为
+   `est/actual ∈ [0.75, T]`（`cjk_opt` T=1.26 / `generic` T=1.71），见 §1.2 TE1–TE6。
+   **它仍然不是精确计数**，三条残余边界必须知道：①**合同外的 `repeat` 类**（同字符
+   重复，实测区间 cjk_opt [0.55, 5.40] / generic [0.35, 3.60]）——词表信息不在字符
+   统计里，无法用启发式闭合；②**provider 侧固定框架**（默认注入的 system prompt、
+   tool prompt 样板）观测不到，实测 ≈22–72 token 的有界常数（Ollama/Qwen）；
+   ③**图片 token** 仍是未验证的固定 1024。旧条目所述"CJK 偏高 5% / JSON 偏低 0.6×"
+   已作废：那是**退化探针**（`"你" * N`，恰好 1.000 token/字）测出来的数字，
+   自然中文实测是 0.60 token/字（高估 67%），见
+   [Batch 18 执行记录](../review/2026-09-19-Batch18-context-token-estimation-执行记录.md)。
 3. **声明窗口 ≠ 服务窗口（Batch 17 起在 Ollama 上被绑定，云端仍是"声明即信任"）**：
    `providers.yaml` 的 `context_window` 是**手写声明值**。对 **Ollama**，Batch 17 起
    该值会同时成为 native `/api/chat` 的 `options.num_ctx`（见 §3.4 OL1/OL2），
@@ -1090,6 +1095,42 @@ sessions_hits=2 archive_hits=1`，与正常回合的对照同值）——本批"
 不引入聚合排序（`$ifNull` / 哨兵字段）**也不改文档 schema**（零字段变更）、不改公开分页
 API（`sessions[]/has_more/cursor` 与 `SessionSummary` 逐字段不变）、不恢复全量预取
 （PG2 仍然成立）、不为 legacy 数据伪造时间戳（禁止 `now()` / 随机 / 首次读取时间）。
+
+### 1.2 Token estimation contract（TE）
+
+**Batch 18 / KB-12**：prompt 用量估算的**合同**。它回答的不是"估算多准"，而是
+"预算决策在边界上是否如实"。权威实现只有一处：`Module/system_prompt/budget.py`。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **TE1** | **单一估算权威**：同一个 resolved model 下，所有 prompt 预算消费者（chat 组装、system prompt 梯子、历史裁剪、预览窗口判定、工具结果截断）走**同一份**估算实现与**同一套** profile 选择规则；不得出现第二份 `_estimate_tokens` 式公式 | `core/prompt/tests/test_prompt_budget.py::TestEstimation`、`core/prompt/tests/test_prompt_budget_wiring.py::TestAssemblerWiring`、`Module/tool/tests/test_framework.py::TestTokenEstimation` | `make test-quick` / `test-normal` | **push/backend** |
+| **TE2** | 估算**确定性、本地、无 provider 网络调用**（热路径不查 token 计数端点、不下载 tokenizer、不引入 tokenizer 依赖） | `Module/system_prompt/tests/test_token_corpus_contract.py::TestEstimatorHygiene::test_determinism_across_repeated_calls`；`Module/llm/tests/test_ollama_token_truth.py`（external，旁证） | `make test-quick` / `test-normal` | **push/backend** |
+| **TE3** | 估算器是**有界近似**且合同被显式声明：低估不得越过 chat 侧 25% 余量（`est/actual ≥ 0.75`），高估不得越出 profile 声明的 T；**近似不得被表述为精确计数** | `::TestEstimatorContract::test_no_family_is_underestimated_beyond_the_budget_headroom`、`::test_no_family_is_overestimated_beyond_the_declared_bound`、`::test_declared_bounds_are_the_measured_bounds`、`::test_hard_floor_follows_the_headroom_ratio` | `make test-quick` | **push/backend** |
+| **TE4** | 估算必须**区分实质不同的内容类**（CJK / 结构化密集 / 消息框架 / 工具 schema），不得退回"按字符数线性外推"；按 resolved model 选 profile（`cjk_opt` / `generic`），未知模型回退**保守** profile | `::TestEstimatorContract`（全量语料 × 7 个权威 tokenizer）、`::TestFailureModeGuards::test_same_char_count_different_content_differs`、`::test_profile_selection_has_one_authority` | `make test-quick` | **push/backend** |
+| **TE5** | **prompt 的每一段都不可漏算也不可重算**：provider request = `messages + tools`，两者一起进预算；`system` 与当前用户消息永不因裁剪丢失 | `::TestPromptComposition`、`core/prompt/tests/test_prompt_budget_wiring.py::TestMessageBuilderToolAccounting`、`::TestTurnPromptWiring::test_tool_definitions_are_taken_before_the_budget_is_spent` | `make test-quick` | **push/backend** |
+| **TE6** | 未知/自定义模型**保持可用**：估算不因缺 metadata 抛错，走确定性的保守回退；配置非法（畸形 schema / 缺字段）不得让 prompt 组装崩掉 | `::TestEstimatorHygiene::test_unknown_model_falls_back_and_stays_usable`、`Module/system_prompt/tests/test_token_corpus_contract.py::TestPreFixRed::test_legacy_formula_ignores_tool_schemas_entirely` | `make test-quick` | **push/backend** |
+
+**TE3 的两个数从哪来**：`budget = window × 0.75`，而超窗在 Ollama 上是
+**HTTP 200 + 静默截断**（Batch 17 实测，从不报 400）⇒ 估算低估超过 25% 时，"预算
+判装得下"就不再蕴含"provider 完整消费"。高估同样是缺陷（过早裁记忆/历史、预览误拒，
+§9），故它是**双侧**合同而不是"越保守越好"。
+
+**profile 为什么必须按模型选（一条被证伪过的单公式假设）**：同一段中文在不同
+tokenizer 下每字符 token 数相差 **3.6×**（DeepSeek-V3 0.58 / Qwen2.5 0.64 /
+Llama-3 0.86 / o200k 0.84 / Mistral 1.14 / cl100k 1.21 / p50k 2.12）。用单一系数
+同时满足"不低估任何一家"，最坏高估被顶到 **1.72–1.83×**（Batch 18 线性规划实测）。
+
+**合同外的已知边界（实测登记，不隐藏）**：`repeat` 类（同字符重复）的 token 率
+**完全由词表决定**，字符统计无法区分——实测 `"哈哈"×300` = 0.25 token/字而
+`"呀"×300` = 1.00 token/字，两者字符分布同构。故该类不参与硬合同，其**实测区间**
+单独钉在 `::TestKnownLimitations::test_degenerate_repeats_stay_within_the_recorded_range`
+（cjk_opt [0.55, 5.40] / generic [0.35, 3.60]）；任何改动让它越界都会红。
+
+**真值层级（本批定义）**：G1 provider 观测输入计数（Ollama `prompt_eval_count`，
+须先证明未截断）> G2 模型权威 tokenizer（HF `tokenizer.json`）> G3 第三方通用
+tokenizer（tiktoken，仅在家族匹配时）> G4 估算器本身。签入的真值见
+`Module/system_prompt/tests/fixtures/token_corpus/GOLDEN.json`（7 个 tokenizer +
+Ollama 实测，含截断污染标记）。
 
 ## 5. 架构与静态面
 
