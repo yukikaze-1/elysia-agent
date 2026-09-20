@@ -321,5 +321,15 @@ PD-2（409 报**权威库现值**，未知则省略，Batch 6 `616e4993`）、PD
 
 ---
 
+## 8. Batch 20 新发现（只登记，**不**立即修）
+
+| ID | 标题 | Reach | Sev | Ev | State | Reopen trigger |
+|---|---|---|---|---|---|---|
+| **KB-83** | **gate 拒绝轮在预算裁剪里不是"可丢的往返组"**（Batch 19 Challenger P7，Batch 20 复核）：`enforce_round_budget` 的整组丢弃只认"assistant tool_calls + 其 tool 结果"的**配对组**，而被 gate 拒绝的那一轮（assistant 带 tool_calls + 连坐回执）结构上**算一组**，但它的 assistant 载荷（实测 1257 token）不会被处理 ⇒ 预算由截断**更早的合法往返**来支付（实测较早结果 1512→736）。与 KB-82 **同族不同根**（budget vs gate 配对） | USER | LOW | E1+**E2**(19) | **OPEN（登记）** | 出现"合法工具结果被过早截断"的报告，或做预算/工具轮小批 |
+| **KB-84** | **golden contract frames 结构上看不见"非空 WS 回放项"的形状**：`ws-v2-session.jsonl` 的回放是 `"messages": []`，且 17 个 frame 里**没有任何 `_id`** ⇒ `make check-types` 不可能发现回放项形状的变化（KB-56 的第一版机制描述正是被这一点掩盖的） | CI_ONLY | LOW | E1(20) | **OPEN（登记）** | 前端契约批次给回放加一条**非空** golden frame |
+| **KB-85** | **估算器文档/工具的陈旧表述**：①`budget.py` 的 qwen 声明 T=1.20 vs 契约测试 `_CONTRACT_MAX_RATIO["qwen"]=1.25`（实测上界 1.191）；②`scripts/README.md` 的"55 条语料" vs MANIFEST 71 条；③Batch 18 记录 §7.1/§7.2 仍描述已被其 §16.1 取代的 9 类/2 profile 设计 | INTERNAL | INFO | E2(20) | **OPEN（登记）** | 下次改这三个文件的批次（顺手对齐即可） |
+
+---
+
 > 历史正文（决策过程、逐批完成记录、详细证据）按 §6 索引到 `docs/review/`、`docs/completed/`
 > 与 `git show 69f2e5a9:todo.md`。**本文件只承载当前状态**，不再累积过程叙事。

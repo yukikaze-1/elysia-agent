@@ -13,7 +13,8 @@ SKIP（无网络 / 无法解析 revision）时打印几行 SKIP 然后 **exit 0*
 2. 有家族未覆盖 → exit 1（不是 0，也不是 2）；
 3. **全部 SKIP → exit 2 拒答**（本组核心）；
 4. 坏 revision（Hub 返回非 40 位 SHA）→ 该家族 SKIP，不落进下载路径；
-5. 合同过滤是**单一权威**：主判定只用合同内类别，`latin_accent` 单独报告（KB-78）。
+5. 合同过滤是**单一权威**：主判定只用合同内类别，`latin_accent` 单独报告（KB-78）；
+   且该类的**击穿**仍必须让退出码变红（Batch 20 闭合后由 ⑤b 显式守住"再坏一次"）。
 """
 
 from __future__ import annotations
@@ -73,14 +74,15 @@ def fake_tokenizer(monkeypatch):
     """假 tokenizer：按"目标 est/actual 比"合成 ids 数（离线、确定性）。
 
     - 合同内样本：目标 0.90（⇒ OK）或 0.70（⇒ NOT COVERED，由 `contract_ratio` 控制）
-    - `latin_accent` 样本：目标 0.60（⇒ 击穿下限，KB-78 的已知缺口）
+    - `latin_accent` 样本：由 `accent_ratio` 控制。**默认 0.90**（KB-78 已于 Batch 20
+      闭合 ⇒ 该类不该再影响退出码）；需要验证"缺口仍在时必须红"的用例把它调到 0.60。
     """
     from Module.system_prompt.budget import _TOKEN_WEIGHTS, profile_for_model
 
     entries = json.loads((_CORPUS / "MANIFEST.json").read_text(encoding="utf-8"))["entries"]
     latin_bodies = {(_CORPUS / e["path"]).read_text(encoding="utf-8")
                     for e in entries if e["category"] == "latin_accent"}
-    state = {"contract_ratio": 0.90}
+    state = {"contract_ratio": 0.90, "accent_ratio": 0.90}
 
     def _est(text: str, model: str | None) -> float:
         from Module.system_prompt.budget import _CLASSES, _classify
@@ -101,7 +103,7 @@ def fake_tokenizer(monkeypatch):
         def encode(self, text, add_special_tokens=False):
             ratio = state["contract_ratio"]
             if text in latin_bodies:
-                ratio = 0.60
+                ratio = state["accent_ratio"]
             est = _est(text, "ollama/qwen2.5:3b")
             return _Enc(math.ceil(est / ratio))
 
@@ -167,6 +169,23 @@ def test_contract_filter_is_single_authority(vf, fake_hub, fake_tokenizer, capsy
     # 主判定的 worst 样本不得是 latin_accent（那说明过滤没生效）
     main_line = next(line for line in out.splitlines() if line.startswith("Qwen/Qwen2.5-3B"))
     assert "script_latin2" not in main_line
-    # 而缺口如实打在单独一行里，并标出击穿
+    # 而 latin_accent 的结论如实打在单独一行里——KB-78 闭合后是"在合同内"，
+    # 且脚本必须**同时**说清"未覆盖类只剩越南语"，避免读者把"这一类在合同内"
+    # 误读成"整类被覆盖"。
+    accent_line = next(line for line in out.splitlines() if "└ latin_accent" in line)
+    assert "在合同内" in accent_line
+    assert "只剩越南语" in out
+
+
+def test_accent_floor_breach_still_turns_red(vf, fake_hub, fake_tokenizer, capsys):
+    """⑤b `latin_accent` 若**再次**击穿硬下限，退出码必须变红（缺口不许被藏起来）。
+
+    这条是在替 KB-78 的**将来**把关：Batch 20 之前它红是真的红；闭合之后默认不再红，
+    但"再坏一次"必须还能报出来——所以这里显式把该类的 ratio 调回击穿区间。
+    """
+    fake_tokenizer["accent_ratio"] = 0.60
+    assert vf.main(["Qwen/Qwen2.5-3B"]) == 1
+    out = capsys.readouterr().out
     accent_line = next(line for line in out.splitlines() if "└ latin_accent" in line)
     assert "击穿硬下限" in accent_line
+    assert "已知缺口" in out

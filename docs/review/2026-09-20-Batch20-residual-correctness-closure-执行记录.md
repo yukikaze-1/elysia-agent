@@ -467,13 +467,13 @@ REALTIME 的 `TestShutdownAdmissionGate`、`test_ws_close_budget.py`）。
 **明确不做**：不靠"`stop()` 再清一次 queue"糊过去（那挡不住清扫**之后**的投递）；
 不新增 `RuntimeEpoch` 框架/字段（RO1 的边界仍然有效）；不动 RO2 的分类。
 
-## 8. 修法之外：本批新增的登记（只登记，不修）
+## 8. 本批新增的登记（只登记，不修；`todo.md` §8 = KB-83/84/85）
 
 | ID | Reach | Sev | Ev | State | Reopen trigger |
 |---|---|---|---|---|---|
-| **NEW-1（budget×gate 同族残余，Challenger P7）** | USER | LOW | E1+E2(19) | **OPEN（登记）** | gate 拒绝轮的 assistant 载荷不是"可丢的往返组" ⇒ 预算由截断更早的合法往返支付。触发：真实出现"合法工具结果被过早截断"的报告，或做预算/工具轮小批 |
-| **NEW-2（golden frames 盲区）** | CI_ONLY | LOW | E1(20) | **OPEN（登记）** | `ws-v2-session.jsonl` 回放 `messages: []` 且 17 个 frame 无任何 `_id` ⇒ `make check-types` 结构上看不见"非空回放项形状"。触发：前端契约批次给回放加非空 golden |
-| **NEW-3（估算器文档漂移）** | INTERNAL | INFO | E2(20) | **OPEN（登记）** | ①`budget.py` 的 qwen 声明 T=1.20 vs 契约测试 `_CONTRACT_MAX_RATIO["qwen"]=1.25`；②`scripts/README.md` 的"55 条语料" vs MANIFEST 71 条；③Batch 18 记录 §7.1/§7.2 仍描述已被 §16.1 取代的 9 类/2 profile 设计。触发：下次改这些文件的批次 |
+| **KB-83**（budget×gate 同族残余，Challenger P7） | USER | LOW | E1+E2(19) | **OPEN（登记）** | gate 拒绝轮的 assistant 载荷不是"可丢的往返组" ⇒ 预算由截断更早的合法往返支付。触发：真实出现"合法工具结果被过早截断"的报告，或做预算/工具轮小批 |
+| **KB-84**（golden frames 盲区） | CI_ONLY | LOW | E1(20) | **OPEN（登记）** | `ws-v2-session.jsonl` 回放 `messages: []` 且 17 个 frame 无任何 `_id` ⇒ `make check-types` 结构上看不见"非空回放项形状"。触发：前端契约批次给回放加非空 golden |
+| **KB-85**（估算器文档/工具陈旧表述） | INTERNAL | INFO | E2(20) | **OPEN（登记）** | ①`budget.py` 的 qwen 声明 T=1.20 vs 契约测试 `_CONTRACT_MAX_RATIO["qwen"]=1.25`；②`scripts/README.md` 的"55 条语料" vs MANIFEST 71 条；③Batch 18 记录 §7.1/§7.2 仍描述已被 §16.1 取代的 9 类/2 profile 设计。触发：下次改这些文件的批次 |
 
 ## 9. 六项终态对照
 
@@ -501,3 +501,39 @@ docs(todo): close or reclassify residual correctness findings
 ```
 
 F13 **没有** production commit（按 §107：不为 commit 数量硬改）。
+`022ac01a` 是 KB-78 的**第二版**（外部队列覆盖修正，见 §4.3b）——它同时带上了
+文档同步；`scripts/tests/test_validate_families_exit.py` 的夹具改为
+`accent_ratio` 可控（缺口闭合后默认不再红，但"再坏一次"由新增的 ⑤b 守住）。
+
+## 11. 最终验证电池（本批实测）
+
+| 项 | 结果 |
+|---|---|
+| `make lint` | ✅ All checks passed（ruff） |
+| `make pyright` | ✅ **0 errors, 0 warnings, 0 informations** |
+| `make audit` | ✅ pip-audit：`No known vulnerabilities found, 2 ignored`；**bandit（`-ll`）：Medium = 0 / High = 0**（`-f json` 实测 `results` 为空；本批新增的 `build_latin_prose_holdout.py` 曾引入 B310 + B615 两条 Medium，已按仓内既有处置收口：钉死 40 位 revision + 运行时 https 断言 + 带理由的 `# nosec B310`） |
+| `check-arch` / `check-contract` / `check-types` / `check-timeouts` / `check-debug-auth` / `check-secrets` / `check-test-sets` / `check-compose` / `check-env-lock` / `check-ci-isolation` | ✅ 10/10 全绿 |
+| `make test-quick` | ✅ **6538 passed** / 3 skipped / 1 xfailed（82s） |
+| `make test-normal` | ✅ **6538 passed** / 3 skipped / 1 xfailed（81s） |
+| `make test-remainder` | ✅ 0 条（Quick ≡ Normal 的互斥性保持） |
+| `make test-full` | ✅ **6570 passed** / 72 skipped / 1 xfailed（490s） |
+| `make test-real-mongo` | ✅ **46 passed**（50s） |
+| 跨不变量回归（agent+cognitive+prompt+input+monitoring+system_prompt） | ✅ **2092 passed** / 1 skipped |
+| 估算器影响面回归（prompt+system_prompt+cognitive+tool+preview） | ✅ **842 passed** / 1 skipped |
+| frontend `npm test` | ✅ **11 passed** |
+| frontend `npm run build` | ✅（`vue-tsc --noEmit` + vite build） |
+| `validate_families.py`（E3 旁证，6 家族 × 权威 tokenizer） | ✅ EXIT=0，6/6 家族 OK，`latin_accent` 最坏 **0.82**（Yi-1.5-6B） |
+| git status | ✅ clean（8 个提交，见 §10） |
+| real CI | ⏳ **READY_FOR_CI**（本记录不宣称 CLOSED——owner push 后由 CI 复验） |
+
+## 12. 程序状态
+
+```text
+KB-82 GUARDED   KB-56 GUARDED   KB-78 GUARDED
+KB-41 GUARDED   KB-48 GUARDED
+F13  BLOCKED_BY_PD-13（唯一未关闭项，且是产品决策而非工程缺口）
+```
+
+required CI 全绿、电池全绿 ⇒ **Residual correctness closure complete**；
+余下的是**一个产品决策（PD-13）**与三条已登记的低风险新发现（KB-83/84/85）——
+按 §123，**不再开新的 correctness campaign**，恢复正常产品开发。
