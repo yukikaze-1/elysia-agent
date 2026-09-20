@@ -91,13 +91,18 @@ metadata，本批不新造（"限制输入长度和输出 token" 那句设计稿
    `SystemPromptManager.render` 会 warning 报出保护节规模，`build_messages` 会
    warning 报出"裁尽历史后仍超预算"。
 2. **判据是有界近似估算，不是 provider tokenizer**（**Batch 18 重写**）：`estimate_tokens`
-   按 9 个字符类加权、按 resolved model 选 profile，合同为
-   `est/actual ∈ [0.75, T]`（`cjk_opt` T=1.26 / `generic` T=1.71），见 §1.2 TE1–TE6。
-   **它仍然不是精确计数**，三条残余边界必须知道：①**合同外的 `repeat` 类**（同字符
-   重复，实测区间 cjk_opt [0.55, 5.40] / generic [0.35, 3.60]）——词表信息不在字符
-   统计里，无法用启发式闭合；②**provider 侧固定框架**（默认注入的 system prompt、
-   tool prompt 样板）观测不到，实测 ≈22–72 token 的有界常数（Ollama/Qwen）；
-   ③**图片 token** 仍是未验证的固定 1024。旧条目所述"CJK 偏高 5% / JSON 偏低 0.6×"
+   按 **11 个字符类**加权、按 resolved model 选 profile（6 个家族：qwen / deepseek /
+   llama / openai / mistral / generic，各自声明的 T 见 `budget.py` 的表），合同为
+   `est/actual ∈ [0.75, T]`，见 §1.2 TE1–TE9。
+   **它仍然不是精确计数**，残余边界必须知道：①**合同外的 `repeat` 类**（同字符
+   重复，实测区间 [0.58, 5.34]）——词表信息不在字符统计里，无法用启发式闭合；
+   ②**provider 侧固定框架**（默认注入的 system prompt、tool prompt 样板）观测不到，
+   实测 ≈22–72 token 的有界常数（Ollama/Qwen）；③**图片 token** 仍是未验证的固定
+   1024；④**合同外的 `latin_accent` 类**（密集变音符号的拉丁文本：捷克/波兰/越南）
+   ——它**不是**"只许高估"的脚本类，走的是拟合系数、**实测击穿 0.75 硬下限**
+   （真 Wikipedia 散文 × 本地权威 tokenizer：qwen 捷克 0.65–0.68 / generic 0.67；
+   Batch 19 / KB-78），修法是重标定 `latin_ext`（已验证可行，属估算器标定批次）。
+   三份未覆盖清单由 `budget.UNCOVERED_CONTENT_CLASSES` **单一定义**。旧条目所述"CJK 偏高 5% / JSON 偏低 0.6×"
    已作废：那是**退化探针**（`"你" * N`，恰好 1.000 token/字）测出来的数字，
    自然中文实测是 0.60 token/字（高估 67%），见
    [Batch 18 执行记录](../review/2026-09-19-Batch18-context-token-estimation-执行记录.md)。
@@ -1109,7 +1114,8 @@ API（`sessions[]/has_more/cursor` 与 `SessionSummary` 逐字段不变）、不
 | **TE4** | 估算必须**区分实质不同的内容类**（拉丁/CJK/生僻字/假名/emoji/数字/结构化密集/消息框架/工具 schema），不得退回"按字符数线性外推"；按 resolved model 选 profile（**6 个家族**），未知模型回退**保守** profile | `::TestEstimatorContract`（全量语料 × 权威 tokenizer）、`::test_cross_family_spread_is_why_profiles_exist`（同文本跨家族差 >3×）、`::test_same_char_count_different_content_differs` | `make test-quick` | **push/backend** |
 | **TE5** | **prompt 的每一段都不可漏算也不可重算**：provider request = `messages + tools`，两者一起进预算；`system` 与当前用户消息永不因裁剪丢失 | `::TestPromptComposition`、`core/prompt/tests/test_prompt_budget_wiring.py::TestMessageBuilderToolAccounting`、`::TestTurnPromptWiring::test_tool_definitions_are_taken_before_the_budget_is_spent` | `make test-quick` | **push/backend** |
 | **TE6** | 未知/自定义模型**保持可用**：估算不因缺 metadata 抛错，走确定性的保守回退；配置非法（畸形 schema / 缺字段）不得让 prompt 组装崩掉 | `::TestEstimatorHygiene::test_unknown_model_falls_back_and_stays_usable`、`Module/system_prompt/tests/test_token_corpus_contract.py::TestPreFixRed::test_legacy_formula_ignores_tool_schemas_entirely` | `make test-quick` | **push/backend** |
-| **TE7** | **合同外文字只许高估**：婆罗米系/东南亚/希伯来/阿拉伯/希腊/亚美尼亚/西里尔这些跨家族差 3–6× 的文字，由**固定在已验证家族实测上界**的系数覆盖 ⇒ 无静默截断面；代价（某些家族高估最多 ~6×）是显式接受的 | `::TestKnownLimitations::test_out_of_scope_scripts_never_underestimate` | `make test-quick` | **push/backend** |
+| **TE7** | **合同外文字只许高估**：婆罗米系/东南亚/希伯来/阿拉伯/希腊/亚美尼亚/西里尔这些跨家族差 3–6× 的文字，由**固定在已验证家族实测上界**的系数覆盖 ⇒ 无静默截断面；代价（某些家族高估最多 **13.9×**：`other`=3.0 × o200k 的阿拉伯文）是显式接受的 | `::TestKnownLimitations::test_out_of_scope_scripts_never_underestimate` | `make test-quick` | **push/backend** |
+| **TE9** | **回合内每一轮都在同一份预算内**（Batch 19 / KB-77）：ReAct 的工具轮会把 assistant `tool_calls` 与 `role="tool"` 结果**原地**追加进同一个 `messages` 数组，而每一轮都整份重发 ⇒ 第 2..N 轮必须在**发下一轮之前**用同一份 canonical 预算再裁一次（先丢历史 → 再整组丢较早的工具往返 → 最后截最新一组的 tool 内容；system / 当前用户消息 / 最新一组的**配对结构**永不丢）。修前实测：首轮 6123 ≤ 6144，追加一条接近单条上限（`max_result_tokens=2000`）的结果后第 2 轮 **8205 > 8192 窗口**，第 5 轮 16533 （Ollama 超窗 = 200 + 静默截断） | `core/cognitive/tests/test_react_round_budget.py`（7，修前 2 红）、`core/prompt/tests/test_round_budget.py`（9） | `make test-quick` / `test-normal` | **push/backend** |
 | **TE8** | **CJK 扩展 B–I（生僻字）在合同内且单列一类**：它们比 BMP 汉字贵 3–7×（实测 est/actual 曾 = **0.13**） | `::TestEstimatorContract`（`cjk_ext_b_ideographs` 语料）、`scripts/token_corpus/validate_families.py` | `make test-quick` | **push/backend** |
 
 **TE3 的两个数从哪来**：`budget = window × 0.75`，而超窗在 Ollama 上是
