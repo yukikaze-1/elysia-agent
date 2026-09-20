@@ -378,7 +378,7 @@ INTERRUPTED → IDLE
 
 ### 4.2.1 Agent 公开接口（组合根访问路径）
 
-`Agent` 是组合根（composition root），持有 30+ 子系统/仓库。除 `agent.status` / `agent.phases` 外，通过 **43 个同名 `@property`** 公开访问路径——`@property` 只是薄 getter（`return self._xxx`，少数为懒初始化），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
+`Agent` 是组合根（composition root），持有 30+ 子系统/仓库。除 `agent.status` / `agent.phases` 外，通过 **46 个同名 `@property`** 公开访问路径——`@property` 只是薄 getter（`return self._xxx`，少数为懒初始化），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
 
 **会话/记忆/存储（12 个）**：`agent.session` / `agent.session_manager` / `agent.active_session_id` / `agent.pending_messages` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.attachment_repo` / `agent.idempotency_repo` / `agent.user_identity_store`
 
@@ -1213,7 +1213,7 @@ Agent/
 │
 ├── core/                    # L1 认知控制 + L2 记忆
 │   ├── agent/                #   Agent 组装包 (agent + lifecycle + server + _types + 4 lifecycle mixins)
-│   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message + 43 公开 @property（含 stt/stt_enabled/tts_enabled/stt_emotion_state/character_profiles/character_state_stream/character_runtime_registry/user_identity_store）
+│   │   ├── agent.py          #     Agent.__init__ + 事件处理 + process_message + 46 公开 @property（含 stt/stt_enabled/tts_enabled/stt_emotion_state/character_profiles/character_state_stream/character_runtime_registry/user_identity_store）
 │   │   ├── lifecycle.py      #     AgentLifecycle: start/stop 编排 + _STARTUP_STEPS / _SHUTDOWN_STEPS
 │   │   ├── server.py         #     AgentServer: run_server/repl + switch_*/set_service + run_server STT 槽位 + banner
 │   │   ├── _types.py         #     RunState + 辅助类
