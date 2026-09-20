@@ -22,6 +22,14 @@ on:
     paths:
       - "docs/archive/frontend-handoff-v2/traces/**"
       - "frontend_contract/**"
+      # 2026-09-20（文档守卫）：`scripts/check_error_codes.py` **读这份文档**
+      # （§9.1 错误码目录 ↔ `frontend_contract/errors.py` 双向比对），而它是
+      # `make check-types` 的第三条命令。ci.yml 带 `paths-ignore: docs/**`
+      # ⇒ 只改协议文档的提交不会触发 ci.yml；若本 workflow 也不覆盖它，
+      # 那第三条命令就**没有任何自动执行点**（改文档里的码表可以静默漂移）。
+      # 加这一条把 `make check-types` 的三条命令在本 workflow 里补齐——
+      # 不新建第二套 checker、不动 push-only 信任边界。
+      - "docs/electron-backend-protocol-v2.md"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -97,3 +105,8 @@ jobs:
         run: python -m frontend_contract --check
       - name: Golden frames drift check
         run: python scripts/gen_contract_frames.py --check
+      # `make check-types` 的第三条命令。它与上一步同属"契约产物无漂移"门禁，
+      # 只是**输入**多了一份人类文档（协议 §9.1）——grep 不到 `make` 调用，
+      # 所以由 `scripts/tests/test_check_ci_isolation.py` 按脚本名识别接线。
+      - name: Protocol error-code catalogue check
+        run: python scripts/check_error_codes.py

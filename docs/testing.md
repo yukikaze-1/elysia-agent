@@ -2,18 +2,27 @@
 
 ## 分层体系
 
-测试统计由 `scripts/print_test_stats.py` 生成（F5：不手写易漂移数字）——`conda run -n Elysia python scripts/print_test_stats.py`。当前（2026-09-17，脚本输出）全量收集 6002：
+**当前收集数不在本文维护**——它是易腐事实，历史上同时存在过 4985 / 5952 / 6002 / 6003 /
+6450 / 6551 / 6576 七个版本的数字（分别出自不同日期的文档与快照）。要当前值：
 
-| 层 | marker | 标准 | 测试数 |
-|---|--------|------|--------|
-| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent | 3389 |
-| 服务 | `service` | 单模块 + mock/fake 替身，不连真实依赖 | 2585 |
-| 集成 | `integration` | 需真实数据库或外部 API | 7 |
-| 慢速 | `slow` | 起 Agent 且连真实依赖 / 端到端 / >1s | 39 |
-| 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） | 18 |
+```bash
+conda run -n Elysia python scripts/print_test_stats.py
+```
+
+| 层 | marker | 标准 |
+|---|--------|------|
+| 单元 | `unit` | 纯函数/类，无 I/O，无 Agent |
+| 服务 | `service` | 单模块 + mock/fake 替身，不连真实依赖 |
+| 集成 | `integration` | 需真实数据库或外部 API |
+| 慢速 | `slow` | 起 Agent 且连真实依赖 / 端到端 / >1s |
+| 外部 | `external` | 需真实 LLM/DB 凭据（F1，独立 opt-in） |
+| 真实库 | `real_mongo` | 真实 MongoDB 测试层（S2-R6-1；非凭据，走容器） |
 
 > **口径说明（F1 起）**：`external` 独立于四层——真实 LLM E2E（WorkflowEngine 集成）不进合并门禁。
 > 各层相加与全量的差异（多 marker 重复计入）以脚本输出为准。
+>
+> 历史上表里有一列"测试数"（如 `unit 3389` / `service 2585`），已删除：那一列没有门禁，
+> 只在每次改测试时静默过期，而读者要的是"哪些层存在、各层判据是什么"。
 
 ### CI 现状：只监听 push 到 main（2026-09-16）
 
@@ -25,9 +34,9 @@
 ### 合并门禁的两个集合是**互斥**的（2026-09-14 CI 性能专项）
 
 ```bash
-make test-quick       # pytest -m "unit or service"                    → 5952 收集
+make test-quick       # pytest -m "unit or service"
 make test-remainder   # pytest -m "not slow and not external and not unit and not service" → 0（2026-09-17 起）
-make test-normal      # pytest -m "not slow and not external"          → 5952 收集（**真正离线**，2026-09-17 起）
+make test-normal      # pytest -m "not slow and not external"（**真正离线**，2026-09-17 起）
 ```
 
 `test-quick ∪ test-remainder == test-normal`，且两者交集为空。这两条恒等式由
@@ -69,7 +78,8 @@ make test-normal      # pytest -m "not slow and not external"          → 5952 
 `make test-quick` / `make test-normal` 默认带 `-n 8 --dist loadfile`
 （`PYTEST_N` 可覆盖：`make test-normal PYTEST_N=12`）。
 
-**实测档位曲线**（本机 24 核；`-m "not slow and not external"`。下表 passed/skipped 数是 2026-09-14 的实测快照，仅用于比较**并行档位曲线**；该档位当前收集 **5952**，权威计数以 `scripts/print_test_stats.py` 输出为准）。
+**实测档位曲线**（本机 24 核；`-m "not slow and not external"`。下表 passed/skipped 数是 2026-09-14 的实测快照，仅用于比较**并行档位曲线**——其中的 passed/skipped 数是**那一天的快照**，不是当前值；
+当前值见 `scripts/print_test_stats.py`）。
 两列是**同一天的两次扫描**——"修复前"是还没动 embedding 替身（见下节，它占了 teardown
 的 44.7%）时测的，"修复后"是打上替身之后：
 
@@ -253,6 +263,83 @@ runner 上，`check-ci-isolation` 会拒答）。本层是 `external` 档、任�
 `Module/workflow_engine/tests/helpers/fake_llm.py`：`FakeLLM`（对齐 `chat.completions.create`
 的 `tool_calls`/`content`/`usage` 访问面 + `gate`/`calls`/`prompts`）、`with_deadline`（gated 测试
 挂死防线，`asyncio.wait_for` 封装）、`CountingLLM`（外部成本计数包装，委托透传 `messages`）。
+
+## Required pre-push verification（提交前的唯一权威清单）
+
+**这一节是"提交前该跑什么"的唯一权威**；`CLAUDE.md` 只保留指向这里的短摘要。
+清单不是照抄愿望，而是**从 `Makefile` 与 `.github/workflows/` 反推**出来的——
+下面每一条都对应一个真实存在的 required 执行点（push 到 `main` 时必须有东西跑它）。
+改了 workflow 或 Makefile 就回来同步这一节。
+
+### A. 静态门禁（全部秒级～分钟级，CI `backend` job 逐步跑）
+
+```bash
+conda activate Elysia
+
+make lint            # ruff：导入风格（禁相对导入 TID252）+ 生产代码参数注解
+make pyright         # pyright 全仓生产代码（core/ + Module/ + frontend_contract/ + scripts/）
+make check-types     # 契约漂移：ts/schema/raw_ts + golden frames + 错误码目录（三条命令）
+make check-arch      # 架构边界 R1/R2/R3/R4/R6（依赖方向 / 私有符号 / eager 环 / 裸 spawn 登记）
+make check-timeouts  # 具名超时预算必须表态（外层 ≥ 内层 / 叶子 + 理由）
+make check-contract  # 契约可达性（枚举成员必须有生产者、字段有读必须有写）
+make check-debug-auth        # /debug/api 只认 SERVER_AUTH_TOKEN，SSE 走 debugFetch
+make check-ci-isolation      # CI 信任边界（PR 可达 job 禁 self-hosted / 禁死 job / fail-closed 清理）
+make check-secrets           # 被跟踪文件里的凭据形态（CR-01）
+make check-test-sets         # Quick ∪ remainder == Normal 且交集为空（约 35s，3 次收集）
+make check-compose           # docker-compose 安全策略（仅 loopback、无默认凭据、生产不发布管理端口）
+make check-env-lock          # requirements*.txt ↔ environment.lock.yml 无漂移
+make audit                   # pip-audit（0 未豁免漏洞）+ bandit（Medium+ 为 0）
+```
+
+> ⚠️ **`make check-full` 不是"全部门禁"**——它是 `app.py --check --full`
+> （环境预检 + 5 项连通性探活）。别拿它当本节的聚合入口；本节没有单条聚合命令，
+> 需要就照上面顺序逐条跑（或直接看 CI 的 `backend` job 步骤，顺序与判据同源）。
+
+### B. 测试层（离线集是 CI 唯一跑的测试档位）
+
+```bash
+make test-quick       # 日常迭代：unit + service（-n 8）
+make test-normal      # **提交前必跑**：not slow and not external（真正离线；CI 只跑这一遍）
+make test-full        # 含 slow；无自动执行点（nightly.yml 手工 workflow_dispatch）
+make test-external    # 真实 LLM/DB（RUN_EXTERNAL_TESTS=1，**刻意 opt-in**，要凭据与费用）
+```
+
+真实 MongoDB 层（CI `real-mongo` job，与本清单同一条路）：
+
+```bash
+docker compose -f docker-compose.test.yml up -d   # 127.0.0.1:27018，无 volume，无 auth（仅测试）
+make test-real-mongo                               # RUN_REAL_MONGO_TESTS=1 + ELYSIA_TEST_MONGODB_URI
+docker compose -f docker-compose.test.yml down --remove-orphans
+```
+
+> `RUN_REAL_MONGO_TESTS=1` 的语义是"**连不上就 fail**"（不是 skip）——容器没起好会变成
+> 一串连接错误，所以先等 healthy。库名必须含 `test`：这一层会 drop 整个库。
+
+### C. 前端（CI `frontend` job 的三步，缺一不可）
+
+```bash
+cd frontend
+npm ci                # 严格按 package-lock.json（不要用 npm install）
+npm run build         # = vue-tsc --noEmit && vite build（类型检查 + 构建）
+npm test              # = vitest run src（store 层不变量；build 只做类型检查、零行为覆盖）
+```
+
+Node 版本：CI 钉 **22.x（22.23.0，LTS 线）** 并断言主版本，漂移即红。
+本仓**没有** `.nvmrc`/`engines` 字段——本地版本不会自动对齐 CI，请自己确认
+（见 [operations.md](operations.md) 的版本权威表）。
+
+### D. 契约产物（改了 `frontend_contract/` 才需要）
+
+```bash
+make gen-types        # 重新生成 ts / schema / raw_ts
+make gen-frames       # 重新生成 golden frames
+make check-types      # 再确认无漂移（与 A 节同一条命令）
+```
+
+### 交付判据
+
+> **真实 CI required jobs 全绿**才算完成——本地清单是它的等价预演，不是替代品
+> （本仓 CI 只监听 `push: [main]`，见 [ci.md](ci.md)）。
 
 ## 日常命令
 

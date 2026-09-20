@@ -12,8 +12,15 @@ on:
       #   - `character/**/config.yaml` 被 `core/prompt/tests/conftest.py:76`、
       #     `core/prompt/tests/test_system_prompt_snapshot.py:91`、
       #     `Module/config/tests/test_preflight.py`、`core/tests/test_phase3.py` 读取。
-      # `docs/**` 保留：没有测试在运行期读 docs/（唯一例外是 golden frames
-      # `docs/archive/frontend-handoff-v2/traces/**`，由 contract-frames.yml 单独覆盖）。
+      # `docs/**` 保留：没有测试在**运行期**读 docs/。⚠️ 但**门禁**会读——
+      #   - golden frames `docs/archive/frontend-handoff-v2/traces/**`（由
+      #     contract-frames.yml 单独覆盖）；
+      #   - `docs/electron-backend-protocol-v2.md` 被 `scripts/check_error_codes.py`
+      #     读取（`make check-types` 的第三条命令）——**2026-09-20 才补进
+      #     contract-frames.yml 的 paths**。此前"只改协议文档"的提交既不走 ci.yml
+      #     （本 ignore）也不走那个 workflow（paths 不含它）⇒ 该检查零执行点。
+      #   新增任何"读 docs/ 的门禁"时，必须同步把被读文件加进 contract-frames.yml
+      #   的 paths，或从本 ignore 里摘掉它。
       - "docs/**"
   # ⚠️ **2026-09-16 起不再监听 pull_request**（本仓当前不开放 PR）。要恢复 PR 门禁，
   # 见下面「PR 门禁（已移除）」小节列的清单——不是把这几行加回来就完事。

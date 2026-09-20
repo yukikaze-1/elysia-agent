@@ -14,8 +14,8 @@
 |---|---|---|---|---|
 | `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / 密钥扫描 / 集合代数 / compose 安全策略 / 环境锁 / 依赖与静态安全扫描 `make audit`）+ **离线**用例 `make test-normal` |
 | `ci.yml` | `real-mongo` | push | `[self-hosted, Linux, X64]` | 真实 MongoDB 层：job 内自起 `docker-compose.test.yml`，`make test-real-mongo`，收尾 `down` |
-| `ci.yml` | `frontend` | push | `[self-hosted, Linux, X64]` | `npm ci` + `vue-tsc --noEmit && vite build` |
-| `contract-frames.yml` | `frames` | push（路径过滤） | `[self-hosted, Linux, X64]` | golden frames + 契约三产物漂移检查 |
+| `ci.yml` | `frontend` | push | `[self-hosted, Linux, X64]` | `npm ci` + `vue-tsc --noEmit && vite build` + `npm test`（vitest） |
+| `contract-frames.yml` | `frames` | push（**路径过滤**：`frontend_contract/**`、`docs/archive/frontend-handoff-v2/traces/**`、`docs/electron-backend-protocol-v2.md`） | `[self-hosted, Linux, X64]` | `make check-types` 的**三条命令**：ts/schema/raw 漂移 + golden frames 漂移 + 错误码目录 ↔ `errors.py` |
 | `nightly.yml` | `full` / `external` | `workflow_dispatch` | `self-hosted` | 手工触发的全量 / 真实 LLM·DB E2E |
 
 **已移除（2026-09-16）**：`ci.yml` 的 `pr-gate`（PR 侧静态门禁）与 `frontend-pr`
@@ -54,7 +54,26 @@ Elysia env 的 `pip 26.1.2` **自身**命中 `PYSEC-2026-3721`（修复版 26.2�
 > 这条纪律由 `scripts/tests/test_check_ci_isolation.py` 的
 > `TestRealRepoWorkflows::test_every_declared_gate_is_wired_to_ci` 机械强制：新门禁必须
 > 接线，或进该文件的 `_GATES_NOT_IN_CI` 写明理由与解除条件；**登记陈旧也会红**
-> （已接线却还挂着豁免，等于让"已豁免"的理由继续冒充事实）。
+> （已接线却还挂着豁免，等于让"已豁免"的理由继续冒充事实）。当前该表**为空**。
+
+### 门禁"接线"的第二种形态：门禁**读了 docs/**，但触发条件不覆盖它
+
+2026-09-20 补的一处洞，形状与上面不同，值得单记：
+
+- `scripts/check_error_codes.py` 读 `docs/electron-backend-protocol-v2.md` §9.1
+  做双向比对，是 `make check-types` 的**第三条**命令；
+- 而 `ci.yml` 带 `paths-ignore: docs/**`（纯文档提交不跑 30 分钟的全套），
+  `contract-frames.yml` 的 `paths` 又只含 `frontend_contract/**` 与 traces ⇒
+  **只改协议文档的提交，这条 checker 零执行点**——改文档里的码表可以静默漂移。
+
+处置（最小改动，不新建第二套 checker、不动 push-only 信任边界）：把
+`docs/electron-backend-protocol-v2.md` 加进 `contract-frames.yml` 的 `paths`，
+并在该 job 里补一步 `python scripts/check_error_codes.py`——于是本 workflow 跑齐
+`make check-types` 的三条命令。
+
+> **纪律**：新增任何"读 `docs/` 的门禁"时，必须同步把**被读文件**加进
+> `contract-frames.yml` 的 `paths`，或从 `ci.yml` 的 ignore 里摘掉它。
+> "运行期没人读 docs/"不等于"门禁不读 docs/"——上面这条洞正是这两句话的差别。
 
 ## 为什么全部走 self-hosted：账单
 

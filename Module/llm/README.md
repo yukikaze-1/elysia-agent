@@ -95,6 +95,10 @@ backend = LLMFactory.create("openai/gpt-5", base_url="https://my-proxy.com/v1")
 
 ## Ollama：为什么它有自己的后端（Batch 17 / KB-13 / AR-16）
 
+> **要接一台 Ollama 跑起来**（安装假设、拉模型、`llm.model` 怎么配、诊断命令、
+> `.env` 里那一行为什么写 `/v1` 却不是 OpenAI 兼容协议）见
+> [docs/operations.md §6](../../docs/operations.md)。本节只讲**为什么这样设计**。
+
 `LLMFactory.create("ollama/<model>")` 返回 **`OllamaBackend`**（native `POST /api/chat`），
 而不是通用 OpenAI 兼容后端。理由不是"每个 provider 都该有类"，而是**语义不可通约**：
 
@@ -230,8 +234,8 @@ backend = LLMFactory.from_config("openai/gpt-5", cfg, base_url="https://proxy/v1
 
 | 字段 | 默认值 | 环境变量 | 说明 |
 |------|--------|----------|------|
-| `base_url` | `https://api.deepseek.com` | `LLM_API_BASE` | LLM API 端点 |
-| `api_key` | `""` | `LLM_API_KEY` | API 密钥（secret，仅从 env 读取） |
+| `base_url` | `https://api.deepseek.com` | `LLM_API_BASE` | LLM API 端点。⚠️ **只有 `LLMFactory.from_config` 这条（测试/嵌入式）路径读它**：生产装配是 `LLMFactory.create("<provider>/<model>")`，端点来自 `Module/config/providers.yaml` 的 `url_key`（如 `DEEPSEEK_URL`）⇒ `LLM_API_BASE` 在生产**无调用者**（见 [docs/operations.md](../../docs/operations.md) §3.3） |
+| `api_key` | `""` | `LLM_API_KEY` | API 密钥（secret，仅从 env 读取）。同上：生产走 `providers.yaml` 的 `env_key`（如 `DEEPSEEK_API_KEY`），`LLM_API_KEY` **无生产调用者** |
 
 ## 添加新后端
 
