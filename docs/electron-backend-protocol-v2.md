@@ -6,6 +6,15 @@
 
 本文档是 Electron 前端联调 v2 协议的**事件契约参考**。v2 由 WS 握手头 `X-Protocol-Version: 2` 判定；未带版本头走 v1 路径（现状不变）。
 
+**引用约定**（本文出现的简写指向）：
+
+| 简写 | 指向 |
+|---|---|
+| `spec §X` | 上方 **Spec** 行所列的批次设计稿（当节所属批次的那一份）；设计稿是**当时**的设计依据，当前契约以本文 + `frontend_contract/` 为准 |
+| `security §X` | [`docs/electron-backend-security.md`](electron-backend-security.md) |
+| `invariants.md §X` | [`docs/architecture/invariants.md`](architecture/invariants.md)（当前不变量权威） |
+| `ws_message/<module>.py` | `frontend_contract/ws_message/` 包（ARCH-INC-P2-02 拆分；联合只在 `__init__.py` 装配） |
+
 ---
 
 ## 1. 握手与版本
@@ -16,7 +25,7 @@
 - **批次 8c（F15）**：switch_model / set_service 后的 `capabilities` 重播仅达 v1 通道——v2 用 `server_info` 取代 capabilities，`broadcast_capabilities` 跳过 protocol_version ≥ 2 的通道；v2 对切换的感知经自身 `switch_model_result`/`service_mode_result` 回显（多客户端 v2 切换同步为已知限制）。
 - **`server_info.connectionId`（批次 4）**：仅 v2 + electron 连接下发（`conn_<uuid4 hex[:12]>`，= WS 握手生成的连接 ID）；普通 v2 / v1 恒省略。Electron 据此构造附件上传 `X-Client-Connection` 头（spec §5.4 持有者校验②依赖）。Desktop 工具 call 同样登记该 ID 为 `target_connection`，后端只向 `client_platform=electron && connection_id=target_connection` 的精确通道投递；重连期间旧连接即使尚未移除也不会收到新请求。
 - **`server_info.build_sha`（批次 7，BE-081）**：构建 git HEAD 完整 SHA（`core/version.py` `get_build_sha()`，`git rev-parse HEAD`，非 git 仓库/失败 → None 缺省省略）；`server_version` 为 `__version__ + "+" + build_sha[:7]` 后缀（`build_server_version()`，无 git 时仅 `0.1.0`）。供前端展示/反馈定位。
-- `server_info.features` 如实反映能力（共 10 字段）：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）、**`media_upload`（批次 7 = true，POST /api/uploads，见 §13）**、**`idempotency_durable`（批次 D6c + 2026-08-12 BE-P1-07 强化：true=幂等 claim 完整跨重启持久化；false=内存降级窗口 或 存在未 reconcile 到 Mongo 的记录——Mongo 已恢复但 recover() 未跑/未清位时也为 false，不止内存降级）**、**`character_profiles`（阶段 H = true：多角色 Profile 能力门禁已闭环；`core/agent/agent.py:1210` 硬编码恒 true，见 §14）**、**`character_state_stream`（阶段 G = true：`character.state.changed` 事件，见 §14.3）**。二者当前后端恒 true（`core/agent/agent.py:1201-1212` + `core/services/capabilities.py:107-108`），`character_state_stream` 独立于 `character_profiles`（后者为 false 时前者仍可用）。
+- `server_info.features` 如实反映能力（共 10 字段）：`structured_generation`（批次 2 = true）、`multi_conversation`（批次 3 = true）、`desktop_runtime`（**批次 4 = true**）、`dictation`/`voice_recording`/`voice_realtime`（**批次 6 = true**，spec BE-060~062，见 §12）、**`media_upload`（批次 7 = true，POST /api/uploads，见 §13）**、**`idempotency_durable`（批次 D6c + 2026-08-12 BE-P1-07 强化：true=幂等 claim 完整跨重启持久化；false=内存降级窗口 或 存在未 reconcile 到 Mongo 的记录——Mongo 已恢复但 recover() 未跑/未清位时也为 false，不止内存降级）**、**`character_profiles`（阶段 H = true：多角色 Profile 能力门禁已闭环；`core/agent/agent.py :: Agent.character_profiles` 硬编码恒 true，见 §14）**、**`character_state_stream`（阶段 G = true：`character.state.changed` 事件，见 §14.3）**。二者当前后端恒 true（`core/agent/agent.py :: Agent.character_profiles` / `:: Agent.character_state_stream` + `core/services/capabilities.py :: build_server_info`），`character_state_stream` 独立于 `character_profiles`（后者为 false 时前者仍可用）。
 - **v1 忽略 `X-Client-Platform`**：v1 无 desktop 概念，伪冒 platform 头不生效（负面隔离，spec §5.1）。
 
 ## 2. 一次完整 v2 回复事件序列
@@ -145,20 +154,20 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 ## 8. 契约 replay 样例与历史轨迹
 
-`docs/archive/frontend-handoff-v2/traces/`：
+> ⚠️ **LIVE CONTRACT ARTIFACTS IN LEGACY PATH**：这些帧是**当前生效的契约产物**
+> （CI 门禁、被跨仓消费者读取），只是路径历史地留在 `archive/` 下。
+> **移动该目录需要与外部前端消费者协同改动**——`elysia-frontend` 的
+> `apps/desktop/scripts/check-backend-contract.mjs` 硬编码了这个绝对路径。
 
-- `ws-v2-handshake.jsonl` — 当前 v2 握手（session → server_info → expression）。
-- `ws-v2-chat.jsonl` — 当前完整生成（ack → started → inner_voice/public_reply → completed）。
-- `ws-v2-cancel.jsonl` — 当前取消（partial segment → `GENERATION_CANCELLED` → interrupted → idle）。
-- `ws-v2-fail.jsonl` — 当前 Provider 失败（started → `GENERATION_PROVIDER_UNAVAILABLE` → idle）。
-- `ws-v2-session.jsonl` — 当前多会话 conversationId 贯通。
-- `ws-v2-tool.jsonl` / `ws-v2-voice.jsonl` — 当前 Desktop 工具与实时语音样例。
-- `ws-v2-rejected.jsonl` — 当前负面 ACK（rejected：`CONTRACT_VALIDATION` / `SESSION_NOT_FOUND` / `QUEUE_FULL` / `STORAGE_UNAVAILABLE` / `RATE_LIMITED` / `IN_PROGRESS`，加固批次 2026-08-11 新增）。
+**逐文件清单（含帧数）的唯一权威是 [`docs/archive/frontend-handoff-v2/traces/README.md`](archive/frontend-handoff-v2/traces/README.md)**，本文不抄写清单。这里只记两类与契约的关系：
 
-上述八个无 `legacy` 后缀的文件由 `scripts/gen_contract_frames.py` 从
-`frontend_contract/` 确定性生成，并由 `--check` 做漂移门禁。批次 2 真实抓包改名为
-`ws-v2-cancel-legacy-batch2.jsonl` / `ws-v2-fail-legacy-batch2.jsonl`，只作历史参考；
-已停用的 `scripts/capture_ws_trace.py` 不是当前契约生成入口。
+| 类别 | 性质 | 门禁 |
+|---|---|---|
+| 契约源 golden frames（`ws-v2-*.jsonl` + `rest-*.jsonl`，无 `legacy` 后缀） | 由 `scripts/gen_contract_frames.py` 从 `frontend_contract/` 的契约模型**确定性生成**（固定测试 ID/时间戳）；反映**当前**契约 | `make check-types`（`gen_contract_frames.py --check`，`git diff` 漂移检测） |
+| 历史真实快照（`ws-chat/cancel/tool-approval`、`ws-server-info`、`ws-v2-*-legacy-batch2`） | 批次 0~2 抓取时点的真实脱敏轨迹，`server_info.features` 反映**当时**能力 | 无（历史参考；**不得**当作当前契约） |
+
+批次 2 的真实抓包已改名为 `ws-v2-cancel-legacy-batch2.jsonl` / `ws-v2-fail-legacy-batch2.jsonl`；
+已停用的 `scripts/capture_ws_trace.py` **不是**当前契约生成入口。
 
 ## 9. 多会话 REST 查询（批次 3，spec BE-030/031 + BE-024）
 
@@ -183,7 +192,9 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 
 错误信封统一（code/message/retryable/requestId）；全部匿名 401（`AGENT_ACCESS_TOKEN` 配置时）。**批次 8c（F1/F2）：** 泛型 `error` 帧补 `retryable`/`details` 字段（语音错误站点透传）；admin/debug 端点（/shutdown、/restart、/tools、/tools/reload、/debug/api/*）错误响应统一走 ProtocolError 信封（`error` = message 兼容别名，v1 读 `.error` 不破坏），不再裸 `{"error":...}`。
 
-### 9.1 错误码目录（批次 1-9C + Stage A–H 累计，54 码）
+### 9.1 错误码目录（批次 1-9C + Stage A–H 累计）
+
+> 本表的**行内容与行数由门禁双向比对**：`make check-types` → `scripts/check_error_codes.py` 校验 `frontend_contract/errors.py` 的 `KNOWN_ERROR_CODES`/`KNOWN_ISSUE_CODES` 与本表 §9.1 逐码一致——所以此处**不抄写码数**（抄写的那份不会被门禁发现）。
 
 | code | HTTP | retryable | 场景 |
 |---|---|---|---|
@@ -228,19 +239,19 @@ v2 缺省 conversationId 时填活动会话 ID（如 `"default"`）。
 | `ATTACHMENT_SIGNATURE_DISABLED` | 403 | false | **落地**：fail-closed——AGENT_ACCESS_TOKEN 配置而 ATTACHMENT_SIG_SECRET 未配置（下载/签发一律拒绝，批次 7，见 security §3.5） |
 | `STORAGE_UNAVAILABLE` | 503 | true | **落地**：附件存储 Mongo 离线（上传写记录/下载/签发一律 503，fail-closed；上传已落盘文件删除不留孤儿，批次 7）；D6c 幂等 claim（产品模式 + Mongo 离线 → v2 文本/voice.commit 拒绝，批次 D6c） |
 | `QUEUE_FULL` | 429 | true | **落地**：Agent 忙队列满——v2 附件/sticker 消息 `process_message` 返回 False → `user_message.ack{status:rejected, error:{code:QUEUE_FULL, retryable:true}}`（WS ACK 错误，无 HTTP 信封，HTTP 429 为目录登记映射，批次 7，见 §13.7） |
-| `CHARACTER_INSTANCE_NOT_FOUND` | 404 | false | **落地**：角色实例不存在（`GET /api/character-instances/{id}/state`、`POST .../reset-evolution`；源 `CharacterInstanceNotFoundError` / runtime source 加载失败，Stage H，`character_routes.py:63-64/204-208`） |
-| `CHARACTER_NOT_FOUND` | 404 | false | **落地**：未知角色（`GET/PUT/DELETE /api/characters/{id}` + clone/revisions/rollback；`character_routes.py:65-66`） |
-| `CHARACTER_IMMUTABLE` | 409 | false | **落地**：内置角色不可编辑（对 builtin 执行 PUT/DELETE；`character_routes.py:67-68`） |
-| `CHARACTER_ARCHIVED` | 409 | false | **落地**：archived 角色不可操作（`character_routes.py:69-70`） |
-| `CHARACTER_TOO_LARGE` | 413 | false | **落地**：角色内容过大（`character_routes.py:71-72`） |
-| `CHARACTER_VALIDATION` | 400 | false | **落地**：角色内容/身份请求校验失败——顶层 code 恒本码，具体原因只走 `details.issues[]`（issue.code 可含 `CHARACTER_RESERVED_CONTENT` 等，BE-STAGEH-04，`character_routes.py:73-83`）；`PUT /api/me` 请求体非法、查询参数非法（`CharacterQueryError`）同码 |
-| `CHARACTER_REVISION_CONFLICT` | 409 | true | **落地**：`expectedRevision` 已过期（CAS 冲突；`retryable=true` + `retryAfterMs=100`，`details.currentRevision` 可带，`character_routes.py:84-97`） |
-| `CHARACTER_STATE_CONFLICT` | 409 | true | **落地**：`expectedStateVersion` 已过期（实例状态 CAS 冲突；`retryable=true` + `retryAfterMs=100`，`details.currentStateVersion` 可带，`character_routes.py:98-111`） |
-| `CHARACTER_BUSY` | 409 | true | **落地**：角色实例正忙——turn/TTS 在途时替换角色 profile 或 reset 演化（`retryable=true` + `retryAfterMs=500`，`character_routes.py:112-116`） |
-| `CHARACTER_PREVIEW_FAILED` | 503 | true | **落地**：角色预览暂不可用（`retryable=true` + `retryAfterMs=1000`，`character_routes.py:117-121`） |
-| `CHARACTER_STORAGE_UNAVAILABLE` | 503 | true | **落地**：角色存储不可用（Mongo 离线 fail-closed；`retryable=true` + `retryAfterMs=1000`，`character_routes.py:122-126`） |
-| `USER_PROFILE_NOT_FOUND` | 404 | false | **落地**：用户身份未初始化 / 权威存储无档案（`GET /api/me`；P0-3 fail-closed——权威存储不可用时改报 `STORAGE_UNAVAILABLE`，不报本码以免诱使客户端重建画像，`character_routes.py:232-238`） |
-| `USER_PROFILE_REVISION_CONFLICT` | 409 | true | **落地**：`expectedRevision` 已过期（`PUT /api/me` CAS 冲突；`retryable=true` + `retryAfterMs=100`，`details.currentRevision` 可带，`character_routes.py:270-286`）。`currentRevision` = **权威库现值**（repository 在冲突点回读，N-3 / Batch 6）；权威现值未知（记录已不存在 / 回读失败）时该字段**缺省**——不变量见 `docs/architecture/invariants.md` §3.3 |
+| `CHARACTER_INSTANCE_NOT_FOUND` | 404 | false | **落地**：角色实例不存在（`GET /api/character-instances/{id}/state`、`POST .../reset-evolution`；源 `CharacterInstanceNotFoundError` / runtime source 加载失败，Stage H，`core/input/character_routes.py :: _character_error_response` / `:: _instance_state_get` / `:: _instance_reset_evolution`） |
+| `CHARACTER_NOT_FOUND` | 404 | false | **落地**：未知角色（`GET/PUT/DELETE /api/characters/{id}` + clone/revisions/rollback；`core/input/character_routes.py :: _character_error_response`） |
+| `CHARACTER_IMMUTABLE` | 409 | false | **落地**：内置角色不可编辑（对 builtin 执行 PUT/DELETE；`core/input/character_routes.py :: _character_error_response`） |
+| `CHARACTER_ARCHIVED` | 409 | false | **落地**：archived 角色不可操作（`core/input/character_routes.py :: _character_error_response`） |
+| `CHARACTER_TOO_LARGE` | 413 | false | **落地**：角色内容过大（`core/input/character_routes.py :: _character_error_response`） |
+| `CHARACTER_VALIDATION` | 400 | false | **落地**：角色内容/身份请求校验失败——顶层 code 恒本码，具体原因只走 `details.issues[]`（issue.code 可含 `CHARACTER_RESERVED_CONTENT` 等，BE-STAGEH-04，`core/input/character_routes.py :: _character_error_response`）；`PUT /api/me` 请求体非法、查询参数非法（`CharacterQueryError`）同码 |
+| `CHARACTER_REVISION_CONFLICT` | 409 | true | **落地**：`expectedRevision` 已过期（CAS 冲突；`retryable=true` + `retryAfterMs=100`，`details.currentRevision` 可带，`core/input/character_routes.py :: _character_error_response`） |
+| `CHARACTER_STATE_CONFLICT` | 409 | true | **落地**：`expectedStateVersion` 已过期（实例状态 CAS 冲突；`retryable=true` + `retryAfterMs=100`，`details.currentStateVersion` 可带，`core/input/character_routes.py :: _character_error_response`） |
+| `CHARACTER_BUSY` | 409 | true | **落地**：角色实例正忙——turn/TTS 在途时替换角色 profile 或 reset 演化（`retryable=true` + `retryAfterMs=500`，`core/input/character_routes.py :: _character_error_response`） |
+| `CHARACTER_PREVIEW_FAILED` | 503 | true | **落地**：角色预览暂不可用（`retryable=true` + `retryAfterMs=1000`，`core/input/character_routes.py :: _character_error_response`） |
+| `CHARACTER_STORAGE_UNAVAILABLE` | 503 | true | **落地**：角色存储不可用（Mongo 离线 fail-closed；`retryable=true` + `retryAfterMs=1000`，`core/input/character_routes.py :: _character_error_response`） |
+| `USER_PROFILE_NOT_FOUND` | 404 | false | **落地**：用户身份未初始化 / 权威存储无档案（`GET /api/me`；P0-3 fail-closed——权威存储不可用时改报 `STORAGE_UNAVAILABLE`，不报本码以免诱使客户端重建画像，`core/input/character_routes.py :: _me_get`） |
+| `USER_PROFILE_REVISION_CONFLICT` | 409 | true | **落地**：`expectedRevision` 已过期（`PUT /api/me` CAS 冲突；`retryable=true` + `retryAfterMs=100`，`details.currentRevision` 可带，`core/input/character_routes.py :: _me_put`）。`currentRevision` = **权威库现值**（repository 在冲突点回读，N-3 / Batch 6）；权威现值未知（记录已不存在 / 回读失败）时该字段**缺省**——不变量见 `docs/architecture/invariants.md` §3.3 |
 
 **数据保护语义**：`DELETE /api/sessions/default` → 409 `SESSION_PROTECTED`（`default` 恒存在且受保护，禁删——含其 append-only 归档）；生成/TTS 进行中 `activate`/`delete` 活动会话 → 409 `AGENT_BUSY`。
 
@@ -577,7 +588,7 @@ multipart 字段：`files[]`（一个或多个文件字段）+ `kind`（可选�
 
 ## 14. 多角色 Profile 与身份契约（Stage A–H，2026-08~09）
 
-Stage A–H 落地多角色/身份契约族：**用户身份**（`UserIdentityProfile`，Mongo `user_identity_profiles` 权威，`user_id` 唯一索引 + revision CAS）→ **会话绑定**（`character_binding` → instance）→ **角色定义 + revision + 实例 state**。REST 路由 `core/input/character_routes.py`（装配于 `core/input/server.py:292-325`），wire 模型单源 `frontend_contract/rest.py`（§14.2），WS 侧新增 `character.state.changed`（§14.3）并给 generation/expression/audio_start 补身份三元组（§14.4）。**`/api/me`、`/api/characters*`、`/api/character-instances*` 均走 Bearer 认证**（`AGENT_ACCESS_TOKEN` 配置时匿名 401，见 `docs/electron-backend-security.md` §2）。
+Stage A–H 落地多角色/身份契约族：**用户身份**（`UserIdentityProfile`，Mongo `user_identity_profiles` 权威，`user_id` 唯一索引 + revision CAS）→ **会话绑定**（`character_binding` → instance）→ **角色定义 + revision + 实例 state**。REST 路由 `core/input/character_routes.py`（装配于 `core/input/server.py :: create_app`），wire 模型单源 `frontend_contract/rest.py`（§14.2），WS 侧新增 `character.state.changed`（§14.3）并给 generation/expression/audio_start 补身份三元组（§14.4）。**`/api/me`、`/api/characters*`、`/api/character-instances*` 均走 Bearer 认证**（`AGENT_ACCESS_TOKEN` 配置时匿名 401，见 `docs/electron-backend-security.md` §2）。
 
 ### 14.1 角色/身份 REST 端点（Stage H）
 
@@ -598,14 +609,14 @@ Stage A–H 落地多角色/身份契约族：**用户身份**（`UserIdentityPr
 | `GET /api/character-instances/{id}/state` | 无 | `200 CharacterPublicState`（未知 instance → 404 `CHARACTER_INSTANCE_NOT_FOUND`） |
 | `POST /api/character-instances/{id}/reset-evolution` | `{expectedStateVersion}` | `200 CharacterResetResult` |
 
-- **固定路径先行**：`/api/characters/validate` 与 `/api/characters/preview` 先于 `/api/characters/{id}` 注册（否则被动态 id 路由吞掉，`character_routes.py:530-533`）。
-- **`PUT /api/me` 是完整最小身份替换，非 PATCH**：请求不得带 `userId/revision/initialized/createdAt/updatedAt`（`UserIdentityUpdate` extra=forbid）；首次成功 PUT 由后端置 `initialized=true`。省略 `preferredAddress`/`pronouns` = **显式清空**；省略 `defaultCharacterId` = 用 bootstrap 内置角色 `chr_builtin_elysia`（`character_routes.py:250-264`）。前端须以 GET 结果为基线提交完整表单。
-- **变更门禁**：`PUT /api/characters/{id}` 与 `reset-evolution` 经 `_character_mutation_guard` 串行化（turn/TTS 在途即 `CHARACTER_BUSY`，`character_routes.py:170-194`）。
-- **错误映射**：领域异常 → 冻结错误码统一在 `_character_error_response`（`character_routes.py:61-127`）；`reset-evolution` 的 `statePolicy` 三枚举取值 `preserve`/`reset_evolution`，`resetFields` 五取值见 §14.2。`POST /api/characters/preview` 为**单次出站 LLM 推理**且**零副作用**（不建 session/instance、不写 archive、不推进 revision/stateVersion，见 security §3.3 补注）。
+- **固定路径先行**：`/api/characters/validate` 与 `/api/characters/preview` 先于 `/api/characters/{id}` 注册（否则被动态 id 路由吞掉，`core/input/character_routes.py :: register_character_routes`）。
+- **`PUT /api/me` 是完整最小身份替换，非 PATCH**：请求不得带 `userId/revision/initialized/createdAt/updatedAt`（`UserIdentityUpdate` extra=forbid）；首次成功 PUT 由后端置 `initialized=true`。省略 `preferredAddress`/`pronouns` = **显式清空**；省略 `defaultCharacterId` = 用 bootstrap 内置角色 `chr_builtin_elysia`（`core/input/character_routes.py :: _me_put`）。前端须以 GET 结果为基线提交完整表单。
+- **变更门禁**：`PUT /api/characters/{id}` 与 `reset-evolution` 经 `_character_mutation_guard` 串行化（turn/TTS 在途即 `CHARACTER_BUSY`，`core/input/character_routes.py :: _require_character_mutation_idle`）。
+- **错误映射**：领域异常 → 冻结错误码统一在 `_character_error_response`（`core/input/character_routes.py :: _character_error_response`）；`reset-evolution` 的 `statePolicy` 三枚举取值 `preserve`/`reset_evolution`，`resetFields` 五取值见 §14.2。`POST /api/characters/preview` 为**单次出站 LLM 推理**且**零副作用**（不建 session/instance、不写 archive、不推进 revision/stateVersion，见 security §3.3 补注）。
 
 ### 14.2 角色/身份 wire 模型（`frontend_contract/rest.py`，Stage H）
 
-**枚举**（`rest.py:587-618`）：
+**枚举**（`frontend_contract/rest.py :: CharacterSource`）：
 
 | 类型 | 取值 |
 |---|---|
@@ -616,56 +627,56 @@ Stage A–H 落地多角色/身份契约族：**用户身份**（`UserIdentityPr
 | `CharacterResetField` | `self_l2` / `state_l3` / `speaking_style_c6` / `reflector` / `mood` |
 | `CharacterValidationSeverity` | `error` / `warning` |
 
-**草稿输入**（`CharacterDraft`，`rest.py:871`，extra=forbid）：
+**草稿输入**（`CharacterDraft`，`frontend_contract/rest.py :: CharacterDraft`，extra=forbid）：
 
 - `displayName`（≤64）/ `description`（≤500）/ `aliases[]`（≤10，去重、每个 ≤32）/ `openingMessage?`（≤1000）。
-- `promptProfile`（`CharacterPromptProfile`，`rest.py:814`）：`corePersonality`（≤12000）/ `relationshipStyle`（≤6000）/ `emotionStyle`（≤5000）/ `speakingStyle`（≤6000）/ `conversationInitiative`（≤3000）/ `examples[]`（≤20，每项 `{user,assistant}` 各 ≤1000）。
-- `runtimeDefaults`（`CharacterRuntimeDefaults`，`rest.py:859`）：`voice{providerId?,voiceId?}` / `emotion{idleExpressions[]≤16}` / `wakeWords[]≤20`（每个 ≤32）/ `proactive{enabled,intervalSeconds≥0,triggers[]≤20}`。
-- `presentation`（`CharacterPresentation`，`rest.py:770`）：`avatarAssetId?` / `live2dModelId?` / `themeColor?`——**受管资源引用**，路径/URL/含 `..` 一律拒（`_registry_ref`），`themeColor` 限安全 CSS 颜色（`_theme_color`）。
+- `promptProfile`（`CharacterPromptProfile`，`frontend_contract/rest.py :: CharacterPromptProfile`）：`corePersonality`（≤12000）/ `relationshipStyle`（≤6000）/ `emotionStyle`（≤5000）/ `speakingStyle`（≤6000）/ `conversationInitiative`（≤3000）/ `examples[]`（≤20，每项 `{user,assistant}` 各 ≤1000）。
+- `runtimeDefaults`（`CharacterRuntimeDefaults`，`frontend_contract/rest.py :: CharacterRuntimeDefaults`）：`voice{providerId?,voiceId?}` / `emotion{idleExpressions[]≤16}` / `wakeWords[]≤20`（每个 ≤32）/ `proactive{enabled,intervalSeconds≥0,triggers[]≤20}`。
+- `presentation`（`CharacterPresentation`，`frontend_contract/rest.py :: CharacterPresentation`）：`avatarAssetId?` / `live2dModelId?` / `themeColor?`——**受管资源引用**，路径/URL/含 `..` 一律拒（`_registry_ref`），`themeColor` 限安全 CSS 颜色（`_theme_color`）。
 
 **角色读模型**：
 
-- `CharacterSummary`（`rest.py:924`）：`characterId` / `source` / `mutable`(bool) / `status` / `currentRevision`(≥1) / `displayName` / `description` / `aliases[]` / `presentation` / `updatedAt`(UTC ISO)。
-- `CharacterDetail`（`rest.py:1018`）：`summary: CharacterSummary` + `current: CharacterRevisionContent`。
-- `CharacterRevisionContent`（`rest.py:888`，别名 `CharacterRevisionResponse`）：`characterId` / `revision`(≥1) / `schemaVersion`(≥1) / `displayName` / `description` / `aliases[]` / `promptProfile` / `runtimeDefaults` / `presentation` / `openingMessage?` / `checksum` / `compilerVersion`(≥1) / `createdBy` / `createdAt`。
-- `CharacterRevisionSummary`（`rest.py:1007`）：`revision` / `checksum` / `createdBy` / `createdAt`。
-- `CharacterRevisionListResponse`（`rest.py:1065`）：`items[]` / `has_more` / `cursor?`。
-- `CharacterListResponse`（`rest.py:1000`）：`items[CharacterSummary]` / `has_more` / `cursor?`。
-- `CharacterInstanceSummary`（`rest.py:945`，绑定列表用，不暴露演化态）：`instanceId` / `characterId` / `revision`(≥1,默认 1) / `stateVersion`(≥1,默认 1)。
+- `CharacterSummary`（`frontend_contract/rest.py :: CharacterSummary`）：`characterId` / `source` / `mutable`(bool) / `status` / `currentRevision`(≥1) / `displayName` / `description` / `aliases[]` / `presentation` / `updatedAt`(UTC ISO)。
+- `CharacterDetail`（`frontend_contract/rest.py :: CharacterDetail`）：`summary: CharacterSummary` + `current: CharacterRevisionContent`。
+- `CharacterRevisionContent`（`frontend_contract/rest.py :: CharacterRevisionContent`，别名 `CharacterRevisionResponse`）：`characterId` / `revision`(≥1) / `schemaVersion`(≥1) / `displayName` / `description` / `aliases[]` / `promptProfile` / `runtimeDefaults` / `presentation` / `openingMessage?` / `checksum` / `compilerVersion`(≥1) / `createdBy` / `createdAt`。
+- `CharacterRevisionSummary`（`frontend_contract/rest.py :: CharacterRevisionSummary`）：`revision` / `checksum` / `createdBy` / `createdAt`。
+- `CharacterRevisionListResponse`（`frontend_contract/rest.py :: CharacterRevisionListResponse`）：`items[]` / `has_more` / `cursor?`。
+- `CharacterListResponse`（`frontend_contract/rest.py :: CharacterListResponse`）：`items[CharacterSummary]` / `has_more` / `cursor?`。
+- `CharacterInstanceSummary`（`frontend_contract/rest.py :: CharacterInstanceSummary`，绑定列表用，不暴露演化态）：`instanceId` / `characterId` / `revision`(≥1,默认 1) / `stateVersion`(≥1,默认 1)。
 
 **变更结果**：
 
-- `CharacterMutationResult`（`rest.py:1040`）：`character: CharacterDetail` + `stateImpact: CharacterStateImpact`。
-- `CharacterStateImpact`（`rest.py:1024`）：`statePolicy` / `affectedInstances`(≥0) / `pendingInstances`(≥0) / `resetFields[]`(≤5)。不变量：`pendingInstances ≤ affectedInstances`；`preserve` → `resetFields` 必须为空。
-- `CharacterArchiveResult`（`rest.py:1072`）：`character: CharacterSummary` + `userProfile?: UserIdentityProfile`——归档默认角色时后端同事务把 `defaultCharacterId` 改为 bootstrap 内置并递增 profile revision，返回新档案；未改默认角色时省略。
+- `CharacterMutationResult`（`frontend_contract/rest.py :: CharacterMutationResult`）：`character: CharacterDetail` + `stateImpact: CharacterStateImpact`。
+- `CharacterStateImpact`（`frontend_contract/rest.py :: CharacterStateImpact`）：`statePolicy` / `affectedInstances`(≥0) / `pendingInstances`(≥0) / `resetFields[]`(≤5)。不变量：`pendingInstances ≤ affectedInstances`；`preserve` → `resetFields` 必须为空。
+- `CharacterArchiveResult`（`frontend_contract/rest.py :: CharacterArchiveResult`）：`character: CharacterSummary` + `userProfile?: UserIdentityProfile`——归档默认角色时后端同事务把 `defaultCharacterId` 改为 bootstrap 内置并递增 profile revision，返回新档案；未改默认角色时省略。
 
 **校验 / 预览**：
 
-- `CharacterValidationIssue`（`rest.py:1046`）：`severity` / `code` / `path`(JSON Pointer) / `message`。
-- `CharacterValidationResult`（`rest.py:1058`）：`valid` / `issues[]`(≤100) / `estimatedPromptChars?`。
-- `CharacterPreviewRequest`（`rest.py:1078`）：`draft: CharacterDraft` + `userMessage`（1-20000，**保留 draft 包装层**）。
-- `CharacterPreviewResult`（`rest.py:1093`）：`ephemeral`(恒 `true`) / `reply` / `model?` / `usage?: CharacterPreviewUsage{input?,output?,total?}`。
+- `CharacterValidationIssue`（`frontend_contract/rest.py :: CharacterValidationIssue`）：`severity` / `code` / `path`(JSON Pointer) / `message`。
+- `CharacterValidationResult`（`frontend_contract/rest.py :: CharacterValidationResult`）：`valid` / `issues[]`(≤100) / `estimatedPromptChars?`。
+- `CharacterPreviewRequest`（`frontend_contract/rest.py :: CharacterPreviewRequest`）：`draft: CharacterDraft` + `userMessage`（1-20000，**保留 draft 包装层**）。
+- `CharacterPreviewResult`（`frontend_contract/rest.py :: CharacterPreviewResult`）：`ephemeral`(恒 `true`) / `reply` / `model?` / `usage?: CharacterPreviewUsage{input?,output?,total?}`。
 
 **实例态 / 重置**：
 
-- `CharacterPublicState`（`rest.py:987`，WS/REST 共享）：`characterId` / `characterInstanceId` / `characterRevision`(≥1) / `stateVersion`(≥1) / `state: CharacterPublicStateView`。
-- `CharacterPublicStateView`（`rest.py:969`，阶段 G 冻结）：`mood: MoodState` / `currentActivity?`(≤200) / `lastInteractionAt?` / `proactiveEnabled`(默认 false) / `updatedAt`。
-- `MoodState`（`rest.py:957`）：`label`(≤100) / `intensity`(0~1，默认 0.5) / `updatedAt`。
-- `CharacterResetRequest`（`rest.py:1105`）：`expectedStateVersion`(≥1)。
-- `CharacterResetResult`（`rest.py:1110`）：`state: CharacterPublicState` + `resetFields[]`(≤5)。
+- `CharacterPublicState`（`frontend_contract/rest.py :: CharacterPublicState`，WS/REST 共享）：`characterId` / `characterInstanceId` / `characterRevision`(≥1) / `stateVersion`(≥1) / `state: CharacterPublicStateView`。
+- `CharacterPublicStateView`（`frontend_contract/rest.py :: CharacterPublicStateView`，阶段 G 冻结）：`mood: MoodState` / `currentActivity?`(≤200) / `lastInteractionAt?` / `proactiveEnabled`(默认 false) / `updatedAt`。
+- `MoodState`（`frontend_contract/rest.py :: MoodState`）：`label`(≤100) / `intensity`(0~1，默认 0.5) / `updatedAt`。
+- `CharacterResetRequest`（`frontend_contract/rest.py :: CharacterResetRequest`）：`expectedStateVersion`(≥1)。
+- `CharacterResetResult`（`frontend_contract/rest.py :: CharacterResetResult`）：`state: CharacterPublicState` + `resetFields[]`(≤5)。
 
 **身份**：
 
-- `UserIdentityProfile`（`rest.py:719`，extra=forbid）：`userId` / `displayName`(≤64) / `preferredAddress?` / `pronouns?`(默认 `"她"`) / `locale` / `timezone` / `initialized`(bool) / `defaultCharacterId?` / `revision`(≥1) / `createdAt` / `updatedAt`（时间戳须 UTC ISO，带 `Z`/`+00:00`）。
-- `UserIdentityUpdate`（`rest.py:749`）：`displayName` / `preferredAddress?` / `pronouns?` / `locale` / `timezone` / `defaultCharacterId?` / `expectedRevision`(≥1)。
+- `UserIdentityProfile`（`frontend_contract/rest.py :: UserIdentityProfile`，extra=forbid）：`userId` / `displayName`(≤64) / `preferredAddress?` / `pronouns?`(默认 `"她"`) / `locale` / `timezone` / `initialized`(bool) / `defaultCharacterId?` / `revision`(≥1) / `createdAt` / `updatedAt`（时间戳须 UTC ISO，带 `Z`/`+00:00`）。
+- `UserIdentityUpdate`（`frontend_contract/rest.py :: UserIdentityUpdate`）：`displayName` / `preferredAddress?` / `pronouns?` / `locale` / `timezone` / `defaultCharacterId?` / `expectedRevision`(≥1)。
 
 **会话绑定快照**：
 
-- `CharacterBindingSnapshot`（`rest.py:782`）：`characterId` / `characterInstanceId` / `characterRevision`(≥1) / `displayName`(≤64) / `presentation`——嵌入 `SessionSummary.character`（`rest.py:334`）与 `Message.character`（`rest.py:281`），见 §14.6。
+- `CharacterBindingSnapshot`（`frontend_contract/rest.py :: CharacterBindingSnapshot`）：`characterId` / `characterInstanceId` / `characterRevision`(≥1) / `displayName`(≤64) / `presentation`——嵌入 `SessionSummary.character`（`frontend_contract/rest.py :: SessionSummary`）与 `Message.character`（`frontend_contract/rest.py :: Message`），见 §14.6。
 
 ### 14.3 WS `character.state.changed`（阶段 G）
 
-`CharacterStateChangedMessage`（`frontend_contract/ws_message.py:513-525`），仅 **v2 且 `features.character_state_stream=true`** 发送：
+`CharacterStateChangedMessage`（`frontend_contract/ws_message/character.py :: CharacterStateChangedMessage`），仅 **v2 且 `features.character_state_stream=true`** 发送：
 
 ```json
 {"type":"character.state.changed","conversationId":"default","characterId":"chr_builtin_elysia",
@@ -684,46 +695,46 @@ Stage A–H 落地多角色/身份契约族：**用户身份**（`UserIdentityPr
 
 - **顺序语义**：客户端只按**同一 instance 内严格递增的 `stateVersion`** 应用事件，**不能用时间字符串替代顺序**（`updatedAt`/`lastInteractionAt` 仅展示）。
 - **发射点**（均 gate `agent.character_state_stream`，仅 v2 通道）：
-  - **建连**：`server_info` 之后、`expression` 之前**强制**发一次快照（客户端刚连上需初始态；失败静默不影响握手）——`core/input/ws_handler.py:180-209`（`_emit_state_snapshot`）、gate 于 `ws_handler.py:261-263`。
-  - **`activate_session` 成功切会话后**：`ws_handler.py:1116-1118`。
-  - **回合边界**：`generation.completed` 落位、runtime flush（`stateVersion` CAS 递增）后，**仅 mood 真变化**时发（不比较 `updatedAt`/`proactiveEnabled`）——`core/cognitive/finalize.py:306-346`（`_emit_state_change_if_needed`，`_broadcast("on_character_state_changed", …, channels=v2)`）。
-- 当前三个发射 gate 硬编码 `agent.character_state_stream` 返回 **true**（`core/agent/agent.py:1200-1207`）。
+  - **建连**：`server_info` 之后、`expression` 之前**强制**发一次快照（客户端刚连上需初始态；失败静默不影响握手）——`core/input/ws_handler.py :: _emit_state_snapshot`、gate 于 `core/input/ws_handler.py :: _open_ws_connection`。
+  - **`activate_session` 成功切会话后**：`core/input/ws_handlers/session.py :: _handle_activate_session`。
+  - **回合边界**：`generation.completed` 落位、runtime flush（`stateVersion` CAS 递增）后，**仅 mood 真变化**时发（不比较 `updatedAt`/`proactiveEnabled`）——`core/cognitive/finalize.py :: CognitiveFinalize._emit_turn_completed`（`_emit_state_change_if_needed`，`_broadcast("on_character_state_changed", …, channels=v2)`）。
+- 当前三个发射 gate 硬编码 `agent.character_state_stream` 返回 **true**（`core/agent/agent.py :: Agent.character_state_stream`）。
 
 ### 14.4 generation / expression / audio_start 的身份三元组（Stage A–H）
 
 - **三元组**：`characterId`(`chr_`) + `characterInstanceId`(`chi_`) + `characterRevision`(≥1)。
-- **完整性强制**：三者**兼容全缺省**（迁移期），但**出现时必须齐备**——任一出现而其余缺失 → 模型构造抛 `ValueError`（`frontend_contract/ws_message.py:388-403` `_require_complete_character_identity`，各消息 `model_validator(mode="after")` 调用）。客户端可据此做身份对账（同一 turn 内 generation/expression/audio_start 的身份必须一致）。
+- **完整性强制**：三者**兼容全缺省**（迁移期），但**出现时必须齐备**——任一出现而其余缺失 → 模型构造抛 `ValueError`（`frontend_contract/ws_message/_types.py :: _require_complete_character_identity`，各消息 `model_validator(mode="after")` 调用）。客户端可据此做身份对账（同一 turn 内 generation/expression/audio_start 的身份必须一致）。
 - **承载消息**：
 
 | 消息 | 三元组字段位置 | validator |
 |---|---|---|
-| `generation.started` | `ws_message.py:415-417` | `:419-423` |
-| `generation.completed` | `ws_message.py:479-481` | `:483-487` |
-| `generation.failed` | `ws_message.py:502-504` | `:506-510` |
-| `expression`（`ExpressionMessage`） | `ws_message.py:561-563` | `:565-569` |
-| `audio_start`（`AudioStartMessage`） | `ws_message.py:795-797` | `:799-803` |
+| `generation.started` | `frontend_contract/ws_message/generation.py :: GenerationStartedMessage` | `:: GenerationStartedMessage._validate_character_identity` |
+| `generation.completed` | `frontend_contract/ws_message/generation.py :: GenerationCompletedMessage` | `:: GenerationCompletedMessage._validate_character_identity` |
+| `generation.failed` | `frontend_contract/ws_message/generation.py :: GenerationFailedMessage` | `:: GenerationFailedMessage._validate_character_identity` |
+| `expression` | `frontend_contract/ws_message/chat.py :: ExpressionMessage` | `:: ExpressionMessage._validate_character_identity` |
+| `audio_start` | `frontend_contract/ws_message/chat.py :: AudioStartMessage` | `:: AudioStartMessage._validate_character_identity` |
 
-- **`ExpressionMessage` 其它身份/定位字段**（`ws_message.py:553-563`）：`conversationId?` / `generationId?`（非生成表现可缺省）——v2 建连时由 `ws_handler.py:274-291` 带活动会话 role 归属发送（`expression=cs.mood, intensity=cs.mood_intensity`）。
-- **`AudioStartMessage` 其它定位字段**（`ws_message.py:786-797`）：`stream_id`(playback ID) / `format`(默认 wav) / `sampleRate?` / `durationMs?` / `conversationId?` / `generationId?`（预览等非生成音频可缺省）。
+- **`ExpressionMessage` 其它身份/定位字段**（`frontend_contract/ws_message/chat.py :: ExpressionMessage`）：`conversationId?` / `generationId?`（非生成表现可缺省）——v2 建连时由 `core/input/ws_handler.py :: _open_ws_connection` 带活动会话 role 归属发送（`expression=cs.mood, intensity=cs.mood_intensity`）。
+- **`AudioStartMessage` 其它定位字段**（`frontend_contract/ws_message/chat.py :: AudioStartMessage`）：`stream_id`(playback ID) / `format`(默认 wav) / `sampleRate?` / `durationMs?` / `conversationId?` / `generationId?`（预览等非生成音频可缺省）。
 
 ### 14.5 `live2d.directive` 帧（Stage A–H）
 
-`Live2DDirectiveMessage`（`frontend_contract/ws_message.py:572-591`）——后端给 Live2D 的低优先级表现建议，客户端按现实态优先级仲裁。**v2-only**（`protocol_version < 2` 通道防御性忽略，`Module/output/websocket.py:152-153`）。
+`Live2DDirectiveMessage`（`frontend_contract/ws_message/chat.py :: Live2DDirectiveMessage`）——后端给 Live2D 的低优先级表现建议，客户端按现实态优先级仲裁。**v2-only**（`protocol_version < 2` 通道防御性忽略，`Module/output/websocket.py :: WebSocketChannel.on_live2d_directive`）。
 
 | 字段 | 说明 |
 |---|---|
 | `conversationId?` / `generationId?` | 会话 / 生成 ID，均可缺省（非生成指令可缺 `generationId`） |
-| `characterId?` / `characterInstanceId?` / `characterRevision?` | 身份三元组（出现须齐备，validator `:587-591`） |
+| `characterId?` / `characterInstanceId?` / `characterRevision?` | 身份三元组（出现须齐备，validator `Live2DDirectiveMessage._validate_character_identity`） |
 | `expression?` / `motion?` | 表情 / 动作资源标识，可缺省 |
 | `state?` | 低优先级表现状态（`Live2DDirectiveState`：`idle`/`listening`/`thinking`/`speaking`/`happy`/`sad`/`surprised`），可缺省 |
 | `priority?` | 建议优先级 0~3，可缺省 |
 | `durationMs?` | 持续时间毫秒 0~30000，可缺省 |
 
-- 发送链路：`Module/output/manager.py:241-272`（`OutputManager.live2d_directive`，`_broadcast(..., channels=v2, capability=EXPRESSION)`）→ `Module/output/websocket.py:141-161`（`on_live2d_directive`）。**注**：本帧当前**无生产代码发射点**（仅测试 `Module/output/tests/test_output.py` 触发）——发送链路与契约模型已就绪，待后续接线；客户端需能容忍其缺席。
+- 发送链路：`Module/output/manager.py :: OutputManager.live2d_directive`（`_broadcast(..., channels=v2, capability=EXPRESSION)`）→ `Module/output/websocket.py :: WebSocketChannel.on_live2d_directive`。**注**：本帧当前**无生产代码发射点**（仅测试 `Module/output/tests/test_output.py` 触发）——发送链路与契约模型已就绪，待后续接线；客户端需能容忍其缺席。
 
 ### 14.6 会话回放与摘要的角色绑定快照
 
-- **`SessionMessageItem.character`**（`frontend_contract/ws_message.py:237-240`）：`session` 回放中 assistant 消息携带的**不可变审计快照**（该消息**实际生成时**的角色身份），`user`/`tool` 消息缺省。类型 `CharacterBindingSnapshot`。
-- **`SessionSummary.character`**（`frontend_contract/rest.py:334`）：会话绑定角色快照；**仅 legacy 未迁移会话可缺省**。
-- **`Message.character`**（`frontend_contract/rest.py:281`）：`/api/messages`、`/api/sessions/{id}/messages` 归档消息视图同形（assistant 消息携带）。
+- **`SessionMessageItem.character`**（`frontend_contract/ws_message/_types.py :: SessionMessageItem`）：`session` 回放中 assistant 消息携带的**不可变审计快照**（该消息**实际生成时**的角色身份），`user`/`tool` 消息缺省。类型 `CharacterBindingSnapshot`。
+- **`SessionSummary.character`**（`frontend_contract/rest.py :: SessionSummary`）：会话绑定角色快照；**仅 legacy 未迁移会话可缺省**。
+- **`Message.character`**（`frontend_contract/rest.py :: Message`）：`/api/messages`、`/api/sessions/{id}/messages` 归档消息视图同形（assistant 消息携带）。
 - **用途**：Electron 据 `SessionMessageItem.character` 校核「历史消息角色 = 当前会话绑定角色」；`displayName`/`presentation` 供回放渲染，`characterId/characterInstanceId/characterRevision` 供与 `character.state.changed` 的 `stateVersion` 线对齐（同 instance 快照）。
