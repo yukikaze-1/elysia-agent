@@ -261,8 +261,22 @@ def _text_cases() -> dict[str, tuple[str, str]]:
         f"for f in $(find ./data -name '*.json' -type f); do\n"
         f"  jq -r '.items[] | select(.score > {i}) | .name' \"$f\" >> out_{i}.txt\n"
         f"done\n" for i in range(8)))
+    # 下面这段 SQL 是本脚本写进 text/code_sql.txt 的**静态基准文本**，只喂给
+    # `estimate_tokens` 数 token。本仓没有任何 DB driver 或 `execute` 路径读它，
+    # 插值变量 i 也只来自下面写死的 `range(8)` ⇒ bandit B608 属**误报**，逐处豁免
+    # （只豁免这一处：不开规则级 ignore、不做文件级豁免、不改写成参数化查询——
+    # 这里根本不是查询，它就是一段要被数 token 的文本）。
+    #
+    # 指令位置的两个实测约束（改这个文件时别踩）：
+    #   ① 必须落在 bandit **报告的那一行**（字符串字面量的起始行）——放到上一行
+    #      或语句首行都不生效，finding 会原样报出来（它按被检查的 AST 节点定位）；
+    #   ② 其后不能跟解释文字——`nosec` 之后的词会被当成测试名解析并告警。
+    # 副作用：bandit 会为同一语句里"带了豁免却没被报告"的其余字面量各吐一条
+    # `nosec encountered ... but no failed test` 到 stderr；那是它的记账噪声，
+    # 与既有的 j2/HTML/autoescape 同类，**不影响退出码**。（条数是 bandit 内部
+    # 记账的副产物，随写法变化，别在注释里钉具体数字。）
     cases["code_sql"] = ("code", "\n".join(
-        f"SELECT u.user_id, COUNT(*) AS n, AVG(o.total_amount) AS avg_total\n"
+        f"SELECT u.user_id, COUNT(*) AS n, AVG(o.total_amount) AS avg_total\n"  # nosec B608
         f"FROM users u JOIN orders_{i} o ON o.user_id = u.user_id\n"
         f"WHERE o.created_at >= '2026-0{i % 9 + 1}-01' AND o.status <> 'cancelled'\n"
         f"GROUP BY u.user_id HAVING COUNT(*) > {i} ORDER BY avg_total DESC LIMIT 20;\n"

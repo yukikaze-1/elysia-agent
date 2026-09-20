@@ -52,12 +52,62 @@ _REPO = Path(__file__).resolve().parents[2]
 _CORPUS = _REPO / "Module/system_prompt/tests/fixtures/token_corpus"
 sys.path.insert(0, str(_REPO))
 
-_DEFAULT = ["01-ai/Yi-1.5-6B", "microsoft/Phi-3-mini-4k-instruct",
-            "allenai/OLMo-7B-0724-hf", "Qwen/Qwen3-8B", "Qwen/Qwen2.5-3B",
-            "deepseek-ai/DeepSeek-V3"]
+# ---------------------------------------------------------------------------
+# 远端 tokenizer 的**单一权威来源表**（repo → 不可变 revision）
+# ---------------------------------------------------------------------------
+#
+# 为什么必须有这张表：`hf_hub_download` 不传 `revision` 就是**浮动引用**——今天拉到
+# 的 `tokenizer.json` 与三个月后的可能不是同一份，而本脚本存在的意义正是"对一个
+# **可复现**的 tokenizer 家族验证估算合同"（bandit B615 / CWE-494）。
+#
+# revision 全部是 **40 位 commit SHA**（不可变）。来源与证明：
+#   * 直接取自 Hugging Face repository metadata（`HfApi().model_info(repo).sha`，
+#     并回验 `model_info(repo, revision=sha).sha == sha`）；
+#   * 其中 5/6 与本机 HF cache 的 `snapshots/<sha>/` 目录**逐字相同** ⇒ 就是
+#     Batch 18 标定/验证实际拉到的那一份（`~/.cache/huggingface/hub/`）。
+#   * `allenai/OLMo-7B-0724-hf` 无本地 cache 记录（当时下载到 /tmp，已清理），
+#     故只以 API metadata 为准，并已单独回验该 revision 下存在 `tokenizer.json`。
+#
+# 换 revision 的纪律：这是一次**基准重标定**，不是顺手升级——换了之后
+# `GOLDEN.json` 的对应列与文档里的 est/actual 区间都要重测。
+TOKENIZER_SOURCES: dict[str, dict[str, str]] = {
+    "01-ai/Yi-1.5-6B": {
+        "revision": "157a3d77ab5a8a8f079510eaa25169b547481f06",
+        "family": "Yi（合同外家族，用于演示 conservative fallback）",
+    },
+    "microsoft/Phi-3-mini-4k-instruct": {
+        "revision": "f39ac1d28e925b323eae81227eaba4464caced4e",
+        "family": "Phi-3（同上）",
+    },
+    "allenai/OLMo-7B-0724-hf": {
+        "revision": "1ee306df318ee15bfe4a76ebd5c002b0105b1ab6",
+        "family": "OLMo（llama profile 的外部验证）",
+    },
+    "Qwen/Qwen3-8B": {
+        "revision": "b968826d9c46dd6066d109eabc6255188de91218",
+        "family": "Qwen3（qwen profile 的外部验证）",
+    },
+    "Qwen/Qwen2.5-3B": {
+        "revision": "3aab1f1954e9cc14eb9509a215f9e5ca08227a9b",
+        "family": "Qwen2.5（qwen profile 的拟合家族之一）",
+    },
+    "deepseek-ai/DeepSeek-V3": {
+        "revision": "e815299b0bcbac849fa540c768ef21845365c9eb",
+        "family": "DeepSeek-V3（deepseek profile 的拟合家族）",
+    },
+}
 
-# 该家族在**生产**里会落到哪个 profile（按 `profile_for_model` 的判定）
-_PROFILE_BY_NAME = (("qwen", "cjk_opt"), ("deepseek", "cjk_opt"))
+# 默认验证集 = 上表的键（**单一权威**：repo 列表与 revision 不可能分叉）
+_DEFAULT = list(TOKENIZER_SOURCES)
+
+# 该家族按 **tokenizer 内容**归属哪个 profile。
+# ⚠️ 与生产 `profile_for_model` **不完全一致**：后者按**模型名子串**判定，所以
+# `allenai/OLMo-7B-0724-hf` 会落到 `generic`（名字里没有家族标记），而它用的
+# 其实是 Llama tokenizer ⇒ 这里标 `llama`。两者都是"标签"，不参与生产决策；
+# 有分歧时以本表（按内容）为准，差异本身登记为 `KB-73/KB-75` 的同族问题。
+_PROFILE_BY_NAME = (("qwen", "qwen"), ("deepseek", "deepseek"),
+                    ("llama", "llama"), ("olmo", "llama"),
+                    ("mistral", "mistral"))
 
 
 def _profile_for(repo: str) -> str:
@@ -66,6 +116,44 @@ def _profile_for(repo: str) -> str:
         if marker in name:
             return profile
     return "generic"
+
+
+def _resolve_revision(repo: str) -> str | None:
+    """把 repo 解析成**不可变 commit SHA**；解析不出来就返回 None（调用方跳过）。
+
+    两条路径都只产出 SHA：
+      1. `TOKENIZER_SOURCES` 里签入的 pin（**首选**：跨运行、跨机器都指向同一份内容）；
+      2. 未登记的 repo（命令行临时传入，或大小写变体）→ 向 Hub 问**当前** main 的
+         commit SHA，再用该 SHA 下载。
+
+    **诚实的边界**：路径 ② 只保证"**单次运行内**按不可变 SHA 取内容"（同一次运行里
+    不会中途换版本），**不保证跨运行可复现**——两次运行可能落在不同的 commit 上。
+    要可复现就把该 repo 登记进 `TOKENIZER_SOURCES`。这才是本表存在的意义。
+
+    绝不在失败时退化成浮动引用（tag/branch/None）：解析不出来就返回 None，调用方跳过。
+    """
+    pinned = TOKENIZER_SOURCES.get(repo, {}).get("revision")
+    if pinned:
+        return pinned
+    try:
+        from huggingface_hub import HfApi
+
+        sha = HfApi().model_info(repo).sha
+    except Exception as exc:  # noqa: BLE001 — 维护者工具：失败必须看得见
+        print(f"{repo:34} SKIP: 无法解析不可变 revision（{type(exc).__name__}: "
+              f"{str(exc)[:50]}）—— 不回退到浮动引用")
+        return None
+    if not sha:
+        print(f"{repo:34} SKIP: Hub 未返回 commit SHA —— 不回退到浮动引用")
+        return None
+    # 形状校验：只接受 40 位十六进制 commit SHA。不校验的话，一个被中间层改写过的
+    # 响应（分支名 / 短 SHA / 空串）会原样进到 `hf_hub_download` —— 那正是本脚本要
+    # 消除的"浮动引用"（B615 / CWE-494），所以宁可跳过也不要放过去。
+    if len(sha) != 40 or any(c not in "0123456789abcdefABCDEF" for c in sha):
+        print(f"{repo:34} SKIP: Hub 返回的 revision 不是 40 位 commit SHA"
+              f"（{sha[:16]!r}…）—— 不回退到浮动引用")
+        return None
+    return sha
 
 
 def main(argv: list[str]) -> int:
@@ -87,11 +175,18 @@ def main(argv: list[str]) -> int:
             counts[_classify(ch)] += 1
         feats[eid] = counts
 
-    print(f"{'family':34} {'profile':9} {'min':>6} {'median':>7} {'max':>6}  worst-min")
+    print(f"{'family':34} {'profile':9} {'min':>6} {'median':>7} {'max':>6}  worst-min"
+          f"   [revision]")
     worst_overall = {}
     for repo in (argv or _DEFAULT):
+        revision = _resolve_revision(repo)
+        if revision is None:
+            continue
         try:
+            # revision= 必须是**不可变 commit SHA**：它既是可复现性的保证，
+            # 也是 bandit B615（CWE-494）要求的那条控制。
             path = hf_hub_download(repo_id=repo, filename="tokenizer.json",
+                                   revision=revision,
                                    cache_dir="/tmp/elysia_tokenizer_validation")
             tok = Tokenizer.from_file(path)
         except Exception as exc:  # noqa: BLE001 — 维护者工具，失败要看得见原因
@@ -111,7 +206,7 @@ def main(argv: list[str]) -> int:
         med = statistics.median(r for r, _ in ratios)
         verdict = "OK" if lo[0] >= 0.75 else "NOT COVERED"
         print(f"{repo:34} {profile:9} {lo[0]:6.2f} {med:7.2f} {hi[0]:6.2f}  "
-              f"{lo[1]} ({verdict})")
+              f"{lo[1]} ({verdict})   [{revision[:12]}]")
         worst_overall[repo] = lo[0]
     uncovered = {r: v for r, v in worst_overall.items() if v < 0.75}
     if uncovered:
