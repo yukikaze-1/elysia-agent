@@ -60,11 +60,17 @@ _TITLES: dict[str, str] = {
     "pl_Lodz": "Łódź",
 }
 
-_HF_TOKENIZERS: dict[str, str] = {
-    "qwen2.5": "Qwen/Qwen2.5-3B",
-    "deepseek_v3": "deepseek-ai/DeepSeek-V3",
-    "llama3": "NousResearch/Meta-Llama-3-8B",
-    "mistral": "mistralai/Mistral-7B-v0.3",
+#: 每个仓库**钉死到 40 位 commit SHA**（与 `GOLDEN.json` 的 provenance 同源）——
+#: 浮动 revision 会让"真值"随上游变动而失去可复现性（B615：不安全下载）。
+_HF_TOKENIZERS: dict[str, tuple[str, str]] = {
+    "qwen2.5": ("Qwen/Qwen2.5-3B",
+                "3aab1f1954e9cc14eb9509a215f9e5ca08227a9b"),
+    "deepseek_v3": ("deepseek-ai/DeepSeek-V3",
+                    "e815299b0bcbac849fa540c768ef21845365c9eb"),
+    "llama3": ("NousResearch/Meta-Llama-3-8B",
+               "315b20096dc791d381d514deb5f8bd9c8d6d3061"),
+    "mistral": ("mistralai/Mistral-7B-v0.3",
+                "caa1feb0e54d415e2df31207e5f4e273e33509b1"),
 }
 _TIKTOKEN_ENCODINGS = ("cl100k_base", "o200k_base", "p50k_base")
 #: 单篇样本的字符上限（保持"小样本"性质）
@@ -72,12 +78,18 @@ _MAX_CHARS = 1000
 
 
 def _fetch_extract(lang: str, title: str) -> str:
+    """抓一篇导言。**只允许 https**（B310：显式拒绝 `file:`/自定义 scheme）。"""
     url = (f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/"
            f"{urllib.parse.quote(title)}")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"拒绝非 https URL: {url}")
     req = urllib.request.Request(
         url, headers={"User-Agent": "elysia-agent-token-calibration/1.0"})
-    # 固定 https 主机（urlopen 的 S310 在此不适用：URL 由本文件的常量表拼出）
-    with urllib.request.urlopen(req, timeout=40) as resp:  # noqa: S310
+    # nosec B310——上面的 scheme 断言是**运行时**守卫（只允许 https）；
+    # bandit 的 B310 是纯词法判据，看不见那个断言，故这里显式表态。
+    # 与仓内既有 `# nosec B701`（本地受信 .j2 模板）同一处置：受控抑制 + 理由。
+    with urllib.request.urlopen(req, timeout=40) as resp:  # noqa: S310  # nosec B310
         return json.loads(resp.read().decode("utf-8")).get("extract", "")
 
 
@@ -89,8 +101,9 @@ def main() -> int:
     from huggingface_hub import hf_hub_download
     from tokenizers import Tokenizer
 
-    hf = {name: Tokenizer.from_file(hf_hub_download(repo_id=repo, filename="tokenizer.json"))
-          for name, repo in _HF_TOKENIZERS.items()}
+    hf = {name: Tokenizer.from_file(hf_hub_download(
+              repo_id=repo, filename="tokenizer.json", revision=revision))
+          for name, (repo, revision) in _HF_TOKENIZERS.items()}
     encs = {name: tiktoken.get_encoding(name) for name in _TIKTOKEN_ENCODINGS}
 
     samples: list[dict] = []
@@ -137,9 +150,10 @@ def main() -> int:
             "titles": _TITLES,
         },
         "tokenizers": {
-            **{n: {"source": "huggingface", "repo": r, "file": "tokenizer.json",
+            **{n: {"source": "huggingface", "repo": r, "revision": rev,
+                   "file": "tokenizer.json",
                    "usage": "encode(add_special_tokens=False)"}
-               for n, r in _HF_TOKENIZERS.items()},
+               for n, (r, rev) in _HF_TOKENIZERS.items()},
             **{n: {"source": "tiktoken", "usage": "encode()"} for n in _TIKTOKEN_ENCODINGS},
         },
         "samples": samples,

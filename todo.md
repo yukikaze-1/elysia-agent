@@ -34,18 +34,14 @@
 
 ## 1. Active Backlog（真正未解决、且值得投入）
 
-### 1.1 Correctness（4 条）
+### 1.1 Correctness（1 条；Batch 20 收口 5 条、1 条转产品决策）
 
 | ID | 标题 | Reach | Sev | Ev | State | Reopen / 下一步 |
 |---|---|---|---|---|---|---|
-| **KB-82** | **gate 拒绝轮里 `submit_task` 的 tool_call 没有配对回复**（Batch 19 Challenger 新发现，主 Agent 独立 E2 复现）：一轮里同时出现 `submit_task` + 一个**幻觉工具名**时，gate 连坐拒绝整轮，而拒绝回执只为非 submit id 生成 ⇒ assistant 消息声明 `call_submit` 却**没有**对应 `role="tool"` 回复。后果：严格 OpenAI 兼容 provider（**含仓内默认 `deepseek`**）在**下一轮**直接 400（400 不在重试集合里 ⇒ 该回合响亮失败）。修法（已设计、未做）：gate 拒绝时也为 submit_task 的 id 补一条 tool 回执（"因同轮其它调用非法而未执行"），约 8 行 + 2 条用例。**同族残余（Challenger P7）**：被 gate 拒绝的那一轮在预算裁剪里**不是一组可丢的往返**⇒ 预算会由截断**更早的合法往返**来支付（实测：较早的合法结果 1512→736 token，而被拒绝的 assistant 载荷 1257 token 未被处理）；同一小批一起收口 | USER（需 LLM 幻觉工具名）| MEDIUM | **E2**(19 主 Agent 探针)+E1 | **PARTIALLY_GUARDED**（拒绝本身响亮、覆盖非 submit id；配对未保证）| **下一个小的 cognitive/工具轮批次**（或真实出现 provider 400 时）；**不是** KB-77 同根（budget vs gate 配对）|
-| **KB-78** | **密集变音符号拉丁文本击穿估算硬下限**（Batch 19 裁决 `IN_CONTRACT`，**不是** misclassified corpus）：`script_latin2_czech/polish` 是**普通拉丁文字**（`other` 占比 ≈0），走**拟合**的 `latin_ext` 类 ⇒ 可低估。**E3 实测（真 Wikipedia 散文 × 本地权威 tokenizer）**：qwen profile 捷克 **0.65–0.68** / 波兰 0.73–0.80；generic 捷克 0.67。根因：`latin_ext` 由 `latin1_accented`（5% 变音密度）标定，而捷克自然文本 12–14%。后果：6144 估算预算可放进 ~9450 真实 token > 8192 窗口 ⇒ Ollama 静默截断 | USER | MEDIUM | **E3**（真散文）+E2（签入语料）| **PARTIALLY_GUARDED**（合同/守卫已修：`UNCOVERED_CONTENT_CLASSES` 单一定义 + `TestKnownLimitations::test_dense_accented_latin_is_a_registered_uncovered_class` 钉住区间**与击穿下限的配对集合**（只钉 min/max 会漏掉“部分重标定”，Challenger M3b） + 验证脚本单独报告缺口；**估算器未改**）| **估算器标定批次**：按既有 LP 流程重标定 `latin_ext`。**可行性（Challenger 两轮复核后的实测，直接代入系数）**：签入语料闭合需 `latin_ext` qwen 0.860→**1.181**、generic 0.200→**0.503**（记录值 1.18 / 0.56 略保守；代入后最坏 0.778 ⇒ 守卫按设计退役）；真实捷克/波兰散文闭合需 qwen ≈**1.54**、generic ≈**0.34**。**⚠️ 真实缺口未闭合**：语料比真散文更重音密集（czech 19.9% / polish 10.5% vs 真 cs 12.3–14.2% / pl 3.7–8.3%）⇒ 只按语料配方重标定会让守卫在**真散文仍 0.723–0.740（9 篇中 4 篇 < 0.75）**时退役；下一批必须同时纳入低密度波兰语真散文样本，且退役判据已从 0.75 抬到 **0.775**（= 合同下限），把 `latin_accent` 语料转正进合同并重跑 holdout；**必须**与 `_CONTRACT_MAX_RATIO` 的 T 复核同步 |
-| **KB-56** | **「加载更多」跨会话串消息**（Batch 19 由 INSUFFICIENT_EVIDENCE **升级为 CONFIRMED-机制**）：回放项不含 `_id` （`session.messages_for_client` 只发 role/parts/content/message_id/timestamp）⇒ 游标恒为空，而 `chatStore.loadMoreMessages` 打的是**全库** `GET /api/messages`（无 `before` ⇒ 全局最新 50 条）。E2 进程内复现：`repo.query(before=None, limit=3)` 返回 `[('a1','A'),('b1','B'),('b2','B')]`（**含 B 会话**）。后果 = 会话真相被污染（别会话的消息出现在当前聊天）；修复点在**前端 store**（改打已存在的 `/api/sessions/{id}/messages`）或后端给全局端点加会话过滤。仍缺的证据：一次浏览器/DOM 级抓取 | USER | MEDIUM | **E2**(19 机制)+E1 | **PARTIALLY_GUARDED**（会话域端点已存在，前端未用）| 修复点很小但属前端改动（Batch 19 前端零变化）；前端批次或专门小修 |
-| **F13** | 系统注入文本（唤醒词 / 任务结果）被当作"用户消息"参与 **mood 判定 / 记忆提取 / 反射器**（历史侧已豁免，这三条链没有）——E2：失败任务的唤醒文案让 `_detect_mood` 判出 `sad` | USER | LOW-MED | E1+**E2** | **PARTIALLY_GUARDED**（`CT-T7` 只钉历史侧） | 修复面很小：在 mood/consolidator/reflector 三个消费点用同一 `is_task_result` 判据；**或**统一裁决合成注入语义（见 PD-13） |
-| **KB-41** | `_handle_task_result` / `_handle_system_tick` 的抢占**没有 ownership 判据**：后台任务终态唤醒 / 主动搭话 tick 落在 admission 窗口时会抢占**尚未接管输入**的用户回合 ⇒ 已 ACK 输入**静默丢**（E2：`cancelled_pre_ownership`、session 里不存在、唤醒回合多跑 2 次 LLM；用户输入路径 Batch 12 已有判据，这两条没有） | INTERNAL | LOW | **E2**(12)+**E2**(19) | **PARTIALLY_GUARDED** | 给两个 handler 补与 `_handle_user_input` 同一份 `current_turn_owns_input` 判据；窗口很窄（tick 门=相位 IDLE + 1s 轮询；task result 需恰好完成），故触发式 |
-| **KB-48** | 输入层两条**直投**入口在停机窗口仍向 bus 投递：`ws_handler.do_transcription`（`:733`）与 `ws_v2._handle_voice_commit`（`:787`）**不查** `is_service_running`（同类入口已按 S2-R2-4 加了）⇒ RO1 清扫**之后**投进的事件会跨 epoch 复活（E2：真 `stop()` 返回后真 `do_transcription` 仍投进总线，`start()` 后被消费进历史） | DEPLOYMENT | LOW | **E2**(14)+**E2**(19) | **PARTIALLY_GUARDED** | 两条入口补同一 `is_service_running` 判据（`voice.commit` 用既有 `_not_accepted_error(agent)` → `AGENT_BUSY`，**零新增 wire 枚举**）|
+| **F13** | 系统注入文本被当作"用户消息"参与 **mood 判定 / 记忆提取 / 反射器**（历史侧已豁免，这三条链没有）——Batch 20 主 Agent 独立 E2 复现：失败任务的唤醒文案让 `_detect_mood` 判出 `sad`，且同一字符串被送进 `consolidator.consolidate(user=…)` 与 `engine.buffer_message(user_msg=…)`。**两条真实入口**（任务终态唤醒 `is_task_result=True`；主动搭话 tick **无任何 provenance flag**），唤醒词**不是**文本注入路径 | USER | LOW-MED | E1+**E2**(19)+**E2**(20) | **PRODUCT_DECISION_REQUIRED / BLOCKED_BY_PD-13**（contract 只裁决了会话历史侧；主动搭话那半被 Batch 15 记录**钉在现状**「否则就是未经授权的会话真相变更」）| **owner 裁决 PD-13**：合成注入在 mood / 记忆 / 反思三条链上算不算用户 authored。裁决前**禁止**由 AI 自行补过滤（见 `invariants.md` §4.10 SY1–SY3）。修法成本已知：`is_task_result` 需跨 `_finalize_turn` 边界转发 + 给 tick 引入 provenance 参数 |
 
-### 1.2 Deployment / Migration（2 条）
+
+### 1.2 Deployment / Migration（1 条）
 
 | ID | 标题 | Reach | Sev | Ev | State | Reopen / 下一步 |
 |---|---|---|---|---|---|---|
@@ -99,7 +95,7 @@
 | **KB-70** | provider 侧固定框架（默认注入的 system prompt、tool 样板）观测不到：实测 ≈22–72 token 有界常数（守卫上界 96） | 某 provider 的框架变成非平凡函数（随消息数/工具数增长）|
 | **KB-71** | `image_url` 固定计 1024 token（未验证）；同族不一致：`debug/prompt_recorder.py` 按 20 字符计同一张图。多模态链路**可达**（`providers.yaml::llm.mimo.supports_multimodal=true`）但本机无 VLM 真值 | 接入真正 vision provider 并用 provider usage 标定（按分辨率分档）|
 | **KB-73 / KB-75** | `profile_for_model` 是**名字子串匹配**、不是权威 metadata：实活误判 `ollama/deepseek-r1:8b`（Llama 蒸馏拿 deepseek profile，实测 1/38 样本 <0.775，最低 0.67）；`switch_model` 接受任意 id、无 allowlist | 有进程内可读的权威家族信号（`ollama show` 的 `architecture` 缓存 / provider 声明 tokenizer family）|
-| **KB-74** | 估算合同外的**两条轴**（家族 = generic 保守并集；内容 = `repeat`/`script`/`latin_accent`）无法用有限字符类闭合；`script` 由固定上界覆盖（只许高估，实测最坏高估 **13.9×**）| 语料/系数变更（见 KB-78 的标定批次）|
+| **KB-74** | 估算合同外的**两条轴**：家族（generic 保守并集）与内容。**内容轴在 Batch 20 收窄**：`latin_accent` 只剩越南语（捷克/波兰已按 KB-78 进合同，见 TE10）；`repeat`（[0.58, 5.34]）与 `script`（只许高估，实测最坏高估 **13.9×**）**不可闭合**——它们由 `UNCOVERED_CONTENT_CLASSES` 单一定义 + `TestKnownLimitations` 钉住区间 | 出现新的"有限字符类无法闭合"的内容轴，或某 provider 的词表使 `repeat` 区间越界 |
 | **KB-76** | 工具 schema 结构化常量在"参数量多而描述极短"的形状上高估到 1.57×（方向安全；preview 不传 tools ⇒ 无 false reject 路径）| 出现真实的高参数低描述工具集（自动生成的 CRUD），按实测重标定 |
 | **KB-2** | LLM 偶不发 `<mood>`：回退链是**设计好的**降级路径（确定性、有用例），omission 是模型合规问题，不产生假状态 | mood 明显错误/冻结 ⇒ 才考虑结构化输出能力 |
 | **KB-4** | VAD 易被环境音触发：`aggressiveness=3` 已在两处硬编码，且已有 5 道缓解（最短段/最短语音块/冷却/短丢弃/空转写丢弃）；残余漏触发率是**产品选择**（PD-15）| 用户报告"嘈杂环境里角色自打断"|
@@ -160,7 +156,7 @@
 | **PD-9** | 任务中心（TaskSystem）是否恢复？（2026-08-30 暂缓，恢复激励点已写明）| FEAT-16 | 暂缓 |
 | **PD-10** | 两套 CLI driver 去留（`run_repl` 0 代码消费者但 5 处文档承诺 vs `app.py::run_interactive` 真实入口，行为已分岔）| AR-12 | 8→5 处文档承诺 |
 | **PD-11** | 记忆/工具参数的**写侧** `max_length` 是否加 | DEP-4 | 只做了运行期截断 |
-| **PD-13** | **合成注入的会话语义**：任务唤醒不写 user 历史、主动搭话写、mood/记忆侧都把唤醒文案当"用户说的"（F13 + KB-52 同根）| F13 / KB-52 | 需统一裁决 |
+| **PD-13** | **合成注入的会话语义**：任务唤醒不写 user 历史、主动搭话写、mood/记忆侧都把唤醒文案当"用户说的"（F13 + KB-52 同根）。**Batch 20 已把边界划清**（`invariants.md` §4.10）：合同只裁决了**会话历史侧**（`is_task_result` 豁免）；mood / 记忆 / 反思三条链**无任何合同依据**，且主动搭话那半被 Batch 15 记录钉在现状 ⇒ 过滤属产品决策，AI **不得**自行补。**需要 owner 选一种**：(a) 控制刺激仅触发思考/响应，不进用户派生认知；(b) 合成事件视为完整会话事件（进部分认知路径）；(c) 混合——进短期认知、不进持久记忆/用户档案 | **F13（当前唯一阻塞项）** / KB-52 | **BLOCKING F13**：需统一裁决；裁决后修法成本已知（`is_task_result` 跨 `_finalize_turn` 转发 + 给 tick 引入 provenance 参数） |
 | **PD-14** | **跨回合重放语义**：同 `clientRequestId`/`message_id` 的"合法重发"与"重放"在 wire 上不可区分（KB-57 会产生两条历史）| KB-57 | 需 wire 决策 |
 | **PD-15** | VAD 灵敏度策略（`aggressiveness` 已满 + 5 道缓解；残余漏触发率是产品选择：降噪 / 能量门 / 开关）| KB-4 | 需产品选择 |
 | **PD-16** | session title 长度上限是否对齐（`PATCH` 无上限 vs `POST`/搜索 200）| KB-17 | 形式确认即可 |
@@ -227,15 +223,19 @@ PD-2（409 报**权威库现值**，未知则省略，Batch 6 `616e4993`）、PD
 
 ## 6. Closed / Superseded / Falsified Archive（一行索引）
 
-> ✅ = 本批（Batch 19）关闭/重分类。详细证据在对应 `docs/review/` 执行记录。
+> ✅ = 已关闭/重分类。详细证据在对应 `docs/review/` 执行记录（Batch 19 与 Batch 20 的记录各一行）。
 
 | ID | 一句话 | 关闭于 |
 |---|---|---|
+| **KB-82** | ✅ gate 拒绝轮的协议完整性：整轮连坐时 `submit_task` 的 tool_call 只有声明、没有 `role="tool"` 配对 ⇒ 严格 provider 下一轮 400。**协议不变量 = 声明的 tool call 集合与终态回执集合相等**（集合与重数），配对 ≠ 执行 | **FIXED** `Batch 20`：`core/cognitive/tools.py::_gate_tool_calls` 第 5 步为 submit id 补终态失败回执；守卫 `core/cognitive/tests/test_tool_pairing.py`(14，修前 5 红) + `test_tool_gate.py` 语义更正的 1 条；变异 M82-1/2/3/4 全杀 |
+| **KB-78** | ✅ 密集变音符号**普通拉丁**文本（捷克/波兰真散文）击穿估算硬下限（实测 0.637–0.749 < 0.75）⇒ 预算判"装得下"而 provider 静默截断。根因：`latin_ext` 由 5.0% 变音密度的合成样本标定 | **FIXED** `Batch 20`：封闭形式重标定 `latin_ext`（只动实际未达标的 4 个 profile；qwen 0.860→1.870 / llama 1.672→1.680 / mistral 3.403→3.410 / generic 0.200→0.560）+ **真散文 holdout**（12 篇 Wikipedia 导言 CC BY-SA 4.0 × 7 权威 tokenizer）+ 生成脚本 `scripts/token_corpus/build_latin_prose_holdout.py`；守卫 `Module/system_prompt/tests/test_latin_prose_contract.py`(31)；合同内语料 band **不变**（qwen 仍 [0.779, 1.191]）；不变量 **TE10/TE11**；代价（越南语 2.47→2.97）登记并钉住；变异 M78-1/2/3/4 全杀 |
+| **KB-56** | ✅ 「加载更多」打**全库**端点 + 回放项无 `_id` ⇒ 首页恒为全局最新 50 条、且全库 `_id` 会被 latch 成游标（跨会话污染**无界**） | **FIXED** `Batch 20`（前端）：store 绑定会话身份（`restoreFromServer(…, conversationId)`）+ 请求发起时冻结 `(sessionId, epoch)`、改打会话域端点、陈旧响应在**任何 store 变更之前**丢弃（SI1–SI4）；守卫 `frontend/src/stores/chatStore.test.ts`(11，修前 **11 红**)；接入 `frontend/package.json::test` 与 CI；变异 M56-1/2/3 全杀 |
+| **KB-41** | ✅ 非用户来源的回合入口（`_handle_system_tick` / `_handle_task_result`）**无条件** `cancel_current()` ⇒ 落在 admission 窗口时已 ACK 用户输入**静默丢**（E2：session 里查不到、tick 回合却进了历史） | **FIXED** `Batch 20`：与 `_handle_user_input` **同一份** `_turn_is_pre_ownership` 判据；tick **放弃并留痕**（可再生），task result **推迟**（`_deferred_task_results`，落定后重投，**不写 durable ack**）；守卫 `core/agent/tests/test_system_event_preemption.py`(9，修前 5 红且全为断言)；不变量 **SE1/SE2**；变异 M41-1/2/3 全杀 |
+| **KB-48** | ✅ 两条直投入口（`do_transcription` / `_handle_voice_commit`）不查生命周期 ⇒ RO1 清扫**之后**投进的事件跨 epoch 复活（E2：`stop()` 返回后真转写进总线，`start()` 后进历史） | **FIXED** `Batch 20`：两条入口补**同一** `status.is_service_running` 判据（`voice.commit` 置于一切副作用之前、复用既有 rejected → `AGENT_BUSY`，零新增 wire 枚举）；守卫 `core/input/tests/test_runtime_epoch_input_boundary.py`(7，修前 3 红且全为断言)；不变量 **RO4**；变异 M48-1/2/3 全杀 |
 | **KB-77** | ✅ ReAct 第 2..N 轮**完全不在预算内**：首轮 6123 ≤ 6144，追加一条接近单条上限（2000 token）的工具结果后第 2 轮 **8205 > 8192 窗口**（E2；真实 tokenizer 交叉验证 9056–10231），而 Ollama 超窗是 200+静默截断 ⇒ 人设区静默劣化 | **FIXED** `Batch 19`：`core/prompt/message_builder.py::enforce_round_budget`（三档：丢历史 → 整组丢较早往返 → 截最新一组 tool 内容）+ `_think_loop` 每轮调用；不变量 **TE9**；守卫 `core/cognitive/tests/test_react_round_budget.py`(7) + `core/prompt/tests/test_round_budget.py`(9)；修前 2 红、**variant M1–M5 全杀** |
 | **KB-79** | ✅ 维护者工具 `validate_families.py` **全部家族 SKIP 时仍 exit 0**（无网络 = 看起来"通过"）| **FIXED** `Batch 19`：0 个家族产出结论 ⇒ **exit 2 拒答**；未覆盖 ⇒ exit 1；守卫 `scripts/tests/test_validate_families_exit.py`(6) |
 | **KB-80** | ✅ `validate_families.py` 的过滤条件与 CI 合同不一致（`!= "repeat"` vs `{"repeat","script"}`）⇒ 对合同**故意排除**的样本报 `NOT COVERED`（误导性假红）；且 Latin-2 的真实击穿靠 `script` 大类躲过硬下限 | **FIXED** `Batch 19`：`budget.UNCOVERED_CONTENT_CLASSES` **单一定义**（合同测试与验证脚本共用）+ `latin_accent` 单独报告（对齐过滤 ≠ 藏缺口）；守卫同上 |
 | **KB-81** | ✅ 旧 profile 名残留（`cjk_opt`）：可执行 0 处、**全在文档**（`invariants.md`、Batch 18 记录、验证脚本 docstring）| **FIXED** `Batch 19`（docs）：`invariants.md` 改为 6 profile/11 字符类/T 指向代码表 + 新增 TE9；数字更正（高估上界 13.9×、repeat 区间）|
-| **KB-78** | ✅ **新登记（Batch 19）**：密集变音符号拉丁文本击穿硬下限 ⇒ 见 §1.1（Active）| 登记并加守卫；估算器标定批次修 |
 | **KB-30** | ✅ 回合级多写入无 rollback | **FALSIFIED**（E2，Batch 19）：写入都在最后一个 pre-claim await 之后，post-claim 取消清 `_clock` |
 | **KB-45** | ✅ `_handle_user_input` 抢占分支不可达 | **FALSIFIED**（E2，Batch 19）：直投 barge-in 正常走该分支 |
 | **AR-7** | ✅ 包级伪环（`prompt_assembler` + `consolidator`）| **FALSIFIED**（E1/AST，Batch 19）：`core.memory → core.prompt` 边**根本不存在**（MemoryLLM Protocol 已消除）|

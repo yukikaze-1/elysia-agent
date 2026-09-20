@@ -93,15 +93,17 @@ metadata，本批不新造（"限制输入长度和输出 token" 那句设计稿
 2. **判据是有界近似估算，不是 provider tokenizer**（**Batch 18 重写**）：`estimate_tokens`
    按 **11 个字符类**加权、按 resolved model 选 profile（6 个家族：qwen / deepseek /
    llama / openai / mistral / generic，各自声明的 T 见 `budget.py` 的表），合同为
-   `est/actual ∈ [0.75, T]`，见 §1.2 TE1–TE9。
+   `est/actual ∈ [0.75, T]`，见 §1.2 TE1–TE11。
    **它仍然不是精确计数**，残余边界必须知道：①**合同外的 `repeat` 类**（同字符
    重复，实测区间 [0.58, 5.34]）——词表信息不在字符统计里，无法用启发式闭合；
    ②**provider 侧固定框架**（默认注入的 system prompt、tool prompt 样板）观测不到，
    实测 ≈22–72 token 的有界常数（Ollama/Qwen）；③**图片 token** 仍是未验证的固定
-   1024；④**合同外的 `latin_accent` 类**（密集变音符号的拉丁文本：捷克/波兰/越南）
-   ——它**不是**"只许高估"的脚本类，走的是拟合系数、**实测击穿 0.75 硬下限**
-   （真 Wikipedia 散文 × 本地权威 tokenizer：qwen 捷克 0.65–0.68 / generic 0.67；
-   Batch 19 / KB-78），修法是重标定 `latin_ext`（已验证可行，属估算器标定批次）。
+   1024；④**合同外的 `latin_accent` 类**只剩**越南语**（堆叠变音符号）——它与
+   **捷克/波兰**在 `latin_ext` 里是两套互斥的 token 经济：同一标量不可能同时覆盖
+   （覆盖捷克/波兰所需系数会把越南语高估 2.5–3.0×；覆盖越南语所需系数是**负数**）。
+   **Batch 20 / KB-78 已修**：`latin_ext` 重标定后捷克/波兰**真散文**（12 篇
+   Wikipedia 导言 × 权威 tokenizer）全部 `≥ 0.775` 进合同（见 §1.2 TE10），代价是
+   越南语从 2.47 高估到 **2.97**（方向安全，区间被 TE11 钉住）。
    三份未覆盖清单由 `budget.UNCOVERED_CONTENT_CLASSES` **单一定义**。旧条目所述"CJK 偏高 5% / JSON 偏低 0.6×"
    已作废：那是**退化探针**（`"你" * N`，恰好 1.000 token/字）测出来的数字，
    自然中文实测是 0.60 token/字（高估 67%），见
@@ -724,6 +726,25 @@ USER_INPUT **没有重投**（`_handle_interrupt` 只搬移不复制），`gener
 | **AD7** | ownership 判据**不得陈旧**：新回合一旦开始执行，就不得再冒领上一回合的 `_generation_ctx`（否则停在 `_process_lock` 上的回合会被误判为"已接管"，第三条消息抢占它 ⇒ 已 ACK 输入静默丢失且**零 disposition**） | `::test_ownership_judgement_is_never_stale_for_a_new_turn`（Challenger C 反证的回归守卫） | 同上 | **push/backend** |
 | **AD8** | 排队消息不得因为"在途回合从未离开 IDLE"而永久滞留：回合结束（取消/异常/正常）后若已空闲且仍有排队消息，必须重新获得处理权——复用既有出队路径，不新增调度器/轮询 | `::test_turn_ending_without_state_change_still_drains_pending`（PRE_FIX_RED；生产形态 = P0-3 `StorageUnavailableError` 在窗口内 fail-closed） | 同上 | **push/backend** |
 
+**SE1/SE2（Batch 20 补，KB-41）——非用户来源的回合也不得抢占"尚未接管输入"的回合**：
+
+AD3 的判据（`not_owning` → 排队）当初只接在 `_handle_user_input` 上。另有**两条**
+非用户来源的回合入口——`_handle_system_tick`（主动搭话）与 `_handle_task_result`
+（后台任务终态唤醒）——它们**无条件** `cancel_current()`。于是同一个 admission 窗口
+里，一个恰好到达的 tick 或任务终态会把用户回合连那条**已 ACK** 的输入一起取消
+（`cancelled_pre_ownership`、不进 session/pending、不重投）。窗口窄（tick 门是相位
+IDLE + 1s 轮询；task result 要恰好完成）但真实。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **SE1** | 系统来源的工作**不得**在 ownership 交接窗口里抹掉或搁浅已 accepted 的用户输入：判据与 AD3 **同一份**（`_turn_is_pre_ownership`，读 `current_turn_owns_input` + `_started_cognitive_tasks`）；系统事件的处置按其**可再生性**区分——proactive tick 可再生（`IdleMonitor` 1s 轮询 + `is_completely_idle` 门）故**放弃并留痕**；`TaskResultData` **不可再生**故**推迟**（`_deferred_task_results`）并在用户回合落定后重新入队 | `core/agent/tests/test_system_event_preemption.py::test_se_t1_accepted_input_survives_system_tick_in_window`（PRE_FIX_RED）、`::test_se_t2_accepted_input_survives_task_result_in_window`（PRE_FIX_RED）、`::test_se_t4_multi_input_with_system_event_keeps_fifo`（PRE_FIX_RED）、`::test_se_t6_no_silent_loss_under_event_flood`（PRE_FIX_RED） | `make test-quick` / `test-normal` | **push/backend** |
+| **SE2** | 修 SE1 **不得**让系统事件饿死，也不得改变用户取消的优先级：proactive 回合在真正空闲时照常起（liveness）；`INTERRUPT`（停止按钮/语音取消）**仍照常**抢占窗口内的回合 | `::test_se_t3_system_event_first_then_user_input`、`::test_se_t7_system_event_not_starved`、`::test_se_t9_interrupt_source_unchanged` | 同上 | **push/backend** |
+
+**SE1 的推迟语义（与 Issue B 的关系）**：推迟路径**刻意不写** durable ack——
+`delivered=True` 的唯一授予点仍是 `_handle_task_result` 里 **spawn 之后**那一步。
+重启时清空暂存（权威是库里 `delivered=False` 那一行，由 `task_result_redelivery`
+补投）；停机时清空并记 `disposition=deferred_by_shutdown`。
+
 **明确不做**（本批取舍）：不延后 ACK（会把"排队时客户端长时间没有 ACK"引入 wire
 契约）、不把 ACK 前移成持久化（本批**不是** durable queue 项目）、不新增 FSM 状态 /
 转换边、不新增 wire 枚举、不改 pending 出队机制、不加 watchdog / 轮询 /
@@ -892,15 +913,27 @@ commit `c029110e`）都按"停机即结束 ownership"写；而 `Agent.stop()` �
 被接受的输入是**合法**的新 epoch 工作，start 侧清扫会误伤它们）、不改 FSM / 不改
 pending 容器 / 不改 `_process_lock` / 不加 watchdog 或轮询、不触碰 wire 与 schema。
 
-**RO1 的残留缺口（已登记，未修）**：清扫发生在 `stop()` 的最后一步，因此
-**清扫之后**才被投进总线的事件仍会跨 epoch 存活。今天有两条直投入口**不查**
-`status.is_service_running`（`core/input/ws_handler.py::do_transcription`、
-`core/input/ws_v2.py::_handle_voice_commit`；另两条——`do_interrupt` 与
-`voice_sessions` REALTIME——已按 S2-R2-4 加了该判据），它们在停机窗口尾部（以及
-`runner.cleanup()` 期间）仍可投递 → 新登记 **KB-48**（**E2 实测**：`stop()` 返回后真
-`do_transcription` 仍能把事件投进总线，`start()` 后进 session/LLM）。**归属**：与 RO1 同族但
-**不同权威**（输入层准入 vs. Agent 停机边界），按"一个 root-cause cluster"的约束
-本批不合并修复（§48）。
+**RO4（Batch 20 补，KB-48）——准入边界必须覆盖**每一条**直投入口**：
+`stop()` 建立的是**硬**准入边界：在 epoch N 创建的生产者不得在 N 已停止后把用户
+输入投进队列（否则同一实例 `start()` 后会被当新输入消费 = 跨 epoch 复活）。判据只有
+一处（`status.is_service_running`）；处置与 `process_message` 一致——**拒收而不排队**
+（停机窗口没有"稍后再处理"）。
+
+为什么 RO1 的清扫挡不住它：清扫是 `stop()` 的**最后一步**，而输入层的两条生产者
+（`do_transcription` 的 STT 回传、`ws_v2._handle_voice_commit`）跑在 aiohttp 的 WS
+任务上——`stop()` **不**取消它们（`runner.cleanup()` 在 `agent.stop()` 返回**之后**
+才跑）。窗口 = 「RO1 清扫 → `stop()` 返回 → 在途生产者才投递」。修前 E2：`stop()`
+返回后真 `do_transcription` 仍投进总线，`start()` 后那条文本进 session / 被喂 LLM。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **RO4** | 直投 `UserInputData` 的**每一条**生产者在入队前都问同一个生命周期权威（`status.is_service_running`）；被拒者**不产生副作用**（不 reserve work、不写幂等 accepted、不发 `accepted` ACK），且**不跨 epoch 复活**。`TaskResultData` 等 durable 事件**不**受这条约束（RO2 的分类边界不变） | `core/input/tests/test_runtime_epoch_input_boundary.py`（7：RE-T1/R2 为 PRE_FIX_RED，修前 `bus.pending_user_inputs==1` 且重启后文本进历史；RE-T3/T4 是运行中／新 epoch 的负向控制；RE-T6 钉 durable 保全；RE-T7 钉 `stop()` 仍有界） | `make test-quick` / `test-normal` | **push/backend** |
+
+**修法边界（Batch 20 实测）**：`voice.commit` 的判据放在**一切副作用之前**
+（幂等 lookup / claim / `reserve_work`），故被拒的提交不留下任何预占——与
+`test_process_message_rejects_before_v2_work_reservation` 同款收口；它复用既有
+rejected 路径与 `_not_accepted_error`（`AGENT_BUSY`），**零新增 wire 枚举**。
+`do_transcription` **仍然回显**转写（客户端需要清掉自己的录音态），被拒的只有入队。
 
 **合法 transient 的边界（Batch 14 实测，KB-26 / KB-28）**：
 
@@ -1011,7 +1044,56 @@ process()  取锁**之前**清空 _generation_ctx / _admission_* / _turn_message
 sessions_hits=2 archive_hits=1`，与正常回合的对照同值）——本批"不承诺 durability"
 指的是**进程硬杀**（`accepted ≠ durable`），不是"取消路径永远不落 `sessions`"。
 
-### 4.9 Session data integrity（SD）
+### 4.10 Synthetic injection provenance（SY）— **合同只覆盖会话历史**
+
+来源：Batch 1.8 §11.4（明确 deferred）+ Batch 20 的独立复核（F13）。
+**这一节的作用是把"已裁决的"与"未裁决的"分开写清楚**——因为 F13 的处置取决于后者。
+
+**已裁决（会话历史侧，唯一一条）**：`session history` 记录"用户真的提交过、且被
+runtime 接管过的每一条输入"；唯一豁免是 `is_task_result`（合成系统唤醒，直接构造为
+`None` ⇒ **不可能**被写成用户历史）。守卫：`test_ct_t7_synthetic_task_result_turn_is_not_
+recorded_as_user_history`（**按条数**钉住）。注意 CT-T7 是**测试级**登记，不在 §4.8 的
+CT1–CT6 表内。
+
+**未裁决（Batch 20 复核结论：`PRODUCT_DECISION_REQUIRED`，见 PD-13）**：合成文本进入
+`mood` 判定 / 记忆提取 / 性格反思这三条链**没有任何合同依据**——没有 invariant、
+没有测试、没有 wire/UI 契约裁决过"合成注入算不算用户 authored"。Batch 1.8 把它**显式
+留在范围外**（"系统注入文本被当成用户发言这个更大的问题不在本批范围"），Batch 15 的
+记录则把主动搭话那半**钉在现状**（"`_handle_system_tick` 的主动搭话
+（`is_task_result=False`）**保持修前行为**（会被记录）…否则就是未经授权的会话真相变更"）。
+故本仓**不得**由 AI 自行补一个过滤条件——那是产品语义决定。
+
+**Batch 20 的独立复现（E2，真实 `drain_mailboxes_once` → `_handle_task_result` →
+`_build_wake_up_message`）**：一个失败的后台任务终态产生的合成文本被
+`_prepare_think_input` 原样当作 `user_message`，于是
+
+```text
+[系统通知] 当前时间: … 你此前委派的后台任务（帮我查天气）未能完成。失败信息: …
+  → EmotionDetector._detect_mood(...)      = "sad"          （mood 链）
+  → consolidator.consolidate(user=…, …)                      （记忆链，且以用户名作前缀渲染）
+  → engine.buffer_message(user_msg=…, …)                     （性格反思链，role=用户名）
+```
+
+**两条真实入口 + 一条不是**：①后台任务终态唤醒（`is_task_result=True`，有 flag）；
+②主动搭话 tick（`agent.py` 传入 `"（系统提示：用户已经N秒没有说话了…）"`，**没有任何
+provenance flag**）；③**唤醒词不是文本注入路径**（只发 `wake` 帧，前端闪一下指示器）。
+`is_task_result` 在 `_finalize_turn` 边界**被丢弃**（`core/cognitive/finalize.py` /
+`streaming.py` / `tool_phase.py` 里零引用），所以下游三个消费者拿到的只是一条普通字符串。
+
+**没有可用的 provenance 载体**：`core/schema/message.py` 只有自由 `metadata`（生产写入者
+仅两处，都与来源无关）；`frontend_contract` 的 `Message` / `V2TextMessage` 无 source 字段；
+`LongTermMemory.insert` 的 `source` 只标**写入路径**（`"consolidation"`）而非输入来源。
+机器可判别的信号在边界上**存在**（`_dispatch_event` 的 `isinstance` 分派 / `event_type`），
+只是被压成了一个 bool（或直接丢掉）。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **SY1** | 系统产生的控制刺激必须在**整个下游认知处理**中与用户 authored 输入可区分（不得靠文本前缀/字符串内容判断） | **未实现**——正是 PD-13 要裁决的东西 | — | — |
+| **SY2** | 合成刺激**不得**在没有产品合同明确授权的情况下变成持久的用户证据（LTM / L2 / 用户档案） | 现状：**不成立**（mood / 记忆 / 反思三条链都receive它） | — | — |
+| **SY3** | 过滤合成输入**不得**同时抑制正常用户学习或唤醒/主动搭话本身 | 若 PD-13 裁决为"过滤"，本条是修法的验收条件（负向控制：同内容的真实用户输入必须仍进原路径） | — | — |
+
+**判定口径（Batch 20）**：F13 = `CONFIRMED`（机制真实、E2 可复现）+ `BLOCKED_BY_PD-13`
+（语义未裁决）。**本批不动 production 代码**——按"禁止 AI 自行选择产品语义"的纪律。
 
 来源：[2026-09-19 Batch 16 执行记录](../review/2026-09-19-Batch16-session-data-integrity-执行记录.md)。
 两个 finding 都是**数据不变量**层面的缺陷，不是"索引看起来不完整"：
@@ -1117,6 +1199,8 @@ API（`sessions[]/has_more/cursor` 与 `SessionSummary` 逐字段不变）、不
 | **TE7** | **合同外文字只许高估**：婆罗米系/东南亚/希伯来/阿拉伯/希腊/亚美尼亚/西里尔这些跨家族差 3–6× 的文字，由**固定在已验证家族实测上界**的系数覆盖 ⇒ 无静默截断面；代价（某些家族高估最多 **13.9×**：`other`=3.0 × o200k 的阿拉伯文）是显式接受的 | `::TestKnownLimitations::test_out_of_scope_scripts_never_underestimate` | `make test-quick` | **push/backend** |
 | **TE9** | **回合内每一轮都要重施同一份预算**（Batch 19 / KB-77）：ReAct 的工具轮会把 assistant `tool_calls` 与 `role="tool"` 结果**原地**追加进同一个 `messages` 数组，而每一轮都整份重发 ⇒ 第 2..N 轮必须在**发下一轮之前**用同一份 canonical 预算再裁一次（先丢历史 → 再整组丢较早的工具往返 → 最后截最新一组的 tool 内容）。**永不丢**：system、当前用户消息、最新一组的配对结构——且"不产生孤儿 `role=\"tool\"`"由**结构性判据**（`turn_tail_start` + `_deletion_is_safe`）保证，不依赖边界算得对（Challenger 反证的"无 user 条目"形状已补守卫）。受保护内容**自身**超预算时如实报 `over_budget`（log ERROR），**不假装成功**——所以本条是"必须被重施 + 残留必须可见"，不是"已被强制满足"。修前实测：首轮 6123 ≤ 6144，追加一条接近单条上限（`max_result_tokens=2000`）的结果后第 2 轮 **8205 > 8192 窗口**，第 5 轮 16533；Ollama 超窗 = 200 + 静默截断（本机复测：~11k token 的 prompt 得 `prompt_eval_count=8192`、HTTP 200）。热路径成本实测 ≈23 ms（15.7k 字符/17 条）～73 ms（55.9k 字符/38k est token），O(n)（逐条可加性有守卫） | `core/cognitive/tests/test_react_round_budget.py`（7，修前 2 红）、`core/prompt/tests/test_round_budget.py`（12，含 Challenger 反证形状） | `make test-quick` / `test-normal` | **push/backend** |
 | **TE8** | **CJK 扩展 B–I（生僻字）在合同内且单列一类**：它们比 BMP 汉字贵 3–7×（实测 est/actual 曾 = **0.13**） | `::TestEstimatorContract`（`cjk_ext_b_ideographs` 语料）、`scripts/token_corpus/validate_families.py` | `make test-quick` | **push/backend** |
+| **TE10** | **密集变音符号的**普通拉丁**文本在合同内**（Batch 20 / KB-78）：捷克/波兰真实散文（不是合成 pangram）的 `est/actual ≥ 0.775`，逐 profile × 逐家族；证据是签入的**真散文 holdout**（12 篇 Wikipedia 导言，CC BY-SA 4.0，7 个权威 tokenizer 真值），**不参与系数拟合**。`latin_ext` 由封闭形式推导得出（`w_need = (0.775·actual − base)/n_latin_ext`，对 w 仿射 ⇒ 精确解），**只动这一个系数**、其余 10 类逐位不变 | `Module/system_prompt/tests/test_latin_prose_contract.py`（31：真散文 floor ×6 profile、低密度波兰语在场、只有 latin_ext 变了、JSON/CJK/代码无回归、推导可执行复算、fixture 哈希/许可/规模） | `make test-quick` | **push/backend** |
+| **TE11** | **合同外的 `latin_accent` 只保留越南语**，且**高估代价被登记**：`latin_ext` 里"普通 Latin-1/Extended-A 变音"（捷克/波兰）与"堆叠变音"（越南语 U+1EA0–1EFF）是两套互斥的 token 经济——同一标量不可能同时覆盖（覆盖捷克/波兰所需系数会让越南语高估 2.5–3.0×；覆盖越南语所需系数是**负数**，即必然击穿硬下限）。故越南语留在 `UNCOVERED_CONTENT_CLASSES`，方向**只许高估**且区间被钉住 | `::TestKnownLimitations::test_dense_accented_latin_is_a_registered_uncovered_class`（语料侧）、`test_latin_prose_contract.py::TestVietnameseStaysOutOfContract`（真散文侧 + 代价区间） | `make test-quick` | **push/backend** |
 
 **TE3 的两个数从哪来**：`budget = window × 0.75`，而超窗在 Ollama 上是
 **HTTP 200 + 静默截断**（Batch 17 实测，从不报 400）⇒ 估算低估超过 25% 时，"预算
