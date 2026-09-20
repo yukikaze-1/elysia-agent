@@ -73,7 +73,9 @@
 | **KB-59** | `rename()` 不更新持久 `updated_at`，而进程内覆盖层把本地键抬到 `now_iso()` ⇒ 本进程排最前、回一个比库里任何值都新的 `updatedAt`，重启后回落（reported ≠ actual） | INTERNAL | LOW | E2(16) | **DOCUMENTED_LIMITATION**（Batch 8 §7 明确要求保住"改名抬升"） | 触发：改名排序语义进产品合同 |
 | **KB-63** | `OllamaBackend.probe_runtime_context()`（configured/requested/observed）**无报告面** ⇒ 用户看不到 runtime mismatch | DEPLOYMENT | LOW | E1(17) | **OBSERVABILITY_DEBT** | 触发：产品要展示 runtime 真相时，**附在既有** provider test（用户点击）里，不新增轮询探针 |
 | **OBS-5** | 把 stt/tts 的 `model`/`enabled` 补进 `/debug/api`（需 `make gen-types`）——F7 只覆盖标志语义，字段补齐这半没有条目跟踪 | ADMIN | LOW | E1 | **OBSERVABILITY_DEBT** | 与 debug 面板批次一起做 |
+| **OBS-6** | 外部删除权威身份档后（缓存仍热）`PUT /api/me` 连报 409「expectedRevision 已过期」而记录**根本不存在**（`details` 为空、无恢复线索），同状态 `GET /api/me` 仍 200 + 陈旧 revision ⇒ 错误码在撒谎 + 恢复路径未闭环（E2，Batch 6 只做到"不伪造 revision"）| USER | LOW | **E2**(6) | **PARTIALLY_GUARDED**（N-3 的元数据权威已修；存在性判定与 404/409 契约未闭环）| 与 E1 freshness 同族；修它需要"存在性"判定 + 404/409 契约决策 |
 | **OBS-7** | debug 面板 `GET /debug/api/sessions` 仍读 `list_all()`（有界 ≤200）⇒ 超 200 会话时看不到更早的（USER 面 P2-01r 已修，ADMIN 面无 cursor 参数） | ADMIN | LOW | E2(8) | **OBSERVABILITY_DEBT** | 需要 debug 契约加分页（前端 `SessionPanel.vue` 同步改）|
+| **KB-56** | 前端「加载更多」游标来源未验证：`chatStore.ts` 打的是全库 `/api/messages`，游标取自回放项 `_id`，而 `messages_for_client` 不产出 `_id` ⇒ 首次加载更多可能取到全库最新 50 条（跨会话）。**纯代码推断、无运行期复现** | USER | MEDIUM（若成立） | E1（未验证） | **INSUFFICIENT_EVIDENCE** | 缺的证据：一次真实前端「加载更多」的请求/响应抓取（Batch 8 续）|
 | **OBS-8** | `finalize._run_after_response` 在 engine 的 `reflect` 是 `MagicMock`/非协程时记 warning ⇒ 污染每条 lifecycle 用例日志（测试替身形状问题，非生产缺陷） | INTERNAL | LOW | E2(9) | **OBSERVABILITY_DEBT** | 给替身一个真协程即可（顺手级）|
 
 ---
@@ -108,6 +110,7 @@
 | **KB-10** | TTS 取消 + HTTP 流清理：**FALSIFIED**——per-request client 在 `finally` 关闭，探针实测 `aclose` 1 次、0 泄漏任务（2026-06-22 记录指向重构前的**共享** client）| 重新引入共享/pooled client，或流式消费者被放弃且不 `aclose()` |
 | **KB-18** | `_task_by_sid` 保留已完成任务：**FALSIFIED**——每次 `stream_sentence` 都剪枝，48 句/8 回合峰值 5 条 | 移除逐句剪枝 |
 | **KB-21** | SPEAKING 语义（"服务端正在输出本轮 response"，与"用户听到什么"无关）已写进 `invariants.md` §4.2 并有守卫用例；缺的只是 wire 契约注释 | 有消费方把 SPEAKING 当"音频播完"（UI 指示/打断策略）|
+| **KB-3** | INTERRUPT + TTS emoji 合并残留竞态：后端那半已修（`4bb8aff7`，S3-G7），**剩余在外部前端仓** | 前端仓修（前端批次）|
 | **KB-39** | `accepted` 的边界承诺（Transport Accepted + 幂等决策；**不**承诺持久化/一定被回复）写在 Batch 12 记录 §3.2，但**没有**写进消费方可见的 wire 文档 | v2 客户端据 `accepted`/`idempotency_durable` 推导超时/重试策略 |
 | **KB-42** | 语音取消的门（`not is_completely_idle`）排除了 admission 窗口：窗口内相位恰是 IDLE ⇒ 不触发取消，但此时**没有 generation 存在**、输入照常前进 ⇒ 无害 | 产品要求"撤回已 accepted 未 claim 的语音输入"|
 | **KB-17** | `PATCH /api/sessions/{id}` 的 title **无长度上限**，而 `POST` 限 200、搜索词上限也是 200 ⇒ >200 字标题只能用 ≤200 字搜索词命中（两条写路径契约不对称，无错误真值）| 出现"改了名却搜不到"的用户报告 ⇒ 对齐上限（PD-16）|
@@ -122,8 +125,10 @@
 | **F12** | 失败细节长度上界（现文本是引擎编写的短诊断串）| 某 provider 回显长文本 |
 | **RB-1** | Mongo 3 个 write-only 字段（`attachments.sha256` / `background_task_results.delivered_at` / `message_archive.metadata.incomplete`）无真实 Mongo 抽样 ⇒ 不能升级为 `PROVEN_DEAD` | 一次真实 Mongo 抽样 |
 | **N-12** | 存量文档 `pronouns: ""` 会让 `GET /api/me` 500（契约拒空串，仓内无写入者）| 出现写入者或存量数据出现空串 |
+| **N-2** | `ProfileStore._load_from_file` 读回失败会**重新 bootstrap**（静默重置）：**仅本地/单测模式**可达（生产装配恒定权威 repo；前半 `_update_local` 绕过 pydantic 已由 `fb438167` 关闭）| 本地模式被产品化 / `_load_from_file` 路径进入生产 |
 | **KB-14** | `core/tests/fake_llm.py` 的 `fault="http_429"/"http_503"` 路径 import 不存在的 `Module/llm/errors.py`（唯一 fault 调用者不用这两个值 ⇒ CURRENTLY_UNREACHABLE）| 第一个使用这两个 fault 值的测试 |
-| **GR-8 / GR-17 / GR-18 / GR-21 / GR-23 / GR-9 / GR-14(见 §1.3) / GR-22** | 见 `docs/review/2026-09-20-Batch19-long-tail-backlog-closure-执行记录.md` 的逐条裁决：R6 条数漂移分支零覆盖（fixture 里 `entry` 恒 None）、`use_mocks` 死支路（7/7 调用点显式 False，默认值仍是 True）、3 个空测试包、token 结构 4 项低残留、`# type: ignore` 60 处（旧记 23）、RUF100（1069 处 `# noqa`）、前端遗留（a11y/CSP/Worklet，属前端仓）| 各自触发：新增 fixture 语义测试 / 新调用方省略 kwarg / 动该测试树 / 观察到重复 token 行 / ignore 掩盖真实类型错误 / 私有穿透纪律迁进 ruff / 前端批次 |
+| **GR-2 / GR-5 / GR-6 / GR-7 / GR-8 / GR-9 / GR-10 / GR-11 / GR-12 / GR-13 / GR-17 / GR-18 / GR-21 / GR-22 / GR-23 / GR-25** | 见 [Batch 19 执行记录](docs/review/2026-09-20-Batch19-long-tail-backlog-closure-执行记录.md) 的逐条裁决。要点：GR-2 弱用例（`test_minimax_key_present_passes` 随 ambient `.env` 走）/GR-5 私有穿透同名遮蔽（KEEP_AS_IS，回归网非完备审计）/GR-6 扫描面不含 `scripts/`·`frontend_contract/`/GR-7 非字面量私有访问不可见/GR-8 R6 条数漂移分支零覆盖（fixture 里 `entry` 恒 None）/GR-9 RUF100 未启用（1069 处 `# noqa`；同族观察：bandit 的 B608 抑制当前**惰性**）/GR-10 CI 未扫 `env:`/`with:`/`working-directory:`（**CURRENTLY_UNREACHABLE**：当前无 PR 可达 job）/GR-11 清空形态长尾（0 实例，KEEP_AS_IS）/GR-12 `if:` 守卫是 token 存在性（保守方向，KEEP_AS_IS）/GR-13 `print_test_stats.py` 不查返回码（非门禁，KEEP_AS_IS）/GR-17 `use_mocks` 死支路（7/7 调用点显式 False，**默认值仍是 True**）/GR-18 3 个 0 字节测试包/GR-21 token 结构 4 项低残留/GR-22 前端遗留（a11y/CSP/Worklet，属前端仓）/GR-23 `# type: ignore` 60 处（旧记 23）/GR-25 测试鉴别力（① 无 repo 模式覆盖了权威模式走不到的路径） | 各自触发：弱用例改为 hermetic / 首次跨包私有访问 / 新私有访问形态 / 新增 fixture 语义测试 / `# noqa` 审计批次 / 重新开启 PR CI / 新调用方省略 kwarg / 动该测试树 / 观察到重复 token 行 / 前端批次 / ignore 掩盖真实类型错误 / 补权威模式冲突用例 |
+ 见 `docs/review/2026-09-20-Batch19-long-tail-backlog-closure-执行记录.md` 的逐条裁决：R6 条数漂移分支零覆盖（fixture 里 `entry` 恒 None）、`use_mocks` 死支路（7/7 调用点显式 False，默认值仍是 True）、3 个空测试包、token 结构 4 项低残留、`# type: ignore` 60 处（旧记 23）、RUF100（1069 处 `# noqa`）、前端遗留（a11y/CSP/Worklet，属前端仓）| 各自触发：新增 fixture 语义测试 / 新调用方省略 kwarg / 动该测试树 / 观察到重复 token 行 / ignore 掩盖真实类型错误 / 私有穿透纪律迁进 ruff / 前端批次 |
 | **OBS-1** | 间歇性 xdist worker 死亡（8 轮 soak 中 1 次且被并发改动污染）| 复现一次干净环境下的 worker 死亡 |
 | **OBS-2** | `context_window` 六家 provider 数值是**估算值**（只影响截断时机；Batch 17 起 Ollama 侧已绑定为 `num_ctx`）| provider 侧拿到权威窗口元数据 |
 | **OBS-3 / OBS-4** | `openai_tts.test()` 旧"假阴性"记录、Batch 1.6 §12#6 的 `consolidator + client closed`——HEAD 上均**定位不到** | 复现出对应报错 |
@@ -256,7 +261,7 @@ PD-2（409 报**权威库现值**，未知则省略，Batch 6 `616e4993`）、PD
 | **N-1 / N-11** | `/ready` 探 ping 假绿 + 装载失败无可查状态 | **GUARDED** `82b80e2e` + `fc648e20`（Batch 4；PD-1 落纸 §3.1）|
 | **N-3** | 409 `details.currentRevision` 读陈旧缓存 ⇒ 谎报 | **GUARDED** `616e4993`（Batch 6；CM1–CM5）|
 | **N-10 / F6 / F7** | provider 能力假绿 / provider-test 缺省模型读 config / `/debug` 面板标志语义混用 | **GUARDED** `c70312de` + `7ef3202b` + `87cc7e38`（Batch 5）；F7 的"存在性"半 **FALSE_POSITIVE** |
-| **N-4 ≡ N-13 / N-8(guard) / B3-CB-1..7** | 索引选项表守卫 / `_IMAGES_DIR` 隔离守卫 / 早期 correctness 批次 | **GUARDED / FIXED / ALREADY_FIXED / FALSE_POSITIVE**（Batch 3.x；见旧 §5）|
+| **N-4 ≡ N-13 / N-8(guard) / B3-CB-1…B3-CB-7** | 索引选项表守卫 / `_IMAGES_DIR` 隔离守卫 / 早期 correctness 批次（B3-CB-1 `pronouns:null` 写读不一致 · `B3-CB-2` `idempotency_claims` 键永不生效 · `B3-CB-3` preflight 把可用配置判死 · `B3-CB-4` `PROTECTED_COLLECTIONS` 自称有守卫 · `B3-CB-5` 文档门禁漏根 README · `B3-CB-6` 两份 `UPDATABLE_FIELDS` · `B3-CB-7` `_IMAGES_DIR` import 期固化）| **GUARDED / FIXED / ALREADY_FIXED / FALSE_POSITIVE / KEEP_AS_IS**（Batch 3.x；见旧 §5）|
 | **M19 / M20** | resume 后 pause 被销毁 / cancel 规划期不推终态 | FIXED（E2/E3，`bb69485`…`5aa7368`）|
 | **F9 / F1(旧) / 其它基础设施** | Batch 2 的 F401/CI/privacy guard；`LoggerFactory`；空 LLM 响应；`flush_after_response` 超时层不匹配；STT 运行时切换/env；WS Bearer；`.env` 模板；`memory_repo.clear_all` 守卫；后台协程所有权 43 站点；`Module/llm/registry` 反向依赖；input 层拆分；`llm_adapter.close` drain；token 统一结构；两个偶发 external 用例；`Module/tool/safety.py` 不拆；Claude 原生持久记忆 | FIXED / CLOSED（见旧 §5 与 `docs/review/archive/2026-08/*`）|
 
@@ -302,6 +307,11 @@ PD-2（409 报**权威库现值**，未知则省略，Batch 6 `616e4993`）、PD
 | `N-13` | ≡ **N-4** | 同一条（表级 AST 守卫缺失），已 GUARDED |
 | `F5`（Batch 1.6 用）| ≡ **F6**（Batch 1.8 表里的 provider-test STT F5）| **不要**与 Batch 1.8 的 `F5 = workflow model reporter` 混 |
 | `B3-CB-5 / B3-CB-4 / B3-CB-7` 的「残留」| **N-5 / N-7 / N-8(guard)** | 残留已各归其 canonical 条目 |
+| `N-15` | ≡ **GR-3**（那 4 条 `unique` 未登记）| 见 §1.3/§3 PD-3；`N-4 ≡ N-13` 是另一条（已 GUARDED）|
+| `KB-7` | ≡ **GR-20**（裸 `setdefault` 污染 env）| Batch 19 复核 FALSIFIED |
+| `DEP-1` | `.env.example` 落后 9 键 | **ALREADY_FIXED** `67eeab83`（9 键都在模板里，注释形态）|
+| `P2-03` / `P2-09` | ≡ **AR-8**（EventBus lifecycle epoch）| 首个实例（USER_INPUT）已修；剩余面见 KB-50 |
+| `F-1 / F-2 / F-4`（Batch 6 Challenger 号）| ≡ **GR-25** | 测试鉴别力残留 |
 | **AUDIT-A / AUDIT-B / AUDIT-C / AUDIT-D**（Batch 18 audit follow-up 的临时标识）| **KB-80 / KB-78 / KB-79 / KB-81** | Batch 19 按仓库编号规则正式登记（**不要**再使用 A/B/C/D）|
 | `KB-*` / `OBS-*` / `DEP-*` / `PD-*` / `AR-*` / `GR-*` / `FEAT-*` | 首次分配于 Batch 4/9+ | 不是给已有 ID 的问题再造 ID |
 
