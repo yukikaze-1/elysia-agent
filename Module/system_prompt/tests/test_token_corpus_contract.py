@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+import Module.system_prompt.budget as budget_module
 from Module.system_prompt.budget import (
     CONTEXT_HEADROOM_RATIO,
     UNCOVERED_CONTENT_CLASSES,
@@ -405,6 +406,15 @@ class TestKnownLimitations:
     # 登记的**下界**就是"击穿硬下限"的证据本身：0.646 < 0.75。
     _LATIN_ACCENT_WORST_RANGE = (0.60, 0.70)
     _LATIN_ACCENT_BEST_RANGE = (3.00, 3.50)
+    # 击穿 0.75 的**具体配对**（Batch 19 实测，签入语料 × 权威 tokenizer）。它是本类
+    # "未覆盖"的证据本体：只登记 min/max 会漏掉"部分重标定"（Challenger M3b）。
+    _LATIN_ACCENT_FLOOR_VIOLATIONS = frozenset({
+        ("script_latin2_czech/generic/cl100k_base", 0.646),
+        ("script_latin2_czech/qwen/qwen2.5", 0.654),
+        ("script_latin2_czech/generic/qwen2.5", 0.662),
+        ("script_latin2_czech/generic/mistral", 0.708),
+        ("script_latin2_polish/qwen/qwen2.5", 0.712),
+    })
 
     def test_dense_accented_latin_is_a_registered_uncovered_class(self):
         """**未覆盖类**：密集变音符号的拉丁文本（捷克/波兰/越南）实测击穿硬下限。
@@ -434,14 +444,28 @@ class TestKnownLimitations:
         assert len(ratios) >= 30, f"latin_accent 语料覆盖不足（{len(ratios)} 组）"
         worst = min(ratios)
         best = max(ratios)
-        if worst[0] >= _HARD_FLOOR:
+        if worst[0] >= _CONTRACT_MIN_RATIO:
             pytest.skip(
-                f"latin_accent 已被覆盖（worst={worst[0]:.3f}）——请同步更新 "
-                f"budget.py 的合同范围声明、`UNCOVERED_CONTENT_CLASSES` 与 KB-78")
+                f"latin_accent 已被覆盖（worst={worst[0]:.3f} ≥ 合同下限 "
+                f"{_CONTRACT_MIN_RATIO}）——请同步更新 budget.py 的合同范围声明、"
+                f"`UNCOVERED_CONTENT_CLASSES` 与 KB-78")
+        if worst[0] > _HARD_FLOOR:
+            pytest.fail(
+                f"latin_accent 最坏 {worst[0]:.3f} 落在 [硬下限 {_HARD_FLOOR}, 合同下限 "
+                f"{_CONTRACT_MIN_RATIO}) 之间：**既没达到合同、又会被 'covered' 判据放行** "
+                "⇒ 必须继续按未覆盖处理（重标定目标取 0.775，不是 0.75）")
         lo, hi = self._LATIN_ACCENT_WORST_RANGE
         assert lo <= worst[0] <= hi, (
             f"latin_accent 最坏比值 {worst[0]:.3f}（{worst[1]}）越出登记区间 [{lo}, {hi}]"
             "——要么估算器退化了，要么它被修好了（后者请走显式 skip 路径）")
+        # **只钉 min/max 不够**（Batch 19 Challenger M3b）：部分重标定（例如只抬 generic）
+        # 会让一部分配对越过下限而 min/max 仍落在登记区间里 ⇒ 静默"半修"。这里把
+        # **击穿下限的配对集合**逐个点名，任何一侧的改动都会改变集合 ⇒ 变红。
+        below = {(who, round(r, 3)) for r, who in ratios if r < _HARD_FLOOR}
+        assert below == self._LATIN_ACCENT_FLOOR_VIOLATIONS, (
+            "击穿下限的配对集合变了（部分重标定/系数回退都会被看见）：\n"
+            f"  新增或变化：{sorted(below - self._LATIN_ACCENT_FLOOR_VIOLATIONS)}\n"
+            f"  已消失：{sorted(self._LATIN_ACCENT_FLOOR_VIOLATIONS - below)}")
         blo, bhi = self._LATIN_ACCENT_BEST_RANGE
         assert blo <= best[0] <= bhi, (
             f"latin_accent 最好比值 {best[0]:.3f}（{best[1]}）越出登记区间 [{blo}, {bhi}]")
@@ -465,9 +489,19 @@ class TestKnownLimitations:
     def test_every_uncovered_class_is_a_real_corpus_category(self):
         """单一权威常量 + 语料必须一致；且每个未覆盖类都要有实测守卫（本类）。"""
         cats = {e["category"] for e in _CORPUS if e["kind"] == "text"}
-        assert set(_CONTRACT_EXCLUDED_CATEGORIES) == set(UNCOVERED_CONTENT_CLASSES)
+        # 注意：不要写 `set(_CONTRACT_EXCLUDED_CATEGORIES) == set(UNCOVERED_CONTENT_CLASSES)`
+        # ——前者就是后者构造出来的，那是**同义反复**（Batch 19 Challenger 指出）。
+        # 真正要钉的是：①没有重复；②每类都在语料里真实存在；③每类都在模块 docstring
+        # 里写明"为什么无法覆盖"（新增一类而不写理由 ⇒ 红）。
+        assert len(set(UNCOVERED_CONTENT_CLASSES)) == len(UNCOVERED_CONTENT_CLASSES)
         assert set(UNCOVERED_CONTENT_CLASSES) <= cats, (
             f"登记表里的类别必须真实存在：{set(UNCOVERED_CONTENT_CLASSES) - cats}")
+        doc = budget_module.__doc__ or ""
+        # 用**反引号精确形态**匹配（Challenger M9：`c not in doc` 是子串检查，
+        # `latin_accent_X` 这种改名也能通过 ⇒ 只证明"名字被提过"，不证明"理由写了"）。
+        undocumented = [c for c in UNCOVERED_CONTENT_CLASSES if f"`{c}`" not in doc]
+        assert not undocumented, (
+            f"未覆盖类必须在 budget.py 的合同范围节写明理由：{undocumented}")
         # 三个类各有自己的 TestKnownLimitations 守卫（repeat / script / latin_accent）
         assert "latin_accent" in _CONTRACT_EXCLUDED_CATEGORIES
         assert {"repeat", "script"} <= _CONTRACT_EXCLUDED_CATEGORIES
