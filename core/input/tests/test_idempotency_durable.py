@@ -1258,6 +1258,11 @@ class _VoiceFakeAgent:
         self.session_manager = session_manager or _CountingSessionMgr()
         self._gen_registry = gen_registry
         self.stt_enabled = True
+        # KB-48：voice.commit 现在也走准入判定（与 `process_message` 同源的生命周期轴
+        # `status.is_service_running`）。替身必须镜像该轴——同 `test_voice_ws.py::FakeAgent`
+        # 的做法；本文件所有用例都在"运行中"语义下，故恒 True（停机窗口那一侧由
+        # `core/input/tests/test_runtime_epoch_input_boundary.py` 覆盖）。
+        self.status = type("Status", (), {"is_service_running": True})()
 
     @property
     def generation_registry(self):

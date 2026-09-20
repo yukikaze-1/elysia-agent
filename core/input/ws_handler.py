@@ -727,6 +727,25 @@ async def do_transcription(agent: "Agent", ws: "web.WebSocketResponse", text: st
     # BE-081 敏感纪律：只记 request_id + 文本长度，不记正文
     logger.debug("STT 识别: rid=%s len=%d%s", rid, len(text),
                  f" [{emotion}]" if emotion and emotion != "NEUTRAL" else "")
+    # KB-48 / RO1（Batch 14 的残留缺口）：**准入判定必须覆盖 STT 路径**。
+    # 本函数是直接 `bus.post(UserInputData)`，不经过 `process_message`；而它跑在
+    # aiohttp 的 WS 请求任务上——`Agent.stop()` **不**取消这些任务（`runner.cleanup()`
+    # 在 `agent.stop()` 之后才跑）。于是窗口是：
+    #
+    #   stop() 最后一步 RO1 清扫 `discard_user_inputs()`  →  stop() 返回
+    #     → 在途 `do_transcription`（STT 单段预算 ≤30s）才投递
+    #
+    # 投进去的事件会**跨 epoch 复活**：同一实例 `start()` 后消费者把它当新输入消费，
+    # 进历史。判据与 `process_message` / REALTIME 语音段同源
+    # （`status.is_service_running`，生命周期轴），不另设 flag。
+    #
+    # 这里**拒收而不排队**（与 `process_message` 一致：停机窗口没有"稍后再处理"）。
+    # 回显（上面那句）仍然发——客户端需要清掉自己的录音态；被拒的是**入队**这一步。
+    if not agent.status.is_service_running:
+        logger.warning(
+            "STT 转写提交被拒：服务未在运行（停机窗口）——该段不入队，不跨 epoch 复活 "
+            "rid=%s len=%d", rid, len(text))
+        return
     # 语音路径绕过 process_message，需手动 touch——否则纯语音对话
     # 会被误判为"用户沉默"，触发 silence_timeout 主动搭话
     agent.idle.touch()

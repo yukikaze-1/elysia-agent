@@ -684,6 +684,28 @@ async def _handle_voice_commit(agent: "Agent", ws: "web.WebSocketResponse | None
 
     # 接收时刻在 handler 一次性生成（now_iso）——reject/complete 与 ACK 用同一值
     received_at = now_iso()
+
+    # KB-48 / RO1（Batch 14 的残留缺口）：**准入判定必须覆盖 voice.commit**，且必须
+    # 早于一切副作用（幂等 lookup / claim / reserve_work）——与 `process_message`
+    # 的"拒收发生在 reserve 之前"同款（`test_process_message_rejects_before_v2_work_reservation`）。
+    #
+    # 为什么这条路径需要它：本函数是直接 `bus.post(UserInputData)`，不经过
+    # `process_message`；它跑在 aiohttp 的 WS 消息循环任务上，而 `Agent.stop()`
+    # **不**取消这些任务（`runner.cleanup()` 在 `agent.stop()` 之后才跑）⇒ 窗口是
+    # 「RO1 清扫 `discard_user_inputs()` → stop() 返回 → 在途 commit 才投递」，
+    # 投进去的事件会在同一实例 `start()` 后被当**新输入**消费（跨 epoch 复活）。
+    # 判据与 `process_message` / REALTIME 语音段同源（`status.is_service_running`，
+    # 生命周期轴）；处置沿用**既有** rejected 路径（`_not_accepted_error` →
+    # `AGENT_BUSY`，**零新增 wire 枚举**）。
+    if not agent.status.is_service_running:
+        logger.warning(
+            "voice.commit 提交被拒：服务未在运行（停机窗口）——不入队，不跨 epoch 复活 "
+            "recordingId=%s len=%d", recording_id, len(text))
+        await _send_ack(ws, "", client_request_id, client_message_id, ack_conv,
+                        "rejected", error=_not_accepted_error(agent),
+                        received_at=received_at)
+        return
+
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     store = get_store()
     # D6c：幂等 lookup——产品模式 + Mongo 离线 → fail-closed（ACK rejected + D3 durable）
