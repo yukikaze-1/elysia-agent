@@ -44,6 +44,17 @@ Qwen2.5 tokenizer 交叉验证：K=1 第 6 轮 **9056**、K=2 第 4 轮 **10231*
 最近 `num_keep`、丢掉**中间**"（`Module/llm/ollama.py:48-53`）⇒ 静默劣化的正是
 system prompt / 人设区。
 
+### 2.1b Ollama 旁证（E3，本机复测）
+
+`qwen2.5:3b` + native `/api/chat` + `options.num_ctx = 8192`，prompt 用 20000 字普通中文
+（≈11k 真实 qwen token，远超窗口）：
+
+    HTTP 200 | done_reason=stop | prompt_eval_count=8192 | /api/ps context_length=8192
+
+即 provider **不报错、不拒绝**，只是把 prompt 静默截到窗口——这正是 KB-77 的严重度所依赖的
+前提（Batch 17 的 E3 结论在本批环境上复现）。对照：12000 字（≈6.7k token）时
+`prompt_eval_count=6684`（完整消费），说明上面那次确实是"被截"而不是"本来就小"。
+
 ### 2.2 根因
 
 预算只在**首轮**派生一次并施加一次（`_apply_prompt_budget`，`message_builder.py:240-242`），
