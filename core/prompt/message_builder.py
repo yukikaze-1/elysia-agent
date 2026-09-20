@@ -401,12 +401,34 @@ def turn_tail_start(messages: list[dict]) -> int:
 
     历史里也会有 user 消息，但**最后一条** user 必然是当前这一条——其后的条目只会是
     工具往返与轮次标记（首轮组装把当前消息放在末尾；工具轮只追加 assistant/tool/system）。
-    该轮没有用户条目时（空文本多模态）退化为"保护最后一条"。
+
+    该轮**没有** user 条目时（空文本 + 无附件被直接调用的边界形状）退化为"**第一组**
+    工具往返的起点"：往返的配对必须整体存活——若从"最后一组"起保护，step ① 会把更早
+    那组的 assistant 删掉而留下它的 `role="tool"` ⇒ **孤儿 tool ⇒ 严格 provider 400**
+    （Batch 19 Challenger 反证）。历史侧不可能出现 tool 条目
+    （`_history_message_content` 对 `role="tool"` 返回 None），故"第一组往返"就是回合
+    内容真正的起点；都没有时退化为"保护最后一条"。
     """
     for i in range(len(messages) - 1, 0, -1):
         if messages[i].get("role") == "user":
             return i
+    spans = _exchange_spans(messages, 1)
+    if spans:
+        return spans[0][0]
     return max(1, len(messages) - 1)
+
+
+def _deletion_is_safe(messages: list[dict], idx: int) -> bool:
+    """删掉 `messages[idx]` 是否会破坏工具往返配对。
+
+    这是"绝不产生孤儿 `role="tool"`"的**结构性**保证（不依赖边界算得对）：tool 条目属于
+    它前面的 assistant，assistant(`tool_calls`) 拥有它后面的 tool 条目，两者都不可单独
+    删除（整组只能走 step ② 的成组丢弃）。
+    """
+    entry = messages[idx]
+    if entry.get("role") == "tool":
+        return False
+    return not (entry.get("role") == "assistant" and entry.get("tool_calls"))
 
 
 def _is_turn_local_system(msg: dict) -> bool:
@@ -526,10 +548,16 @@ def enforce_round_budget(
     original = before
 
     protected_from = min(max(1, turn_start), max(1, len(messages) - 1))
+    # 结构性兜底："当前用户消息永不丢"是合同，**不该依赖调用方把边界算对**
+    # （Batch 19 Challenger：`turn_start=998` 这类荒谬值曾能把它删掉）。
+    for i in range(len(messages) - 1, 0, -1):
+        if messages[i].get("role") == "user":
+            protected_from = min(protected_from, i)
+            break
     dropped_history = dropped_exchanges = truncated = 0
 
     # ① 历史：由旧到新（与首轮同优先级）
-    while before > budget and protected_from > 1:
+    while before > budget and protected_from > 1 and _deletion_is_safe(messages, 1):
         before -= costs.pop(1)
         del messages[1]
         protected_from -= 1

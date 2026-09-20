@@ -218,6 +218,87 @@ class TestEnforceRoundBudget:
         assert not outcome.trimmed
         assert json.dumps(messages, ensure_ascii=False, sort_keys=True) == snapshot
 
+    def test_no_user_entry_shape_never_orphans_tool_entries(self):
+        """**Challenger 反证**：没有 user 条目时也不得产生孤儿 `role="tool"`。
+
+        形状来自 `turn_tail_start` 的退化分支（空文本 + 无附件被直接调用）。修前：
+        step ① 会删掉 assistant(`tool_calls`) 而留下它的 tool 结果 ⇒ 严格 provider 400。
+        """
+        budget = 625
+        messages = [
+            {"role": "system", "content": "人设。" * 60},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "web_fetch", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": _big_text(400)},
+            {"role": "system", "content": "[TOOL_EXECUTED]"},
+        ]
+        outcome = enforce_round_budget(messages, budget, turn_start=turn_tail_start(messages),
+                                       model_id=MODEL, tools=None)
+        assert not _has_orphan_tool(messages), f"产生了孤儿 tool：{messages}"
+        assert any(m.get("role") == "tool" for m in messages), "最新（唯一）一组往返不得被整组丢掉"
+        assert messages[0]["role"] == "system"
+        # 本次调用 tools=None ⇒ 断言必须用同一口径（`_fits` 会带上模块级 _TOOLS）
+        assert outcome.after == estimate_messages_tokens(messages, model=MODEL)
+
+    def test_no_user_entry_with_two_exchanges_keeps_both_pairs(self):
+        """两组往返、没有 user 条目：两组都必须保持配对完整（宁可超预算也不孤儿）。"""
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "a", "type": "function",
+                             "function": {"name": "t", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "a", "content": _big_text(300)},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "b", "type": "function",
+                             "function": {"name": "t", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "b", "content": _big_text(300)},
+        ]
+        enforce_round_budget(messages, 200, turn_start=turn_tail_start(messages),
+                             model_id=MODEL, tools=None)
+        assert not _has_orphan_tool(messages), messages
+        # 两组都在（step ② 只允许丢"较早的一组"，且被丢时必须整组走）
+        ids = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
+        assert ids <= {"a", "b"}
+        for i, m in enumerate(messages):
+            if m.get("role") == "tool":
+                j = i - 1
+                while j >= 0 and messages[j].get("role") == "tool":
+                    j -= 1
+                assert j >= 0 and messages[j].get("role") == "assistant"
+
+    def test_current_user_message_survives_a_bogus_turn_start(self):
+        """**合同**："当前用户消息永不丢"不该依赖调用方把边界算对。
+
+        Batch 19 Challenger 反证：`turn_start=998` 曾能把当前 user 消息删掉
+        （配对守卫恰好挡住了另一种形状，所以旧用例通过是"因错误的原因通过"）。
+        """
+        # 形状要让兜底**真的承重**：user 消息不在末尾（末尾是普通 assistant 条目），
+        # 且它本身可被无脑删除 —— 只有"最后一条 user 永不丢"这条兜底能救它
+        # （若 user 在末尾，`min(turn_start, len-1)` 的钳位就会顺带保护它 ⇒ 用例
+        #   会"因错误的原因通过"，正是 Challenger 指出的旧写法问题）。
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": "当前消息"},
+            {"role": "assistant", "content": "历史回复"},
+        ]
+        # 预算必须小到**真的触发裁剪**（否则本用例会因为"根本没裁"而假通过）
+        enforce_round_budget(messages, 5, turn_start=998, model_id=MODEL, tools=None)
+        assert any(m.get("role") == "user" and m["content"] == "当前消息" for m in messages), messages
+
+    def test_pairing_guard_survives_a_bogus_turn_start(self):
+        """即使调用方给了荒谬的 `turn_start`，结构性守卫也不允许拆配对。"""
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "x", "type": "function",
+                             "function": {"name": "t", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "x", "content": _big_text(300)},
+            {"role": "user", "content": "当前消息"},
+        ]
+        enforce_round_budget(messages, 100, turn_start=998, model_id=MODEL, tools=None)
+        assert not _has_orphan_tool(messages), messages
+
     def test_orphan_tool_entry_is_never_grouped(self):
         """孤立 tool 条目不成组 ⇒ 宁可不裁，也不制造半截配对。"""
         budget = 900
