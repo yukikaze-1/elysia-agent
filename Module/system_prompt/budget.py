@@ -130,26 +130,42 @@ DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴不共线：用两个 p
 `test_token_corpus_contract.py` 的契约断言会红。
 
 **Batch 20 的 `latin_ext` 重标定（KB-78）——为什么这次只动一个系数**：
+
 `latin_ext` 由 `latin1_accented`（变音密度 **5.0%**）标定，而真捷克散文是
 **12–14%**、真波兰语 2–8%，于是密集变音符号的普通拉丁文本被低估到 **0.64–0.75**
 （真 Wikipedia 散文 × 本地权威 tokenizer，E3）。修法是**封闭形式推导**而非手调：
-对每个 profile 解出"使**全部** floor 样本（合同内语料 ∪ 捷克/波兰真散文 holdout）
-达到合同下限 **0.775** 所需的最小 `latin_ext`——因为
-`ratio(w) = (Σ_{c≠latin_ext} n_c·w_c + n_latin_ext·w) / actual`
+对每个 profile 解出"使**全部** floor 样本（合同内语料 ∪ 捷克/波兰真散文 holdout ×
+该 profile 的**完整声明覆盖**）达到合同下限 **0.775** 所需的最小 `latin_ext`——因为
+
+```text
+ratio(w) = (Σ_{c≠latin_ext} n_c·w_c + n_latin_ext·w) / actual
+```
+
 对 w 是**仿射**的，故 `w_need = (0.775·actual − base) / n_latin_ext` 是**精确解**，
 取 `max(现值, max over floor 样本 w_need)` 并向上留 2% 余量。推导由
 `Module/system_prompt/tests/test_latin_prose_contract.py` **独立复算并断言**
 （不是注释里的数字）。其余 10 个系数**不动**——理由是纪律而非省事：仓内**没有**
 原拟合脚本（LP 是过程、不是可运行产物，见 Batch 18 §7），重建目标函数会绕开
 "改系数必须重跑该流程"的约束；只动一个系数时推导可复核且**不需要**重建 LP。
-结果（实测，同一测试钉住）：合同内语料的 band **不变**（qwen 仍 [0.779, 1.191]，
-12 个 profile×family 组合里 11 个逐位一致，`mistral` 最高值 1.303→1.306）；
-实际只改了 **4 个真正未达标的 profile**（qwen / llama / mistral / generic），
-`deepseek`（原名 1.0079，需求 0.873）与 `openai`（1.1090，需求 1.004）本来就达标，
-**逐位不变**；
-捷克/波兰真散文从 **0.64–0.95** 抬到 **0.78–0.95** 全部进合同；代价是越南语
-（`latin_accent`，合同外）从 2.47 高估到 2.97。
-**不做的**：不新增字符类、不改 profile 结构、不动其它系数、不放大任何 T。
+
+**⚠️ 第一版漏了一件事（本条留痕）**：第一版只按 `GOLDEN.json` 的 6 个家族拟合
+`generic`（得 0.560）。但 `generic` 的**声明覆盖**还包括外部队列里的
+**Yi-1.5-6B** 与 **Phi-3-mini**（`scripts/token_corpus/validate_families.py`），
+真散文在那两个家族上**仍击穿硬下限**（Yi 上捷克 0.663）——是**仓库自己的**验证脚本
+先报出来的。第二版把这两族纳入 floor ⇒ `generic` 需要 **1.126**。同理 `llama`
+的覆盖含 OLMo-7B、`qwen` 含 Qwen3-8B（这两族本来就够，系数未变）。
+**教训**："覆盖声明"必须与"拟合集合"逐族对齐，否则 profile 会在它自称覆盖的家族上
+失守；守卫现在把外部队列的真值也签进 fixture 并参与 floor 断言。
+
+结果（实测，同一测试钉住）：合同内语料的 band **不变**（qwen 仍 [0.779, 1.191]）；
+实际只改了 **4 个真正未达标的 profile**：qwen **0.8601→1.8700**、llama
+**1.6723→1.6800**、mistral **3.4031→3.4100**、generic **0.2000→1.1490**；
+`deepseek`（原 1.0079，需求 0.873）与 `openai`（1.1090，需求 1.004）本来就达标，
+**逐位不变**。捷克/波兰真散文从 **0.64–0.95** 抬到 **0.78–1.64** 全部进合同；
+代价是越南语（`latin_accent`，合同外）从 2.47 高估到 **3.31**。
+`validate_families.py` 复跑：6 个家族全部 OK，`latin_accent` 最坏 **0.82**
+（Yi-1.5-6B）≥ 0.75。**不做**：不新增字符类、不改 profile 结构、不动其它系数、
+不放大任何 T。
 
 ### 明确不在本批范围
 
@@ -290,7 +306,7 @@ _TOKEN_WEIGHTS: dict[str, dict[str, float]] = {
     "generic": {
         "word": 0.2722, "digits": 0.8008, "punct": 1.0157, "space": 0.8030,
         "cjk": 1.5015, "cjk_ext": 3.2076, "kana": 0.7583, "cjksym": 1.4447,
-        "emoji": 3.6582, "latin_ext": 0.5600, "other": 3.0000,   # 0.2000 → 0.5600
+        "emoji": 3.6582, "latin_ext": 1.1490, "other": 3.0000,   # 0.2000 → 1.1490
     },
 }
 

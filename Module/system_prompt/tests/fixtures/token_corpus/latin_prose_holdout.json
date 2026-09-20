@@ -77,6 +77,12 @@
     "cl100k_base": 211,
     "o200k_base": 164,
     "p50k_base": 257
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 245,
+    "phi_3_mini_4k": 191,
+    "olmo_7b_0724": 210,
+    "qwen3_8b": 216
    }
   },
   {
@@ -93,6 +99,12 @@
     "cl100k_base": 308,
     "o200k_base": 236,
     "p50k_base": 379
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 367,
+    "phi_3_mini_4k": 282,
+    "olmo_7b_0724": 323,
+    "qwen3_8b": 307
    }
   },
   {
@@ -109,6 +121,12 @@
     "cl100k_base": 92,
     "o200k_base": 75,
     "p50k_base": 109
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 114,
+    "phi_3_mini_4k": 88,
+    "olmo_7b_0724": 97,
+    "qwen3_8b": 96
    }
   },
   {
@@ -125,6 +143,12 @@
     "cl100k_base": 163,
     "o200k_base": 124,
     "p50k_base": 198
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 183,
+    "phi_3_mini_4k": 143,
+    "olmo_7b_0724": 163,
+    "qwen3_8b": 162
    }
   },
   {
@@ -141,6 +165,12 @@
     "cl100k_base": 289,
     "o200k_base": 218,
     "p50k_base": 355
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 341,
+    "phi_3_mini_4k": 253,
+    "olmo_7b_0724": 287,
+    "qwen3_8b": 289
    }
   },
   {
@@ -157,6 +187,12 @@
     "cl100k_base": 298,
     "o200k_base": 248,
     "p50k_base": 361
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 348,
+    "phi_3_mini_4k": 276,
+    "olmo_7b_0724": 306,
+    "qwen3_8b": 301
    }
   },
   {
@@ -173,6 +209,12 @@
     "cl100k_base": 162,
     "o200k_base": 137,
     "p50k_base": 210
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 198,
+    "phi_3_mini_4k": 142,
+    "olmo_7b_0724": 189,
+    "qwen3_8b": 154
    }
   },
   {
@@ -189,6 +231,12 @@
     "cl100k_base": 253,
     "o200k_base": 225,
     "p50k_base": 311
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 331,
+    "phi_3_mini_4k": 248,
+    "olmo_7b_0724": 279,
+    "qwen3_8b": 257
    }
   },
   {
@@ -205,6 +253,12 @@
     "cl100k_base": 129,
     "o200k_base": 111,
     "p50k_base": 174
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 171,
+    "phi_3_mini_4k": 117,
+    "olmo_7b_0724": 153,
+    "qwen3_8b": 118
    }
   },
   {
@@ -221,6 +275,12 @@
     "cl100k_base": 242,
     "o200k_base": 222,
     "p50k_base": 253
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 267,
+    "phi_3_mini_4k": 252,
+    "olmo_7b_0724": 249,
+    "qwen3_8b": 239
    }
   },
   {
@@ -237,6 +297,12 @@
     "cl100k_base": 222,
     "o200k_base": 195,
     "p50k_base": 305
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 280,
+    "phi_3_mini_4k": 200,
+    "olmo_7b_0724": 257,
+    "qwen3_8b": 206
    }
   },
   {
@@ -253,7 +319,51 @@
     "cl100k_base": 94,
     "o200k_base": 82,
     "p50k_base": 126
+   },
+   "external_tokens": {
+    "yi_1_5_6b": 126,
+    "phi_3_mini_4k": 95,
+    "olmo_7b_0724": 104,
+    "qwen3_8b": 88
    }
   }
- ]
+ ],
+ "external_tokenizers": {
+  "yi_1_5_6b": {
+   "source": "huggingface",
+   "repo": "01-ai/Yi-1.5-6B",
+   "revision": "157a3d77ab5a8a8f079510eaa25169b547481f06",
+   "file": "tokenizer.json",
+   "usage": "encode(add_special_tokens=False)",
+   "origin": "validate_families.py::TOKENIZER_SOURCES（外部队列，不在 GOLDEN.json 里）",
+   "why": "generic/llama profile 的**声明覆盖**包含这些家族（Yi→generic、Phi-3→generic、OLMo→llama、Qwen3→qwen），故它们也参与 DB-78 的 floor 验证"
+  },
+  "phi_3_mini_4k": {
+   "source": "huggingface",
+   "repo": "microsoft/Phi-3-mini-4k-instruct",
+   "revision": "f39ac1d28e925b323eae81227eaba4464caced4e",
+   "file": "tokenizer.json",
+   "usage": "encode(add_special_tokens=False)",
+   "origin": "validate_families.py::TOKENIZER_SOURCES（外部队列，不在 GOLDEN.json 里）",
+   "why": "generic/llama profile 的**声明覆盖**包含这些家族（Yi→generic、Phi-3→generic、OLMo→llama、Qwen3→qwen），故它们也参与 DB-78 的 floor 验证"
+  },
+  "olmo_7b_0724": {
+   "source": "huggingface",
+   "repo": "allenai/OLMo-7B-0724-hf",
+   "revision": "1ee306df318ee15bfe4a76ebd5c002b0105b1ab6",
+   "file": "tokenizer.json",
+   "usage": "encode(add_special_tokens=False)",
+   "origin": "validate_families.py::TOKENIZER_SOURCES（外部队列，不在 GOLDEN.json 里）",
+   "why": "generic/llama profile 的**声明覆盖**包含这些家族（Yi→generic、Phi-3→generic、OLMo→llama、Qwen3→qwen），故它们也参与 DB-78 的 floor 验证"
+  },
+  "qwen3_8b": {
+   "source": "huggingface",
+   "repo": "Qwen/Qwen3-8B",
+   "revision": "b968826d9c46dd6066d109eabc6255188de91218",
+   "file": "tokenizer.json",
+   "usage": "encode(add_special_tokens=False)",
+   "origin": "validate_families.py::TOKENIZER_SOURCES（外部队列，不在 GOLDEN.json 里）",
+   "why": "generic/llama profile 的**声明覆盖**包含这些家族（Yi→generic、Phi-3→generic、OLMo→llama、Qwen3→qwen），故它们也参与 DB-78 的 floor 验证"
+  }
+ }
 }

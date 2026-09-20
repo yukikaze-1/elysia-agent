@@ -62,6 +62,16 @@ _PROFILE_FAMILIES: dict[str, tuple[str, ...]] = {
     "mistral": ("mistral",),
     "generic": ("qwen2.5", "deepseek_v3", "llama3", "cl100k_base", "o200k_base", "mistral"),
 }
+#: 每个 profile **声明覆盖**的家族中、`GOLDEN.json` 之外的那部分
+#: （`validate_families.py::TOKENIZER_SOURCES` 的外部队列）。
+#: ⚠️ 这一条是 KB-78 的**第二轮**证据：第一版只按 6 个 GOLDEN 家族拟合，而
+#: `generic` profile 的声明覆盖包含 Yi-1.5-6B 与 Phi-3-mini——真散文在这两个家族上
+#: 仍击穿下限（Yi 上捷克 0.663），是**仓库自己的** `validate_families.py` 先报出来的。
+_EXTERNAL_FAMILIES: dict[str, tuple[str, ...]] = {
+    "generic": ("yi_1_5_6b", "phi_3_mini_4k"),
+    "llama": ("olmo_7b_0724",),
+    "qwen": ("qwen3_8b",),
+}
 _PROFILE_MODEL: dict[str, str | None] = {
     "qwen": "ollama/qwen2.5:3b",
     "deepseek": "deepseek/deepseek-v4-flash",
@@ -78,14 +88,14 @@ _LATIN_EXT_BEFORE = {
 #: KB-78 重标定之后（= production 系数）
 _LATIN_EXT_AFTER = {
     "qwen": 1.8700, "deepseek": 1.0079, "llama": 1.6800,
-    "openai": 1.1090, "mistral": 3.4100, "generic": 0.5600,
+    "openai": 1.1090, "mistral": 3.4100, "generic": 1.1490,
 }
 #: 语料里三个 `latin_accent` 样本的重标定后实测区间（含越南语高估代价）
 _LATIN_ACCENT_POST_CALIBRATION = {
     # sample → (min ratio, max ratio) over 6 profiles × 各自家族（实测，Batch 20）
-    "script_latin2_czech": (0.779, 1.840),     # min @ generic/cl100k_base
-    "script_latin2_polish": (0.837, 1.297),    # min @ generic/mistral
-    "script_vietnamese": (1.182, 3.237),       # min @ generic/mistral，max @ llama/llama3
+    "script_latin2_czech": (0.817, 1.840),     # min @ openai/cl100k_base
+    "script_latin2_polish": (0.849, 1.301),    # min @ openai/cl100k_base
+    "script_vietnamese": (1.296, 3.307),       # min @ generic/mistral
 }
 #: 真散文在**重标定后**的实测高估上界（逐 profile）。`mistral` 的 1.58 **超出**它自己的
 #: 合同 T=1.31——那是**既有**行为（捷克语在 mistral tokenizer 下就是贵 1.5×），
@@ -93,7 +103,7 @@ _LATIN_ACCENT_POST_CALIBRATION = {
 #: 高估方向是**安全侧**（只会过早裁预算 / 预览误拒，不会静默截断）。
 _PROSE_MAX_RATIO = {
     "qwen": 0.950, "deepseek": 1.024, "llama": 1.640,
-    "openai": 1.106, "mistral": 1.580, "generic": 1.338,
+    "openai": 1.106, "mistral": 1.580, "generic": 1.588,
 }
 _LATIN_EXT_INDEX = _CLASSES.index("latin_ext")
 
@@ -101,6 +111,18 @@ _LATIN_EXT_INDEX = _CLASSES.index("latin_ext")
 def _samples():
     for rec in _HOLDOUT["samples"]:
         yield rec, (_FIXTURES / rec["path"]).read_text(encoding="utf-8")
+
+
+def _families_for(profile: str) -> tuple[str, ...]:
+    """该 profile 的**完整声明覆盖**：GOLDEN 家族 + 外部队列家族。"""
+    return _PROFILE_FAMILIES[profile] + _EXTERNAL_FAMILIES.get(profile, ())
+
+
+def _actual(rec: dict, family: str) -> int | None:
+    if family in _EXTERNAL_FAMILIES.get("generic", ()) + _EXTERNAL_FAMILIES.get("llama", ()) \
+            + _EXTERNAL_FAMILIES.get("qwen", ()):
+        return rec.get("external_tokens", {}).get(family)
+    return rec["tokens"].get(family)
 
 
 def _class_counts(text: str) -> dict[str, int]:
@@ -144,8 +166,9 @@ class TestRealProseLatinFloor:
         for rec, body in _samples():
             assert rec["lang"] in ("cs", "pl")
             est = estimate_tokens(body, model=model)
-            for family in _PROFILE_FAMILIES[profile]:
-                actual = rec["tokens"][family]
+            for family in _families_for(profile):
+                actual = _actual(rec, family)
+                assert actual, f"{rec['id']}/{family}: 缺真值"
                 ratio = est / actual
                 if ratio < _CONTRACT_MIN_RATIO:
                     violations.append(f"{rec['id']}/{family}: est={est} actual={actual} "
@@ -164,10 +187,10 @@ class TestRealProseLatinFloor:
         超界必须**被写下来**，不许悄悄漂。
         """
         worst = max(
-            (estimate_tokens(body, model=_PROFILE_MODEL[profile]) / rec["tokens"][family],
+            (estimate_tokens(body, model=_PROFILE_MODEL[profile]) / _actual(rec, family),
              rec["id"], family)
             for rec, body in _samples()
-            for family in _PROFILE_FAMILIES[profile]
+            for family in _families_for(profile)
         )
         registered = _PROSE_MAX_RATIO[profile]
         assert worst[0] == pytest.approx(registered, abs=0.01), (
@@ -254,10 +277,10 @@ class TestNoRegressionAcrossFamilies:
         for model in (None, "custom/my-local-model", "mimo/mimo-v2.5", "ollama/unknown:1b"):
             assert profile_for_model(model) == "generic", model
         violations = [
-            (rec["id"], family, estimate_tokens(body, model=None) / rec["tokens"][family])
+            (rec["id"], family, estimate_tokens(body, model=None) / _actual(rec, family))
             for rec, body in _samples()
-            for family in _PROFILE_FAMILIES["generic"]
-            if estimate_tokens(body, model=None) / rec["tokens"][family] < _CONTRACT_MIN_RATIO
+            for family in _families_for("generic")
+            if estimate_tokens(body, model=None) / _actual(rec, family) < _CONTRACT_MIN_RATIO
         ]
         assert not violations, f"generic profile 的真散文低估越界：{violations}"
 
@@ -277,8 +300,8 @@ class TestCoefficientDerivation:
     def test_latin_ext_covers_every_holdout_sample(self, profile):
         """逐样本：现系数必须 ≥ 该样本达到合同下限所需的系数。"""
         for rec, body in _samples():
-            need = max(_latin_need(body, profile, rec["tokens"][f], _CONTRACT_MIN_RATIO)
-                       for f in _PROFILE_FAMILIES[profile])
+            need = max(_latin_need(body, profile, _actual(rec, f), _CONTRACT_MIN_RATIO)
+                       for f in _families_for(profile))
             have = _TOKEN_WEIGHTS[profile]["latin_ext"]
             assert have >= need - 1e-9, (
                 f"{profile}/{rec['id']}: latin_ext={have} < 所需 {need:.4f}")
@@ -379,6 +402,18 @@ class TestHoldoutIntegrity:
         for rec, _ in _samples():
             assert set(rec["tokens"]) == families, rec["id"]
             assert all(v > 0 for v in rec["tokens"].values()), rec["id"]
+            # 外部队列的真值同样必须齐备（generic/llama/qwen 的声明覆盖依赖它）
+            ext = set(rec["external_tokens"])
+            assert ext == set(_HOLDOUT["external_tokenizers"]), rec["id"]
+            assert all(v > 0 for v in rec["external_tokens"].values()), rec["id"]
+
+    def test_external_families_are_pinned_to_a_revision(self):
+        """外部队列（Yi/Phi-3/OLMo/Qwen3）必须钉死 revision——浮动会让真值失去可复现性。"""
+        ext = _HOLDOUT["external_tokenizers"]
+        assert set(ext) == {"yi_1_5_6b", "phi_3_mini_4k", "olmo_7b_0724", "qwen3_8b"}, ext
+        for key, meta in ext.items():
+            rev = meta["revision"]
+            assert len(rev) == 40 and all(c in "0123456789abcdef" for c in rev), (key, rev)
 
     def test_source_is_licensed_for_redistribution(self):
         """来源必须是可再分发的许可（CC BY-SA 4.0），并带署名与许可链接。"""

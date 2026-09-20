@@ -285,8 +285,19 @@ def main(argv: list[str]) -> int:
             print(f"   {repo}: {v:.2f}")
     if accent_worst:
         repo_w, val_w = min(accent_worst.items(), key=lambda kv: kv[1])
-        print(f"\nℹ️  已知缺口（`latin_accent`，KB-78）：最坏 {val_w:.2f}（{repo_w}）"
-              "—— 该类**不在**合同内，修法是重标定 `latin_ext`（估算器标定批次）。")
+        if val_w < 0.75:
+            # 缺口仍在：如实报告，**不**因为"过滤条件对齐"就把它藏起来（KB-80 的教训）。
+            print(f"\nℹ️  已知缺口（`latin_accent`，KB-78）：最坏 {val_w:.2f}（{repo_w}）"
+                  "—— 该类仍有样本击穿硬下限，修法是继续重标定 `latin_ext`。")
+            return 1
+        # KB-78 已闭合（Batch 20）：捷克/波兰（普通拉丁 + 变音）进入合同。**仍剩**
+        # 越南语（堆叠变音）——它与前者在同一标量里互斥，故 `latin_accent` 仍是
+        # 未覆盖类，只是这一类**在合同外不等于击穿**。这里明确说出来，避免读者把
+        # "在合同内"误读成"这一类整体被覆盖"。
+        print(f"\nℹ️  `latin_accent` 的普通拉丁成员（捷克/波兰）**已在合同内**："
+              f"最坏 {val_w:.2f}（{repo_w}）≥ 0.75 硬下限（KB-78 / Batch 20）。")
+        print("   未覆盖类里**只剩越南语**（堆叠变音符号）——它与捷克/波兰在 "
+              "`latin_ext` 单一标量里互斥，登记见 `TestKnownLimitations`。")
     return 1 if uncovered else 0
 
 

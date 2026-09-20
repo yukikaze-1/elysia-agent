@@ -16,7 +16,7 @@
 |---|---|---|---|---|
 | 1 | **KB-82** | USER / MEDIUM | production fix（协议配对） | **FIXED / GUARDED** |
 | 2 | **KB-56** | USER / MEDIUM | production fix（前端会话归属） | **FIXED / GUARDED** |
-| 3 | **KB-78** | USER / MEDIUM | production fix（`latin_ext` 重标定 + 真散文 holdout） | **FIXED / GUARDED** |
+| 3 | **KB-78** | USER / MEDIUM | production fix（`latin_ext` 重标定 + 真散文 holdout；含外部队列家族） | **FIXED / GUARDED** |
 | 4 | **F13** | USER / LOW-MED | **不动 production** | **CONFIRMED / PRODUCT_DECISION_REQUIRED / BLOCKED_BY_PD-13** |
 | 5 | **KB-41** | INTERNAL / LOW | production fix（ownership 判据 + 推迟） | **FIXED / GUARDED** |
 | 6 | **KB-48** | DEPLOYMENT / LOW | production fix（准入判据） | **FIXED / GUARDED** |
@@ -192,6 +192,44 @@ False 时**直接 return**（`tool_phase.py:284-286`）⇒ submit 一个都不�
   样本的 w_need)` 并向上留 2% 余量；
 - **只动这一个系数**，其余 10 类逐位不变（可逐位核对）。
 
+### 4.3b 第一版漏了外部队列（**留痕**，第二版修正）
+
+第一版只按 `GOLDEN.json` 的 6 个家族拟合，得 `generic = 0.560`，并让仓库自己的
+`validate_families.py` 在**外部队列**上报出仍击穿：
+
+```text
+01-ai/Yi-1.5-6B   generic   0.66  script_latin2_czech (⚠️ 击穿硬下限（已知缺口 KB-78）)
+```
+
+**根因**：`generic` 的**声明覆盖**包含 Yi-1.5-6B 与 Phi-3-mini（外部队列），
+而"拟合集合"只有 GOLDEN 的 6 族 ⇒ profile 在它**自称覆盖**的家族上失守。
+同理 `llama` 的覆盖含 OLMo-7B、`qwen` 含 Qwen3-8B（这两族本来就够，系数未变）。
+
+**第二版**把外部队列的真值（Yi / Phi-3 / OLMo / Qwen3，**逐仓钉死 40 位 revision**）
+并入 holdout fixture，并把 floor 集合改为**该 profile 的完整声明覆盖**：
+
+| profile | floor 集合（完整覆盖） | 修前 | 需求 | 修后 |
+|---|---|---|---|---|
+| **generic** | GOLDEN 6 族 + Yi-1.5-6B + Phi-3-mini | 0.2000 | **1.126**（pl_Wisla/Yi） | **1.1490** |
+
+复跑 `validate_families.py`（E3 旁证，6 个家族 × 权威 tokenizer）：
+
+```text
+01-ai/Yi-1.5-6B   generic  in-contract  └ latin_accent 0.82  (在合同内)
+microsoft/Phi-3   generic  in-contract  └ latin_accent 1.04  (在合同内)
+allenai/OLMo-7B   llama    in-contract  └ latin_accent 0.91  (在合同内)
+Qwen/Qwen3-8B     qwen     in-contract  └ latin_accent 0.99  (在合同内)
+Qwen/Qwen2.5-3B   qwen     in-contract  └ latin_accent 0.99  (在合同内)
+deepseek-ai/…V3   deepseek in-contract  └ latin_accent 0.98  (在合同内)
+EXIT=0
+```
+
+为此新增变异 **M78-5**（generic 只按 GOLDEN 6 族拟合到 0.800）⇒ **6 红**，
+证明"覆盖声明与拟合集合必须逐族对齐"这一条现在**有守卫**。
+`validate_families.py` 的收尾文案也同步更正：它在缺口闭合后仍打印"已知缺口…
+修法是重标定"，会让读者把"这一类整体未覆盖"误读成"仍在击穿"——现在分两句说清
+（普通拉丁成员在合同内 / 未覆盖类只剩越南语）。
+
 ### 4.4 修法与证据
 
 新增 **真散文 holdout**（12 篇 Wikipedia 导言，CC BY-SA 4.0，单篇 ≤ 730 字符，
@@ -209,7 +247,7 @@ False 时**直接 return**（`tool_phase.py:284-286`）⇒ submit 一个都不�
 | qwen | 0.8601 | **1.8700** | 1.864 |
 | llama | 1.6723 | **1.6800** | 1.676 |
 | mistral | 3.4031 | **3.4100** | 3.406 |
-| generic | 0.2000 | **0.5600** | 0.555 |
+| generic | 0.2000 | **1.1490** | 1.126（见 §4.3b：必须含外部队列） |
 | deepseek | 1.0079 | 1.0079（本来就过，需求 0.873） | — |
 | openai | 1.1090 | 1.1090（本来就过，需求 1.004） | — |
 
@@ -217,8 +255,8 @@ False 时**直接 return**（`tool_phase.py:284-286`）⇒ submit 一个都不�
 
 - 合同内语料 band **不变**（qwen 仍 **[0.779, 1.191]**；12 个 profile×family 组合里
   11 个**逐位一致**，mistral 最高值 1.303→1.306）；
-- 捷克/波兰真散文 → **0.778–1.640**，全部 ≥0.775 进合同；
-- **代价（登记，不隐藏）**：越南语（`latin_accent`，合同外）2.47 → **2.97**（方向安全）。
+- 捷克/波兰真散文 → **0.778–1.640**（含外部队列家族），全部 ≥0.775 进合同；
+- **代价（登记，不隐藏）**：越南语（`latin_accent`，合同外）2.47 → **3.31**（方向安全）。
 
 ### 4.5 为什么 `latin_accent` 不整类转正（真实的残余）
 
@@ -250,6 +288,7 @@ JSON/CJK/代码**零影响**（LT-T5/T6）、generic/未知/custom 回退（LT-T
 | M78-2 只按语料配方闭合（qwen 1.181） | **5 红**（低密度波兰语 holdout 红——正是它存在的意义） |
 | M78-3 generic 不更新 | **8 红** |
 | M78-4 过度校准（qwen 4.0） | **6 红**（高估侧 + 越南语代价区间 + 语料 T） |
+| M78-5 generic 只按 GOLDEN 6 族拟合（0.800） | **6 红**（外部队列 floor——第一版的盲区现在有守卫） |
 
 **跨家族回归**：`core/prompt`、`Module/system_prompt`、`core/cognitive`、
 `Module/tool`、`core/input/test_character_preview_window.py` 共 **841 passed**。
