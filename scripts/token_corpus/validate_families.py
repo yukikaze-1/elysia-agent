@@ -1,17 +1,23 @@
-"""验证 `generic` profile 在**指定 tokenizer 家族**上的 est/actual 区间。
+"""验证估算器在**指定 tokenizer 家族**上的 est/actual 区间。
 
     用法：conda run -n Elysia python scripts/token_corpus/validate_families.py [repo_id ...]
+
+退出码：**0 = 至少校验了一个家族且无未覆盖家族**；**1 = 有家族未覆盖**（min < 0.75）；
+**2 = 拒答**（没有任何家族产出结论，例如全部 SKIP / 无网络）。三者都打印人可读原因。
 
 ## 为什么需要这个入口
 
 `Module/system_prompt/budget.py` 的合同是**按 profile 声明**的，而每个 profile 的
 声明值只在**一组已验证的家族**上成立：
 
-    cjk_opt  ←  Qwen2.5（HF + 真实 Ollama 双证）、DeepSeek-V3
-    generic  ←  Llama-3-8B、Mistral-7B-v0.3、o200k_base、cl100k_base
+    qwen     ←  Qwen2.5（HF + 真实 Ollama 双证）、Qwen3
+    deepseek ←  DeepSeek-V3
+    llama    ←  Llama-3-8B、OLMo-7B
+    mistral  ←  Mistral-7B-v0.3
+    openai   ←  o200k_base / cl100k_base（GOLDEN，不在本脚本的默认集里）
+    generic  ←  上述全部（未知模型的**保守并集**回退）
 
-`generic` 是**未知模型的回退**（全部已验证家族的保守并集），而"未知"意味着它迟早会遇到
-没验证过的家族。本脚本就是
+`generic` 是**未知模型的回退**，而"未知"意味着它迟早会遇到没验证过的家族。本脚本就是
 那条"把新家族纳入/排除验证范围"的可执行入口：给定 HF repo，直接报出该家族在每个
 profile 下的 `min/median/max` 比值与越界样本。
 
@@ -19,22 +25,28 @@ profile 下的 `min/median/max` 比值与越界样本。
 新增或升级 provider/model 家族时跑一次，把结果写进执行记录，并据此决定是"纳入拟合"
 还是"如实登记为未覆盖"。
 
-## 已知结论（Batch 18 实测，2026-09-19）
+## 与 CI 合同的关系（Batch 19 / KB-78 起：单一权威）
+
+"哪些内容类不参与硬合同"由 `budget.UNCOVERED_CONTENT_CLASSES` **单一定义**，本脚本
+不再自己维护一份过滤条件（此前是 `!= "repeat"`，与合同测试的 `{"repeat","script"}`
+不一致 ⇒ 会对合同**故意排除**的样本报 `NOT COVERED`，属误导性的假红；见 KB-79）。
+本脚本现在：
+  * **主判定**只用合同内类别（与 CI 合同同一份集合）；
+  * `latin_accent`（密集变音符号的拉丁文本，实测击穿 0.75）**单独一行**报告——
+    对齐过滤条件**不得**变成把已知缺口藏起来（KB-78）。
+
+## 已知结论（Batch 18 实测，2026-09-19；Batch 19 复核）
 
 | 家族 | profile | min est/actual | 判定 |
 |---|---|---|---|
-| Qwen2.5-3B / DeepSeek-V3 / Llama-3 / Mistral / o200k / cl100k | 各自 profile | ≥0.78 | ✅ 拟合集 |
-| OLMo-7B / Qwen3-8B | `llama` / `qwen` | ≥0.78 | ✅ 区间内 |
-| Yi-1.5-6B / Phi-3-mini-4k | `generic`（名字不匹配任何家族标记） | ≥0.78 | ✅ `generic` 是全部已验证家族的**保守并集**，故覆盖 |
+| Qwen2.5-3B / DeepSeek-V3 / Llama-3 / Mistral（拟合集） | 各自 profile | ≥0.78 | ✅ |
+| OLMo-7B / Qwen3-8B | `llama` / `qwen` | ≥0.78 | ✅ |
+| Yi-1.5-6B / Phi-3-mini-4k | `generic`（名字不匹配任何家族标记） | ≥0.78 | ✅ `generic` 是全部已验证家族的**保守并集** |
 
-**当前未覆盖的是"内容"而不是"家族"**：婆罗米系/东南亚/希伯来/阿拉伯/希腊/
-亚美尼亚/西里尔这些**文字**跨家族差 3–6×，由固定的保守系数覆盖（只高估，
-TE7）；`repeat` 类同理（只登记区间）。
-
-**未覆盖的含义**：在这些家族上，估算仍可能低估到 0.63–0.66（低于 0.75 硬下限），
-即"预算判装得下而实际超窗"仍可能发生。修它的代价已实测：把这两个家族纳入拟合会把
-`generic` 的最坏高估从 **1.71 顶到 2.19**（对所有 custom/未知使用者生效）——Batch 18
-判定"不划算"，改为**如实登记**（`todo.md` KB-74）而不是悄悄放宽或悄悄忽略。
+**未覆盖的是"内容"而不是"家族"**：`script`（婆罗米系/东南亚/希伯来/阿拉伯/希腊/
+亚美尼亚/西里尔）由固定系数覆盖（只高估，TE7）；`repeat` 只登记区间；而
+`latin_accent` **会低估**（捷克 0.65 / 波兰 0.71，qwen profile）——它是**真实缺口**，
+修法（重标定 `latin_ext`）已验证可行但属独立的估算器标定批次（KB-78）。
 """
 
 from __future__ import annotations
@@ -160,24 +172,54 @@ def main(argv: list[str]) -> int:
     from huggingface_hub import hf_hub_download
     from tokenizers import Tokenizer
 
-    from Module.system_prompt.budget import _TOKEN_WEIGHTS, _CLASSES  # noqa: SLF001
+    from Module.system_prompt.budget import (  # noqa: SLF001
+        _CLASSES,
+        _TOKEN_WEIGHTS,
+        _classify,
+        UNCOVERED_CONTENT_CLASSES,
+    )
 
     manifest = json.loads((_CORPUS / "MANIFEST.json").read_text(encoding="utf-8"))["entries"]
-    bodies = {e["id"]: (_CORPUS / e["path"]).read_text(encoding="utf-8")
-              for e in manifest if e["kind"] == "text"
-              and e["category"] != "repeat" and len(
-                  (_CORPUS / e["path"]).read_text(encoding="utf-8")) >= 8}
-    feats = {}
-    for eid, body in bodies.items():
-        from Module.system_prompt.budget import _classify  # noqa: SLF001
-        counts = dict.fromkeys(_CLASSES, 0)
-        for ch in body:
-            counts[_classify(ch)] += 1
-        feats[eid] = counts
 
+    def _bodies(categories: set[str] | None) -> dict[str, str]:
+        """取样本：`categories=None` ⇒ **合同内**类别（排除未覆盖类）。"""
+        out: dict[str, str] = {}
+        for e in manifest:
+            if e["kind"] != "text":
+                continue
+            if categories is None:
+                if e["category"] in UNCOVERED_CONTENT_CLASSES:
+                    continue
+            elif e["category"] not in categories:
+                continue
+            body = (_CORPUS / e["path"]).read_text(encoding="utf-8")
+            if len(body) >= 8:
+                out[e["id"]] = body
+        return out
+
+    # **主判定**只用合同内类别（与 CI 合同同一份集合）；`latin_accent` 单独报告——
+    # "对齐过滤条件"不得变成把已知缺口藏起来（KB-78）。
+    bodies = _bodies(None)
+    accent_bodies = _bodies({"latin_accent"})
+
+    def _feats(items: dict[str, str]) -> dict[str, dict[str, int]]:
+        out: dict[str, dict[str, int]] = {}
+        for eid, body in items.items():
+            counts = dict.fromkeys(_CLASSES, 0)
+            for ch in body:
+                counts[_classify(ch)] += 1
+            out[eid] = counts
+        return out
+
+    feats = _feats(bodies)
+    accent_feats = _feats(accent_bodies)
+
+    print(f"合同内样本 {len(bodies)} 条；未覆盖类 {sorted(UNCOVERED_CONTENT_CLASSES)}"
+          f"（其中 latin_accent {len(accent_bodies)} 条单独报告）")
     print(f"{'family':34} {'profile':9} {'min':>6} {'median':>7} {'max':>6}  worst-min"
           f"   [revision]")
-    worst_overall = {}
+    worst_overall: dict[str, float] = {}
+    accent_worst: dict[str, float] = {}
     for repo in (argv or _DEFAULT):
         revision = _resolve_revision(repo)
         if revision is None:
@@ -192,15 +234,24 @@ def main(argv: list[str]) -> int:
         except Exception as exc:  # noqa: BLE001 — 维护者工具，失败要看得见原因
             print(f"{repo:34} SKIP: {type(exc).__name__} {str(exc)[:60]}")
             continue
+
+        def _ratios(items: dict[str, str], item_feats: dict[str, dict[str, int]],
+                    weights: dict[str, float]) -> list[tuple[float, str]]:
+            out: list[tuple[float, str]] = []
+            for eid, body in items.items():
+                actual = len(tok.encode(body, add_special_tokens=False).ids)
+                if not actual:
+                    continue
+                est = sum(item_feats[eid][k] * weights[k] for k in _CLASSES)
+                out.append((est / actual, eid))
+            return out
+
         profile = _profile_for(repo)
         weights = _TOKEN_WEIGHTS[profile]
-        ratios = []
-        for eid, body in bodies.items():
-            actual = len(tok.encode(body, add_special_tokens=False).ids)
-            if not actual:
-                continue
-            est = sum(feats[eid][k] * weights[k] for k in _CLASSES)
-            ratios.append((est / actual, eid))
+        ratios = _ratios(bodies, feats, weights)
+        if not ratios:
+            print(f"{repo:34} SKIP: 主判定集上无可测样本")
+            continue
         lo = min(ratios)
         hi = max(ratios)
         med = statistics.median(r for r, _ in ratios)
@@ -208,13 +259,35 @@ def main(argv: list[str]) -> int:
         print(f"{repo:34} {profile:9} {lo[0]:6.2f} {med:7.2f} {hi[0]:6.2f}  "
               f"{lo[1]} ({verdict})   [{revision[:12]}]")
         worst_overall[repo] = lo[0]
+
+        accent = _ratios(accent_bodies, accent_feats, weights)
+        if accent:
+            alo = min(accent)
+            accent_worst[repo] = alo[0]
+            flag = "⚠️ 击穿硬下限（已知缺口 KB-78）" if alo[0] < 0.75 else "在合同内"
+            print(f"{'  └ latin_accent':34} {profile:9} {alo[0]:6.2f} "
+                  f"{statistics.median(r for r, _ in accent):7.2f} "
+                  f"{max(r for r, _ in accent):6.2f}  {alo[1]} ({flag})")
+
+    if not worst_overall:
+        # **拒答**：一个家族都没校验成功（无网络 / 全部 SKIP / revision 解析失败）时
+        # 绝不 exit 0——那会让"什么都没检查"看起来像"检查通过"（Batch 19 / KB-79）。
+        print("\n❌ 拒答：没有任何家族产出结论（全部 SKIP / 无法解析不可变 revision）"
+              "——这不代表通过；修好环境后重跑。")
+        return 2
+
+    print(f"\n已校验 {len(worst_overall)} 个家族（合同内类别）。")
     uncovered = {r: v for r, v in worst_overall.items() if v < 0.75}
     if uncovered:
         print("\n⚠️  以下家族**未覆盖**（min < 0.75 硬下限）——要么把它们纳入拟合"
               "（会把 generic 的 T 顶高，对所有未知使用者生效），要么如实登记：")
         for repo, v in sorted(uncovered.items(), key=lambda kv: kv[1]):
             print(f"   {repo}: {v:.2f}")
-    return 0
+    if accent_worst:
+        repo_w, val_w = min(accent_worst.items(), key=lambda kv: kv[1])
+        print(f"\nℹ️  已知缺口（`latin_accent`，KB-78）：最坏 {val_w:.2f}（{repo_w}）"
+              "—— 该类**不在**合同内，修法是重标定 `latin_ext`（估算器标定批次）。")
+    return 1 if uncovered else 0
 
 
 if __name__ == "__main__":
