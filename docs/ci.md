@@ -15,7 +15,7 @@
 | `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / 密钥扫描 / 集合代数 / compose 安全策略 / 环境锁 / 依赖与静态安全扫描 `make audit`）+ **离线**用例 `make test-normal` |
 | `ci.yml` | `real-mongo` | push | `[self-hosted, Linux, X64]` | 真实 MongoDB 层：job 内自起 `docker-compose.test.yml`，`make test-real-mongo`，收尾 `down` |
 | `ci.yml` | `frontend` | push | `[self-hosted, Linux, X64]` | `npm ci` + `vue-tsc --noEmit && vite build` + `npm test`（vitest） |
-| `contract-frames.yml` | `frames` | push（**路径过滤**：`frontend_contract/**`、`docs/archive/frontend-handoff-v2/traces/**`、`docs/electron-backend-protocol-v2.md`） | `[self-hosted, Linux, X64]` | `make check-types` 的**三条命令**：ts/schema/raw 漂移 + golden frames 漂移 + 错误码目录 ↔ `errors.py` |
+| `contract-frames.yml` | `frames` | push（**路径过滤**：`frontend_contract/**`、`docs/archive/frontend-handoff-v2/traces/**`、`docs/electron-backend-protocol-v2.md`、`docs/**`） | `[self-hosted, Linux, X64]` | `make check-types` 的**三条命令**（ts/schema/raw 漂移 + golden frames 漂移 + 错误码目录 ↔ `errors.py`）+ **`make check-docs`（文档守卫 DG1–DG5）** |
 | `nightly.yml` | `full` / `external` | `workflow_dispatch` | `self-hosted` | 手工触发的全量 / 真实 LLM·DB E2E |
 
 **已移除（2026-09-16）**：`ci.yml` 的 `pr-gate`（PR 侧静态门禁）与 `frontend-pr`
@@ -74,6 +74,12 @@ Elysia env 的 `pip 26.1.2` **自身**命中 `PYSEC-2026-3721`（修复版 26.2�
 > **纪律**：新增任何"读 `docs/` 的门禁"时，必须同步把**被读文件**加进
 > `contract-frames.yml` 的 `paths`，或从 `ci.yml` 的 ignore 里摘掉它。
 > "运行期没人读 docs/"不等于"门禁不读 docs/"——上面这条洞正是这两句话的差别。
+
+**同一形状的第二处（2026-09-20 文档守卫批）**：新增的 `make check-docs`（DG1–DG5）
+同样读 `docs/` 下的 canonical 文档。处置一致——挂进 `ci.yml` 的 `backend` job
+（**代码/契约提交**会触发它），并把 `docs/**` 加进 `contract-frames.yml` 的 `paths`
+（**纯文档提交**在那边跑）。两条合起来，无论哪一类提交都能跑到守卫；
+而 `docs/**` 仍留在 ci.yml 的 ignore 里，纯文档提交不会拉起 30 分钟的测试套件。
 
 ## 为什么全部走 self-hosted：账单
 

@@ -139,7 +139,7 @@ make test-quick      # unit + service（-n 8）
 make lint make pyright make check-types make check-arch make check-timeouts \
      make check-contract make check-debug-auth make check-ci-isolation \
      make check-secrets make check-test-sets make check-compose \
-     make check-env-lock make audit make test-normal
+     make check-env-lock make check-docs make audit make test-normal
 cd frontend && npm ci && npm run build && npm test
 ```
 

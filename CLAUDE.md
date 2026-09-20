@@ -95,7 +95,7 @@ marker 纪律由根 `conftest.py` 的收集钩子强制：**每个测试必须�
 最小入口（完整清单见上面那条链接）：
 
 ```bash
-make lint && make pyright && make check-types && make check-arch && make test-normal
+make lint && make pyright && make check-types && make check-arch && make check-docs && make test-normal
 cd frontend && npm ci && npm run build && npm test
 ```
 

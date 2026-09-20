@@ -288,6 +288,7 @@ make check-secrets           # 被跟踪文件里的凭据形态（CR-01）
 make check-test-sets         # Quick ∪ remainder == Normal 且交集为空（约 35s，3 次收集）
 make check-compose           # docker-compose 安全策略（仅 loopback、无默认凭据、生产不发布管理端口）
 make check-env-lock          # requirements*.txt ↔ environment.lock.yml 无漂移
+make check-docs              # 文档守卫 DG1–DG5（链接可解析 / 无失效引用 / 错误码双向 / core README 覆盖 / env 索引一致）
 make audit                   # pip-audit（0 未豁免漏洞）+ bandit（Medium+ 为 0）
 ```
 

@@ -165,6 +165,81 @@
 - **不重复 architecture.md** —— 详细架构图/数据流指向 `docs/architecture.md`，README 只给概要
 - **不重复其他 README** —— 链接过去，不要复制内容
 
+## 文档纪律（七条，2026-09-20 文档整理批固化）
+
+这七条是那轮整理得出的结论，也是 `scripts/check_docs.py`（DG1–DG5）与
+`core/tests/test_doc_counts.py` 的判据来源。**新写/修改文档时先过一遍**。
+
+### Rule 1 — One fact → one canonical authority
+
+一个事实只能有一个**主要**权威（[`docs/README.md`](README.md) 的 Canonical Reference Table）。
+其它文档提到它时**链接**，不要复制。
+
+> 反面教材（都在本轮修掉）：架构树在根 README / `CLAUDE.md` / `architecture.md` 各一份；
+> 错误码数量在根 README 写 41、`docs/README.md` 写 54、实际 54；测试收集数同时存在过
+> 七个不同版本。
+
+### Rule 2 — Supporting docs link instead of copying large tables
+
+`CLAUDE.md`、包 README、`README.md` 这类 supporting 文档，遇到大表（provider 列表 /
+集合表 / 组件清单 / 完整目录树）一律**下放给权威 + 链接**。判据很朴素：
+**这份表会不会在别人改代码时过期，而没有任何门禁告诉我？** 会 → 别抄。
+
+### Rule 3 — Historical docs never represent current HEAD
+
+`docs/review/**`、`docs/archive/**`、`docs/superpowers/**`、`docs/progress/**`、
+`docs/completed/**`、`docs/legacy/**` 里的正文是**当时**的快照：
+
+- **不改写结论**（包括后来被证伪的结论）、**不删失败的实验轨迹**、
+  **不重写 Challenger 的反证**；
+- 允许的动作只有两种：**修导航**（坏链接）与**加 banner / index 元数据**；
+- 历史路径**允许保留**（当时的 `core/cognitive_loop.py` 就写它，别改成今天的路径——
+  那是篡改历史上下文）；
+- 每个历史目录必须有一个 README 说明"这里不代表 HEAD"。
+
+### Rule 4 — Canonical docs avoid unguarded volatile counts
+
+canonical 文档**不写**会静默过期的数字：当前测试数、LOC、模块/模型数、耗时、提交数。
+两种例外（只此两种）：
+
+| 例外 | 要求 | 本仓实例 |
+|---|---|---|
+| **A. 有门禁钉住** | 门禁会在数字漂移时变红 | `@property` 计数（`core/tests/test_doc_counts.py`）、AppConfig env 索引（`check_docs.py` DG5）、错误码表（`check_error_codes.py`） |
+| **B. 明确写成 dated snapshot** | 写明"Measured on `<日期/commit>`"，且读者能看出它**不是**当前值 | `docs/testing.md` 的并行档位曲线（2026-09-14 实测） |
+
+**没有门禁又没写日期 → 删掉**（不是"更新成对的值"——下次还会漂）。需要数字时给命令：
+`python scripts/print_test_stats.py`、`git log --since=… | wc -l`。
+
+### Rule 5 — Canonical references prefer symbols/headings over line numbers
+
+引用代码用 **`path/to/file.py :: ClassName.method`** 或 **`path :: test_name`**，
+不用 `foo.py:123` / `foo.py:321-340`——行号会在下一次无关重构时全部失效，
+而**失效的行号不会被任何门禁发现**（它不是链接）。同理，文档内引用用**章节标题**或
+可点击的相对链接，不用 `§9` 这种无锚点的裸编号（跨文档引用更是如此）。
+
+> 历史 Batch report **允许**保留旧行号——那记录的是当时的事实（Rule 3 优先）。
+
+### Rule 6 — New `core/` subsystem README requirement is enforced or explicitly exempted
+
+`core/<name>/` 里只要有生产 `.py`，就**必须**有 `README.md`（模板见上文）。
+确不该有的，在 `scripts/check_docs.py` 的 `_DG4_EXEMPTIONS` 登记**理由**；
+**豁免陈旧也会红**（某天它有了 README 却还挂着豁免）。
+
+"写在文档里的要求"与"有判据的要求"不是一回事——本轮补的三个丢的 README
+（`core/application` / `core/desktop` / `core/status`）就是约定存在、执行缺席的结果。
+
+### Rule 7 — Generated artifacts identify generator + check command
+
+凡是生成产物（TS 快照、JSON Schema、golden frames、契约 raw 快照…），文档里必须写清：
+
+1. **谁生成它**（脚本 / 命令）；
+2. **怎么校验没漂**（`--check` 命令 / 哪道门禁）；
+3. **不要手改**。
+
+本仓实例见 [`docs/README.md`](README.md) 的 Generated Artifacts 表。
+
+---
+
 ## 新增模块时的检查清单
 
 - [ ] 创建 README.md，使用对应模板

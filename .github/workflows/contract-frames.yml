@@ -30,6 +30,12 @@ on:
       # 加这一条把 `make check-types` 的三条命令在本 workflow 里补齐——
       # 不新建第二套 checker、不动 push-only 信任边界。
       - "docs/electron-backend-protocol-v2.md"
+      # 2026-09-20（文档守卫）：`make check-docs`（DG1–DG5）读 docs/ 下的 canonical
+      # 文档，而 ci.yml 带 `paths-ignore: docs/**` ⇒ **纯文档提交**在那边零执行点。
+      # 把 `docs/**` 纳入本 workflow 的触发面，doc 改动就有地方跑守卫了。
+      # 成本可控：本 job 只跑 4 条纯 Python 命令（无测试套件、无凭据）。
+      # 这与本 workflow 的创建理由同源——"让该跑的门禁真的有执行点"。
+      - "docs/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -110,3 +116,7 @@ jobs:
       # 所以由 `scripts/tests/test_check_ci_isolation.py` 按脚本名识别接线。
       - name: Protocol error-code catalogue check
         run: python scripts/check_error_codes.py
+      # 文档漂移守卫（DG1–DG5）。放这里而不是 ci.yml 的唯一原因见上面 paths 的注释：
+      # 纯文档提交不会触发 ci.yml（那是刻意的，为了不让每次改文档跑 30 分钟）。
+      - name: Documentation drift guard (DG1-DG5)
+        run: make check-docs

@@ -161,6 +161,13 @@ jobs:
         # 此前只在 PR Gate 跑 → 直接 push 到 main 的提交从未被校验过信任边界。
         # 纯静态解析、<1s。
         run: make check-ci-isolation
+      # 2026-09-20：文档守卫必须**接在这里**（而不是只留在 Makefile）——
+      # 它读 docs/ 下的 canonical 文档，而本 workflow 带 `paths-ignore: docs/**`：
+      # 纯文档提交不会触发本 job（那是刻意的），但**契约/代码**提交会触发，
+      # 那时若文档已被改坏，这条门禁就是唯一能发现它的地方。
+      # 纯文档提交的覆盖由 contract-frames.yml 的 paths 补（见该文件）。
+      - name: Documentation drift guard (DG1-DG5)
+        run: make check-docs
       - name: Secret scanning (CR-01)
         # 同上：此前只在 PR Gate 跑 → 直接 push 到 main 的提交不会被扫凭据形态。
         # 纯 stdlib、秒级。

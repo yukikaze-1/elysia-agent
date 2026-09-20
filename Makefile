@@ -1,4 +1,4 @@
-.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-remainder test-full test-external test-real-mongo test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-env-lock check-arch check-debug-auth check-timeouts check-contract check-secrets check-secrets-history check-ci-isolation check-test-sets check check-full
+.PHONY: test test-module test-core test-tools test-all test-quick test-normal test-remainder test-full test-external test-real-mongo test-workflow-engine lint pyright lock-env audit start gen-types gen-frames check-types check-compose check-env-lock check-arch check-debug-auth check-timeouts check-contract check-secrets check-secrets-history check-ci-isolation check-test-sets check-docs check check-full
 
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
@@ -185,6 +185,15 @@ check-secrets-history:
 # 在**每个** pytest 进程内零成本断言，见那里的 docstring。
 check-test-sets:
 	conda run -n $(CONDA_ENV) python scripts/check_test_sets.py
+
+# 文档漂移门禁（DG1–DG5，2026-09-20 文档整理批）：canonical/supporting 文档的
+# 内部链接可解析 + 不引用已知不存在的符号/路径 + 错误码双向一致（委托
+# check_error_codes）+ core 子系统 README 覆盖 + AppConfig 环境变量索引与代码一致。
+# **只扫 current 文档**，历史语料（review/archive/superpowers/progress/completed/legacy）
+# 刻意不扫——历史文档允许保留当时的路径，强制当代链接等于逼人改写历史。
+# 扫描面与全部豁免都可用 `--list` 打印；豁免陈旧也会红。纯 stdlib、~0.3s。
+check-docs:
+	python scripts/check_docs.py
 
 # CI 信任边界门禁（P0-02）：PR 可达 job 禁 self-hosted / 禁宿主 .env 路径 /
 # 禁死 job（`if` 守卫引用未在 `on:` 声明的事件）。默认扫描全部 workflow 文件。
