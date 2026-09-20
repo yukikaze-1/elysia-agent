@@ -367,15 +367,28 @@ def _text_cases() -> dict[str, tuple[str, str]]:
     cases["script_greek"] = (
         "script", "Γεια σου κόσμε αυτή είναι μια δοκιμή εκπαίδευση υγεία οικονομία πολιτική "
                   "οικογένεια δάσκαλος σχολείο βιβλίο νερό γη δάσος βουνό ποτάμι θάλασσα πόλη" * 3)
+    # 密集变音符号的拉丁文本（捷克/波兰/越南）——Batch 19（KB-78）单列 `latin_accent`：
+    # 它们是**普通拉丁文字**（`other` 占比 ≈0，不是婆罗米系那种"跨家族 3–6×、只许高估"
+    # 的脚本类），走的是**拟合**的 `latin_ext` 类 ⇒ 可以低估。实测（真 Wikipedia 散文 ×
+    # 本地权威 tokenizer，E3）：qwen profile 捷克 **0.65–0.68**、波兰 0.73–0.80；
+    # generic 捷克 0.67、波兰 0.70 —— **击穿 0.75 硬下限**。根因是该系数由
+    # `latin1_accented`（5% 变音密度）标定，而捷克自然文本是 12–14%。
+    # 故它们**不能**继续混在 `script` 里（那会让"只许高估"的方向保证被误当成覆盖）：
+    # 单列一类、明确未覆盖，并由合同测试的 `TestKnownLimitations` 把实测值钉住。
+    # 系数重标定（已验证可行：qwen latin_ext 0.86→1.18 / generic 0.20→0.56 即可闭合，
+    # 且合同内 band 不变）属独立的**估算器标定批次**。
     cases["script_latin2_polish"] = (
-        "script", "Zażółć gęślą jaźń oraz źdźbło trawy. Edukacja zdrowie gospodarka polityka "
-                  "rodzina nauczyciel szkoła książka woda ziemia las góra rzeka morze miasto droga" * 3)
+        "latin_accent",
+        "Zażółć gęślą jaźń oraz źdźbło trawy. Edukacja zdrowie gospodarka polityka "
+        "rodzina nauczyciel szkoła książka woda ziemia las góra rzeka morze miasto droga" * 3)
     cases["script_latin2_czech"] = (
-        "script", "Příliš žluťoučký kůň úpěl ďábelské ódy. Vzdělání zdraví hospodářství politika "
-                  "rodina učitel škola kniha voda země les hora řeka moře město cesta člověk" * 3)
+        "latin_accent",
+        "Příliš žluťoučký kůň úpěl ďábelské ódy. Vzdělání zdraví hospodářství politika "
+        "rodina učitel škola kniha voda země les hora řeka moře město cesta člověk" * 3)
     cases["script_vietnamese"] = (
-        "script", "Xin chào thế giới đây là một bài kiểm tra. Giáo dục sức khỏe kinh tế chính trị "
-                  "gia đình giáo viên trường học sách nước đất rừng núi sông biển thành phố con người" * 3)
+        "latin_accent",
+        "Xin chào thế giới đây là một bài kiểm tra. Giáo dục sức khỏe kinh tế chính trị "
+        "gia đình giáo viên trường học sách nước đất rừng núi sông biển thành phố con người" * 3)
     cases["script_cyrillic"] = (
         "script", "Привет мир это проверка Образование Здоровье Экономика Политика Семья Учитель "
                   "Школа Книга Вода Земля Лес Гора Река Море Город Дорога Человек Люди День Ночь" * 3)

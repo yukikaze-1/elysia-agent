@@ -381,7 +381,7 @@
   {
    "id": "script_latin2_czech",
    "kind": "text",
-   "category": "script",
+   "category": "latin_accent",
    "path": "text/script_latin2_czech.txt",
    "chars": 453,
    "bytes": 543,
@@ -390,7 +390,7 @@
   {
    "id": "script_latin2_polish",
    "kind": "text",
-   "category": "script",
+   "category": "latin_accent",
    "path": "text/script_latin2_polish.txt",
    "chars": 459,
    "bytes": 507,
@@ -426,7 +426,7 @@
   {
    "id": "script_vietnamese",
    "kind": "text",
-   "category": "script",
+   "category": "latin_accent",
    "path": "text/script_vietnamese.txt",
    "chars": 483,
    "bytes": 642,

@@ -85,13 +85,16 @@ DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴不共线：用两个 p
 ### 合同范围（诚实声明，§113/§196）
 
 **在合同内**（参与拟合与硬下限断言）：
-- 文字：拉丁（含重音）、CJK BMP、**CJK 扩展 B–I**（生僻字，单列 `cjk_ext` 类——
-  实测它们比 BMP 汉字贵 3–7×，旧实现漏了这段区间 ⇒ est/actual = **0.13**）、
-  假名、谚文、数字、ASCII 标点、emoji、JSON/代码/Markdown 结构、消息框架、工具 schema。
+- 文字：拉丁（**普通重音密度**，实测 ≤8% 变音字符——法/德/西等）、CJK BMP、
+  **CJK 扩展 B–I**（生僻字，单列 `cjk_ext` 类——实测它们比 BMP 汉字贵 3–7×，
+  旧实现漏了这段区间 ⇒ est/actual = **0.13**）、假名、谚文、数字、ASCII 标点、
+  emoji、JSON/代码/Markdown 结构、消息框架、工具 schema。
 - 家族：上表六个 profile 各自的依据家族；其中 Qwen3-8B（对 `qwen`）与 OLMo-7B
   （对 `llama`）经**外部**验证也在区间内。
 
-**合同外**（实测登记，不隐藏；`TestKnownLimitations` 钉住区间）：
+**合同外**（实测登记，不隐藏；`TestKnownLimitations` 钉住区间，
+常量 `UNCOVERED_CONTENT_CLASSES` 是**唯一权威**，合同测试与
+`scripts/token_corpus/validate_families.py` 都读它）：
 1. `repeat` 类（同字符重复）：token 率完全由词表决定，字符统计无法区分
    （`"哈哈"×300` = 0.25 token/字 vs `"呀"×300` = 1.00）。实测区间 `[0.58, 5.34]`。
 2. `script` 类（**婆罗米系 / 东南亚 / 希伯来 / 阿拉伯 / 希腊 / 亚美尼亚 / 西里尔**）：
@@ -99,8 +102,17 @@ DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴不共线：用两个 p
    亚美尼亚文 cl100k 1.88 vs o200k 0.29）⇒ **单一字符类系数不可能同时覆盖**。
    本实现把这一类的系数固定在**已验证家族上的实测上界 + 余量**（3.00 token/字符），
    方向是**安全侧**：这些文字**不会再低估**（无静默截断面），代价是某些家族上
-   高估最多 ~6×。`scripts/token_corpus/validate_families.py` 可复现。
-3. `p50k_base`（GPT-3 时代 byte-level BPE）：`providers.yaml` 无对应模型。
+   高估（实测最坏 **13.9×**，general 系数 × o200k 的阿拉伯文）。
+   `scripts/token_corpus/validate_families.py` 可复现。
+3. `latin_accent` 类（**密集变音符号的拉丁文本**：捷克/波兰/越南等）：
+   **未覆盖，且实测击穿 0.75 硬下限**（真 Wikipedia 散文 × 权威 tokenizer：
+   qwen profile 捷克 0.65–0.68 / 波兰 0.73–0.80；generic 捷克 0.67 / 波兰 0.70）。
+   根因：`latin_ext` 系数由 `latin1_accented`（5% 变音密度）标定，而捷克自然文本
+   是 12–14%。**它与第 2 类的性质不同**——不是"跨家族 3–6×、只许高估"，而是走
+   **拟合**系数、可以低估 ⇒ 不能混进 `script`（那会把方向保证误当成覆盖，
+   Batch 19 / KB-78 的裁决）。修法是重标定 `latin_ext`：已验证可行（qwen
+   0.86→1.18 / generic 0.20→0.56 即可闭合且合同内 band 不变），属**估算器标定批次**。
+4. `p50k_base`（GPT-3 时代 byte-level BPE）：`providers.yaml` 无对应模型。
 
 **已知的判定漂移面**：`profile_for_model` 是**名字匹配**，不是权威 metadata。
 `ollama/deepseek-r1:8b` 实为 Llama-arch 蒸馏（拿 `deepseek` profile）；反向
@@ -264,6 +276,21 @@ _TOOL_FRAME_TOKENS: int = 10
 _TOOL_PARAM_FRAME_TOKENS: int = 12
 
 _DEFAULT_PROFILE = "generic"
+
+# **估算器不承诺覆盖的内容类**（语料 `category` 名）：单一权威。
+#
+# 为什么放在生产模块而不是测试里：这三个名字是**合同**的一部分——生产模块的
+# docstring 用它们声明"哪些内容不在覆盖范围内"，而合同测试
+# （`Module/system_prompt/tests/test_token_corpus_contract.py`）与维护者工具
+# （`scripts/token_corpus/validate_families.py`）都必须读**同一份**清单。
+# Batch 19 之前的实况是三处各自维护（测试 `{"repeat","script"}`、验证脚本
+# `!= "repeat"`、docstring 散文），于是验证脚本会对合同**故意排除**的样本报
+# "NOT COVERED"，而 Latin-2 的真实击穿又靠 `script` 这个大类躲过硬下限
+# （见 KB-78）。**单一常量 + 每类各自的 `TestKnownLimitations` 守卫**取代三份散文。
+#
+# 新增一类的纪律：① docstring 的合同范围节写清"为什么无法覆盖"；② 合同测试加一条
+# 钉住实测区间的守卫（不许悄悄变坏，也不许悄悄变绿）；③ 语料里真有该 `category`。
+UNCOVERED_CONTENT_CLASSES: tuple[str, ...] = ("repeat", "script", "latin_accent")
 
 # model 名 → profile 的**唯一**判定表（顺序即优先级；小写子串匹配，只看模型段）。
 #

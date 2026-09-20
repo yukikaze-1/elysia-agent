@@ -29,6 +29,7 @@ import pytest
 
 from Module.system_prompt.budget import (
     CONTEXT_HEADROOM_RATIO,
+    UNCOVERED_CONTENT_CLASSES,
     _TOKEN_WEIGHTS,  # noqa: SLF001 — 合同测试要读 profile 表本体
     budget_from_context_window,
     estimate_messages_tokens,
@@ -81,17 +82,22 @@ _OUT_OF_CONTRACT = ("p50k_base",)
 # 文本语料里 <8 字符的样本：单条消息的 chat 模板开销占比过大，不参与比例断言。
 _MIN_CHARS_FOR_RATIO = 8
 
-# **合同外的类别：`repeat`（退化/对抗性重复输入）**。
+# **合同外的类别**（单一权威 = `budget.UNCOVERED_CONTENT_CLASSES`）：
 #
-# 为什么它必须是"合同外"而不是"被忽略"：BPE 的合并率取决于**词表**，而词表信息
-# 在字符统计里根本不存在。实测（Qwen2.5 / DeepSeek-V3 / Llama-3 / cl100k）：
-#     "哈哈" * 300  → 0.25 token/字      （"哈哈" 是词表里的 token）
-#     "呀"   * 300  → 1.00 token/字      （"呀呀" 不在词表里，逐字计费）
-# 两者字符分布**完全同构**（同一字符重复 300 次），任何启发式都无法区分。故：
-#   * 拟合与硬合同只用**自然语言 + 结构化内容**（`repeat` 之外的全部类别）；
-#   * `repeat` 的实测区间单独钉在 `TestKnownLimitations` 里，**如实报告不隐藏**，
-#     并且每次改动估算器都会让那组数字重新暴露一次。
-_CONTRACT_EXCLUDED_CATEGORIES = frozenset({"repeat", "script"})
+# 1. `repeat`（退化/对抗性重复输入）：BPE 的合并率取决于**词表**，而词表信息在字符
+#    统计里根本不存在。实测（Qwen2.5 / DeepSeek-V3 / Llama-3 / cl100k）：
+#        "哈哈" * 300  → 0.25 token/字      （"哈哈" 是词表里的 token）
+#        "呀"   * 300  → 1.00 token/字      （"呀呀" 不在词表里，逐字计费）
+#    两者字符分布**完全同构**（同一字符重复 300 次），任何启发式都无法区分。
+# 2. `script`（婆罗米系/东南亚/希伯来/阿拉伯/希腊/亚美尼亚/西里尔）：跨家族差 3–6×，
+#    实现取"已验证家族实测上界"固定系数 ⇒ 方向被钉住（只许高估，见下面的方向守卫）。
+# 3. `latin_accent`（密集变音符号的拉丁文本：捷克/波兰/越南）：**实测击穿硬下限**
+#    （Batch 19 / KB-78）——它走的是**拟合**的 `latin_ext` 类，与第 2 类性质不同，
+#    故单列一类、不再借 `script` 的方向保证充当覆盖。见
+#    `TestKnownLimitations::test_dense_accented_latin_is_a_registered_uncovered_class`。
+#
+# 三类都**如实报告不隐藏**，并且每次改动估算器都会让登记数字重新暴露一次。
+_CONTRACT_EXCLUDED_CATEGORIES = frozenset(UNCOVERED_CONTENT_CLASSES)
 
 
 def _text_body(path: str) -> str:
@@ -367,8 +373,11 @@ class TestKnownLimitations:
 
         为什么这条比"登记一个区间"更强：`other` 类的系数被固定在已验证家族上的
         实测上界（安全侧），所以这些文字不会再走"预算判装得下而实际静默截断"那条
-        路——代价（某些家族高估最多 ~6×）是显式接受的。任何把该系数调低的改动
-        都会在这里变红。
+        路——代价（某些家族高估最多 13.9×，见 `other` 系数）是显式接受的。任何把该
+        系数调低的改动都会在这里变红。
+
+        拉丁成员（捷克/波兰/越南）**不在本组**：它们走的是**拟合**的 `latin_ext` 类，
+        没有方向保证，已单列 `latin_accent` 并由下面那条守卫登记（KB-78）。
         """
         from Module.system_prompt.budget import _classify  # noqa: SLF001
 
@@ -376,9 +385,8 @@ class TestKnownLimitations:
         for entry, body in _text_cases(include_degenerate=True):
             if entry["category"] != "script":
                 continue
-            # 只对**非拉丁文字**（由固定的 `other` 类主导）保证方向；Latin-2
-            # （波兰/捷克/越南）走的是**拟合**的 `latin_ext` 类，属"合同外、
-            # 无方向保证"——它和法语/德语重音共用一类，无法既紧又覆盖极端。
+            # 判据是**内容**而不是类别名：只有"由固定的 `other` 类主导"的样本才有
+            # 方向保证（`latin_accent` 那三条 other 占比 ≈0，天然被这条挡在外面）。
             if sum(1 for ch in body if _classify(ch) == "other") < 0.4 * len(body):
                 continue
             for profile, families in _PROFILE_FAMILIES.items():
@@ -392,11 +400,77 @@ class TestKnownLimitations:
                     seen += 1
         assert seen >= 30, f"script 语料覆盖不足（{seen} 组）"
 
-    def test_repeat_category_is_excluded_from_the_binding_contract(self):
-        """防止有人"顺手"把退化样本塞回合同里——那会把系数推向为最坏情况服务。"""
-        assert {"repeat", "script"} <= _CONTRACT_EXCLUDED_CATEGORIES
+    # `latin_accent`（密集变音符号的拉丁文本）实测区间：跨 6 profile × 各自家族，
+    # 最低 **0.646**（czech/generic/cl100k）、最高 3.237（vietnamese/llama/llama3）。
+    # 登记的**下界**就是"击穿硬下限"的证据本身：0.646 < 0.75。
+    _LATIN_ACCENT_WORST_RANGE = (0.60, 0.70)
+    _LATIN_ACCENT_BEST_RANGE = (3.00, 3.50)
+
+    def test_dense_accented_latin_is_a_registered_uncovered_class(self):
+        """**未覆盖类**：密集变音符号的拉丁文本（捷克/波兰/越南）实测击穿硬下限。
+
+        为什么单列一类而不留在 `script`：`script` 的合同理由是"跨家族 3–6×、方向被
+        钉在只许高估"，而这三条走的是**拟合**的 `latin_ext` 类、**可以低估**——把它
+        们混在 `script` 里会让那条方向保证被误读成覆盖（Batch 19 / KB-78）。
+
+        实测（**真 Wikipedia 散文 × 本地权威 tokenizer**，E3）：qwen profile 捷克
+        0.65–0.68 / 波兰 0.73–0.80；generic 捷克 0.67 / 波兰 0.70。签入语料上的最坏值
+        见 `_LATIN_ACCENT_WORST_RANGE`。本守卫钉住这个**已知缺口**：不许悄悄变坏。
+
+        **修好之后**（重标定 `latin_ext` 使该类进入合同）本组会显式 `skip`——残留的
+        "断言缺陷存在"式用例会在 owner 修好它的那一刻变成永久红，那是本仓明令禁止的
+        （见 CLAUDE.md「门禁的三种假绿」配套约束）。
+        """
+        ratios = []
+        for entry, body in _text_cases(include_degenerate=True):
+            if entry["category"] != "latin_accent":
+                continue
+            for profile, families in _PROFILE_FAMILIES.items():
+                est = estimate_tokens(body, model=_profile_model(profile))
+                for family in families:
+                    actual = _GOLDEN["text"][entry["id"]][family]
+                    if actual:
+                        ratios.append((est / actual, f"{entry['id']}/{profile}/{family}"))
+        assert len(ratios) >= 30, f"latin_accent 语料覆盖不足（{len(ratios)} 组）"
+        worst = min(ratios)
+        best = max(ratios)
+        if worst[0] >= _HARD_FLOOR:
+            pytest.skip(
+                f"latin_accent 已被覆盖（worst={worst[0]:.3f}）——请同步更新 "
+                f"budget.py 的合同范围声明、`UNCOVERED_CONTENT_CLASSES` 与 KB-78")
+        lo, hi = self._LATIN_ACCENT_WORST_RANGE
+        assert lo <= worst[0] <= hi, (
+            f"latin_accent 最坏比值 {worst[0]:.3f}（{worst[1]}）越出登记区间 [{lo}, {hi}]"
+            "——要么估算器退化了，要么它被修好了（后者请走显式 skip 路径）")
+        blo, bhi = self._LATIN_ACCENT_BEST_RANGE
+        assert blo <= best[0] <= bhi, (
+            f"latin_accent 最好比值 {best[0]:.3f}（{best[1]}）越出登记区间 [{blo}, {bhi}]")
+        assert worst[0] < _HARD_FLOOR, "登记为未覆盖的类必须仍在下限之下（否则应转入合同）"
+
+    def test_latin_accent_samples_are_not_silently_promoted(self):
+        """这三条是击穿下限的**证据**：既不能被静默挪进合同内类别，也不能被删掉。
+
+        挪进合同内 ⇒ 合同测试会红（那是**想修**的信号，请同时重标定系数）；
+        删掉 ⇒ 本组失去证据，故这里把成员**逐一点名**。
+        """
+        expected = {"script_latin2_czech", "script_latin2_polish", "script_vietnamese"}
+        actual = {e["id"] for e in _CORPUS if e["category"] == "latin_accent"}
+        assert actual == expected, (
+            f"latin_accent 成员变化：{actual ^ expected}——改成员必须显式（见 docstring）")
+        for entry_id in expected:
+            body = _text_body(next(e for e in _CORPUS if e["id"] == entry_id)["path"])
+            # 证据必须真的是**普通拉丁文本**（不是别的脚本借道）
+            assert body.isascii() is False and any(ord(c) > 0x7F for c in body)
+
+    def test_every_uncovered_class_is_a_real_corpus_category(self):
+        """单一权威常量 + 语料必须一致；且每个未覆盖类都要有实测守卫（本类）。"""
         cats = {e["category"] for e in _CORPUS if e["kind"] == "text"}
-        assert _CONTRACT_EXCLUDED_CATEGORIES <= cats, "登记表里的类别必须真实存在"
+        assert set(_CONTRACT_EXCLUDED_CATEGORIES) == set(UNCOVERED_CONTENT_CLASSES)
+        assert set(UNCOVERED_CONTENT_CLASSES) <= cats, (
+            f"登记表里的类别必须真实存在：{set(UNCOVERED_CONTENT_CLASSES) - cats}")
+        # 三个类各有自己的 TestKnownLimitations 守卫（repeat / script / latin_accent）
+        assert "latin_accent" in _CONTRACT_EXCLUDED_CATEGORIES
+        assert {"repeat", "script"} <= _CONTRACT_EXCLUDED_CATEGORIES
 
 
 class TestFailureModeGuards:
