@@ -41,6 +41,7 @@ from core.utils import set_request_id, get_request_id, log_conversation
 from core.storage.desktop_call_repo import STATUS_OFFLINE
 from Module.system_prompt.budget import budget_from_context_window
 from core.prompt.prompt_assembler import PromptAssembler
+from core.prompt.message_builder import enforce_round_budget, turn_tail_start
 from core.memory.session import SessionMemory
 from core.adapter.llm_adapter import LLMAdapter
 from core.memory.consolidator import MemoryConsolidator
@@ -1123,6 +1124,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
         content: list[dict] | None,
         stt_emotion: str, stt_events: list[str] | None,
         is_task_result: bool,
+        prompt_budget: int,
         user_message_id: MessageId | None = None,
         conversation_id: SessionId | None = None,
     ) -> tuple[list[dict], list[dict]]:
@@ -1135,6 +1137,8 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             stt_emotion: STT 情绪标签
             stt_events: STT 事件列表
             is_task_result: 是否为任务结果唤醒（决定是否写入 session）
+            prompt_budget: 本回合的 prompt 预算（token）。**派生点在 `_think_loop`**，
+                与工具轮的再预算（KB-77）共用同一个数——两处分别派生就是漂移面。
             user_message_id: v2 预分配用户消息 ID（MessageId NewType，落库优先用，
                 保证 ACK 一致）；无则 new_message_id()
             conversation_id: 批次 3 目标会话 ID（SessionId NewType，贯通，供日志/归属追踪）
@@ -1149,8 +1153,7 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             # S2-H9：prompt 预算来自 provider 的上下文窗口（providers.yaml），留 25% 余量。
             # 未声明 → 保守默认（budget.DEFAULT_CONTEXT_WINDOW）——"没配 = 不截断"
             # 会退化成"超 context 变 provider 400、该会话永久失败"的原始缺陷。
-            prompt_budget = budget_from_context_window(
-                LLMFactory.context_window(self._llm.model))
+            # Batch 19：预算由调用方传入（同一份也用于工具轮再预算，见 KB-77）。
             # Batch 18：工具定义必须在**预算之前**算出来。provider request 是
             # `messages + tools` 一起发的，而估算/裁剪此前只看得见 messages ⇒
             # 12 个内置工具的 schema 实测 1126 token（占 6144 预算的 18%）完全漏算，
@@ -1189,6 +1192,29 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
             self._turn_message_persisted = True
         logger.debug("提示词构建: %d ms, %d 条消息, %d 个工具", t.elapsed_ms, len(messages), len(tool_defs))
         return messages, tool_defs
+
+    def _enforce_round_prompt_budget(
+        self, messages: list[dict], tool_defs: list[dict], prompt_budget: int,
+    ) -> None:
+        """ReAct 第 2..N 轮的再预算（KB-77）。
+
+        首轮的预算只覆盖 `system + 历史 + 当前消息`；工具轮会把 assistant tool_calls 与
+        `role="tool"` 结果**原地**追加进同一个数组，而每轮都把整个数组重发 ⇒ 不做这一步
+        的话第 2..N 轮完全在预算外（实测第 2 轮即超窗，Ollama 静默截断）。
+
+        裁剪策略与优先级收口在 `core.prompt.message_builder.enforce_round_budget`
+        （与首轮同一份估算权威、同一"由旧到新"优先级）；本方法只负责调用与留痕。
+        """
+        outcome = enforce_round_budget(
+            messages, prompt_budget,
+            turn_start=turn_tail_start(messages),
+            model_id=self._llm.model, tools=tool_defs)
+        if outcome.trimmed:
+            logger.info(
+                "工具轮上下文再预算：估算 %d → %d / 预算 %d token（历史 -%d / 往返 -%d / "
+                "截断结果 %d）",
+                outcome.before, outcome.after, outcome.budget, outcome.dropped_history,
+                outcome.dropped_exchanges, outcome.truncated_results)
 
     # 流式消费/事件分发已迁至 CognitiveStreaming mixin（CORE-MOD-P1-04）。
 
@@ -1301,8 +1327,13 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
 
         # 1. 构建 prompt
         self._phase = TurnPhase.BUILD_PROMPT
+        # KB-77：预算**在这里派生一次**，既给首轮组装，也给每个工具轮的再预算。
+        # 分别在两处派生就是漂移面（改了一处、另一处还是旧窗口）。
+        prompt_budget = budget_from_context_window(
+            LLMFactory.context_window(self._llm.model))
         messages, tool_defs = await self._build_turn_prompt(
             user_message, user_name, content, stt_emotion, stt_events, is_task_result,
+            prompt_budget,
             user_message_id=message_id, conversation_id=conversation_id)
 
         await self._start_turn_tracking(messages, tool_defs)
@@ -1350,6 +1381,12 @@ class CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize):
                         conversation_id=conversation_id)
                     # 显式模式切换信号：帮助 LLM 从"工具执行模式"切回"对话模式"
                     messages.append({"role": "system", "content": "[TOOL_EXECUTED]"})
+                    # KB-77（Batch 19）：工具结果已进入同一个 messages 数组，而下一轮
+                    # 会把整个数组重发 ⇒ 必须用**同一份** canonical 预算再裁一次。
+                    # 此前只有第 1 轮在预算内：实测追加一条接近单条上限（2000 token）
+                    # 的结果后第 2 轮就超窗（Ollama 是 200 + 静默截断，不是报错）。
+                    self._enforce_round_prompt_budget(
+                        messages, tool_defs, prompt_budget)
                     continue
 
                 if raw_tool_calls:

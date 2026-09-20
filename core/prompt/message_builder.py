@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from core.schema.message import Message
 from core.schema.part import (
@@ -331,3 +332,254 @@ def _apply_prompt_budget(messages: list[dict], budget_tokens: int, *,
         logger.warning(
             "截尽历史后仍超预算 %d token（system prompt 或当前消息自身过长）",
             after - budget_tokens)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 回合内重预算（KB-77 / Batch 19）
+# ═══════════════════════════════════════════════════════════════════
+#
+# `_apply_prompt_budget` 只覆盖**回合开始时的第一次组装**（system + 历史 + 当前消息）。
+# 但 ReAct 的工具轮会**原地**往同一个 `messages` 数组追加内容（assistant tool_calls +
+# `role="tool"` 结果 + 轮次标记），而 `CognitiveLoop` 每轮都把整个数组重发给 provider
+# ⇒ 第 2..N 轮**完全不在预算内**。实测（Qwen2.5-3b / 8192 窗口 / 6144 预算）：
+# 第 1 轮 6123（预算内），追加一条接近单条上限（`max_result_tokens = 2000`）的工具
+# 结果后第 2 轮 **8205 > 8192 窗口**，第 5 轮 16533。Ollama 超窗是 **HTTP 200 +
+# 静默截断**（Batch 17 实测），故这是 silent loss，不是 provider 报错。
+#
+# 为什么放在本模块：裁剪优先级必须与 `_apply_prompt_budget` **同一处**（单一权威），
+# 且估算仍走 `Module.system_prompt.budget`（TE1：估算只有一个权威）。
+
+# 预算驱动的工具结果截断标记（与 `ToolResult.llm_content` 的既有标记同风格：
+# 告诉模型"内容被截了、可以用更精确的参数重试"，而不是让它以为结果就这么短）。
+_TOOL_BUDGET_TRUNCATION_NOTICE = "\n[结果超出本轮上下文预算，已截断；如需完整数据请用更精确的参数重试]"
+# 二级回退：预算紧到连说明都装不下时用它（仍告诉模型"这里被截了"）
+_TOOL_BUDGET_TRUNCATION_MARK = "[已截断]"
+
+
+@dataclass(frozen=True)
+class RoundBudgetOutcome:
+    """一次回合内重预算的结果（供调用方留痕/守卫断言）。"""
+
+    budget: int
+    before: int
+    after: int
+    dropped_history: int = 0
+    dropped_exchanges: int = 0
+    truncated_results: int = 0
+
+    @property
+    def trimmed(self) -> bool:
+        return bool(self.dropped_history or self.dropped_exchanges or self.truncated_results)
+
+    @property
+    def over_budget(self) -> bool:
+        """尽最大努力后仍超预算——受保护内容（system/tools/当前消息）自身过长。"""
+        return self.after > self.budget
+
+
+def _message_costs(messages: list[dict], *, model_id: str | None) -> list[int]:
+    """逐条消息的估算成本。
+
+    `estimate_messages_tokens` 是**逐条可加**的（每条：固定开销 + role + content +
+    tool_calls），故"整份估算 == 逐条之和 + tools 段"。这里利用该性质把裁剪循环从
+    O(n²) 次全量估算降到 O(n) 次逐条估算（热路径：每轮工具往返都要跑）。
+    """
+    from Module.system_prompt.budget import estimate_messages_tokens
+
+    return [estimate_messages_tokens([msg], model=model_id) for msg in messages]
+
+
+def _entry_cost(entry: dict, model_id: str | None) -> int:
+    """单条消息的估算成本（`estimate_messages_tokens` 逐条可加）。"""
+    from Module.system_prompt.budget import estimate_messages_tokens
+
+    return estimate_messages_tokens([entry], model=model_id)
+
+
+def turn_tail_start(messages: list[dict]) -> int:
+    """回合内容（当前用户消息及其后的工具往返）在 `messages` 中的起点下标。
+
+    历史里也会有 user 消息，但**最后一条** user 必然是当前这一条——其后的条目只会是
+    工具往返与轮次标记（首轮组装把当前消息放在末尾；工具轮只追加 assistant/tool/system）。
+    该轮没有用户条目时（空文本多模态）退化为"保护最后一条"。
+    """
+    for i in range(len(messages) - 1, 0, -1):
+        if messages[i].get("role") == "user":
+            return i
+    return max(1, len(messages) - 1)
+
+
+def _is_turn_local_system(msg: dict) -> bool:
+    """回合内容区里的 system 条目（轮次标记）。
+
+    `MessageBuilder` 只在 `[0]` 放 system，故回合区内的 system 只可能由
+    `CognitiveLoop` 在工具轮后追加。**刻意不做文本匹配**——那会把两个模块用一句
+    提示词耦合起来，改文案就静默失效。
+    """
+    return msg.get("role") == "system"
+
+
+def _exchange_spans(messages: list[dict], protect_from: int) -> list[tuple[int, int]]:
+    """回合区内的工具往返组：`(起始下标, 结束下标)`（左闭右开）。
+
+    一组 = 带 `tool_calls` 的 assistant 消息 + **紧随其后**的全部 `role="tool"` 结果
+    + 可选的一个轮次标记（system）。判据是结构性的：只有"assistant(tool_calls) 后面
+    直接跟至少一条 tool 结果"才算一组——**孤立的 tool 条目永不成组**（宁可不裁，
+    也不制造 OpenAI wire 上的孤儿 tool 消息 ⇒ provider 400）。
+    """
+    spans: list[tuple[int, int]] = []
+    i = max(1, protect_from)
+    while i < len(messages):
+        msg = messages[i]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") == "tool":
+                j += 1
+            if j > i + 1:
+                if j < len(messages) and _is_turn_local_system(messages[j]):
+                    j += 1
+                spans.append((i, j))
+                i = j
+                continue
+        i += 1
+    return spans
+
+
+def _shrink_tool_entry(entry: dict, allowance: int, *, model_id: str | None) -> tuple[bool, int]:
+    """把一条 `role="tool"` 条目的 content 头部截到约 `allowance` token。
+
+    标记按"信息量递减"三级回退（完整说明 → 短标记 → 空内容）：预算极紧时先牺牲说明
+    文字，而不是整条结果的结构——`role="tool"` 与 assistant `tool_calls` 的配对必须
+    保住（孤儿 tool 消息会让严格 provider 直接 400）。
+
+    Returns:
+        (是否改动, 改动后的单条成本)
+    """
+    content = entry.get("content")
+    if not isinstance(content, str) or not content:
+        return False, 0
+
+    cost = _entry_cost(entry, model_id)
+    if cost <= allowance:
+        return False, cost
+
+    original = content
+    for marker in (_TOOL_BUDGET_TRUNCATION_NOTICE, _TOOL_BUDGET_TRUNCATION_MARK, ""):
+        # 比例外推给出首猜，再用真实估算收敛（估算按字符类加权，纯比例会有偏差）。
+        chars = max(0, int(len(original) * max(0, allowance - 8) / max(1, cost)))
+        while True:
+            entry["content"] = original[:chars] + marker
+            new_cost = _entry_cost(entry, model_id)
+            if new_cost <= allowance:
+                return True, new_cost
+            if chars == 0:
+                break
+            chars = max(0, int(chars * 0.7))
+
+    # 连"空内容 + 骨架"都装不下：保留最短形态，由调用方如实报 over_budget。
+    entry["content"] = ""
+    return True, _entry_cost(entry, model_id)
+
+
+def enforce_round_budget(
+    messages: list[dict],
+    budget_tokens: int,
+    *,
+    turn_start: int,
+    model_id: str | None = None,
+    tools: list[dict] | None = None,
+) -> RoundBudgetOutcome:
+    """回合内（ReAct 第 2..N 轮）重新施加同一份 canonical 预算（**原地**修改）。
+
+    与 `_apply_prompt_budget` 共用估算权威与"由旧到新"的裁剪优先级，但保护集更宽：
+    回合内容（当前用户消息及其后的工具往返）是**这一轮正在发生的事**，丢它等于把
+    工具调用变成没发生过。裁剪顺序（从最可丢到最不可丢）：
+
+    1. **历史**：`messages[1:turn_start]`，由旧到新逐条丢（与首轮完全一致）；
+    2. **较早的工具往返组**：整组丢（assistant tool_calls + 其 tool 结果 + 轮次标记）
+       ——整组丢是为了不产生孤儿 `role="tool"`（那会让严格 provider 直接 400）；
+    3. **最新一组里的工具结果**：按"由旧到新"做头部截断（保留配对结构，只改 content），
+       并附上截断标记让模型知道可以用更精确的参数重试。
+
+    永不丢：`messages[0]`（system）、当前用户消息、最新工具往返组的 assistant 条目与其
+    tool 配对的**结构**。三档用尽仍超预算时**如实**在结果里报出（`over_budget`），
+    由调用方留痕——system prompt + tools 自身超预算是首轮就存在的情形，不在本函数职责内。
+
+    Args:
+        messages: 当前回合的完整 messages（原地修改）。
+        budget_tokens: 与首轮**同一份**预算（`budget_from_context_window(...)`）。
+        turn_start: 回合内容起点下标（当前用户消息；无用户条目时退化为 protections 起点）。
+        model_id: 已解析模型 id（估算 profile，与首轮同一份）。
+        tools: 同一次请求的 tools（不变，只计入总量）。
+
+    Returns:
+        `RoundBudgetOutcome`。
+    """
+    from Module.system_prompt.budget import estimate_tools_tokens
+
+    tools_cost = estimate_tools_tokens(tools, model=model_id)
+    costs = _message_costs(messages, model_id=model_id)
+    before = tools_cost + sum(costs)
+    budget = max(1, budget_tokens)
+    if before <= budget:
+        return RoundBudgetOutcome(budget=budget, before=before, after=before)
+    original = before
+
+    protected_from = min(max(1, turn_start), max(1, len(messages) - 1))
+    dropped_history = dropped_exchanges = truncated = 0
+
+    # ① 历史：由旧到新（与首轮同优先级）
+    while before > budget and protected_from > 1:
+        before -= costs.pop(1)
+        del messages[1]
+        protected_from -= 1
+        dropped_history += 1
+
+    if before > budget:
+        protected_from = min(protected_from, max(1, len(messages) - 1))
+
+    # ② 较早的工具往返组：整组丢（保留最新一组）
+    while before > budget:
+        spans = _exchange_spans(messages, protected_from)
+        if len(spans) <= 1:
+            break
+        start, end = spans[0]
+        for idx in range(end - 1, start - 1, -1):
+            before -= costs.pop(idx)
+            del messages[idx]
+            if idx < protected_from:
+                protected_from -= 1
+        dropped_exchanges += 1
+
+    # ③ 最新一组：截 tool 结果（结构不动，只改 content）
+    if before > budget:
+        spans = _exchange_spans(messages, protected_from)
+        if spans:
+            start, end = spans[-1]
+            for idx in range(start + 1, end):
+                if before <= budget:
+                    break
+                entry = messages[idx]
+                if entry.get("role") != "tool":
+                    continue
+                allowance = max(0, costs[idx] - (before - budget))
+                changed, new_cost = _shrink_tool_entry(entry, allowance, model_id=model_id)
+                if changed:
+                    before += new_cost - costs[idx]
+                    costs[idx] = new_cost
+                    truncated += 1
+
+    outcome = RoundBudgetOutcome(
+        budget=budget, before=original, after=before,
+        dropped_history=dropped_history, dropped_exchanges=dropped_exchanges,
+        truncated_results=truncated)
+    if outcome.trimmed:
+        logger.warning(
+            "回合内 prompt 超预算：估算 %d > 预算 %d token → 丢历史 %d 条 / 丢工具往返 %d 组 "
+            "/ 截断工具结果 %d 条（截后估算 %d）",
+            original, budget, dropped_history, dropped_exchanges, truncated, before)
+    if outcome.over_budget:
+        logger.error(
+            "回合内预算用尽仍超 %d token（system prompt / tools / 最新工具往返自身过长）",
+            before - budget)
+    return outcome

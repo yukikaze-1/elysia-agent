@@ -283,11 +283,17 @@ class TestToolSessionRebind:
             loop._session = session_a  # noqa: SLF001 — _build_turn_prompt 直测需 _session（loop.py:627 add_message）
             monkeypatch.setattr(LLMFactory, "supports_multimodal",
                                 classmethod(lambda cls, m: True))
-            _, tool_defs = await loop._build_turn_prompt("你好", "u", None, "", None, False)
+            # Batch 19（KB-77）：预算由 `_think_loop` 派生后传入；直测按生产形状传同一份。
+            from Module.system_prompt.budget import budget_from_context_window
+            budget = budget_from_context_window(
+                LLMFactory.context_window(loop._llm.model))  # noqa: SLF001
+            _, tool_defs = await loop._build_turn_prompt(  # noqa: SLF001
+                "你好", "u", None, "", None, False, budget)
             assert "describe_image" not in [t["function"]["name"] for t in tool_defs]
             monkeypatch.setattr(LLMFactory, "supports_multimodal",
                                 classmethod(lambda cls, m: False))
-            _, tool_defs2 = await loop._build_turn_prompt("你好", "u", None, "", None, False)
+            _, tool_defs2 = await loop._build_turn_prompt(  # noqa: SLF001
+                "你好", "u", None, "", None, False, budget)
             assert "describe_image" in [t["function"]["name"] for t in tool_defs2]
         finally:
             await loop._output.close()

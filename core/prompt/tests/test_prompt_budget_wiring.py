@@ -47,10 +47,18 @@ _BIG_TOOLS = [
 
 
 async def _build(loop: CognitiveLoop):
-    """按生产签名调 `_build_turn_prompt`（参数齐了才叫"走同一条路"）。"""
+    """按生产签名调 `_build_turn_prompt`（参数齐了才叫"走同一条路"）。
+
+    Batch 19（KB-77）：预算改由 `_think_loop` 派生后传入（同一份也用于工具轮再预算），
+    故这里按生产形状传 canonical 派生值。
+    """
+    from Module.llm.registry import LLMFactory
+    from Module.system_prompt.budget import budget_from_context_window
+
     return await loop._build_turn_prompt(  # noqa: SLF001
         user_message="在吗", user_name="妖梦", content=None,
-        stt_emotion="", stt_events=None, is_task_result=False)
+        stt_emotion="", stt_events=None, is_task_result=False,
+        prompt_budget=budget_from_context_window(LLMFactory.context_window(_MODEL)))
 
 
 def _make_loop(*, tool_defs=None) -> CognitiveLoop:
