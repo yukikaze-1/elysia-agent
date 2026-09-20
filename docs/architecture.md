@@ -304,7 +304,8 @@ sandbox = ProjectPath.DATA_SANDBOX.resolve(session_id="a") # → <root>/data/san
 
 - **项目根检测**: `ELYSIA_ROOT` 环境变量 > `paths.py` 所在目录
 - **环境变量覆盖**: `ELYSIA_PATH_{NAME}` 可逐路径覆盖（如 `ELYSIA_PATH_LOG=/var/log/elysia`）
-- **25 个枚举成员**: 15 目录 + 10 文件（含 `MEMORY_PENDING_SYNCS` / `SESSION_PENDING_CLEANUP` 两个 journal），枚举类 `ProjectPath(str, Enum)`。批次 4 新增 `DATA_UPLOADS_DESKTOP`、批次 5 新增 `DATA_SECRETS`，批次 7 起 `DATA_UPLOADS_IMAGES` 预置，2026-08-14 起 `LIVE2D_ASSETS` 指向 `data/live2d-assets`
+- **枚举成员分两类**: 目录与文件（`ProjectPath(str, Enum)`）。含若干 `data/*.jsonl`/`*.json` **journal** 成员的 `MEMORY_PENDING_SYNCS` / `SESSION_PENDING_CLEANUP` / `CONSOLIDATOR_PENDING` / `TASK_RESULT_WAL` 等。批次 4 新增 `DATA_UPLOADS_DESKTOP`、批次 5 新增 `DATA_SECRETS`，批次 7 起 `DATA_UPLOADS_IMAGES` 预置，2026-08-14 起 `LIVE2D_ASSETS` 指向 `data/live2d-assets`
+- **逐项清单不在本文维护**：成员集合的唯一权威是 `paths.py :: ProjectPath` 本身（`make check-arch` R2 会因领域层依赖 `core.input` 变红，但成员清单没有第二份）
 - **语义**: `resolve()` 纯计算返回 `pathlib.Path`，不检查存在性
 
 ---
@@ -380,19 +381,9 @@ INTERRUPTED → IDLE
 
 `Agent` 是组合根（composition root），持有 30+ 子系统/仓库。除 `agent.status` / `agent.phases` 外，通过 **46 个同名 `@property`** 公开访问路径——`@property` 只是薄 getter（`return self._xxx`，少数为懒初始化），可写性由子系统自身 API 自管。设计详见 [spec](superpowers/specs/archive/2026-08/2026-08-01-agent-public-readonly-interface-design.md)。
 
-**会话/记忆/存储（12 个）**：`agent.session` / `agent.session_manager` / `agent.active_session_id` / `agent.pending_messages` / `agent.long_term` / `agent.message_repo` / `agent.session_repo` / `agent.memory_repo` / `agent.token_repo` / `agent.attachment_repo` / `agent.idempotency_repo` / `agent.user_identity_store`
+> **逐项清单不在本文维护**：完整枚举（按会话/记忆/存储、适配器/能力、认知/后台、角色/观测、标量分组）的唯一权威是 [`core/README.md`](../core/README.md)「公开接口」节——那里由 `core/tests/test_doc_counts.py::test_property_list_is_complete` 断言"数字对了且列表不漏项"。本文只保留那个被门禁钉住的**计数**。
 
-**适配器/能力（13 个）**：`agent.tool_adapter` / `agent.output` / `agent.llm` / `agent.tts` / `agent.tts_manager` / `agent.stt` / `agent.stt_enabled` / `agent.tts_enabled` / `agent.stt_emotion_state` / `agent.config` / `agent.bus` / `agent.character_profiles` / `agent.character_state_stream`
-
-**认知/后台（9 个）**：`agent.cognitive` / `agent.generation_registry` / `agent.character_runtime_registry` / `agent.desktop_bridge` / `agent.idle` / `agent.scheduler` / `agent.consolidator` / `agent.memory_reflector` / `agent.character_engine`
-
-**角色/观测（5 个）**：`agent.character_reflector` / `agent.character` / `agent.token_tracker` / `agent.prompt_recorder` / `agent.response_recorder`
-
-**标量（4 个）**：`agent.user_name` / `agent.state` / `agent.started_at` / `agent.stt_ok`
-
-**状态写方法（2 个）**：`agent.request_shutdown()` / `agent.request_restart()` — 设 `_state` 信号（STOPPING / RESTARTING）引导主循环退出，不做清理（`agent.stop()` 才做）。
-
-**公开方法**：`agent.purge_message_from_session(msg_id)` — 从当前 session 移除匹配消息，archive 删除时同步清理。
+**状态写方法**：`agent.request_shutdown()` / `agent.request_restart()` — 设 `_state` 信号（STOPPING / RESTARTING）引导主循环退出，不做清理（`agent.stop()` 才做）；`agent.set_service(service, enabled)` / `agent.purge_message_from_session(msg_id)`。
 
 **约定**：跨模块消费禁止 `agent._xxx`，一律走公开接口；debug 层深度内省（`agent.<sub>._<attr>`）用 `# noqa: SLF001` 显式豁免。
 
@@ -483,7 +474,7 @@ MOOD_KEYWORDS = {
 ```
 文本关键词路径作为 fallback（LLM 未输出 `<mood>` 时降级使用）。
 
-**衰减**: `analyze_assistant()` 每次回复后 `new_intensity = max(0.1, intensity - 0.15)`（每轮 -0.15，下限 0.1；`emotion.py:110`），低于 0.2 推送闲置表情。mood 文本不再重置——LLM 下轮通过 `<mood>` 自行描述心情变化。
+**衰减**: `analyze_assistant()` 每次回复后 `new_intensity = max(0.1, intensity - 0.15)`（每轮 -0.15，下限 0.1，见 `core/personality/emotion.py :: EmotionEngine.analyze_assistant`），低于 0.2 推送闲置表情。mood 文本不再重置——LLM 下轮通过 `<mood>` 自行描述心情变化。
 
 **Expression 映射**: `mood` 文本（str）直接作为 expression 名透传 → OutputManager.expression()
 
@@ -632,7 +623,7 @@ core/character/
 **配套：**
 - 路由：`core/input/character_routes.py`（14 路由，含 `/api/me`、`/api/characters*`、`/api/character-instances/{id}/*`）——清单见 §6.3。
 - 存储：`core/storage/character_repo.py`（`characters`）/ `character_revision_repo.py`（`character_revisions`）/ `character_instance_repo.py`（`character_instances`）+ `character_version_repo.py`（L2/C6 版本历史）。
-- 契约：`frontend_contract/rest.py` 的 `Character*` 模型（`CharacterDraft`/`CharacterSummary`/`CharacterDetail`/`CharacterPublicStateView`/`CharacterPreview*` 等）+ `ws_message.py::CharacterStateChangedMessage` + `Live2DDirectiveMessage`。
+- 契约：`frontend_contract/rest.py` 的 `Character*` 模型（`CharacterDraft`/`CharacterSummary`/`CharacterDetail`/`CharacterPublicStateView`/`CharacterPreview*` 等）+ `frontend_contract/ws_message/character.py :: CharacterStateChangedMessage` + `frontend_contract/ws_message/chat.py :: Live2DDirectiveMessage`。
 - Agent 访问路径（公开只读 `@property`）：`agent.character_runtime_registry` / `agent.character_profiles` / `agent.character_state_stream`。
 
 完整设计见 [core/character/README.md](../core/character/README.md) 与 [角色域架构稿](2026-08-30-character-prompt-customization-backend-architecture-design.md)。
@@ -687,7 +678,8 @@ class SessionMemory:
     _db: DocumentDBBackend | None # MongoDB 或降级
 
     # 运行时状态经专用类型字段持久化：save() 写 character_state + service_state
-    # （reflector 计数器经 set_memory_reflector() 在 save 时并入 character_state，session.py:210/246），
+    # （reflector 计数器经 set_memory_reflector() 在 save 时并入 character_state，
+    # 见 core/memory/session.py :: SessionMemory.save / save_state），
     # load()/load_from_jsonl() 恢复（MongoDB 持久化 + JSONL fallback；2026-08-10 后
     # sessions 不再建 Mongo TTL 索引，删除走显式级联删除）。已无 _reflector_state 字段。
     async connect_db() → bool
@@ -761,25 +753,10 @@ tool_adapter = ToolAdapter(ALL_PLUGINS, ...); await tool_adapter.start()
 
 详见 `Module/tool/README.md`。
 
-已注册工具（16 个）：
-| 工具 | 参数 | 功能 |
-|------|------|------|
-| `search_memory` | query, limit | 语义搜索长期记忆 |
-| `save_memory` | content, type | 将重要信息保存到长期记忆库（type: fact/preference/event/plan/note，输入大小写不敏感，归一化为 TitleCase） |
-| `get_time` | timezone, format | 获取当前日期时间，支持时区和格式 |
-| `web_search` | query, limit | Tavily / Brave 搜索（默认 Tavily） |
-| `web_fetch` | url | 抓取网页内容 |
-| `read_file` | path, start_line, max_lines | 读取本地文件（沙箱内） |
-| `list_directory` | path, depth | 列出目录内容（depth 默认 1，最大 3） |
-| `write_file` | path, content | 写入文件（需审批） |
-| `set_reminder` | message, delay_seconds | 设置定时提醒（1-86400 秒） |
-| `get_runtime_config` | query | 查询运行时配置和状态 |
-| `get_self_state` | — | 查询 Agent 自身状态 |
-| `describe_image` | prompt, image_index, image_indices | 视觉模型描述图片（单图/批量互斥） |
-| `desktop.file.select` | — | 桌面端文件选择器（批次 4，经 DesktopToolBridge 委托执行，remote 侧结果回调） |
-| `desktop.file.read` | path, range | 桌面端文件读取（批次 4） |
-| `desktop.file.write` | path, content | 桌面端文件写入（批次 4） |
-| `desktop.screen.capture` | region, scale | 桌面端屏幕截图（批次 4） |
+**已注册工具清单与逐项参数不在本文维护**——唯一权威是 [`core/tools/README.md`](../core/tools/README.md)（插件总览）与各插件目录自己的 `README.md` + `config.yaml`；注册集合由 `core/tools/__init__.py` 的 `ALL_PLUGINS` 定义。本文只记架构形状：
+
+- **进程内工具**（filesystem / web / memory / time / reminder / runtime_config / self_state / vision）——由 `ToolAdapter` 直接执行。
+- **桌面工具**（`desktop.*`，批次 4）——`runtime=desktop`，经 `DesktopToolBridge` 委托 Electron 执行，结果经 `tool.request` / `tool.status` 回传（v2 另发 `tool.started` / `tool.completed` 展示帧）。
 
 CognitiveLoop 使用 `asyncio.gather` 并行执行无依赖工具。
 
@@ -829,9 +806,9 @@ Browser Microphone
 
 ### 6.2 WebSocket 消息协议
 
-协议已**契约层化**：前后端消息类型的唯一类型来源是 `frontend_contract/ws_message.py`（Pydantic 判别联合 + `gen_ts` 生成 `contract.generated.ts` 只读快照）。本表只列消息类别概要，**字段定义与序列化以契约模型为准**。
+协议已**契约层化**：前后端消息类型的唯一类型来源是 `frontend_contract/ws_message/` 包（Pydantic 判别联合 + `gen_ts` 生成 `contract.generated.ts` 只读快照）。**唯一装配点**是该包的 `__init__.py`：`ServerMessage` / `ClientMessage` 两个判别联合只在那里定义，其余 9 个模块按领域存放成员类型（`_types` / `chat` / `session` / `tool` / `generation` / `voice` / `ack` / `character`）。本表只列消息类别概要，**字段定义与序列化以契约模型为准**——成员数与字段名请直接读代码，本文不抄写。
 
-**Server → Browser**（`ServerMessage` 判别联合，现 42 具名成员）：
+**Server → Browser**（`ServerMessage` 判别联合）：
 
 | 类别 | 成员 | 说明 |
 |------|------|------|
@@ -847,14 +824,14 @@ Browser Microphone
 | 服务管理 | `SwitchModelResultMessage`、`ServiceModeResultMessage`、`SetTtsVoiceResultMessage` | 模型切换 / STT·TTS 模式开关 / TTS 声音选择（批次 5） |
 | 统计/错误 | `TokenUsageMessage`、`ErrorMessage` | Token 统计、统一错误信封（含 retryable/details） |
 
-**Browser → Server**：`text`（文本/附件，含 requestId 幂等）/ `interrupt` / `wake_toggle` / `switch_model` / `set_service` / `set_tts_voice`（批次 5）/ `tool_approval` / `activate_session`（批次 3 多会话切换）/ `tool.status`（批次 4 桌面调用状态）/ 语音控制（`voice.start` / `voice.stop` / `audio.cancel` 等，批次 6）/ binary（Int16 PCM 麦克风音频）。客户端消息同样在 `frontend_contract/ws_message.py` 中定义。
+**Browser → Server**：`text`（文本/附件，含 requestId 幂等）/ `interrupt` / `wake_toggle` / `switch_model` / `set_service` / `set_tts_voice`（批次 5）/ `tool_approval` / `activate_session`（批次 3 多会话切换）/ `tool.status`（批次 4 桌面调用状态）/ 语音控制（`voice.start` / `voice.stop` / `audio.cancel` 等，批次 6）/ binary（Int16 PCM 麦克风音频）。客户端消息同样在 `frontend_contract/ws_message/` 中定义。
 
-> **注意**：早期版本在本文档手工枚举 payload 字段（delta/message/typing/…）的做法已废弃——前后端契约单源机制落地后，任何字段变更只改 `frontend_contract/ws_message.py`，用 `make gen-types` 再生成 TS 快照、`make check-types` 做漂移门禁。
+> **注意**：早期版本在本文档手工枚举 payload 字段（delta/message/typing/…）的做法已废弃——前后端契约单源机制落地后，任何字段变更只改 `frontend_contract/ws_message/`（按领域选模块，联合本身只在 `__init__.py`），用 `make gen-types` 再生成 TS 快照、`make check-types` 做漂移门禁。
 
 ### 6.3 WebSocket 服务器 (core/input/)
 
 ```
-aiohttp Application（78 个显式 handler 注册，不含 aiohttp 自动 HEAD；另有 4 个静态挂载）。2026-08-14 起路由按域拆到独立模块，定义分布见 `core/input/server.py` + 下列 `*_routes.py`：
+aiohttp Application（路由按域拆到独立模块，定义分布见 `core/input/server.py` + 下列 `*_routes.py`；注册总数不在此抄写——`make check-arch` 不校验它，读代码得到的是唯一真值）：
 
 **server.py（10）— 纯装配 + 页面/管理/健康端点：**
 
@@ -986,8 +963,8 @@ Vue 3 + Vite + Pinia + TypeScript。开发时通过 Vite 代理（:5173 → :876
 - **浮层**: 设置面板 + 工具管理面板 + HITL 审批弹窗
 
 关键实现：
-- 21 个 Vue 3 组件，全部使用 `<script setup lang="ts">` + `<style scoped>`
-- 6 个 Pinia store（connectionStore, chatStore, audioStore, settingsStore, toolsStore, debugStore）
+- Vue 3 组件（全部使用 `<script setup lang="ts">` + `<style scoped>`）
+- Pinia store（connectionStore, chatStore, audioStore, settingsStore, toolsStore, debugStore）
 - WebSocket 消息路由通过 `useWebSocket` composable 分发到 store action（替代旧版 switch）
 - AudioContext 16kHz → Int16 PCM → WS binary
 - 流式 delta 追加（Vue 响应式 + `chatStore.appendDelta()`）
@@ -1221,6 +1198,9 @@ Agent/
 │   │   ├── _lifecycle_services.py     #  LLM/TTS/STT/Output/Token 启停 + _apply_service_state 启动步骤
 │   │   ├── _lifecycle_tools.py        #  工具/调度/空闲监控 启停
 │   │   └── _lifecycle_task_system.py  #  WorkflowEngine/DelegationPreparer/mailbox 启停
+│   ├── application/          #   应用用例层：跨 input/storage 的用例编排（不含 wire/传输细节）
+│   │   ├── sessions.py       #     会话级用例（删除/级联等跨仓储编排）
+│   │   └── attachment_signing.py # 附件签名用例（HMAC 短签 + 过期口径的唯一执行点）
 │   ├── adapter/
 │   │   ├── llm_adapter.py
 │   │   ├── tts_adapter.py
@@ -1257,17 +1237,18 @@ Agent/
 │   │   ├── splitter.py      #     SpeechSplitter: 结构感知分句（span 保护 + SENTENCE/TEXT_DELTA）
 │   │   ├── parts.py         #     TextPart + content_type 构建 / public_text 重建
 │   │   └── stream_processor.py #  StreamProcessor 协调器（tokenizer + splitter + 事件发射 + get_blocks）
-│   ├── task/                 #   任务子系统包
-│   │   ├── __init__.py       #     重导出 Task + TaskScheduler
-│   │   ├── task.py           #     任务数据模型
-│   │   └── scheduler.py      #     Worker Pool 调度器
+│   ├── tool_runtime/         #   工具调用运行时（ARCH-INC-P1-01 由 core/task/ 改名）
+│   │   ├── __init__.py       #     重导出 QueuedToolCall + ToolCallDispatcher
+│   │   ├── task.py           #     工具调用数据模型（QueuedToolCall + Kind/State 枚举 + Future 绑定）
+│   │   └── scheduler.py      #     ToolCallDispatcher: ReAct 工具调用的 worker pool
 │   ├── utils/                #   通用工具包（message_id 重导出 shim + log_setup + text_utils + server_guard）
 │   ├── schema/               #   共享类型包 (agent + types + part + tool + message + service_state + character + event + memory + memory_reflector + mood + token + compression + error_type + adapters + utils)
 │   ├── status/                #   AgentStatus 接口层 (protocol + FSMBacked 实现)
 │   │   ├── protocol.py       #     AgentStatus（对外只读）+ CognitivePhaseController（对内写）
 │   │   └── fsm.py            #     FSMBackedStatus + FSMBackedPhaseController
-│   ├── storage/               #   存储层 — Repository 模式 (MongoDB/Milvus)（20 文件）
+│   ├── storage/               #   存储层 — Repository 模式 (MongoDB/Milvus)
 │   │   ├── base.py           #     Repository 基类 + 共享连接/索引辅助（bson_expires 等）
+│   │   ├── schema_drift.py   #     启动期 schema 漂移只读比对（声明 vs 库内实况；孤儿索引报 warning，绝不自动删）
 │   │   ├── session_repo.py   #     SessionRepository: session CRUD（无 Mongo TTL，显式级联删除）
 │   │   ├── message_repo.py   #     MessageRepository: 消息归档 append-only
 │   │   ├── token_repo.py     #     TokenRepository: token 统计持久化
@@ -1285,6 +1266,11 @@ Agent/
 │   │   ├── desktop_call_repo.py #  DesktopCallRepository: 桌面调用状态（Mongo + 进程内缓存 + ttl_expires_at TTL 30d，批次 4）
 │   │   ├── idempotency.py    #     v2 消息幂等存储（内存权威 overlay + Mongo 写穿 + recover 四分支，CORE-MOD-P1-01 从 input 迁入）
 │   │   ├── idempotency_repo.py #    IdempotencyRepository: 幂等 claim 三态持久化（唯一约束 + TTL，claim 所有权 + restore 条件 upsert，D6c + 2026-08-12）
+│   │   ├── background_task_repo.py # BackgroundTaskResultRepository: 后台任务终态结果（task_id 唯一 + TTL 7d，fail-closed）
+│   │   ├── task_result_wal.py #     TaskResultWAL: 终态结果本地 WAL（硬杀窗口；启动 replay 进仓储，库为权威）
+│   │   ├── pending_attachment_release.py # 提交后附件引用释放失败 journal（启动 + 恢复边界重试）
+│   │   ├── destructive_guard.py #   破坏性操作的集合/库名守卫（clean_db 等调用方共用）
+│   │   ├── character_write_guard.py # 角色域写路径守卫（归档/绑定写入前置校验）
 │   │   └── secret_store.py   #     SecretStore: 密钥存储（data/secrets/profiles.json，0600 + 原子写，批次 5）
 │   ├── debug/                #   Debug 仪表板包
 │   │   ├── info.py           #     /debug 数据聚合
@@ -1297,6 +1283,7 @@ Agent/
 │   │   ├── errors.py         #     统一错误信封（_protocol_error_response）
 │   │   ├── _common.py        #     跨业务共享 helper（_send_ack/_find_channel/_tool_error/_archive_*）
 │   │   ├── ws_handler.py     #     WebSocket 连接/消息路由（_WS_HANDLERS 注册表分发）
+│   │   ├── ws_handlers/      #     WS 领域 handler 包（context.py 收口连接级 WsRequestContext + chat/session/tool/voice 四域）
 │   │   ├── ws_v2.py          #     v2 深业务（_route_v2_text/_handle_voice_commit + 幂等/ACK helper）
 │   │   ├── provider_routes.py #    Provider 管理 REST
 │   │   ├── tts_routes.py     #     TTS 声音 REST
@@ -1309,7 +1296,7 @@ Agent/
 │   │   ├── voice_sessions.py #     三模式语音状态机（普通录音/实时语音/输入法转写，批次 6 BE-060~062）
 │   │   ├── sticker_registry.py #  内置表情注册表（批次 7 BE-071）
 │   │   ├── tts_profile.py    #     TTS 声音 Profile（批次 5 BE-051）
-│   │   ├── debug_routes/     #     Debug API 路由 (package: 25 注册 / 7 模块 + _shared)
+│   │   ├── debug_routes/     #     Debug API 路由（package：按域分模块 + _shared/_common）
 │   │   ├── audio_buffer.py   #     音频缓冲 + VAD
 │   │   ├── wakeword.py       #     唤醒词检测
 │   │   └── __main__.py       #     python -m core.input 入口
@@ -1367,10 +1354,19 @@ Agent/
 ├── frontend_contract/          # 前后端契约单源（零依赖，仅 pydantic + stdlib）
 │   ├── base.py                 #   ContractModel 基类 + TsNull marker + wire_dict 序列化
 │   ├── version.py              #   TRANSPORT_VERSION="2" / PROTOCOL_VERSION="2.0" 协议版本单源（批次 9B）
-│   ├── ws_message.py           #   WS 消息契约（ServerMessage 判别联合 42 具名成员 + 支持类型 + Client 消息）
-│   ├── rest.py                 #   REST 业务契约（providers/images/messages/多会话/Desktop/附件/角色域 等 84 模型）
-│   ├── debug.py                #   Debug API 契约（DebugData 16 面板等 38 模型）
-│   ├── errors.py               #   错误码单源（54 码，F5；check_error_codes.py 比对协议文档 §9.1）
+│   ├── ws_message/             #   WS 消息契约**包**（ARCH-INC-P2-02 物理拆分，原单文件 → 9 模块）
+│   │   ├── __init__.py         #     **单一装配点**：唯一的 ServerMessage / ClientMessage 联合定义位置 + 显式 re-export
+│   │   ├── _types.py           #     共享词汇：ContentPart 联合 + 全部非联合成员类型（零跨模块依赖）
+│   │   ├── chat.py             #     chat 域（Delta/Message/Token/Audio/Expression/Live2D/State/Typing/Transcription…）
+│   │   ├── session.py          #     session 域（Session/Capabilities/ServerInfo/Command/Wake/SwitchModel/ServiceMode…）
+│   │   ├── tool.py             #     tool 域（ToolStarted/ToolCompleted/ToolRequest/ToolStatus/ToolCall*）
+│   │   ├── generation.py       #     generation 域（Started/SegmentStarted/Delta/SegmentCompleted/Completed/Failed）
+│   │   ├── voice.py            #     voice 域（Voice* / Dictation* + TTS 播放控制 Audio*）
+│   │   ├── ack.py              #     ack 域 + UserAckMessage 嵌套联合
+│   │   └── character.py        #     character 域（CharacterStateChanged）
+│   ├── rest.py                 #   REST 业务契约（providers/images/messages/多会话/Desktop/附件与表情/角色域）
+│   ├── debug.py                #   Debug API 契约（/debug/api 响应，含 DebugData 面板模型）
+│   ├── errors.py               #   错误码单源（KNOWN_ERROR_CODES；check_error_codes.py 比对协议文档 §9.1）
 │   ├── gen_ts.py               #   TS 发射器：模型 → contract.generated.ts + generate_raw_ts（raw wire 快照，批次 9B）
 │   ├── gen_schema.py           #   JSON Schema 发射器：模型 → contract.schema.json（含 schemaHash，批次 9B）
 │   ├── contract.schema.json    #   生成产物（机器契约 JSON Schema，Electron replay 主源，批次 9B）
@@ -1473,7 +1469,7 @@ INTERRUPT:
 ├── cancel _current_task → cancel _tts_tasks[] → drain queue → → IDLE
 ```
 
-**19 个 `asyncio.create_task` 调用点一览（非穷举，仅列出核心调用点）：**
+**`asyncio.create_task` 调用点一览（非穷举，仅列出核心调用点）**——本清单不抄写条数：裸 spawn 的**登记条数**由 `make check-arch` 的 R6 逐点校验（`scripts/check_architecture.py::_TASK_SPAWN_ALLOWLIST`，同一函数内追加裸 spawn 或清理后忘删条目都会报），所有权约定见 [CLAUDE.md](../CLAUDE.md)：
 
 | # | 位置 | 用途 | 管理模式 |
 |---|------|------|----------|

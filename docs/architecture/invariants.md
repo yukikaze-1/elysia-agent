@@ -39,8 +39,9 @@
 | **P2** | 临时上下文**不泄漏**到 system prompt：角色/关系/情绪等运行时片段不得固化进模板正文 | `core/prompt/tests/test_system_prompt_leak.py`（21 例） | `make test-quick` / `test-normal` | **push/backend** |
 
 **P1 的机制**：opt-in 覆盖 + `finally` 逆序恢复；`render()` 不再使用破坏性的
-`set_context` 广播。判据点：`test_render_local_budget.py:231`（溢出轮结束应恢复为
-`None`）与 `:450`（**异常路径也必须恢复**）。
+`set_context` 广播。判据点：
+`Module/system_prompt/tests/test_render_local_budget.py :: test_a1_next_normal_render_restores_full_memory_injection`（溢出轮结束应恢复为 `None`）与
+`:: test_a5_exception_during_ladder_still_restores_override`（**异常路径也必须恢复**）。
 
 **P2 的补充网**：`core/prompt/tests/test_system_prompt_snapshot.py`（快照）与
 `Module/system_prompt/sections/authored.py` 的**递归转义**（见 CLAUDE.md
@@ -83,6 +84,56 @@ F8 的原始错误——把真相换成"稍后重试"。400 `CHARACTER_VALIDATIO
 输出余量由 `CONTEXT_HEADROOM_RATIO`（0.75）预留；仓库没有 model 级 output cap
 metadata，本批不新造（"限制输入长度和输出 token" 那句设计稿从未落成契约字段，
 属独立产品决策）。
+
+### 1.2 Token estimation contract（TE）
+
+**Batch 18 / KB-12**：prompt 用量估算的**合同**。它回答的不是"估算多准"，而是
+"预算决策在边界上是否如实"。权威实现只有一处：`Module/system_prompt/budget.py`。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **TE1** | **单一估算权威**：同一个 resolved model 下，所有 prompt 预算消费者（chat 组装、system prompt 梯子、历史裁剪、预览窗口判定、工具结果截断）走**同一份**估算实现与**同一套** profile 选择规则；不得出现第二份 `_estimate_tokens` 式公式 | `core/prompt/tests/test_prompt_budget.py::TestEstimation`、`core/prompt/tests/test_prompt_budget_wiring.py::TestAssemblerWiring`、`Module/tool/tests/test_framework.py::TestTokenEstimation` | `make test-quick` / `test-normal` | **push/backend** |
+| **TE2** | 估算**确定性、本地、无 provider 网络调用**（热路径不查 token 计数端点、不下载 tokenizer、不引入 tokenizer 依赖） | `Module/system_prompt/tests/test_token_corpus_contract.py::TestEstimatorHygiene::test_determinism_across_repeated_calls`；`Module/llm/tests/test_ollama_token_truth.py`（external，旁证） | `make test-quick` / `test-normal` | **push/backend** |
+| **TE3** | 估算器是**有界近似**且合同被显式声明：低估不得越过 chat 侧 25% 余量（`est/actual ≥ 0.75`），高估不得越出 profile 声明的 T；**近似不得被表述为精确计数** | `::TestEstimatorContract::test_no_family_is_underestimated_beyond_the_budget_headroom`、`::test_no_family_is_overestimated_beyond_the_declared_bound`、`::test_declared_bounds_are_the_measured_bounds`、`::test_hard_floor_follows_the_headroom_ratio`（文档即断言） | `make test-quick` | **push/backend** |
+| **TE4** | 估算必须**区分实质不同的内容类**（拉丁/CJK/生僻字/假名/emoji/数字/结构化密集/消息框架/工具 schema），不得退回"按字符数线性外推"；按 resolved model 选 profile（**6 个家族**），未知模型回退**保守** profile | `::TestEstimatorContract`（全量语料 × 权威 tokenizer）、`::test_cross_family_spread_is_why_profiles_exist`（同文本跨家族差 >3×）、`::test_same_char_count_different_content_differs` | `make test-quick` | **push/backend** |
+| **TE5** | **prompt 的每一段都不可漏算也不可重算**：provider request = `messages + tools`，两者一起进预算；`system` 与当前用户消息永不因裁剪丢失 | `::TestPromptComposition`、`core/prompt/tests/test_prompt_budget_wiring.py::TestMessageBuilderToolAccounting`、`::TestTurnPromptWiring::test_tool_definitions_are_taken_before_the_budget_is_spent` | `make test-quick` | **push/backend** |
+| **TE6** | 未知/自定义模型**保持可用**：估算不因缺 metadata 抛错，走确定性的保守回退；配置非法（畸形 schema / 缺字段）不得让 prompt 组装崩掉 | `::TestEstimatorHygiene::test_unknown_model_falls_back_and_stays_usable`、`Module/system_prompt/tests/test_token_corpus_contract.py::TestPreFixRed::test_legacy_formula_ignores_tool_schemas_entirely` | `make test-quick` | **push/backend** |
+| **TE7** | **合同外文字只许高估**：婆罗米系/东南亚/希伯来/阿拉伯/希腊/亚美尼亚/西里尔这些跨家族差 3–6× 的文字，由**固定在已验证家族实测上界**的系数覆盖 ⇒ 无静默截断面；代价（某些家族高估最多 **13.9×**：`other`=3.0 × o200k 的阿拉伯文）是显式接受的 | `::TestKnownLimitations::test_out_of_scope_scripts_never_underestimate` | `make test-quick` | **push/backend** |
+| **TE9** | **回合内每一轮都要重施同一份预算**（Batch 19 / KB-77）：ReAct 的工具轮会把 assistant `tool_calls` 与 `role="tool"` 结果**原地**追加进同一个 `messages` 数组，而每一轮都整份重发 ⇒ 第 2..N 轮必须在**发下一轮之前**用同一份 canonical 预算再裁一次（先丢历史 → 再整组丢较早的工具往返 → 最后截最新一组的 tool 内容）。**永不丢**：system、当前用户消息、最新一组的配对结构——且"不产生孤儿 `role=\"tool\"`"由**结构性判据**（`turn_tail_start` + `_deletion_is_safe`）保证，不依赖边界算得对（Challenger 反证的"无 user 条目"形状已补守卫）。受保护内容**自身**超预算时如实报 `over_budget`（log ERROR），**不假装成功**——所以本条是"必须被重施 + 残留必须可见"，不是"已被强制满足"。修前实测：首轮 6123 ≤ 6144，追加一条接近单条上限（`max_result_tokens=2000`）的结果后第 2 轮 **8205 > 8192 窗口**，第 5 轮 16533；Ollama 超窗 = 200 + 静默截断（本机复测：~11k token 的 prompt 得 `prompt_eval_count=8192`、HTTP 200）。热路径成本实测 ≈23 ms（15.7k 字符/17 条）～73 ms（55.9k 字符/38k est token），O(n)（逐条可加性有守卫） | `core/cognitive/tests/test_react_round_budget.py`（7，修前 2 红）、`core/prompt/tests/test_round_budget.py`（12，含 Challenger 反证形状） | `make test-quick` / `test-normal` | **push/backend** |
+| **TE8** | **CJK 扩展 B–I（生僻字）在合同内且单列一类**：它们比 BMP 汉字贵 3–7×（实测 est/actual 曾 = **0.13**） | `::TestEstimatorContract`（`cjk_ext_b_ideographs` 语料）、`scripts/token_corpus/validate_families.py` | `make test-quick` | **push/backend** |
+| **TE10** | **密集变音符号的**普通拉丁**文本在合同内**（Batch 20 / KB-78）：捷克/波兰真实散文（不是合成 pangram）的 `est/actual ≥ 0.775`，逐 profile × 逐家族；证据是签入的**真散文 holdout**（12 篇 Wikipedia 导言，CC BY-SA 4.0，7 个权威 tokenizer 真值），**不参与系数拟合**。`latin_ext` 由封闭形式推导得出（`w_need = (0.775·actual − base)/n_latin_ext`，对 w 仿射 ⇒ 精确解），**只动这一个系数**、其余 10 类逐位不变 | `Module/system_prompt/tests/test_latin_prose_contract.py`（31：真散文 floor ×6 profile、低密度波兰语在场、只有 latin_ext 变了、JSON/CJK/代码无回归、推导可执行复算、fixture 哈希/许可/规模） | `make test-quick` | **push/backend** |
+| **TE11** | **合同外的 `latin_accent` 只保留越南语**，且**高估代价被登记**：`latin_ext` 里"普通 Latin-1/Extended-A 变音"（捷克/波兰）与"堆叠变音"（越南语 U+1EA0–1EFF）是两套互斥的 token 经济——同一标量不可能同时覆盖（覆盖捷克/波兰所需系数会让越南语高估 2.5–3.0×；覆盖越南语所需系数是**负数**，即必然击穿硬下限）。故越南语留在 `UNCOVERED_CONTENT_CLASSES`，方向**只许高估**且区间被钉住 | `::TestKnownLimitations::test_dense_accented_latin_is_a_registered_uncovered_class`（语料侧）、`test_latin_prose_contract.py::TestVietnameseStaysOutOfContract`（真散文侧 + 代价区间） | `make test-quick` | **push/backend** |
+
+**TE3 的两个数从哪来**：`budget = window × 0.75`，而超窗在 Ollama 上是
+**HTTP 200 + 静默截断**（Batch 17 实测，从不报 400）⇒ 估算低估超过 25% 时，"预算
+判装得下"就不再蕴含"provider 完整消费"。高估同样是缺陷（过早裁记忆/历史、预览误拒，
+§9），故它是**双侧**合同而不是"越保守越好"。
+
+**profile 为什么必须按家族选（一条被证伪过的假设）**：家族之间在**两条独立轴**上
+分叉——①CJK 压缩率（0.58–1.21 token/字）②**数字分组**（Qwen/Mistral 逐位
+≈1.0 token/位，DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴**不共线**：用两个
+profile 覆盖时，"数字密集"内容被迫高估 **2.4–2.8×**（Batch 18 线性规划 + 真实
+Ollama 实测）。故按族分 6 个 profile；本仓默认的 `deepseek/*` 因此拿到 T=1.46
+而不是 2.4。
+
+**已验证范围**：6 个 profile 各自的依据家族（见 `budget.py` docstring 的表），
+其中 Qwen3-8B（对 `qwen`）与 OLMo-7B（对 `llama`）经**外部**验证亦在区间内。
+验证入口 `scripts/token_corpus/validate_families.py`（改家族时跑一次，
+据此决定"纳入拟合"还是"如实登记"）。
+
+**合同外的已知边界（实测登记，不隐藏）**：①`repeat` 类（同字符重复）的 token 率
+**完全由词表决定**，字符统计无法区分——实测 `"哈哈"×300` = 0.25 token/字而
+`"呀"×300` = 1.00 token/字，两者字符分布同构；②`script` 类（婆罗米系/东南亚/
+希伯来/阿拉伯/希腊/亚美尼亚/西里尔）跨家族差 **3–6×**，单一系数不可能覆盖。
+①② 都不参与硬合同；①的实测区间钉在
+`::TestKnownLimitations::test_degenerate_repeats_stay_within_the_recorded_range`，
+②的方向（**只许高估**）钉在 `::test_out_of_scope_scripts_never_underestimate`。
+
+**真值层级（本批定义）**：G1 provider 观测输入计数（Ollama `prompt_eval_count`，
+须先证明未截断）> G2 模型权威 tokenizer（HF `tokenizer.json`）> G3 第三方通用
+tokenizer（tiktoken，仅在家族匹配时）> G4 估算器本身。签入的真值见
+`Module/system_prompt/tests/fixtures/token_corpus/GOLDEN.json`（7 个 tokenizer +
+Ollama 实测，含截断污染标记）。
 
 ## 已知边界（accepted risk，全部有测试钉住行为）
 
@@ -506,7 +557,7 @@ canonical 收口 `_handle_interrupt()`（唯一做 `THINKING → INTERRUPTED →
 用户消息都走 `process_message` 的排队分支、被 ACK `accepted` 后进 `_pending_messages`，
 而 pending 只在 `STATE_CHANGE → IDLE` 出队（那个事件再也不会来）⇒ 进程活着、EventBus
 活着、消息能进队列，但**没有任何回合再启动**——用户感知为 Agent **永久失聪**。
-仓内唯一恢复点是 `Agent.start()` 的 `fsm.reset()`（`core/agent/lifecycle.py:204`）。
+仓内唯一恢复点是 `Agent.start()` 的 `fsm.reset()`（`core/agent/lifecycle.py :: AgentLifecycle.start`）。
 
 **THINKING 的语义**（本批核对，未重新定义）：回合**已被接受、正在做本回合的准备工作与
 认知工作**（选项 C）——`enter_thinking()` 在 generation 建档与 prompt 组装**之前**，
@@ -591,7 +642,7 @@ BaseException, object)`），既不被沿途的 `except Exception` 接住，也*
 
 - **第二发** `task.cancel()`（生产唯一形态 = `Agent.stop()` 第 3 步
   `_turns.drain(timeout=3.0)` 预算耗尽后的直接 `task.cancel()`，
-  `Module/_common/task_scope.py:277`；`cancel_current()` 本身是 one-shot，**不可能**发第二发）
+  `Module/_common/task_scope.py :: AsyncTaskScope.drain`；`cancel_current()` 本身是 one-shot，**不可能**发第二发）
   只要落在上面任何一个 await 上，CancelledError 就穿过收口链逃出 `process()`；
 - 同理，**第一发**取消落在 `_handle_turn_exception` 的 await 上（think 路径的
   `except Exception` 分支不在任何取消边界内——`except` 块里抛出的异常**不被兄弟子句**
@@ -605,7 +656,7 @@ BaseException, object)`），既不被沿途的 `except Exception` 接住，也*
 而相位**留在 THINKING 或 INTERRUPTED**——`status.is_accepting_input` 恒假 ⇒ 之后每条
 消息都被 ACK `accepted` 后进 `_pending_messages`，而 pending 只在 `STATE_CHANGE → IDLE`
 出队（那个事件再也不会来）⇒ **永久失聪**；仓内唯一恢复点是 `Agent.start()` 的
-`fsm.reset()`（`core/agent/lifecycle.py:204`）。
+`fsm.reset()`（`core/agent/lifecycle.py :: AgentLifecycle.start`）。
 
 **修复的形状（owner-side，不 shield 整块）**：把收口显式劈成两段——
 **逻辑终态**（同步、无 await：`transition(IDLE)` + `bus.post(STATE_CHANGE IDLE)`）
@@ -655,7 +706,7 @@ await 时还会变成 detached 清理任务）；不做 retry-until-clean；不�
   （例如落在 `output.turn_cancelled` 上），那条 generation 行会停在 `running`。按
   §17/§18 的优先级（runtime truth 优先于 persisted truth）这是**允许**的，且有既有兜底：
   启动期 `GenerationRegistry.mark_stale_interrupted(cutoff)`
-  （`core/agent/_lifecycle_persistence.py:173/575`）把它扫成 `interrupted`。
+  （`core/agent/_lifecycle_persistence.py :: _start_persistence` 与 `:: _recover_dependency` 两处调用点）把它扫成 `interrupted`。
   真库旁证：`tests/real_mongo/test_real_finalization_cancellation.py`（`make test-real-mongo`，
   **push/real-mongo**）。
 - **被放弃的资源清理**：第二发取消若恰好落在 `_cancel_desktop_calls()` 上，在途 desktop
@@ -768,8 +819,7 @@ IDLE + 1s 轮询；task result 要恰好完成）但真实。
   "这条从未被处理"（→ 新登记 KB-40）。
 - **"接管之后、进历史之前"这一段没有归因**：`cancelled_pre_ownership` 只在
   `_handle_prepare_cancelled` 里打，而该 handler 只覆盖 `_prepare_turn` 之内的落点；
-  取消若落在 `_think_loop` → `_build_turn_prompt`（`loop.py:1152` → `:1021` 的
-  `session.add_message` 之前）这一段，处置只有一句 `<<< 用户打断`。
+  取消若落在 `_think_loop` → `_build_turn_prompt`（`core/cognitive/loop.py :: CognitiveLoop._build_turn_prompt`，即 `session.add_message` 之前）这一段，处置只有一句 `<<< 用户打断`。
   **Batch 14 已确证这是可达的**（USER：直投输入或停止按钮落在这个窗口）→ 新登记
   **KB-46**（原 N7），与"该输入是否应进会话历史"这一产品决策绑定，本批**只登记不修**。
 - **v1/REST 输入的身份为空**：`_admission_message_id` 取自 v2 预分配的 `messageId`；
@@ -940,10 +990,10 @@ rejected 路径与 `_not_accepted_error`（`AGENT_BUSY`），**零新增 wire �
 **合法 transient 的边界（Batch 14 实测，KB-26 / KB-28）**：
 
 - **`_current_task` 陈旧**（KB-26）：`_current_task` 的权威含义只是"最近 spawn 的回合 /
-  取消目标"（写点 `loop.py:940`、`agent.py:1168/1218/1258`；清点 `loop.py:431-434/457`），
+  取消目标"（写点分散在回合 spawn 与取消路径：`core/cognitive/loop.py :: CognitiveLoop.process`、`:: cancel_current`、`:: mark_shutting_down`、`core/agent/agent.py :: Agent._handle_user_input` / `:: _handle_system_tick`；清点在 `cancel_current`），
   ownership 判据自 Batch 12 起是 `_generation_ctx`（`current_turn_owns_input`）＋
-  `_started_cognitive_tasks`。生产读者**恰好 5 处**（`loop.py:418`、`agent.py:1092`、
-  `agent.py:1340`、`debug/info.py:164`，以及 `loop.py:431` 的取消调用），每一处都在
+  `_started_cognitive_tasks`。生产读者**恰好 5 处**（`core/cognitive/loop.py :: CognitiveLoop.process` 与 `:: cancel_current`、
+  `core/agent/agent.py :: Agent._handle_user_input` 与 `:: _handle_task_result`、`core/debug/info.py :: DebugInfo._collect_system`），每一处都在
   `.done()` 守卫之内 ⇒ 陈旧句柄**不产生**错误取消 / 错误排队 / 误报忙 / 跳过登记。
 - **`FSM=IDLE` 而锁未释放**（KB-28）：原始claim（"下一条消息取消卡在锁上的回合，
   吞掉已 ACK 且已出队的消息"）在 HEAD 上**已被 Batch 12/13 的判据覆盖**——卡在
@@ -1046,6 +1096,96 @@ process()  取锁**之前**清空 _generation_ctx / _admission_* / _turn_message
 sessions_hits=2 archive_hits=1`，与正常回合的对照同值）——本批"不承诺 durability"
 指的是**进程硬杀**（`accepted ≠ durable`），不是"取消路径永远不落 `sessions`"。
 
+### 4.9 Session data integrity（SD）
+
+来源：[2026-09-19 Batch 16 执行记录](../review/2026-09-19-Batch16-session-data-integrity-执行记录.md)。
+两个 finding 都是**数据不变量**层面的缺陷，不是"索引看起来不完整"：
+
+- **KB-15（可达性）**：一个**已经持久化**的逻辑会话，可能被正常支持的分页/枚举
+  **永久看不到**。修前 `list_page` 把排序/谓词直接压**原始** `updated_at`，而投影层
+  （`_summary_from_doc`）把"非字符串 / 缺失 / null"归一成 `""` 再交给游标：
+
+  ```text
+  存储侧排序键 ≠ 对外暴露的排序键
+     ├── 静默漏项：{updated_at: {$lt: "<str>"}} 对缺失/null 永不匹配（type bracketing）
+     │             ⇒ 排在末尾却谁也叫不到它（只有"一页装得下"时才露过面）
+     └── 游标毒化：BSON Date 型排在字符串**之前**（BSON 序）而投影归成 ""
+                   ⇒ 它若落在页边界，next_cursor = base64("|sid")
+                     ⇒ 解码端拒绝空时间戳 ⇒ 下一页 400，此后全部不可达
+  ```
+
+- **KB-16（身份唯一性）**：`session_id` 是**逻辑主键**（直读/改名/删除/摘要/级联/缓存键
+  全部按它寻址），但存储层从未有唯一约束。三条写路径都是
+  `update_one({session_id}, …, upsert=True)`——**不是原子的**：两个并发 upsert 都看不到
+  匹配就各自插入。真库实测（Batch 16 / E3）：20 轮 × 两个独立 client 的 `create`
+  有 1–3 轮产出重复文档；把存在性检查卡住可以让它**确定性**复现（2 篇同 ID）。
+
+> **会话持久化合同（Batch 16 Phase 0 裁定）**
+>
+> | 字段 | 地位 |
+> |---|---|
+> | `session_id` | **REQUIRED / 非空字符串 / 逻辑主键**（唯一约束见 SD4）——所有写者恒写，全仓按它寻址 |
+> | `updated_at` | **REQUIRED（写入侧）；读入侧允许缺失**——规范形态是 `now_iso()` 的 UTC ISO 字符串；排序键就是它本身（不做任何格式解析） |
+> | `messages` | OPTIONAL（`create()` 写 `[]`；窗口由 `session_max_messages` 界界） |
+> | `title` / `character_binding` | OPTIONAL（缺省空串 / 空对象） |
+> | `character_state` / `reflector_state` / `service_state` | OPTIONAL（`load()` 缺省构造默认值；`create()` 不写，首次 `save()` 才出现） |
+> | `created_at` | **不存在**——任何版本的写者都没写过（真库审计：7/7 缺失），故**不得**作为 fallback 候选 |
+> | 非空字符串以外的一切 `updated_at` 形态 | **legacy 桶**（可达，排最后，桶内 `session_id ASC`）——不视为 corruption、也不伪造时间戳 |
+> | `session_id` 缺失/null/非字符串/空串 | **corruption**：无身份、不可寻址（唯一索引把它们并入 null 桶，至多一篇） |
+>
+> **不变量落点**：存储层的两个桶判据 `ORDERED_TS_FILTER` / `LEGACY_TS_FILTER` 与投影层
+> 的 Sentinel `""` **必须一致**——"存储顺序 == 投影顺序 == 游标语义"是游标能当位置用的
+> 前提（这正是 KB-15 的根因形状）。
+
+| ID | Invariant | Test | Gate | CI |
+|---|---|---|---|---|
+| **SD1** | **可达性完备（含 legacy 元数据）**：每一条结构上被接受的持久会话都必须能被**支持的分页语义**走到——`updated_at` 缺失/null/非字符串/空串/**数组**的记录**不得**静默落在可枚举数据集之外（要么可达，要么被显式归类为 corruption） | `core/storage/tests/test_session_repo_pagination.py::TestLegacyOrderingBucket`（N ∈ {0,1,49,50,51,205} × {missing,null,empty,array}；Date/数字型；search；list_all；legacy-only 数据集）、`::TestArrayValuedOrderingMetadata`（挑战者 A 的数组反证）、`core/input/tests/test_sessions_pagination.py::TestLegacyOrderingRowsAreReachable`（route 层 = 用户入口）、`tests/real_mongo/test_real_session_ordering_truth.py::TestLegacyOrderingReachabilityRealMongo`（真库 BSON 序/类型括号） | `make test-quick` / `test-normal` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **SD2** | **排序 fallback 必须确定性**：legacy 元数据不得用"读的时刻 / 当前进程时间 / 首次读取时间"来补——排序键只能是**已持久化的事实**（本批：`session_id`）。同一稳定数据集重复遍历顺序逐项一致 | `test_session_repo_pagination.py::TestLegacyOrderingBucket::test_legacy_bucket_is_deterministic_across_runs`、`core/memory/tests/test_session_manager_pagination.py::TestAdversarialRegressions::test_repeated_traversal_with_legacy_rows_is_stable`、`tests/real_mongo/test_real_session_ordering_truth.py::TestLegacyOrderingReachabilityRealMongo::test_traversal_order_is_stable_across_runs` | `make test-quick` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **SD3** | **游标遍历全域且终止**：任何由 API 产出的合法游标，继续翻页最终**终止**且不重不漏；`has_more=false` 必须真的意味着"当前查询域没有下一项"（含 legacy 桶） | `test_session_manager_pagination.py::TestAdversarialRegressions::test_legacy_row_on_page_boundary_round_trips_through_the_cursor`（PRE_FIX_RED：修前 400）、`::test_sentinel_cursor_round_trips_and_legacy_cursor_still_decodes`、`test_session_repo_pagination.py::TestLegacyOrderingBucket::test_legacy_row_at_page_boundary_does_not_poison_the_cursor`、`tests/real_mongo/test_real_session_ordering_truth.py::TestLegacyOrderingReachabilityRealMongo::test_legacy_row_on_page_boundary_does_not_truncate_the_list` | 同上 | **push/backend** + **push/real-mongo** |
+| **SD4** | **逻辑身份唯一**：权威 `sessions` 集合里，至多一篇文档代表一个逻辑 `session_id`（存储层强制，不只靠应用层检查） | `core/storage/tests/test_session_identity_uniqueness.py`（索引引导/升级/幂等/降级）、`tests/real_mongo/test_real_session_identity_truth.py::TestSessionIdentityUniquenessRealMongo::test_connect_creates_the_unique_index`、`::test_find_then_upsert_window_cannot_produce_two_authorities`（**确定性** PRE_FIX_RED：修前 2 篇）、`::test_concurrent_same_session_creation_keeps_one_authority` | `make test-quick` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
+| **SD5** | **身份腐化必须显式**：遗留重复文档不得被"随便挑一篇当权威"静默掩盖——启动日志显著告警 + 运行时 `schema_drift` 的 `option_conflicts` 报 error；系统**不自动删数据、不猜赢家** | `test_session_identity_uniqueness.py::TestSessionIdentityIndexBootstrap::test_duplicates_keep_availability_and_skip_unique_build`（caplog 断言告警）、`tests/real_mongo/test_real_session_identity_truth.py::TestSessionIdentityUniquenessRealMongo::test_duplicates_do_not_destroy_availability`（真库 + `check_schema_drift` 报 option_conflict） | 同上 | **push/backend** + **push/real-mongo** |
+| **SD6** | **约束部署是向后安全的**：加/升级唯一约束必须有**定义的**遗留数据行为，且索引引导**不得意外毁掉可用性**——已有重复 ⇒ 保持现状（非唯一）+ 告警 + 应用照常启动；唯一建不出来 ⇒ 退回非唯一，`connect()` 仍返回 True | `test_session_identity_uniqueness.py::…::test_duplicates_keep_availability_and_skip_unique_build`、`::test_unique_build_failure_falls_back_to_non_unique`、`::test_index_listing_failure_skips_all_changes`、`::test_duplicate_probe_failure_counts_as_possible_duplicates`、`tests/real_mongo/test_real_session_identity_truth.py::TestSessionIdentityUniquenessRealMongo::test_existing_non_unique_index_is_upgraded_in_place`、`::test_building_unique_index_with_duplicates_fails_loudly`（真库异常码 11000 留证） | 同上 | **push/backend** + **push/real-mongo** |
+
+**实现形状（唯一权威 + 两个桶 + 受守卫的索引升级）**：
+
+- **排序域**（`SessionRepository.list_page`）：`ORDERED_TS_FILTER =
+  {"updated_at": {"$type": "string", "$gt": "", "$not": {"$type": "array"}}}`
+  （恰为"非空字符串**标量**"；`$not: {$type: "array"}` 是承重条件——Mongo 的
+  `$type`/比较算子会**遍历数组元素**，不排除数组就会出现"有序桶文档投影成 Sentinel"
+  与"游标 Sentinel 表示 legacy 桶"撞车，见 §33 挑战者 A）先按
+  `updated_at DESC, session_id ASC` 取；取不满一页时再查
+  `LEGACY_TS_CLAUSE = {"$nor": [ORDERED_TS_FILTER]}`（**真补集**：缺失/null/非字符串/
+  空串/数组/对象…）并按 `session_id ASC` 取剩余。两桶拼接 == 投影层的契约序
+  （`_precedes` / `_after_cursor`：`""` 最小）。真库 `explain` 实测：有序桶仍是
+  `IXSCAN(updated_at_-1_session_id_1)` + 索引序（`docsExamined == nReturned == limit`，
+  与旧谓词逐项相同）；legacy 桶是一次 `session_id` 索引扫描（O(N)、无阻塞排序）——
+  两者都**不是**"全表扫描 + 阻塞排序"的正常路径退化，且 legacy 查询只在有序桶取尽后
+  发生（一次遍历的最后一页）。
+- **游标**（`core/memory/session_manager.py`）：格式不变（`base64url(updated_at|session_id)`），
+  只是解码端接受空时间戳（legacy 桶 Sentinel）。旧游标（非空时间戳）**逐字节兼容**；
+  无 legacy 文档时**永不**产出空时间戳游标 ⇒ 公开 API 零变化。
+- **身份约束**（`SessionRepository._ensure_session_id_index`，S8 同族纪律）：
+  先 `aggregate` 探测重复（**检测失败按"可能有重复"处理**）→ `list_indexes()` 比选项
+  （查询失败 ⇒ 不做任何变更）→ 已唯一则返回（幂等）→ 有重复则保持非唯一 + 告警 →
+  数据干净且选项不同则 `drop_index` 后重建（Mongo **不能原地改选项**，真库实测 code 86）
+  → 建失败退回非唯一且**不抛**（`connect()` 仍 True）。
+- **写路径**（`SessionRepository._upsert_session`）：`non_fatal=is_duplicate_key`
+  保证并发冲突不判死仓储；**经确认**是本集合 `session_id` 约束的 E11000 才收敛
+  （重跑一次 upsert ⇒ 走 update 分支，不可能再次冲突）；别的唯一约束冲突原样冒泡。
+
+**"supported 数据集"的边界（SD1 的判据）**：带**非空字符串 `session_id`** 的文档一律
+属于 supported（其 `updated_at` 无论是什么形态都可达）；`session_id` 缺失/null/非字符串/
+空串的文档没有可寻址身份，属 corruption——本批不隐藏它们（legacy 桶里照样可达，
+`sessionId` 为空串），唯一索引把同类并入 null 桶（至多一篇），`schema_drift` 与启动日志
+负责让操作者看见。**不支持无限兼容**：不为任意 BSON 形态做类型特判、不做 repair-on-read、
+不把 `updated_at` 解析成时间（排序是字符串序）。
+
+**SD1–SD6 的边界（明确不做）**：不做通用迁移框架、不做自动删重复/自动合并 winner
+（重复文档可能各自带着不同消息、标题、归档关联，"取最新的那个"是猜）、不做 repair-on-read、
+不引入聚合排序（`$ifNull` / 哨兵字段）**也不改文档 schema**（零字段变更）、不改公开分页
+API（`sessions[]/has_more/cursor` 与 `SessionSummary` 逐字段不变）、不恢复全量预取
+（PG2 仍然成立）、不为 legacy 数据伪造时间戳（禁止 `now()` / 随机 / 首次读取时间）。
+
 ### 4.10 Synthetic injection provenance（SY）— **合同只覆盖会话历史**
 
 来源：Batch 1.8 §11.4（明确 deferred）+ Batch 20 的独立复核（F13）。
@@ -1097,144 +1237,6 @@ provenance flag**）；③**唤醒词不是文本注入路径**（只发 `wake` 
 **判定口径（Batch 20）**：F13 = `CONFIRMED`（机制真实、E2 可复现）+ `BLOCKED_BY_PD-13`
 （语义未裁决）。**本批不动 production 代码**——按"禁止 AI 自行选择产品语义"的纪律。
 
-来源：[2026-09-19 Batch 16 执行记录](../review/2026-09-19-Batch16-session-data-integrity-执行记录.md)。
-两个 finding 都是**数据不变量**层面的缺陷，不是"索引看起来不完整"：
-
-- **KB-15（可达性）**：一个**已经持久化**的逻辑会话，可能被正常支持的分页/枚举
-  **永久看不到**。修前 `list_page` 把排序/谓词直接压**原始** `updated_at`，而投影层
-  （`_summary_from_doc`）把"非字符串 / 缺失 / null"归一成 `""` 再交给游标：
-
-  ```text
-  存储侧排序键 ≠ 对外暴露的排序键
-     ├── 静默漏项：{updated_at: {$lt: "<str>"}} 对缺失/null 永不匹配（type bracketing）
-     │             ⇒ 排在末尾却谁也叫不到它（只有"一页装得下"时才露过面）
-     └── 游标毒化：BSON Date 型排在字符串**之前**（BSON 序）而投影归成 ""
-                   ⇒ 它若落在页边界，next_cursor = base64("|sid")
-                     ⇒ 解码端拒绝空时间戳 ⇒ 下一页 400，此后全部不可达
-  ```
-
-- **KB-16（身份唯一性）**：`session_id` 是**逻辑主键**（直读/改名/删除/摘要/级联/缓存键
-  全部按它寻址），但存储层从未有唯一约束。三条写路径都是
-  `update_one({session_id}, …, upsert=True)`——**不是原子的**：两个并发 upsert 都看不到
-  匹配就各自插入。真库实测（Batch 16 / E3）：20 轮 × 两个独立 client 的 `create`
-  有 1–3 轮产出重复文档；把存在性检查卡住可以让它**确定性**复现（2 篇同 ID）。
-
-> **会话持久化合同（Batch 16 Phase 0 裁定）**
->
-> | 字段 | 地位 |
-> |---|---|
-> | `session_id` | **REQUIRED / 非空字符串 / 逻辑主键**（唯一约束见 SD4）——所有写者恒写，全仓按它寻址 |
-> | `updated_at` | **REQUIRED（写入侧）；读入侧允许缺失**——规范形态是 `now_iso()` 的 UTC ISO 字符串；排序键就是它本身（不做任何格式解析） |
-> | `messages` | OPTIONAL（`create()` 写 `[]`；窗口由 `session_max_messages` 界界） |
-> | `title` / `character_binding` | OPTIONAL（缺省空串 / 空对象） |
-> | `character_state` / `reflector_state` / `service_state` | OPTIONAL（`load()` 缺省构造默认值；`create()` 不写，首次 `save()` 才出现） |
-> | `created_at` | **不存在**——任何版本的写者都没写过（真库审计：7/7 缺失），故**不得**作为 fallback 候选 |
-> | 非空字符串以外的一切 `updated_at` 形态 | **legacy 桶**（可达，排最后，桶内 `session_id ASC`）——不视为 corruption、也不伪造时间戳 |
-> | `session_id` 缺失/null/非字符串/空串 | **corruption**：无身份、不可寻址（唯一索引把它们并入 null 桶，至多一篇） |
->
-> **不变量落点**：存储层的两个桶判据 `ORDERED_TS_FILTER` / `LEGACY_TS_FILTER` 与投影层
-> 的 Sentinel `""` **必须一致**——"存储顺序 == 投影顺序 == 游标语义"是游标能当位置用的
-> 前提（这正是 KB-15 的根因形状）。
-
-| ID | Invariant | Test | Gate | CI |
-|---|---|---|---|---|
-| **SD1** | **可达性完备（含 legacy 元数据）**：每一条结构上被接受的持久会话都必须能被**支持的分页语义**走到——`updated_at` 缺失/null/非字符串/空串/**数组**的记录**不得**静默落在可枚举数据集之外（要么可达，要么被显式归类为 corruption） | `core/storage/tests/test_session_repo_pagination.py::TestLegacyOrderingBucket`（N ∈ {0,1,49,50,51,205} × {missing,null,empty,array}；Date/数字型；search；list_all；legacy-only 数据集）、`::TestArrayValuedOrderingMetadata`（挑战者 A 的数组反证）、`core/input/tests/test_sessions_pagination.py::TestLegacyOrderingRowsAreReachable`（route 层 = 用户入口）、`tests/real_mongo/test_real_session_data_integrity.py::TestLegacyOrderingReachabilityRealMongo`（真库 BSON 序/类型括号） | `make test-quick` / `test-normal` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
-| **SD2** | **排序 fallback 必须确定性**：legacy 元数据不得用"读的时刻 / 当前进程时间 / 首次读取时间"来补——排序键只能是**已持久化的事实**（本批：`session_id`）。同一稳定数据集重复遍历顺序逐项一致 | `test_session_repo_pagination.py::TestLegacyOrderingBucket::test_legacy_bucket_is_deterministic_across_runs`、`core/memory/tests/test_session_manager_pagination.py::TestAdversarialRegressions::test_repeated_traversal_with_legacy_rows_is_stable`、`tests/real_mongo/…::test_traversal_order_is_stable_across_runs` | `make test-quick` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
-| **SD3** | **游标遍历全域且终止**：任何由 API 产出的合法游标，继续翻页最终**终止**且不重不漏；`has_more=false` 必须真的意味着"当前查询域没有下一项"（含 legacy 桶） | `test_session_manager_pagination.py::TestAdversarialRegressions::test_legacy_row_on_page_boundary_round_trips_through_the_cursor`（PRE_FIX_RED：修前 400）、`::test_sentinel_cursor_round_trips_and_legacy_cursor_still_decodes`、`test_session_repo_pagination.py::TestLegacyOrderingBucket::test_legacy_row_at_page_boundary_does_not_poison_the_cursor`、`tests/real_mongo/…::test_legacy_row_on_page_boundary_does_not_truncate_the_list` | 同上 | **push/backend** + **push/real-mongo** |
-| **SD4** | **逻辑身份唯一**：权威 `sessions` 集合里，至多一篇文档代表一个逻辑 `session_id`（存储层强制，不只靠应用层检查） | `core/storage/tests/test_session_identity_uniqueness.py`（索引引导/升级/幂等/降级）、`tests/real_mongo/test_real_session_data_integrity.py::test_connect_creates_the_unique_index`、`::test_find_then_upsert_window_cannot_produce_two_authorities`（**确定性** PRE_FIX_RED：修前 2 篇）、`::test_concurrent_same_session_creation_keeps_one_authority` | `make test-quick` / `make test-real-mongo` | **push/backend** + **push/real-mongo** |
-| **SD5** | **身份腐化必须显式**：遗留重复文档不得被"随便挑一篇当权威"静默掩盖——启动日志显著告警 + 运行时 `schema_drift` 的 `option_conflicts` 报 error；系统**不自动删数据、不猜赢家** | `test_session_identity_uniqueness.py::TestSessionIdentityIndexBootstrap::test_duplicates_keep_availability_and_skip_unique_build`（caplog 断言告警）、`tests/real_mongo/…::test_duplicates_do_not_destroy_availability`（真库 + `check_schema_drift` 报 option_conflict） | 同上 | **push/backend** + **push/real-mongo** |
-| **SD6** | **约束部署是向后安全的**：加/升级唯一约束必须有**定义的**遗留数据行为，且索引引导**不得意外毁掉可用性**——已有重复 ⇒ 保持现状（非唯一）+ 告警 + 应用照常启动；唯一建不出来 ⇒ 退回非唯一，`connect()` 仍返回 True | `test_session_identity_uniqueness.py::…::test_duplicates_keep_availability_and_skip_unique_build`、`::test_unique_build_failure_falls_back_to_non_unique`、`::test_index_listing_failure_skips_all_changes`、`::test_duplicate_probe_failure_counts_as_possible_duplicates`、`tests/real_mongo/…::test_existing_non_unique_index_is_upgraded_in_place`、`::test_building_unique_index_with_duplicates_fails_loudly`（真库异常码 11000 留证） | 同上 | **push/backend** + **push/real-mongo** |
-
-**实现形状（唯一权威 + 两个桶 + 受守卫的索引升级）**：
-
-- **排序域**（`SessionRepository.list_page`）：`ORDERED_TS_FILTER =
-  {"updated_at": {"$type": "string", "$gt": "", "$not": {"$type": "array"}}}`
-  （恰为"非空字符串**标量**"；`$not: {$type: "array"}` 是承重条件——Mongo 的
-  `$type`/比较算子会**遍历数组元素**，不排除数组就会出现"有序桶文档投影成 Sentinel"
-  与"游标 Sentinel 表示 legacy 桶"撞车，见 §33 挑战者 A）先按
-  `updated_at DESC, session_id ASC` 取；取不满一页时再查
-  `LEGACY_TS_CLAUSE = {"$nor": [ORDERED_TS_FILTER]}`（**真补集**：缺失/null/非字符串/
-  空串/数组/对象…）并按 `session_id ASC` 取剩余。两桶拼接 == 投影层的契约序
-  （`_precedes` / `_after_cursor`：`""` 最小）。真库 `explain` 实测：有序桶仍是
-  `IXSCAN(updated_at_-1_session_id_1)` + 索引序（`docsExamined == nReturned == limit`，
-  与旧谓词逐项相同）；legacy 桶是一次 `session_id` 索引扫描（O(N)、无阻塞排序）——
-  两者都**不是**"全表扫描 + 阻塞排序"的正常路径退化，且 legacy 查询只在有序桶取尽后
-  发生（一次遍历的最后一页）。
-- **游标**（`core/memory/session_manager.py`）：格式不变（`base64url(updated_at|session_id)`），
-  只是解码端接受空时间戳（legacy 桶 Sentinel）。旧游标（非空时间戳）**逐字节兼容**；
-  无 legacy 文档时**永不**产出空时间戳游标 ⇒ 公开 API 零变化。
-- **身份约束**（`SessionRepository._ensure_session_id_index`，S8 同族纪律）：
-  先 `aggregate` 探测重复（**检测失败按"可能有重复"处理**）→ `list_indexes()` 比选项
-  （查询失败 ⇒ 不做任何变更）→ 已唯一则返回（幂等）→ 有重复则保持非唯一 + 告警 →
-  数据干净且选项不同则 `drop_index` 后重建（Mongo **不能原地改选项**，真库实测 code 86）
-  → 建失败退回非唯一且**不抛**（`connect()` 仍 True）。
-- **写路径**（`SessionRepository._upsert_session`）：`non_fatal=is_duplicate_key`
-  保证并发冲突不判死仓储；**经确认**是本集合 `session_id` 约束的 E11000 才收敛
-  （重跑一次 upsert ⇒ 走 update 分支，不可能再次冲突）；别的唯一约束冲突原样冒泡。
-
-**"supported 数据集"的边界（SD1 的判据）**：带**非空字符串 `session_id`** 的文档一律
-属于 supported（其 `updated_at` 无论是什么形态都可达）；`session_id` 缺失/null/非字符串/
-空串的文档没有可寻址身份，属 corruption——本批不隐藏它们（legacy 桶里照样可达，
-`sessionId` 为空串），唯一索引把同类并入 null 桶（至多一篇），`schema_drift` 与启动日志
-负责让操作者看见。**不支持无限兼容**：不为任意 BSON 形态做类型特判、不做 repair-on-read、
-不把 `updated_at` 解析成时间（排序是字符串序）。
-
-**SD1–SD6 的边界（明确不做）**：不做通用迁移框架、不做自动删重复/自动合并 winner
-（重复文档可能各自带着不同消息、标题、归档关联，"取最新的那个"是猜）、不做 repair-on-read、
-不引入聚合排序（`$ifNull` / 哨兵字段）**也不改文档 schema**（零字段变更）、不改公开分页
-API（`sessions[]/has_more/cursor` 与 `SessionSummary` 逐字段不变）、不恢复全量预取
-（PG2 仍然成立）、不为 legacy 数据伪造时间戳（禁止 `now()` / 随机 / 首次读取时间）。
-
-### 1.2 Token estimation contract（TE）
-
-**Batch 18 / KB-12**：prompt 用量估算的**合同**。它回答的不是"估算多准"，而是
-"预算决策在边界上是否如实"。权威实现只有一处：`Module/system_prompt/budget.py`。
-
-| ID | Invariant | Test | Gate | CI |
-|---|---|---|---|---|
-| **TE1** | **单一估算权威**：同一个 resolved model 下，所有 prompt 预算消费者（chat 组装、system prompt 梯子、历史裁剪、预览窗口判定、工具结果截断）走**同一份**估算实现与**同一套** profile 选择规则；不得出现第二份 `_estimate_tokens` 式公式 | `core/prompt/tests/test_prompt_budget.py::TestEstimation`、`core/prompt/tests/test_prompt_budget_wiring.py::TestAssemblerWiring`、`Module/tool/tests/test_framework.py::TestTokenEstimation` | `make test-quick` / `test-normal` | **push/backend** |
-| **TE2** | 估算**确定性、本地、无 provider 网络调用**（热路径不查 token 计数端点、不下载 tokenizer、不引入 tokenizer 依赖） | `Module/system_prompt/tests/test_token_corpus_contract.py::TestEstimatorHygiene::test_determinism_across_repeated_calls`；`Module/llm/tests/test_ollama_token_truth.py`（external，旁证） | `make test-quick` / `test-normal` | **push/backend** |
-| **TE3** | 估算器是**有界近似**且合同被显式声明：低估不得越过 chat 侧 25% 余量（`est/actual ≥ 0.75`），高估不得越出 profile 声明的 T；**近似不得被表述为精确计数** | `::TestEstimatorContract::test_no_family_is_underestimated_beyond_the_budget_headroom`、`::test_no_family_is_overestimated_beyond_the_declared_bound`、`::test_declared_bounds_are_the_measured_bounds`、`::test_hard_floor_follows_the_headroom_ratio`（文档即断言） | `make test-quick` | **push/backend** |
-| **TE4** | 估算必须**区分实质不同的内容类**（拉丁/CJK/生僻字/假名/emoji/数字/结构化密集/消息框架/工具 schema），不得退回"按字符数线性外推"；按 resolved model 选 profile（**6 个家族**），未知模型回退**保守** profile | `::TestEstimatorContract`（全量语料 × 权威 tokenizer）、`::test_cross_family_spread_is_why_profiles_exist`（同文本跨家族差 >3×）、`::test_same_char_count_different_content_differs` | `make test-quick` | **push/backend** |
-| **TE5** | **prompt 的每一段都不可漏算也不可重算**：provider request = `messages + tools`，两者一起进预算；`system` 与当前用户消息永不因裁剪丢失 | `::TestPromptComposition`、`core/prompt/tests/test_prompt_budget_wiring.py::TestMessageBuilderToolAccounting`、`::TestTurnPromptWiring::test_tool_definitions_are_taken_before_the_budget_is_spent` | `make test-quick` | **push/backend** |
-| **TE6** | 未知/自定义模型**保持可用**：估算不因缺 metadata 抛错，走确定性的保守回退；配置非法（畸形 schema / 缺字段）不得让 prompt 组装崩掉 | `::TestEstimatorHygiene::test_unknown_model_falls_back_and_stays_usable`、`Module/system_prompt/tests/test_token_corpus_contract.py::TestPreFixRed::test_legacy_formula_ignores_tool_schemas_entirely` | `make test-quick` | **push/backend** |
-| **TE7** | **合同外文字只许高估**：婆罗米系/东南亚/希伯来/阿拉伯/希腊/亚美尼亚/西里尔这些跨家族差 3–6× 的文字，由**固定在已验证家族实测上界**的系数覆盖 ⇒ 无静默截断面；代价（某些家族高估最多 **13.9×**：`other`=3.0 × o200k 的阿拉伯文）是显式接受的 | `::TestKnownLimitations::test_out_of_scope_scripts_never_underestimate` | `make test-quick` | **push/backend** |
-| **TE9** | **回合内每一轮都要重施同一份预算**（Batch 19 / KB-77）：ReAct 的工具轮会把 assistant `tool_calls` 与 `role="tool"` 结果**原地**追加进同一个 `messages` 数组，而每一轮都整份重发 ⇒ 第 2..N 轮必须在**发下一轮之前**用同一份 canonical 预算再裁一次（先丢历史 → 再整组丢较早的工具往返 → 最后截最新一组的 tool 内容）。**永不丢**：system、当前用户消息、最新一组的配对结构——且"不产生孤儿 `role=\"tool\"`"由**结构性判据**（`turn_tail_start` + `_deletion_is_safe`）保证，不依赖边界算得对（Challenger 反证的"无 user 条目"形状已补守卫）。受保护内容**自身**超预算时如实报 `over_budget`（log ERROR），**不假装成功**——所以本条是"必须被重施 + 残留必须可见"，不是"已被强制满足"。修前实测：首轮 6123 ≤ 6144，追加一条接近单条上限（`max_result_tokens=2000`）的结果后第 2 轮 **8205 > 8192 窗口**，第 5 轮 16533；Ollama 超窗 = 200 + 静默截断（本机复测：~11k token 的 prompt 得 `prompt_eval_count=8192`、HTTP 200）。热路径成本实测 ≈23 ms（15.7k 字符/17 条）～73 ms（55.9k 字符/38k est token），O(n)（逐条可加性有守卫） | `core/cognitive/tests/test_react_round_budget.py`（7，修前 2 红）、`core/prompt/tests/test_round_budget.py`（12，含 Challenger 反证形状） | `make test-quick` / `test-normal` | **push/backend** |
-| **TE8** | **CJK 扩展 B–I（生僻字）在合同内且单列一类**：它们比 BMP 汉字贵 3–7×（实测 est/actual 曾 = **0.13**） | `::TestEstimatorContract`（`cjk_ext_b_ideographs` 语料）、`scripts/token_corpus/validate_families.py` | `make test-quick` | **push/backend** |
-| **TE10** | **密集变音符号的**普通拉丁**文本在合同内**（Batch 20 / KB-78）：捷克/波兰真实散文（不是合成 pangram）的 `est/actual ≥ 0.775`，逐 profile × 逐家族；证据是签入的**真散文 holdout**（12 篇 Wikipedia 导言，CC BY-SA 4.0，7 个权威 tokenizer 真值），**不参与系数拟合**。`latin_ext` 由封闭形式推导得出（`w_need = (0.775·actual − base)/n_latin_ext`，对 w 仿射 ⇒ 精确解），**只动这一个系数**、其余 10 类逐位不变 | `Module/system_prompt/tests/test_latin_prose_contract.py`（31：真散文 floor ×6 profile、低密度波兰语在场、只有 latin_ext 变了、JSON/CJK/代码无回归、推导可执行复算、fixture 哈希/许可/规模） | `make test-quick` | **push/backend** |
-| **TE11** | **合同外的 `latin_accent` 只保留越南语**，且**高估代价被登记**：`latin_ext` 里"普通 Latin-1/Extended-A 变音"（捷克/波兰）与"堆叠变音"（越南语 U+1EA0–1EFF）是两套互斥的 token 经济——同一标量不可能同时覆盖（覆盖捷克/波兰所需系数会让越南语高估 2.5–3.0×；覆盖越南语所需系数是**负数**，即必然击穿硬下限）。故越南语留在 `UNCOVERED_CONTENT_CLASSES`，方向**只许高估**且区间被钉住 | `::TestKnownLimitations::test_dense_accented_latin_is_a_registered_uncovered_class`（语料侧）、`test_latin_prose_contract.py::TestVietnameseStaysOutOfContract`（真散文侧 + 代价区间） | `make test-quick` | **push/backend** |
-
-**TE3 的两个数从哪来**：`budget = window × 0.75`，而超窗在 Ollama 上是
-**HTTP 200 + 静默截断**（Batch 17 实测，从不报 400）⇒ 估算低估超过 25% 时，"预算
-判装得下"就不再蕴含"provider 完整消费"。高估同样是缺陷（过早裁记忆/历史、预览误拒，
-§9），故它是**双侧**合同而不是"越保守越好"。
-
-**profile 为什么必须按家族选（一条被证伪过的假设）**：家族之间在**两条独立轴**上
-分叉——①CJK 压缩率（0.58–1.21 token/字）②**数字分组**（Qwen/Mistral 逐位
-≈1.0 token/位，DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴**不共线**：用两个
-profile 覆盖时，"数字密集"内容被迫高估 **2.4–2.8×**（Batch 18 线性规划 + 真实
-Ollama 实测）。故按族分 6 个 profile；本仓默认的 `deepseek/*` 因此拿到 T=1.46
-而不是 2.4。
-
-**已验证范围**：6 个 profile 各自的依据家族（见 `budget.py` docstring 的表），
-其中 Qwen3-8B（对 `qwen`）与 OLMo-7B（对 `llama`）经**外部**验证亦在区间内。
-验证入口 `scripts/token_corpus/validate_families.py`（改家族时跑一次，
-据此决定"纳入拟合"还是"如实登记"）。
-
-**合同外的已知边界（实测登记，不隐藏）**：①`repeat` 类（同字符重复）的 token 率
-**完全由词表决定**，字符统计无法区分——实测 `"哈哈"×300` = 0.25 token/字而
-`"呀"×300` = 1.00 token/字，两者字符分布同构；②`script` 类（婆罗米系/东南亚/
-希伯来/阿拉伯/希腊/亚美尼亚/西里尔）跨家族差 **3–6×**，单一系数不可能覆盖。
-①② 都不参与硬合同；①的实测区间钉在
-`::TestKnownLimitations::test_degenerate_repeats_stay_within_the_recorded_range`，
-②的方向（**只许高估**）钉在 `::test_out_of_scope_scripts_never_underestimate`。
-
-**真值层级（本批定义）**：G1 provider 观测输入计数（Ollama `prompt_eval_count`，
-须先证明未截断）> G2 模型权威 tokenizer（HF `tokenizer.json`）> G3 第三方通用
-tokenizer（tiktoken，仅在家族匹配时）> G4 估算器本身。签入的真值见
-`Module/system_prompt/tests/fixtures/token_corpus/GOLDEN.json`（7 个 tokenizer +
-Ollama 实测，含截断污染标记）。
-
 ## 5. 架构与静态面
 
 | Invariant | Test / Gate | Gate 命令 | CI |
@@ -1243,7 +1245,7 @@ Ollama 实测，含截断污染标记）。
 | 领域/基础设施层不得依赖 `core.input` | `make check-arch`（R2） | 同上 | **push/backend** |
 | 禁止跨包导入下划线私有符号 | `make check-arch`（R3，allowlist 空） | 同上 | **push/backend** |
 | 不得新增 **eager** import 环 | `make check-arch`（R4） | 同上 | **push/backend** |
-| 裸 `create_task` 必须逐点登记所有权 | `make check-arch`（R6，19 点 / 22 处） | 同上 | **push/backend** |
+| 裸 `create_task` 必须逐点登记所有权（逐点记**期望条数**） | `make check-arch`（R6；条数以 `scripts/check_architecture.py::_TASK_SPAWN_ALLOWLIST` 为准） | 同上 | **push/backend** |
 | **跨包私有访问（含私有方法）必须公开化或显式标注** | `core/tests/test_cross_package_privacy.py`（5 例） | `make test-normal` | **push/backend** |
 | 输入层任何未标注私有穿透即红（比全仓更严） | `core/input/tests/test_layer_discipline.py` | `make test-normal` | **push/backend** |
 | **索引选项声明表只许指向真实 schema 实体**：集合键/索引名写错或整条漏登记 ⇒ 该集合选项**一个都不比**却照报健康（B3-CB-2） | `core/storage/tests/test_schema_drift.py::TestExpectedIndexOptionsPinnedToCode`（9 例；判据 = 生产 `ensure_index(...)` 的 **AST**，非第二张手写表） | `make test-quick` / `test-normal` | **push/backend** |
@@ -1259,6 +1261,7 @@ Ollama 实测，含截断污染标记）。
 | 依赖锁与声明一致 | `make check-env-lock` | `scripts/check_env_lock.py` | **push/backend** |
 | 无凭据形态入库 | `make check-secrets` | `scripts/check_secrets.py` | **push/backend** |
 | 依赖无已知漏洞（Medium+） | `make audit` | pip-audit + bandit | **push/backend** |
+| **文档里的 `@property` 计数与枚举必须与代码一致** | `core/tests/test_doc_counts.py::test_property_count_matches_code`（四份文档：`CLAUDE.md` / `core/README.md` / `README.md` / `docs/architecture.md`，判据 = `core/agent/agent.py` 的 AST 计数） + `::test_property_list_is_complete`（`core/README.md` 的**枚举**不得漏项） | `make test-quick` / `test-normal` | **push/backend** |
 
 ---
 
@@ -1293,7 +1296,6 @@ Ollama 实测，含截断污染标记）。
 | **清空形态识别的长尾** | 规范 `find … -exec rm` 与 4 种 `$GITHUB_WORKSPACE` 写法 + 当前目录形态已覆盖；`xargs`/`for` 循环/`git clean` 未覆盖 | 间接清空写法不受三道清理子句约束 | **接受**（本仓 6 处清理点全用规范写法，无实例）；见 todo.md |
 | **`if:` 守卫是 token 存在性** | `… \|\| true` 会被判成受信 push-only | 静态判据无法判定布尔语义 | **接受**（保守方向是"当 PR 可达"，此处相反但需构造）；见 todo.md |
 | **删除 `__init__.py` 重导出的风险** | F401 已豁免 `__init__.py`；重导出由 `__all__` + 直接导入覆盖；**无自动"公开面冻结"测试**（`Module/workflow_contract` 有，其余没有） | 误删重导出曾真实发生（Batch 2：`SessionId`/`asdict` → 59 模块 ImportError） | 见 todo.md |
-| **`core/tests/test_doc_counts.py` 的覆盖范围** | 该文档数字门禁**不含根 `README.md`**，且正则只认粗体 `**N 个同名 @property**` ⇒ 根 README 的「39 个 @property」（实际 46）永远抓不到；本文也未登记它 | 文档数字失真不会被自动发现 | 见 todo.md（Batch 3 登记） |
 
 ---
 
@@ -1325,3 +1327,17 @@ Ollama 实测，含截断污染标记）。
 | [2026-09-16 Batch 1 执行记录](../review/2026-09-16-Batch1-correctness-durability-执行记录.md) | P1/P2/R 的来源 |
 | [2026-09-17 Batch 1.7 执行记录](../review/2026-09-17-Batch1.7-background-task-terminal-state-执行记录.md) | T1–T4 的来源 |
 | [2026-09-17 Batch 1.8 执行记录](../review/2026-09-17-Batch1.8-user-visible-terminal-semantics-执行记录.md) | U1–U5 的来源 |
+| [2026-09-18 Batch 7 执行记录](../review/2026-09-18-Batch7-provider-preview-window-执行记录.md) | PW1–PW6 的来源（F8） |
+| [2026-09-18 Batch 8 执行记录](../review/2026-09-18-Batch8-pagination-completeness-执行记录.md) | PG1–PG6 的来源（P2-01r） |
+| [2026-09-18 Batch 9 执行记录](../review/2026-09-18-Batch9-speaking-state-recovery-执行记录.md) | SP1–SP4 的来源（KB-6） |
+| [2026-09-18 Batch 10 执行记录](../review/2026-09-18-Batch10-thinking-state-cancellation-recovery-执行记录.md) | TH1–TH5 的来源（KB-22） |
+| [2026-09-18 Batch 11 执行记录](../review/2026-09-18-Batch11-cancellation-safe-turn-finalization-执行记录.md) | CF1–CF6 的来源（KB-25 / KB-23） |
+| [2026-09-18 Batch 12 执行记录](../review/2026-09-18-Batch12-accepted-input-delivery-closure-执行记录.md) | AD1–AD8 的来源（KB-24） |
+| [2026-09-19 Batch 13 执行记录](../review/2026-09-19-Batch13-pending-input-ordering-执行记录.md) | PO1–PO6 的来源（KB-38） |
+| [2026-09-19 Batch 14 执行记录](../review/2026-09-19-Batch14-residual-input-ownership-triage-执行记录.md) | RO1–RO4 的来源（KB-47；KB-26/28/29 裁决） |
+| [2026-09-19 Batch 15 执行记录](../review/2026-09-19-Batch15-claimed-input-conversation-truth-执行记录.md) | CT1–CT6 的来源（KB-46） |
+| [2026-09-19 Batch 16 执行记录](../review/2026-09-19-Batch16-session-data-integrity-执行记录.md) | SD1–SD6 的来源（KB-15 / KB-16） |
+| [2026-09-19 Batch 18 执行记录](../review/2026-09-19-Batch18-context-token-estimation-执行记录.md) | TE1–TE11 的来源（KB-12） |
+| [2026-09-20 Batch 19 执行记录](../review/2026-09-20-Batch19-long-tail-backlog-closure-执行记录.md) | TE9 的来源（KB-77）；长期 backlog 裁决 |
+| [2026-09-20 Batch 20 执行记录](../review/2026-09-20-Batch20-residual-correctness-closure-执行记录.md) | SY1–SY3 / PD-13（F13）+ TE10–TE11（KB-78）的来源 |
+| [2026-09-17 Batch 2 执行记录](../review/2026-09-17-Batch2-guardrails-hardening-执行记录.md) | §5/§6 门禁（R1–R6 / check-ci-isolation）的来源 |
