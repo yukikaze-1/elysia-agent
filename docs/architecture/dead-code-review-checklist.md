@@ -604,8 +604,8 @@ git log -S '<symbol>' --oneline | cat
 
 | Candidate | 看起来为什么 dead | 实际消费者 / 原因 | 分类 |
 |---|---|---|---|
-| `Agent.character_service`（及 `instance_repo` / `character_profiles` / `character_state_stream` / `character_runtime_registry`） | 静态 `.prop` 引用计数为 **0** | `core/input/server.py:337` 的 `getattr(agent, "character_service")` 字符串读取 ⇒ 误删会让 REST 角色域**静默换一套 repository 图** | `KEEP_DYNAMIC` |
-| `services["_tool_names"]` | 全仓无静态读者 | 同函数相邻的 `_tool_count` 被 `core/tools/self_state/plugin.py:31` 经 `ctx.get` 动态读；`_fsm_state` / `_session_msg_count` 同型，且有 `test_self_state_is_live.py` 时序守卫 | `KEEP_DYNAMIC` |
+| `Agent.character_service`（及 `instance_repo` / `character_profiles` / `character_state_stream` / `character_runtime_registry`） | 静态 `.prop` 引用计数为 **0** | `core/input/server.py :: create_app` 的 `getattr(agent, "character_service")` 字符串读取 ⇒ 误删会让 REST 角色域**静默换一套 repository 图** | `KEEP_DYNAMIC` |
+| `services["_tool_names"]` | 全仓无静态读者 | 同函数相邻的 `_tool_count` 被 `core/tools/self_state/plugin.py :: SelfStatePlugin` 经 `ctx.get` 动态读；`_fsm_state` / `_session_msg_count` 同型，且有 `test_self_state_is_live.py` 时序守卫 | `KEEP_DYNAMIC` |
 | `SessionId`（`core/schema/types.py`） | F401 报 unused | **public re-export**；`ruff --fix` 误删后 **59 个模块 ImportError** | `KEEP_PUBLIC_API` |
 | `asdict`（`core/debug/info.py`） | F401 报 unused | 在 `core/debug/__init__.py` 的 `__all__` 里 | `KEEP_PUBLIC_API` |
 | `frontend_contract` 顶层 114 个零消费者 `__all__` 名 + `core/schema/__init__.py` 的 `# noqa: F401` 面 | 零静态消费者 | 消费者是三产物（TS / JSON Schema / raw）+ 17 golden frames + `make check-types`；**注释本身就是公开承诺的机器表达** | `KEEP_PUBLIC_API` |

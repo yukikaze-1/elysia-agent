@@ -1,5 +1,9 @@
 # Batch 16 — Session Data Integrity（KB-15 / KB-16）执行记录
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > 范围：canonical backlog 仅 **KB-15**（malformed/missing/null `updated_at` 导致 persisted
 > session 不可达）与 **KB-16**（逻辑 `session_id` 缺少数据库唯一性约束）。**KB-17 默认
 > OUT OF FIX SCOPE**（本批只做边界核对，未改 title 校验）。不做通用迁移框架、不做自动

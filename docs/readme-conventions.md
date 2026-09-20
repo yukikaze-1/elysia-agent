@@ -213,7 +213,7 @@ canonical 文档**不写**会静默过期的数字：当前测试数、LOC、模
 ### Rule 5 — Canonical references prefer symbols/headings over line numbers
 
 引用代码用 **`path/to/file.py :: ClassName.method`** 或 **`path :: test_name`**，
-不用 `foo.py:123` / `foo.py:321-340`——行号会在下一次无关重构时全部失效，
+不用 `` foo.py:123 `` / `` foo.py:321-340 ``——行号会在下一次无关重构时全部失效，
 而**失效的行号不会被任何门禁发现**（它不是链接）。同理，文档内引用用**章节标题**或
 可点击的相对链接，不用 `§9` 这种无锚点的裸编号（跨文档引用更是如此）。
 

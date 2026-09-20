@@ -1,5 +1,9 @@
 # 全仓工程级 Code Review —— 架构地图 + Issue Ledger（工作稿）
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > 本文件是 2026-09-12 起对 `/home/yomu/elysia-agent` 进行 **全面、系统、工程级 Code Review** 的
 > 主 Agent 工作台账（objective 第 18/19 节要求的 architecture map + issue ledger）。
 > 最终交付物是同目录/根目录的 `CODE_REVIEW_REPORT.md`；本文件为**过程证据**，非最终结论。

@@ -1,5 +1,9 @@
 # Ollama Runtime Context Authority（KB-13）与 Ollama Provider Adapter（AR-16）backlog 记录
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > **本文性质**：backlog / planning 记录，**不是**批次执行记录。本次**只改 `todo.md` 与本文**：
 > 零生产代码、零测试、零 CI、零 `providers.yaml` 改动；**不**实现 Ollama adapter、**不**修 KB-13、
 > **不**重做全仓 provider 审计、**不**改动其它 backlog 条目状态。

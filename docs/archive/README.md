@@ -64,7 +64,7 @@
 > **Relocation requires a coordinated change with the external frontend consumer.**
 > 单仓移动即令对端契约校验静默失效。
 
-清单（含帧数）与再生成命令见 [`traces/README.md`](frontend-handoff-v2/traces/README.md)。
+清单（含帧数）与再生成命令见 [traces 清单与再生成命令](frontend-handoff-v2/traces/README.md)。
 
 ---
 

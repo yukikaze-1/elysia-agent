@@ -1,5 +1,9 @@
 # Batch 18 — Context / Token Estimation Correctness（KB-12）执行记录
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > 范围：canonical 主 scope = **KB-12**（prompt token 估算）。本批**不**改
 > `contextWindow` 语义（Batch 17 已定）、`num_ctx`、provider runtime allocation、
 > `/api/ps`、通用 LLM 后端架构、PromptAssembler 大重构、memory 架构、system-prompt

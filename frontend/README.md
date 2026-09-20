@@ -133,9 +133,9 @@ connectionStore.onmessage → _onMessage
 
 | 模块 | 使用者 |
 |------|--------|
-| `composables/useImageUpload.ts` | InputBar + MessageList |
-| `utils/format.ts` | CharStatus + TokenLabel |
-| `styles/message-layout.css` | ChatMessage + TypingIndicator |
+| `src/composables/useImageUpload.ts` | InputBar + MessageList |
+| `src/utils/format.ts` | CharStatus + TokenLabel |
+| `src/styles/message-layout.css` | ChatMessage + TypingIndicator |
 
 ### 无障碍（a11y）
 

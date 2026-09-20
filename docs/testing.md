@@ -153,8 +153,8 @@ make test-normal      # pytest -m "not slow and not external"（**真正离线**
 恰好指向开发者本机生产库：
 
 ```python
-AppConfig().database.mongodb_uri = "mongodb://localhost:27017"   # core/config/app_config.py:119
-AppConfig().database.db_name     = "default"                      # core/config/app_config.py:134
+AppConfig().database.mongodb_uri = "mongodb://localhost:27017"   # core/config/app_config.py :: DatabaseConfig.mongodb_uri
+AppConfig().database.db_name     = "default"                      # core/config/app_config.py :: DatabaseConfig
 ```
 
 于是任何 `Agent(config=AppConfig())` + `await agent.start()` 的 unit/service 测试，只要本机
@@ -325,11 +325,17 @@ npm run build         # = vue-tsc --noEmit && vite build（类型检查 + 构建
 npm test              # = vitest run src（store 层不变量；build 只做类型检查、零行为覆盖）
 ```
 
-Node 版本：CI 钉 **22.x（22.23.0，LTS 线）** 并断言主版本，漂移即红。
+Node 版本：CI 钉 **22.x（LTS 线）** 并断言主版本，漂移即红——精确 pin 与本地版本对齐方式见
+[docs/operations.md §11](operations.md)（版本权威只有那一处）。
 本仓**没有** `.nvmrc`/`engines` 字段——本地版本不会自动对齐 CI，请自己确认
 （见 [operations.md](operations.md) 的版本权威表）。
 
 ### D. 契约产物（改了 `frontend_contract/` 才需要）
+
+> **纯 `docs/**` 提交不会触发 `ci.yml`**（它带 `paths-ignore: docs/**`）——那类提交由
+> `contract-frames.yml` 覆盖（它的 `paths` 含 `docs/**`，job 里跑 `make check-types` 三条命令
+> 与 `make check-docs`）。所以**只改文档**时，真正会跑的是那个名字看起来只管契约的 workflow；
+> 原因与权衡见 [ci.md](ci.md) 的「门禁接线的第二种形态」。
 
 ```bash
 make gen-types        # 重新生成 ts / schema / raw_ts
@@ -410,8 +416,8 @@ autouse `_no_real_embedding`。豁免 `external` 与显式请求 `real_embedding
 | 测试 | 耗时 | 说明 |
 |------|------|------|
 | `scripts/tests/test_check_secrets.py::test_real_repo_full_history_verdict_is_faithful` | 34.5s | `git clone --depth 1`（`:208`） |
-| `core/tests/test_phase3.py::TestAudioBufferErrors::test_stt_timeout` | 30.1s | 桩 sleep 99s，测试等真实预算 `timeout=30.0`（`core/input/audio_buffer.py:356`） |
-| `Module/workflow_engine/tests/unit/test_workflow_engine.py::test_pause_sets_pause_requested` | 30.1s | **unit** 却烧掉 `pause()` 默认 `timeout=30.0`（`Module/workflow_engine/workflow_engine.py:494`），而该断言并不需要它 |
+| `core/tests/test_phase3.py::TestAudioBufferErrors::test_stt_timeout` | 30.1s | 桩 sleep 99s，测试等真实预算 `timeout=30.0`（`core/input/audio_buffer.py :: AudioBuffer._process_segment`） |
+| `Module/workflow_engine/tests/unit/test_workflow_engine.py::test_pause_sets_pause_requested` | 30.1s | **unit** 却烧掉 `pause()` 默认 `timeout=30.0`（`Module/workflow_engine/workflow_engine.py :: WorkflowEngine._run_and_cleanup`），而该断言并不需要它 |
 
 其余量级：`core/cognitive/tests/test_v2_generation.py` ×4 各 7.1s、
 `core/input/tests/test_v2_ws.py::TestSetTtsVoice` ×3 各 5.0s。
@@ -482,7 +488,7 @@ conda run -n Elysia python -m pytest <文件> --collect-only -q -m "unit or serv
 | 层 | 测试目录 |
 |----|----------|
 | `Module/` | `_common/tests/`、`config/tests/`、`database/documentdb/tests/`、`database/vectordb/tests/`、`embedding/tests/`、`llm/tests/`、`logger/tests/`、`output/tests/`、`stt/tests/`、`system_prompt/tests/`（含 `unit/`、`integration/`）、`tool/tests/`、`tts/tests/`、`workflow_contract/tests/`、`workflow_engine/tests/unit/`、`workflow_engine/tests/integration/` |
-| `core/` | `tests/`、`status/tests/`、`agent/tests/`、`config/tests/`、`monitoring/tests/`、`task/tests/`、`text/tests/`、`debug/tests/`、`cognitive/tests/`、`desktop/tests/`、`input/tests/`、`memory/tests/`、`personality/tests/`、`prompt/tests/`、`schema/tests/`、`schema/adapters/tests/`、`storage/tests/`、`tools/tests/`、`adapter/tests/` |
+| `core/` | `tests/`、`status/tests/`、`agent/tests/`、`config/tests/`、`monitoring/tests/`、`tool_runtime/tests/`、`text/tests/`、`debug/tests/`、`cognitive/tests/`、`desktop/tests/`、`input/tests/`、`memory/tests/`、`personality/tests/`、`prompt/tests/`、`schema/tests/`、`schema/adapters/tests/`、`storage/tests/`、`tools/tests/`、`adapter/tests/` |
 | `frontend_contract/` | `tests/` |
 | 仓库根 | `scripts/tests/`、`tests/` |
 

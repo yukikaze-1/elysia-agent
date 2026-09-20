@@ -1,5 +1,9 @@
 # Batch 14 — Residual Input Ownership Triage（执行记录）
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > 范围：**先 triage、后修复**。审计 KB-26 / KB-28 / KB-29 / N7 / N8 五项残余 ownership
 > finding，在 Batch 9–13 已建立的大量 lifecycle / admission / ordering 不变量之上，判断
 > 哪些仍是**真实、用户可达、未被已有 invariant 覆盖**的缺陷。

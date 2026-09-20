@@ -1,5 +1,9 @@
 # Batch 19 — Long-tail Backlog Closure 执行记录
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > 批次定位：**不是**"把 todo 剩下所有项修完"，也**不是**继续沿每条 finding 无限深挖，而是
 > 用当前 HEAD、真实生产调用链、既有 invariants、真实测试与独立 Challenger 把剩余 backlog
 > **系统性压缩**成明确状态。成功判据不是"修了多少条"，而是"剩下每一条都知道：它是什么、

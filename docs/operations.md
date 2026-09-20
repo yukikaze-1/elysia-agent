@@ -506,7 +506,7 @@ backup/dump/snapshot/restore 目标；`app.py` 没有 `backup` 子命令；没�
 | 运行时 | **支持版本** | 权威文件 | 其它地方的说法 |
 |---|---|---|---|
 | Python | **3.12** | `environment.yml`（`python=3.12`）、`scripts/setup.sh`、`pyrightconfig.json`（`pythonVersion: 3.12`） | 代码侧的**兜底分支**（`Module/config/preflight.py::_check_python` 与 `scripts/setup.sh` 的非 conda 分支）接受 `>= 3.11`——那是**下界判据**，不是"受支持并验证过的版本"。**3.12 才是 lock 与 CI 实际构建的版本**（canonical 文档一律写 3.12） |
-| Node.js | **22.x（22.23.0，LTS 线）** | `.github/workflows/ci.yml` 的 `frontend` job（显式 pin + 断言主版本，漂移即红） | `README` 与 `setup.sh` 接受 `>= 18`——那是**构建 v1 UI 的下界**。本仓**没有** `.nvmrc` / `engines` 字段，所以本地 Node 不会自动对齐 CI |
+| Node.js | **22.x（22.23.0，LTS 线）** | `.github/workflows/ci.yml` 的 `frontend` job（显式 pin + 断言主版本，漂移即红） | `scripts/setup.sh` 的前端分支接受 `>= 18`——那是**构建 v1 UI 的下界**（canonical 文档一律写 22.x）。本仓**没有** `.nvmrc` / `engines` 字段，所以本地 Node 不会自动对齐 CI |
 | conda env 名 | `Elysia` | `Makefile`（`CONDA_ENV`）、`environment.yml` | — |
 
 > **已知不一致（如实记录，不在文档层掩盖）**：`scripts/setup.sh` 用 `python=3.12` 建环境，

@@ -29,7 +29,7 @@
 |---|---|---|---|
 | `ws-v2-handshake.jsonl` | 契约源 golden | v2 握手（session→server_info→expression） | 3 |
 | `ws-v2-session.jsonl` | 契约源 golden | v2 多会话（activate 回放 conversationId 贯通→generation.*） | 10 |
-| `ws-v2-chat.jsonl` | 契约源 golden | v2 结构化聊天（ack→generation.* 完整序列→idle） | 13 |
+| `ws-v2-chat.jsonl` | 契约源 golden | v2 结构化聊天（ack→generation.* 完整序列→idle→character.state.changed） | 14 |
 | `ws-v2-cancel.jsonl` | 契约源 golden | v2 取消（partial segment→GENERATION_CANCELLED→interrupted→idle） | 14 |
 | `ws-v2-fail.jsonl` | 契约源 golden | v2 Provider 故障（started→GENERATION_PROVIDER_UNAVAILABLE→idle） | 12 |
 | `ws-v2-tool.jsonl` | 契约源 golden | 桌面工具（tool.request→tool_approval→tool_calls 完成） | 4 |

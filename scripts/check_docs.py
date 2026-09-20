@@ -10,13 +10,16 @@
 | **DG2** 禁止引用**已知不存在**的符号/路径（`frontend_contract/ws_message.py`、`core/task/`、`TaskScheduler`） | 文档停留在某次重构之前（这三条都是真实发生过的：ws_message 已拆包、core/task 已改名） |
 | **DG3** 协议错误码目录 ↔ `frontend_contract/errors.py` 双向一致 | **委托**给既有 `scripts/check_error_codes.py`（不建第二套 checker） |
 | **DG4** `core/` 新子系统必须有 README | 约定写在文档里、实际没人执行（"要求"退化成愿望） |
+| **DG6** 代码围栏成对（标题不被吞进代码块） | 漏写闭合围栏 ⇒ 章节标题被渲染成代码、锚点失效，而链接检查看不见 |
 | **DG5** 文档里的**机器可导出的**事实与代码一致 | 手抄的清单/计数静默过期（AppConfig 环境变量索引） |
 
 **刻意不做的事**（否则它会变成一个没人维护的巨型 linter）：
-- **不扫历史语料**（`docs/review/**`、`docs/archive/**`（traces 除外）、
-  `docs/superpowers/**`、`docs/progress/**`、`docs/completed/**`、`docs/legacy/**`）——
-  历史文档允许保留**当时的**路径（见 `docs/README.md` 的 Historical Records 节）。
-  对 500+ 份历史正文强制当代链接，等于逼人改写历史。
+- **不扫历史语料**（`docs/review/**`、`docs/archive/**`、`docs/superpowers/**`、
+  `docs/progress/**`、`docs/completed/**`、`docs/legacy/**`）——历史文档允许保留
+  **当时的**路径（见 `docs/README.md` 的 Historical Records 节）。对 500+ 份历史正文
+  强制当代链接，等于逼人改写历史。**两个例外**：各历史目录的 `README.md`（它们是
+  **current** 导航）+ `docs/archive/frontend-handoff-v2/traces/README.md`
+  （**live** 契约产物的清单）在扫描面内。
 - **不做 Markdown 风格检查**、**不查拼写**、**不引入第三方依赖**（纯 stdlib）。
 
 用法：
@@ -65,6 +68,10 @@ CANONICAL: tuple[str, ...] = (
     "docs/readme-conventions.md",
     "docs/completed.md",
     "frontend_contract/README.md",
+    # live 契约产物的**清单**（docs/README.md 指定它为 traces 的权威说明）。
+    # 不扫它 = 跨仓消费的那批帧的说明无人守（Challenger 2026-09-20 指出的洞：
+    # 它的帧数已经与文件实际不符过一次）。
+    "docs/archive/frontend-handoff-v2/traces/README.md",
 )
 
 # 历史目录的**索引**（它们自身是 current 的导航，故纳入；其正文不纳入）。
@@ -124,9 +131,14 @@ _FORBIDDEN: tuple[tuple[re.Pattern[str], str], ...] = (
 # 行内出现这些标记即视为**显式历史语境**（讲"以前叫什么/已归档/当时"），允许保留旧名。
 _HISTORICAL_MARKERS: tuple[str, ...] = (
     "历史", "当时", "已归档", "归档", "改名", "重命名", "原 ", "原名", "原单文件",
-    "不再", "拆分", "split", "historical", "superseded", "legacy", "LEGACY",
+    "原路径", "已废弃", "废弃", "旧 |", "不再", "拆分", "split",
+    "historical", "superseded", "legacy", "LEGACY",
     "→",  # 改名映射（`core/task/` → `core/tool_runtime/`）
 )
+
+#: 判定历史语境时一并看**上文两行**：改名映射表的数据行本身通常不含标记词，
+#: 标记在它的表头（`| 旧 | 新 |`）或引导句里。只看本行会把这些行误判为"失效引用"。
+_MARKER_LOOKBACK = 6
 
 # 文件级豁免：整个文件都在讲"旧名与新名的关系"。**陈旧也会红**。
 _DG2_FILE_EXEMPTIONS: dict[str, str] = {
@@ -168,9 +180,26 @@ def _link_scan_targets() -> list[str]:
     return out
 
 
-_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_FENCE_LINE_RE = re.compile(r"^\s{0,3}```")
 _INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 _LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+
+
+def _mask_fences(text: str) -> str:
+    """只遮蔽**围栏代码块**（保留行内 code span，供 DG7 提取路径）。"""
+    out: list[str] = []
+    in_fence = False
+    for line in text.splitlines(keepends=True):
+        if _FENCE_LINE_RE.match(line):
+            in_fence = not in_fence
+            out.append(_blank(line))
+            continue
+        out.append(_blank(line) if in_fence else line)
+    return "".join(out)
+
+
+def _blank(s: str) -> str:
+    return "".join("\n" if ch == "\n" else " " for ch in s)
 
 
 def _mask_non_link_regions(text: str) -> str:
@@ -182,12 +211,12 @@ def _mask_non_link_regions(text: str) -> str:
         它是"面包屑长什么样"的展示（`docs/readme-conventions.md` 的深度对照表）。
     不涂会把示例判成坏链（假红），而假红会逼人删掉有价值的内容。
     **等长替换**：这样报告的行号仍是原文行号。
+
+    逐行 toggle 而不是 ```` ```.*?``` ```` 配对：Markdown 允许围栏缩进最多 3 格
+    （`docs/architecture.md` 里就有一对缩进围栏），正则配对会错位一格，
+    把真实的标题/链接整段遮掉 ⇒ 判据看不见它该看的东西（假绿②）。
     """
-
-    def blank(m: re.Match[str]) -> str:
-        return "".join("\n" if ch == "\n" else " " for ch in m.group(0))
-
-    return _INLINE_CODE_RE.sub(blank, _FENCE_RE.sub(blank, text))
+    return _INLINE_CODE_RE.sub(lambda m: _blank(m.group(0)), _mask_fences(text))
 
 
 def _resolve(base_dir: Path, target: str) -> Path | None:
@@ -195,6 +224,71 @@ def _resolve(base_dir: Path, target: str) -> Path | None:
     if not raw or raw.startswith(("http://", "https://", "mailto:", "#")):
         return None
     return (base_dir / raw).resolve()
+
+
+_ANCHOR_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$", re.MULTILINE)
+_MD_LINK_RE = re.compile(r"\[[^\]]*\]\([^)]*\)")
+_CODE_SPAN_RE = re.compile(r"`[^`]*`")
+
+
+def _heading_slugs(path: Path) -> set[str]:
+    """把 Markdown 标题转成 GitHub 风格 anchor slug（够用即可，不求完备）。
+
+    规则（GitHub 实际行为）：小写 → 去掉标点（保留字母数字、空格、连字符、下划线、
+    CJK）→ 空格换 `-`。**不处理重复标题的 `-1` 后缀**：本仓没有重复标题，
+    真出现时本判据会误报一次，那时再补。
+    """
+    text = _mask_fences(path.read_text(encoding="utf-8"))
+    slugs: set[str] = set()
+    for _, title in _ANCHOR_RE.findall(text):
+        # 标题里的链接语法只保留链接文字，code span 去掉反引号
+        title = _MD_LINK_RE.sub(lambda m: m.group(0).split("]")[0].lstrip("["), title)
+        title = _CODE_SPAN_RE.sub(lambda m: m.group(0).strip("`"), title)
+        slug = title.strip().lower()
+        slug = re.sub(r"[^\w\s\-\u4e00-\u9fff]", "", slug)
+        slug = slug.strip().replace(" ", "-")
+        if slug:
+            slugs.add(slug)
+    return slugs
+
+
+def check_dg1_anchors(files: list[str]) -> list[str]:
+    """DG1b：文内/跨文 `#anchor` 必须落在目标文件真实存在的标题上。
+
+    为什么单独一条：`_resolve()` 会把 `#anchor` 剥掉只验文件存在，于是
+    "文件在、锚点拼错"这种断链**完全看不见**（Challenger 2026-09-20 反证：
+    `docs/architecture.md` 里指向 4.10 的锚点在标题加了" + "之后失效，
+    而守卫照绿）。点击无效与 404 对读者是同一件事。
+    """
+    problems: list[str] = []
+    cache: dict[Path, set[str]] = {}
+    for rel in files:
+        path = _ROOT / rel
+        text = _mask_non_link_regions(path.read_text(encoding="utf-8"))
+        own_slugs: set[str] | None = None
+        for m in _LINK_RE.finditer(text):
+            raw = m.group(1).strip()
+            if "#" not in raw or raw.startswith(("http://", "https://", "mailto:")):
+                continue
+            target, _, anchor = raw.partition("#")
+            if not anchor:
+                continue
+            anchor = anchor.strip()
+            if target:
+                resolved = _resolve(path.parent, target)
+                if resolved is None or not resolved.is_file() or resolved.suffix != ".md":
+                    continue  # 文件本身的问题由 DG1 报，这里只管锚点
+                slugs = cache.setdefault(resolved, _heading_slugs(resolved))
+            else:
+                if own_slugs is None:
+                    own_slugs = _heading_slugs(path)
+                slugs = own_slugs
+            if anchor.lower() not in slugs:
+                line = text[: m.start()].count("\n") + 1
+                problems.append(
+                    f"{rel}:{line} 锚点不存在：`{raw}`（目标里没有该标题的 slug）"
+                )
+    return problems
 
 
 def check_dg1(files: list[str]) -> list[str]:
@@ -219,14 +313,137 @@ def check_dg2(files: list[str]) -> list[str]:
     problems: list[str] = []
     for rel in files:
         exempt = rel in _DG2_FILE_EXEMPTIONS
+        lines = (_ROOT / rel).read_text(encoding="utf-8").splitlines()
         for lineno, line in enumerate((_ROOT / rel).read_text(encoding="utf-8").splitlines(), 1):
+            context = "\n".join(lines[max(0, lineno - 1 - _MARKER_LOOKBACK):lineno])
             for pattern, why in _FORBIDDEN:
                 if not pattern.search(line):
                     continue
-                if exempt or any(marker in line for marker in _HISTORICAL_MARKERS):
+                if exempt or any(marker in context for marker in _HISTORICAL_MARKERS):
                     continue
                 problems.append(
                     f"{rel}:{lineno} 引用了不存在的东西 `{pattern.pattern}`（{why}）：{line.strip()[:120]}"
+                )
+    return problems
+
+
+def check_dg6(files: list[str]) -> list[str]:
+    """DG6：代码围栏必须成对，且**闭合围栏不得带 info string**。
+
+    为什么这条值得单独存在（2026-09-20 Challenger 顺带挖出来的真缺陷）：
+    `docs/architecture.md` 的 ```` ```yaml ```` 块**漏写闭合围栏**，而紧随其后的是
+    ```` ```python ````（带 info string ⇒ 按 CommonMark 它**不能**充当闭合围栏）。
+    后果是 `## 8` / `## 9` / `## 10` 三节的标题**被当成代码渲染**——章节在正文里
+    消失、锚点全部失效，而**任何链接检查都看不见**（链接指向的文件确实存在）。
+    这类缺陷只有"围栏配平"能发现，且它同时解释了"锚点为何不存在"。
+    """
+    problems: list[str] = []
+    for rel in files:
+        state = False
+        opener = 0
+        for lineno, line in enumerate((_ROOT / rel).read_text(encoding="utf-8").splitlines(), 1):
+            if not _FENCE_LINE_RE.match(line):
+                continue
+            info = line.strip()[3:].strip()
+            if not state:
+                state, opener = True, lineno
+            else:
+                if info:
+                    problems.append(
+                        f"{rel}:{lineno} 闭合围栏带了 info string（`{line.strip()}`）——"
+                        f"按 CommonMark 它不能闭合第 {opener} 行打开的块；"
+                        f"这通常意味着缺一个闭合围栏，或此处本应是起始围栏"
+                    )
+                state = False
+        if state:
+            problems.append(
+                f"{rel}:{opener} 的代码围栏没有闭合——其后内容会被当成代码渲染"
+                f"（标题消失、锚点失效），而链接检查看不见这类缺陷"
+            )
+    return problems
+
+
+# 已知的**非仓库内**路径（运行时产物 / 外部仓 / 生成物），逐条写理由。**陈旧也会红**。
+_PATH_ALLOWLIST: dict[str, str] = {
+    "data/task_result_wal.jsonl": "运行时产物（gitignore），由 ProjectPath 生成",
+    "data/session_pending.jsonl": "运行时产物（gitignore）",
+    "data/token_usage_pending.jsonl": "运行时产物（gitignore）",
+    "data/scheduler_checkpoint.json": "运行时产物（gitignore，P3-01-RESERVED 预留）",
+    "data/memory_pending_syncs.json": "运行时产物（gitignore）",
+    "data/memory_pending_deletes.json": "运行时产物（gitignore）",
+    "data/session_pending_cleanup.json": "运行时产物（gitignore）",
+    "data/pending_attachment_release.json": "运行时产物（gitignore）",
+    "data/secrets/profiles.json": "运行时密钥存储（0600 + gitignore）",
+    "data/secrets/": "运行时密钥目录（gitignore；SecretStore 落盘处）",
+    "data/live2d-assets": "运行时资源目录（gitignore；ProjectPath.LIVE2D_ASSETS）",
+    "Module/llm/errors.py": "**KB-14 描述的正是这个文件不存在**（`core/tests/fake_llm.py` import 它但从未被调用）——todo 条目按原样保留该路径是判据本身",
+    "elysia-frontend/apps/desktop/scripts/check-backend-contract.mjs": "**外部仓**（姊妹前端仓）的路径；本仓内不存在是正常的",
+}
+
+# 形如路径的 inline code：带已知顶层目录前缀，或以**已知扩展名**结尾且含 `/`。
+_PATH_PREFIXES = ("core/", "Module/", "frontend_contract/", "frontend/", "scripts/",
+                  "docs/", "tests/", "character/", "static/", "log/", "data/",
+                  ".github/", "elysia-frontend/")
+_PATH_EXT_RE = re.compile(
+    r"^[\w./\-]+\.(py|md|json|jsonl|ya?ml|ts|vue|toml|sh|cfg|ini|j2|css|html|txt)$"
+)
+_INLINE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+#: 文档**示例**里的占位路径（不是真实引用）：`Module/tts/your_backend.py`、`path/to/file.py`…
+_PATH_PLACEHOLDER_RE = re.compile(r"(your_|path/to/|/to/|foo/|xxx|示例)")
+
+
+def check_dg7(files: list[str]) -> list[str]:
+    """DG7：行内 code 里**像仓库路径**的引用必须能解析到真实文件/目录。
+
+    为什么需要它（Challenger 2026-09-20 的反证）：DG2 只认三条硬编码模式，于是
+    `docs/testing.md` 的 `task/tests/`（目录早改名 `tool_runtime/`）与 `CLAUDE.md` 的
+    `core/tests/test_session_cascade.py`（真实位置在 `core/memory/tests/`）**双双通过**——
+    两条都会让读者按图索骥 404，而 DG1/DG2 都看不见。同一轮还查出了
+    `core/input/README.md` 里 5 处**已经搬到别的包**的文件路径。
+
+    **判据刻意收窄**（第一版按"看起来像路径"实现，271 条命中里绝大多数是假阳性——
+    假红会逼人删掉有价值的内容，与不做守卫同样糟）：
+
+    - 只查**去掉 `::symbol` 后的路径部分**，且必须含 `/`；
+    - 以**已知顶层目录**开头，或以**已知扩展名**结尾；
+    - 含占位符（`<` `>` `*` `{` `}` `…` `$`）的一律跳过；
+    - 解析候选 = 本文档所在目录 + 其每一级祖先（覆盖"根相对"与"包相对"两种写法）；
+    - 带历史标记（`原` / `改名` / `→` …）的行整行跳过；
+    - 运行时产物与外部仓路径在 `_PATH_ALLOWLIST` 逐条登记理由（**陈旧也会红**）。
+    """
+    problems: list[str] = []
+    for rel in files:
+        doc_dir = (_ROOT / rel).parent
+        candidates_dirs = [doc_dir, *doc_dir.parents]
+        text = _mask_fences((_ROOT / rel).read_text(encoding="utf-8"))
+        doc_lines = text.splitlines()
+        for lineno, line in enumerate(doc_lines, 1):
+            context = "\n".join(doc_lines[max(0, lineno - 1 - _MARKER_LOOKBACK):lineno])
+            if any(marker in context for marker in _HISTORICAL_MARKERS):
+                continue
+            for span in _INLINE_SPAN_RE.findall(line):
+                tok = span.strip().strip("`").strip()
+                tok = re.split(r"\s*::\s*", tok, maxsplit=1)[0].strip()
+                tok = tok.rstrip("：:，,。；;)）】」")
+                if not tok or tok.startswith(("./", "/", "~")) or ".." in tok:
+                    continue
+                if any(ch in tok for ch in "<>*{}…$|=`"):
+                    continue
+                if _PATH_PLACEHOLDER_RE.search(tok):
+                    continue  # 示例 / 模板占位路径
+                if "/" not in tok:
+                    continue
+                if not (tok.startswith(_PATH_PREFIXES) or _PATH_EXT_RE.match(tok)):
+                    continue
+                if tok in _PATH_ALLOWLIST:
+                    continue
+                bare = tok.rstrip("/")
+                if any((d / bare).exists() for d in candidates_dirs):
+                    continue
+                problems.append(
+                    f"{rel}:{lineno} 引用了解析不到的仓库路径 `{tok}`（已按文档目录及其各级祖先解析）—— "
+                    f"读者按它去找会 404；若它本就是运行时/外部路径，"
+                    f"请登记进 scripts/check_docs.py 的 _PATH_ALLOWLIST 并写明理由"
                 )
     return problems
 
@@ -365,6 +582,12 @@ def check_stale_registrations() -> list[str]:
     for rel, why in _SCAN_EXCLUSIONS.items():
         if not (_ROOT / rel).is_file():
             problems.append(f"_SCAN_EXCLUSIONS 登记了 {rel}（{why}），但文件不存在")
+    for tok, why in _PATH_ALLOWLIST.items():
+        if (_ROOT / tok).exists():
+            problems.append(
+                f"_PATH_ALLOWLIST 登记了 `{tok}`（{why}），但它在仓库里**存在** —— "
+                f"请删除该条目（登记陈旧 = 理由在冒充事实）"
+            )
     return problems
 
 
@@ -399,8 +622,11 @@ def main() -> int:
 
     failures: list[tuple[str, list[str]]] = [
         ("DG1 canonical/supporting 内部链接", check_dg1(files)),
+        ("DG1b 文内锚点（#heading）可解析", check_dg1_anchors(files)),
         ("DG2 禁止引用已知不存在的符号/路径", check_dg2(files)),
         ("DG3 协议错误码目录 ↔ errors.py", check_dg3()),
+        ("DG6 代码围栏成对", check_dg6(files)),
+        ("DG7 行内 code 里的仓库路径存在", check_dg7(files)),
         ("DG4 core/ 子系统 README 覆盖", check_dg4()),
         ("DG5 AppConfig 环境变量索引一致", check_dg5()),
         ("DG* 登记陈旧", check_stale_registrations()),
@@ -416,7 +642,7 @@ def main() -> int:
         return 1
 
     print(
-        f"文档守卫通过：DG1（{len(files)} 份文档内部链接可解析）/ "
+        f"文档守卫通过：DG1（{len(files)} 份文档内部链接与锚点可解析）/ "
         f"DG2（无失效引用）/ DG3（错误码双向一致）/ "
         f"DG4（core 子系统 README 覆盖）/ DG5（{len(_appconfig_env_names())} 个 AppConfig env 名在册）"
     )

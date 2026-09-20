@@ -1,5 +1,9 @@
 # Contract 发版记录（2026-08-11）
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > F5：记录最终契约产物（schema/raw TS/golden frames）的版本与溯源，供 Electron 团队
 > replay 与跨仓核对。产物由 `frontend_contract/` 单源生成（`make gen-types` /
 > `make gen-frames`），`make check-types` 漂移门禁（含 golden frames + 错误码单源）。

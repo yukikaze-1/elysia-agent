@@ -327,8 +327,8 @@ Vue 3 + Vite + Pinia + TypeScript。开发时 Vite（:5173）代理 WS/API 到 :
 Coding Agent 需要知道的只有：
 
 - 入口：`index.html`（聊天）+ `debug.html`（Debug 应用，Vite 多入口）
-- `src/types/protocol.ts` 是**契约类型 re-export shim**——真源是 `frontend_contract/` 生成的
-  `src/types/contract.generated.ts`（**禁止手写契约类型**）
+- `frontend/src/types/protocol.ts` 是**契约类型 re-export shim**——真源是 `frontend_contract/`
+  生成的 `frontend/src/types/contract.generated.ts`（**禁止手写契约类型**）
 - 状态：Pinia store（connection / chat / audio / settings / tools / debug）
 - WS 路由集中在 `useWebSocket` composable（不要再写成巨型 switch）
 - 构建产物在 `static/`，被 aiohttp serve；`outDir: ../static` + `emptyOutDir: false`
@@ -375,7 +375,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 - **看用户/任务里提到的图片，优先用 WebUI（Agent 平台）自带的 `describe_image` 工具**：传图片本地绝对路径（如 `/home/yomu/elysia-agent/static/Elysia.png`）或 URL + `prompt`，即可拿到图片描述，无需经过项目后端。
 - 同一平台的 `read_image`（图片直接喂给底层模型）**不可用**：当前底层模型 `deepseek-v4-pro` 未声明 image input，会报 `model ... does not declare image input`；看图一律走 `describe_image`。
 - 实测记录（2026-08-19，`static/Elysia.png`）：WebUI `describe_image` 可正常查看并正确描述（粉色短发、紫瞳、精灵耳、粉白礼服少女）。偶发 timeout / 安全策略拒绝时，换更简短、中性的 `prompt` 重试即可。
-- 项目后端也有同名工具 `core/tools/vision/DescribeImagePlugin`（agent 运行时描述用户消息中的图片，与 WebUI 工具无关）：模型来自 `config.vision.model`（默认 `mimo/mimo-v2.5`），支持 `image_index` / `image_indices`，结果缓存到 `data/cache/vision/*.json`，本地路径 / `/static/*` 会转 base64 data URI。链路实测成功，但 MiMo 可能认错角色（把 Elysia 认成《原神》诺艾尔），只保证返回描述。
+- 项目后端也有同名工具 `core/tools/vision/plugin.py :: DescribeImagePlugin`（agent 运行时描述用户消息中的图片，与 WebUI 工具无关）：模型来自 `config.vision.model`（默认 `mimo/mimo-v2.5`），支持 `image_index` / `image_indices`，结果缓存到 `data/cache/vision/*.json`，本地路径 / `/static/*` 会转 base64 data URI。链路实测成功，但 MiMo 可能认错角色（把 Elysia 认成《原神》诺艾尔），只保证返回描述。
 - 项目插件的运行/测试坑：环境带 `ALL_PROXY=socks://127.0.0.1:7897/` 时，httpx 报 `Unknown scheme for proxy URL`；先 `env -u ALL_PROXY -u all_proxy` 再跑（HTTP 代理可保留）。
 
 ## Memory & storage
@@ -384,7 +384,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 本文只留 Coding Agent 真正需要知道的**所有权规则**：
 
 - **会话**：`sessions`（Mongo，`default.sessions`）**无 Mongo TTL**，删除走**显式级联删除**
-  （`SessionManager.cascade_repos` 清单由 `core/tests/test_session_cascade.py` 的 AST 守卫钉住）。
+  （`SessionManager.cascade_repos` 清单由 `core/memory/tests/test_session_cascade.py` 的 AST 守卫钉住）。
   运行时状态用 `SessionMemory` 的**专用类型字段**（`character_state` / `service_state`），
   经 `save()` / `load()` 两侧同步——**没有** `set_param/get_param` 通用接口。
 - **归档**：`message_archive` 是 append-only 的永久消息日志（与 `sessions` 是**两份**数据，
@@ -415,7 +415,7 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 - **私有穿透守卫收私有方法**（2026-09-17 Batch 2.1 修复的假绿）— `core/tests/test_cross_package_privacy.py` 的归属表此前**只收赋值目标**（`ast.Assign`/`ast.AnnAssign`），`def _m` 一个都不收，于是 `_scan()` 里 `if defining and …` 恒假 ⇒ **跨包私有方法调用整类静默放行**（字段与方法不同权）。生产代码实测漏 9 处（`core/adapter/tts_adapter.py` 8 处 + `core/cognitive/streaming.py` 1 处调用 `Module/output/manager.py::OutputManager._broadcast`），修复后 0 → 9 且全为真实泄漏，已按「要么改走公开 API、要么同行 `# noqa: SLF001` + 理由」收口（tts_adapter 那 8 处收成一个带理由的 `_broadcast_text_delta` 豁免点）。**新增私有方法访问即红**。注意 `ruff.toml` **未启用** SLF001，故全仓 `# noqa: SLF001` 对 lint 是惰性的——真正执行这条纪律的是上面这个守卫；`core/input/tests/test_layer_discipline.py` 管输入层，比它更严且本来就认方法。
 - **后台协程所有权** — 新增后台协程一律走 `Module/_common/task_scope.py` 的 `AsyncTaskScope`（按 owner 实例化：`spawn` 强引用 + done callback 统一记未处理异常 + `cancel_all`/`drain`/`aclose`）或 `cancel_and_drain(task, ...)`（单任务有序收尾）。`drain(timeout)` 是**总预算**而非逐任务超时。终态 owner（VoiceSession/ToolPlugin）用 `aclose()`；可重启 owner（Agent 同一实例 `stop()`→`start()`）用 `cancel_all()`+`drain()`——封闭 scope 会让重启后一律 `TaskScopeClosedError`。确需裸 `create_task` 的，须在 `_TASK_SPAWN_ALLOWLIST` 登记「任务存哪 / 谁取消 / 谁等待 / 异常谁看」。新 owner 停止后必须 drain 再关它依赖的资源（repo/客户端）。详见 `docs/review/2026-08-30-后端架构分层与模块化增量评估.md` §ARCH-INC-P2-03。
 - **`docs/readme-conventions.md`** — README 编写规范。新增/修改模块时必须按模板写 README（面包屑 + 相关文档节），并在根 README 文档导航中注册。
-- **`docs/ci.md`** — **CI 的唯一权威说明**：job 布局 / 为什么全部 job 跑在 self-hosted（GitHub 托管按分钟计费，额度见底后 job **根本不启动**，会挂与代码无关的红叉）/ `check_ci_isolation` 的信任边界规则（PR 可达 job 禁 self-hosted、禁死 job、禁表达式 `runs-on`、self-hosted 清理必须密闭受守卫且 fail-closed）/ **开放 PR 时的恢复清单（含分支保护 required check 陷阱）**。**本仓当前不开放 PR**：两个 workflow 都只监听 `push: [main]`。改 CI 前先读它。
+- **`docs/ci.md`** — **CI 的唯一权威说明**：job 布局 / 为什么全部 job 跑在 self-hosted（GitHub 托管按分钟计费，额度见底后 job **根本不启动**，会挂与代码无关的红叉）/ `check_ci_isolation` 的信任边界规则（PR 可达 job 禁 self-hosted、禁死 job、禁表达式 `runs-on`、self-hosted 清理必须密闭受守卫且 fail-closed）/ **开放 PR 时的恢复清单（含分支保护 required check 陷阱）**。**本仓当前不开放 PR**：`ci.yml` / `contract-frames.yml` 只监听 `push: [main]`，`nightly.yml` 只监听 `workflow_dispatch`。改 CI 前先读它。
 - **`docs/testing.md`** — 测试分层体系。新测试必须加 marker（unit/service/integration/slow），日常用 `make test-quick` / `make test-normal` / `make test-full`。
 - **超时预算** — 任何**新的具名超时常量**被当作 `wait_for`/`wait`/`timeout` 的实参时，必须在 `scripts/check_timeout_budget.py` 表态：它覆盖谁（登记进 `_INVARIANTS`，外层 ≥ 内层），或者它是预算链最内层（登记进 `_LEAF_BUDGETS` + 理由）。门禁 `make check-timeouts`。**理由不是洁癖**：S2-A3 的成因就是「外层 5s < 内层 17s」，而当时两条预算的一致性只写在注释里——注释不是机制。同一函数内嵌套的等待预算由 R1 自动校验（内 ≤ 外），无需登记。**R4**：插件经 `SafetyProfile(request_timeout=…)` **自己声明**的预算必须 ≤ 调度器的 `_MAX_PLUGIN_REQUEST_TIMEOUT`（超出即红，逼着同步抬上界并重算 `_CALL_BUDGET`/`_DISPATCH_TIMEOUT`）。R4 补的是 R1–R3 都看不见的盲区——那个 120 是经**字段**传进管道的，不是"具名常量直接当 `timeout` 实参"，于是 desktop/vision 按设计声明的 120s 曾被外层 60s 悄悄截断（S2-G2）而三条规则全绿。
 - **prompt 预算** — 组装后的 prompt 必须有上界：预算 = `providers.yaml::llm.<provider>.context_window` × 0.75，未声明用保守默认（32K）。唯一执行点 `Module/system_prompt/budget.py`（估算 + 换算 + 常量），两个截断点：`SystemPromptManager.render(budget_tokens=…)`（C4 记忆逐条降 → `_DROPPABLE_SECTIONS` 整节丢，`_PROTECTED_SECTIONS` 永不丢）与 `MessageBuilder.build_messages(prompt_budget_tokens=…)`（历史由旧到新逐条丢，system 与当前消息永不丢）。**理由**：超 context 不是被截断而是 provider **400**，而 400 不进重试集合 ⇒ 该会话对该角色永久失败，日志只显示 `GENERATION_PROVIDER_UNAVAILABLE`。**该模块必须留在 `Module/` 侧**——放 `core/` 会让 `Module/system_prompt` 反向依赖 core，`make check-arch` R1 会红（实测如此）。**Ollama 是双重语义（Batch 17 / KB-13 / AR-16）**：同一个 `context_window` 既是预算来源，也是 native `/api/chat` 的 `options.num_ctx` 请求值（OpenAI 兼容端点实测**静默忽略**它 ⇒ 只能在 native 表达）；显式声明（>0）才下发，缺失/非法一律**不发**——通用预算回退 32768 是预算兼容行为，**绝不**当运行时分配指令（那是真实显存分配，且 `num_ctx=0/-1` 会得到 4 token 的畸形 runner）。

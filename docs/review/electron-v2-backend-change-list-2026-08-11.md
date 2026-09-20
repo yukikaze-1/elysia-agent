@@ -1,5 +1,9 @@
 # Electron 后端契约变更清单（2026-08-11）
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > F5 交接：本次发版（D6b/D6c 产品化门禁 + **2026-08-11 加固批次**：P0×2 + P1×5 + P2×3）对 Electron
 > 前端的 wire 契约影响，逐条可回放。前置批次 9A/9B/9C 的变更见 `docs/electron-backend-protocol-v2.md`
 > + golden frames（`docs/archive/frontend-handoff-v2/traces/`）；加固批次设计与决策见

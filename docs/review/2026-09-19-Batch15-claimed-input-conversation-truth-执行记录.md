@@ -1,5 +1,9 @@
 # Batch 15 — Claimed Input Conversation Truth Closure（KB-46）
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > 批次范围：**KB-46 单条**。canonical scope 之外的一切发现只登记（§96）。
 > 基线 HEAD：`9e9e25b9`。产出 commit：`e5e6e4b5`（production + PRE_FIX_RED）、
 > `dbed9856`（变异暴露的两条守卫缺口）、`2f51b9c7`（真库旁证）、

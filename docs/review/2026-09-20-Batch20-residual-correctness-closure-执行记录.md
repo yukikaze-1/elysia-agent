@@ -1,5 +1,9 @@
 # Batch 20 — Residual Correctness Closure 执行记录（KB-82 / KB-56 / KB-78 / F13 / KB-41 / KB-48）
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > 批次定位：**不是** Batch 20 意义上的新一轮 hardening。Batch 19 已正式结束系统性
 > correctness hardening（`Systematic correctness hardening program = CLOSED`），
 > 本批只处理它最后留下的 **6 个真实 finding**，并给每一项一个**不留模糊**的终态：

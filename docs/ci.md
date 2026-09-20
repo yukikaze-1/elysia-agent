@@ -8,7 +8,8 @@
 
 ## 现状（2026-09-16 起）
 
-**两个 workflow 都只监听 `push: [main]`，全部 job 跑在 self-hosted runner 上。**
+**`ci.yml` 与 `contract-frames.yml` 只监听 `push: [main]`；`nightly.yml` 只监听 `workflow_dispatch`
+（没有 push / PR 触发）。三者全部跑在 self-hosted runner 上；本仓不开放 PR。**
 
 | workflow | job | 触发 | runs-on | 内容 |
 |---|---|---|---|---|

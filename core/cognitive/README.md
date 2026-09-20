@@ -65,7 +65,7 @@ session.character_binding → instance_id（缺省回退 DEFAULT_INSTANCE_ID=chi
 ```
 
 - 三个 `_require_*` 私有方法做**延迟 factory None guard**（registry/runtime_factory/engine_factory 未注入时抛清晰 `RuntimeError`，消除 `# type: ignore`）。
-- `self._engine` 是**本回合实例引擎**——streaming `_apply_mood`（`streaming.py:61`）写 `engine.state`，finalize `_apply_final_mood_fallback`/`turn_completed`（`finalize.py`）读 `self._engine.state.mood`。**状态权威 = `runtime.state`（instance-scoped，F1-b 正确语义：engine per-instance 永不换绑消除跨会话污染风险源）**。
+- `self._engine` 是**本回合实例引擎**——streaming `_apply_mood`（`core/cognitive/streaming.py :: CognitiveStreaming._apply_mood`）写 `engine.state`，finalize `_apply_final_mood_fallback`/`turn_completed`（`finalize.py`）读 `self._engine.state.mood`。**状态权威 = `runtime.state`（instance-scoped，F1-b 正确语义：engine per-instance 永不换绑消除跨会话污染风险源）**。
 - `DEFAULT_INSTANCE_ID`/`DEFAULT_CHARACTER_ID` 常量是「无 binding → 哪个 instance」兜底；权威 characterId 来自 `runtime.definition.characterId`（`DEFAULT_CHARACTER_ID` 供 agent 默认 binding 用）。
 
 ### TurnCharacterContext 扩展（阶段 E）

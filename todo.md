@@ -90,7 +90,7 @@
 | **KB-68** | 协议切换后 SDK 隐式重试消失：流式仍有 `LLMAdapter` 的 3 次（仅 429/5xx 且流未开始），非流式现在 0 次；SDK 的隐式重试**从来不是**仓库文档化的合同 | 把重试策略收口到一处并覆盖非流式调用（retry 策略批次）|
 | **KB-69** | `repeat` 类（同字符重复）token 率完全由词表决定，字符统计**无法**闭合（实测区间 [0.58, 5.34]，`TestKnownLimitations` 钉住） | 引入词表级 tokenizer（依赖门槛见 Batch 18 记录）或产品限制单字符重复输入 |
 | **KB-70** | provider 侧固定框架（默认注入的 system prompt、tool 样板）观测不到：实测 ≈22–72 token 有界常数（守卫上界 96） | 某 provider 的框架变成非平凡函数（随消息数/工具数增长）|
-| **KB-71** | `image_url` 固定计 1024 token（未验证）；同族不一致：`debug/prompt_recorder.py` 按 20 字符计同一张图。多模态链路**可达**（`providers.yaml::llm.mimo.supports_multimodal=true`）但本机无 VLM 真值 | 接入真正 vision provider 并用 provider usage 标定（按分辨率分档）|
+| **KB-71** | `image_url` 固定计 1024 token（未验证）；同族不一致：`core/debug/prompt_recorder.py` 按 20 字符计同一张图。多模态链路**可达**（`providers.yaml::llm.mimo.supports_multimodal=true`）但本机无 VLM 真值 | 接入真正 vision provider 并用 provider usage 标定（按分辨率分档）|
 | **KB-73 / KB-75** | `profile_for_model` 是**名字子串匹配**、不是权威 metadata：实活误判 `ollama/deepseek-r1:8b`（Llama 蒸馏拿 deepseek profile，实测 1/38 样本 <0.775，最低 0.67）；`switch_model` 接受任意 id、无 allowlist | 有进程内可读的权威家族信号（`ollama show` 的 `architecture` 缓存 / provider 声明 tokenizer family）|
 | **KB-74** | 估算合同外的**两条轴**：家族（generic 保守并集）与内容。**内容轴在 Batch 20 收窄**：`latin_accent` 只剩越南语（捷克/波兰已按 KB-78 进合同，见 TE10）；`repeat`（[0.58, 5.34]）与 `script`（只许高估，实测最坏高估 **13.9×**）**不可闭合**——它们由 `UNCOVERED_CONTENT_CLASSES` 单一定义 + `TestKnownLimitations` 钉住区间 | 出现新的"有限字符类无法闭合"的内容轴，或某 provider 的词表使 `repeat` 区间越界 |
 | **KB-76** | 工具 schema 结构化常量在"参数量多而描述极短"的形状上高估到 1.57×（方向安全；preview 不传 tools ⇒ 无 false reject 路径）| 出现真实的高参数低描述工具集（自动生成的 CRUD），按实测重标定 |

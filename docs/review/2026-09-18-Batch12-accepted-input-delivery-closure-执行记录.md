@@ -1,5 +1,9 @@
 # Batch 12 — Accepted Input Delivery Closure（KB-24）执行记录
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 - 日期：2026-09-18
 - canonical scope：**KB-24**（admission 窗口内已 ACK 输入的所有权）
 - worktree：`tmp/b12-wt`（HEAD `2e70854d` + 本批改动）

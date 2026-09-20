@@ -1,5 +1,9 @@
 # Batch 4 — Runtime Health Truthfulness 执行记录
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > 文档导航：[项目文档](../../README.md) → [docs 索引](../README.md) → 本文
 >
 > 前置：[Batch 4 Backlog Triage & Planning](2026-09-18-Batch4-backlog-triage.md)（N-1 / N-11 的**登记来源**与 §10 推荐）

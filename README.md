@@ -19,7 +19,7 @@
 
 | 包 | 是什么 |
 |---|---|
-| `Module/` | **能力与基础设施**：LLM / STT / TTS / Embedding / 向量库 / 文档库 / 输出通道 / 配置 / system prompt / 工具框架 / 后台任务引擎。每个服务遵循 `protocol → registry → backend` 模式，可独立替换 |
+| `Module/` | **能力与基础设施**（LLM / STT / TTS / Embedding / 数据库 / 输出通道 / 配置 / system prompt / 工具框架 / 后台任务引擎 / 共享工具）。每个服务遵循 `protocol → registry → backend` 模式，可独立替换；**逐模块清单见 [Module/README.md](Module/README.md)** |
 | `core/` | **应用与领域编排**：`Agent`（组合根，通过 **46 个同名 `@property`** 公开子系统）、认知循环、角色引擎、记忆、存储仓储、输入层（WS/HTTP）、工具插件 |
 | `frontend_contract/` | **共享 wire 契约**：可执行 Pydantic 模型 + 生成器 + 漂移门禁（零依赖，不 import 上面两者） |
 
@@ -33,7 +33,7 @@
 |---|---|
 | [Miniconda](https://docs.anaconda.com/miniconda/install/) | Python 环境管理（项目实际构建的是 **3.12**；conda env 名 `Elysia`） |
 | [Docker Engine](https://docs.docker.com/engine/install/ubuntu/) | 自带 Compose 插件；跑 MongoDB + Milvus |
-| [Node.js](https://nodejs.org/en/download) **22.x** | **仅**构建 v1 网页 UI 时需要（backend-only 可省略）。CI 钉 22.23.0 并断言主版本 |
+| [Node.js](https://nodejs.org/en/download) **22.x** | **仅**构建 v1 网页 UI 时需要（backend-only 可省略）。CI 会断言主版本，精确 pin 与下界见 [docs/operations.md §11](docs/operations.md) |
 | [DeepSeek API key](https://platform.deepseek.com/api_keys) | 唯一必填的外部凭据 |
 | 可选：MiniMax key / Tavily key / MiMo key | TTS / 网页搜索 / 图片识别；不配则对应功能降级或跳过 |
 

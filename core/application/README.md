@@ -29,7 +29,7 @@ core/application/
 ## 依赖与所有权
 
 - **方向**：`core.input → core.application → core.memory`。`sessions.py` 只取 `core.memory.session_manager.SessionBusyError`（`SessionMemory` 仅 `TYPE_CHECKING`）；`attachment_signing.py` 只用 stdlib（`hmac` / `hashlib` / `re` / `time`）。本包不 import `core.input`，也不 import `Module/`。
-- **谁消费**：`core/input` 的多个入口——`upload_routes._sign_url`（薄壳，保持既有函数名）、`attachment_routes`（下载验签 + 签发端点）、`session_routes` 与 `ws_handlers/session.py`（会话激活）。
+- **谁消费**：`core/input` 的多个入口——`upload_routes._sign_url`（薄壳，保持既有函数名）、`attachment_routes`（下载验签 + 签发端点）、`session_routes` 与 `core/input/ws_handlers/session.py`（会话激活）。
 - **谁构造**：无状态、按请求现建（`service_for_agent(agent)`），不缓存、不持会话对象；Agent 生命周期不感知本包。
 - `make check-arch` 保证方向：R2 禁止领域 / 基础设施层反向依赖 `core.input`，本包处在被传输层依赖的一侧。
 

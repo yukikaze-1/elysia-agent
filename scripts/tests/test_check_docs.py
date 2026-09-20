@@ -171,6 +171,64 @@ def test_dg5_emits_the_real_env_surface():
 
 
 # ---------------------------------------------------------------------------
+# DG1b / DG6 / DG7 —— Challenger 2026-09-20 反证后新增的三条判据
+# ---------------------------------------------------------------------------
+
+
+def test_dg1b_flags_a_broken_anchor(tmp_path: Path):
+    """`#anchor` 必须落在真实标题上——文件在、锚点拼错，对读者与 404 是同一件事。"""
+    from scripts.check_docs import _heading_slugs
+
+    doc = tmp_path / "t.md"
+    doc.write_text("# 标题\n\n## 10. 日志系统\n\n[坏](../t.md#10-日志系统)\n",
+                   encoding="utf-8")
+    slugs = _heading_slugs(doc)
+    assert "10-日志系统" in slugs, slugs
+    assert "10-日志系" not in slugs
+
+
+def test_dg6_detects_unbalanced_fence_and_tagged_closer(tmp_path: Path):
+    """缺闭合围栏 ⇒ 后续标题被当成代码渲染；带 info string 的"闭合"围栏不算闭合。"""
+    from scripts.check_docs import check_dg6
+
+    good = tmp_path / "good.md"
+    good.write_text("# t\n\n```yaml\na: 1\n```\n\n## s\n", encoding="utf-8")
+    bad = tmp_path / "bad.md"
+    bad.write_text("# t\n\n```yaml\na: 1\n\n```python\n## s\n", encoding="utf-8")
+
+    import scripts.check_docs as cd
+    orig = cd._ROOT
+    cd._ROOT = tmp_path
+    try:
+        assert check_dg6(["good.md"]) == []
+        problems = check_dg6(["bad.md"])
+    finally:
+        cd._ROOT = orig
+    assert problems, "缺闭合围栏必须报"
+
+
+def test_dg7_resolves_package_relative_and_flags_missing(tmp_path: Path):
+    """DG7 要能同时处理"根相对"与"包相对"，并对真正不存在的路径报错。"""
+    import scripts.check_docs as cd
+
+    (tmp_path / "core" / "memory" / "tests").mkdir(parents=True)
+    (tmp_path / "core" / "memory" / "tests" / "test_x.py").write_text("", encoding="utf-8")
+    (tmp_path / "core" / "README.md").write_text(
+        "# core\n\n见 `memory/tests/test_x.py` 与 `core/memory/tests/test_x.py`；"
+        "坏引用 `core/tests/test_missing.py`。\n",
+        encoding="utf-8",
+    )
+    orig = cd._ROOT
+    cd._ROOT = tmp_path
+    try:
+        problems = cd.check_dg7(["core/README.md"])
+    finally:
+        cd._ROOT = orig
+    assert len(problems) == 1, problems
+    assert "core/tests/test_missing.py" in problems[0]
+
+
+# ---------------------------------------------------------------------------
 # 端到端
 # ---------------------------------------------------------------------------
 

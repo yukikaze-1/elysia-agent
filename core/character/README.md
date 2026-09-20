@@ -71,7 +71,7 @@ core/character/
 [core/schema/character.py](../schema/character.py) 的 `CharacterRuntimeState`——**扁平** Pydantic 模型，与旧 `CharacterState` **字段同构**（子组件 0 改动），仅做两处身份/语义调整：
 
 - **`instance_id`**：instance-scoped **权威身份**。
-- **`session_id`**：**保留**作版本历史键（`CompressionManager` 版本历史 `append_version` 读 `state.session_id`，见 compression.py:248/332——保留使子组件扁平字段读取 0 改动，避免 AttributeError）。
+- **`session_id`**：**保留**作版本历史键（`CompressionManager` 版本历史 `append_version` 读 `state.session_id`，见 `core/personality/compression.py :: CompressionManager.append_version`——保留使子组件扁平字段读取 0 改动，避免 AttributeError）。
 - `source_revision`：记录状态基于哪版 L1 演化。
 
 承载 L2/L3/L4 + awareness/compression/reflector + mood。**`CharacterState` 标记退役**（保留兼容导入，不物理删）；`session.character_state` 不再权威——新会话用 `CharacterRuntimeState`。

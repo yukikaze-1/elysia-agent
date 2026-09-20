@@ -27,23 +27,29 @@
 **唯一权威是 [`todo.md`](../todo.md) §3**（含 blocker 与现状）。本文不复制它们的状态，
 只给一个入口索引：
 
-| ID | 决策点（一行） | 阻塞 |
-|---|---|---|
-| `PD-3` | 那 4 条 `unique` 是否纳入 schema drift enforcement | GR-3 / GR-24 |
-| `PD-4` | 审批流是否启用（`WAITING_APPROVAL` live-lock 的前提） | 能力已备、未接线 |
-| `PD-5` | `plan_too_large` 语义 + 新契约枚举值 | 契约可达性登记 |
-| `PD-6` | 可选节点失败的任务终态语义（**未关闭的 wrong user-visible truth**） | F17 |
-| `PD-7` | `clean_db.py` 破坏范围（清 v2 危险 / 只清 v1 无用） | DEP-3 |
-| `PD-8` | `live2d.directive` 是否接线 | FEAT-2 / KB-1 |
-| `PD-9` | 任务中心（TaskSystem）是否恢复 | FEAT-16 |
-| `PD-10` | 两套 CLI driver 去留 | AR-12 |
-| `PD-11` | 记忆/工具参数的**写侧** `max_length` 是否加 | DEP-4 |
-| `PD-13` | **合成注入的会话语义**（控制刺激是否进 mood/记忆/反思三条链） | **F13（当前唯一阻塞项）** / KB-52 |
-| `PD-14` | 跨回合重放语义（合法重发 vs 重放 wire 上不可区分） | KB-57 |
-| `PD-15` | VAD 灵敏度策略（残余漏触发率是产品选择） | KB-4 |
-| `PD-16` | session title 长度上限是否对齐（`PATCH` 无上限 vs `POST`/搜索 200） | KB-17 |
+**只有 ID 与一句话决策点**——状态 / blocker / 下一步**一律不在这里复制**
+（那正是"同一事实两处权威"的成因；本轮 Challenger 复核发现 `PD-9` 曾在本文件里
+同时以"待裁决"和"已裁定为暂缓"两种身份出现，已按下述方式收口）。
 
-已裁定的 `PD-1` / `PD-2` / `PD-12` 见下方「已裁定的当前决策」。
+| ID | 决策点（一行） |
+|---|---|
+| `PD-3` | 那 4 条 `unique` 是否纳入 schema drift enforcement |
+| `PD-4` | 审批流是否启用（`WAITING_APPROVAL` live-lock 的前提） |
+| `PD-5` | `plan_too_large` 语义 + 新契约枚举值 |
+| `PD-6` | 可选节点失败的任务终态语义（**未关闭的 wrong user-visible truth**） |
+| `PD-7` | `clean_db.py` 破坏范围（清 v2 危险 / 只清 v1 无用） |
+| `PD-8` | `live2d.directive` 是否接线 |
+| `PD-10` | 两套 CLI driver 去留 |
+| `PD-11` | 记忆/工具参数的**写侧** `max_length` 是否加 |
+| `PD-13` | **合成注入的会话语义**（控制刺激是否进 mood/记忆/反思三条链） |
+| `PD-14` | 跨回合重放语义（合法重发 vs 重放 wire 上不可区分） |
+| `PD-15` | VAD 灵敏度策略（残余漏触发率是产品选择） |
+| `PD-16` | session title 长度上限是否对齐（`PATCH` 无上限 vs `POST`/搜索 200） |
+
+> `PD-1` / `PD-2` / `PD-12` 已裁定（见下方「已裁定的当前决策」）。
+> `PD-9`（任务中心是否恢复）**也已裁定为"暂缓"**（见下方「范围/暂缓类」）——
+> 它仍留在 `todo.md` §3 是因为那里的 `PD-9` 与 `FEAT-16` 同条登记、需要时重新评估，
+> **不代表它待裁决**。
 
 ---
 
@@ -83,7 +89,7 @@
 | CI 保持 **push-only** | 本仓不开放 PR；不把 `pull_request` 加回 self-hosted job，不用 `pull_request_target` 绕过；要恢复 PR 门禁必须先有**隔离 runner** | 2026-09-17（owner 选择） | [`ci.md`](ci.md)（唯一权威，含恢复清单） | [Hardening Batch 2.2 执行记录](review/2026-09-17-Batch2-guardrails-hardening-执行记录.md) |
 | 测试分层与 `external` opt-in | `external` marker 取代 `--ignore`；`test-quick`/`test-normal` 不跳目录；`real_mongo` 走容器（push-only + self-hosted）；**`make test-full` 无自动执行点** | 2026-09-17 | [`testing.md`](testing.md)、[`ci.md`](ci.md) | [Hardening Batch 1.5/2 执行记录](review/) |
 | 本地最终 battery 必须含 `make audit` | 验收清单强制包含依赖/静态安全扫描（Batch 18 follow-up 的教训） | 2026-09-20 | [`testing.md`](testing.md) §Required pre-push verification | [Hardening Batch 19 执行记录](review/2026-09-20-Batch19-long-tail-backlog-closure-执行记录.md) |
-| Hardening Batch 19 **Keep-As-Is** 清单 | EventBus / FSM / `_process_lock` / CognitiveLoop / PromptAssembler / SessionRepository 架构 / LLMAdapter·Factory / OllamaBackend / `contextWindow` authority / TokenEstimator authority / 0.75 headroom / push-only self-hosted CI / no durable inbox / no generic transaction framework / no automatic tokenizer download / no runtime token-count provider call —— **owner 确认，勿因边角 case 重开** | 2026-09-20 | [`todo.md`](../todo.md) §8 | [Hardening Batch 19 执行记录](review/2026-09-20-Batch19-long-tail-backlog-closure-执行记录.md) |
+| Hardening Batch 19 **Keep-As-Is** 清单 | EventBus / FSM / `_process_lock` / CognitiveLoop / PromptAssembler / SessionRepository 架构 / LLMAdapter·Factory / OllamaBackend / `contextWindow` authority / TokenEstimator authority / 0.75 headroom / push-only self-hosted CI / no durable inbox / no generic transaction framework / no automatic tokenizer download / no runtime token-count provider call。**owner 确认，勿因边角 case 重开**；**清单正文不在此复制**——权威是 [`todo.md`](../todo.md) §8（新增第 17 项时只需改那一处） | 2026-09-20 | [`todo.md`](../todo.md) §8 | [Hardening Batch 19 执行记录](review/2026-09-20-Batch19-long-tail-backlog-closure-执行记录.md) |
 
 ### 范围/暂缓类（"不做"也是决定）
 

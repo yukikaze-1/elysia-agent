@@ -1,5 +1,9 @@
 # Batch 9 — Speaking State Recovery（KB-6）执行记录
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > 范围：canonical backlog 仅 **KB-6**。本批**不**处理 KB-12 / KB-13 / Ollama Provider Adapter /
 > AR-16 / WAITING_APPROVAL / reminder 持久化 / 通用分页 / 前端语音 UX。
 > 结论：**CONFIRMED_USER_REACHABLE**（E2）→ 最小修复 + PRE_FIX_RED 守卫 + 不变量落纸。

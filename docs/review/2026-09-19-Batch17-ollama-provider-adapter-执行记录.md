@@ -1,5 +1,9 @@
 # Batch 17 — Ollama Provider Adapter（KB-13 / AR-16 / PD-12）执行记录
 
+> ⚠️ **Historical execution record.** 本文描述**执行当时**的系统与结论；后续批次可能推翻其中部分判断。
+> 当前事实见 [docs 索引](../README.md) 的 Canonical References（架构 / 不变量 / 测试 / CI / 运维 / 契约）。
+> 正文**按当时原样保留**——不改结论、不删失败轨迹、不重写 Challenger 反证（`docs/readme-conventions.md` Rule 3）。
+
 > **范围**：canonical 主 scope 仅 **KB-13**（Ollama runtime context authority mismatch）与
 > **AR-16**（Ollama Provider Adapter / dedicated backend architecture debt），并顺带裁决
 > **PD-12**（`contextWindow` 语义）。**不做**：每个 provider 全拆 adapter、LLM 子系统重写、
