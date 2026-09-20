@@ -18,7 +18,9 @@
 | Sub-agent E | guardrail / test debt（GR-1..25、KB-14、KB-27） | 27 项裁决 + 合成仓复现 R4 漏报 |
 | Sub-agent F | misc correctness long tail（KB-2/4/8/10/11/18..21/39..44/53、F1） | 16 项裁决 + 6 个探针 |
 | **Challenger** | 独立副本（`git archive HEAD`）× 4 组 claim 攻击 | 见 §7 |
-| Main agent | 决策表、两个 fix、mutation、全局回归、todo 重写 | 本记录 |
+| Main agent | 决策表、production fix、mutation、全局回归、todo 重写 | 本记录 |
+
+**主 Agent 的独立复核**（不依赖子代理结论）：KB-77 的 pre-fix E2 与真实 tokenizer 交叉验证、Latin-2 的真散文测量（本地权威 tokenizer × Wikipedia REST 散文）、验证脚本的真实运行、`enforce_round_budget` 的记账不变式（60 组随机形状：`outcome.after == estimate_messages_tokens(...)` 零偏差、零孤儿 `role="tool"`、system 恒在 `[0]`）+ 边界形状（空表 / len 1·2 / 无 user 条目 / 孤立 tool 条目）。
 
 **纪律**：Sub-agent 结论**不直接触发** production patch；任何 FIX_NOW 由主 Agent 独立 E2/E3
 复现。所有裁决基于**当前 HEAD**（多个子代理在 pristine 副本上重跑，因为共享工作树在批次中
@@ -172,3 +174,33 @@ session 里存**完整**结果（裁剪只改 prompt 副本）、max rounds 正�
 | frontend build | ✅ |
 | git status clean（提交后） | ✅（见 §7 提交划分） |
 | owner push 后真实 CI green | ⏳ **READY_FOR_CI**（本记录不宣称 CLOSED） |
+
+## 6. 最终 Active Correctness（只列真正未解决、有实际影响者）
+
+| 顺序 | ID | 一句话 | Reach / Sev | Evidence |
+|---|---|---|---|---|
+| 1 | **KB-56** | 「加载更多」用全库端点 + 恒空游标 ⇒ 可把**别会话**的消息注入当前聊天（会话真相污染）。E2 机制已复现（`repo.query(before=None)` 返回 A+B 两会话）；修复点在**前端 store**（改打已存在的 `/api/sessions/{id}/messages`）或后端加会话过滤 | USER / MEDIUM | E2(机制)+E1 |
+| 2 | **KB-78** | 密集变音符号拉丁文本（捷克/波兰）击穿估算硬下限（真散文 qwen 0.65–0.68）⇒ 6144 预算可放进 ~9450 真实 token（>8192）而在 Ollama 上静默截断 | USER / MEDIUM | **E3** |
+| 3 | **F13** | 合成唤醒文本参与 mood/记忆提取/反射（历史侧已豁免）| USER / LOW-MED | E2 |
+| 4 | **KB-41** | 系统事件（任务终态/主动搭话）可抢占**尚未接管输入**的用户回合 ⇒ 已 ACK 输入静默丢（窗口窄）| INTERNAL / LOW | E2 |
+| 5 | **KB-48** | 停机窗口内两条直投入口仍投事件 ⇒ 跨 epoch 复活 | DEPLOYMENT / LOW | E2 |
+
+**本批未修但已登记的 Deployment 面**：GR-24（部分索引盲区：旧库会整域 503 而自检报健康，E3）、
+DEP-5（YAML 那行永不生效，已文档化）。
+
+## 7. 测试与门禁结果（Batch 19 最终状态）
+
+| 项 | 结果 |
+|---|---|
+| `make lint` / `make pyright` | ✅（0 error） |
+| `make audit` | ✅ pip-audit：`No known vulnerabilities found, 2 ignored`；bandit（`-ll`）：Medium/High = 0（19 Low 为登记基线） |
+| `check-arch` / `check-contract` / `check-types` / `check-timeouts` / `check-debug-auth` / `check-secrets` / `check-test-sets` / `check-compose` / `check-env-lock` / `check-ci-isolation` | ✅ 全绿 |
+| `make test-quick` | ✅ 6472 passed / 2 skipped / 1 xfailed（82s） |
+| `make test-normal` | ✅ 6472 passed / 2 skipped / 1 xfailed（81s） |
+| `make test-full` | ✅ 6504 passed / 71 skipped / 1 xfailed（485s） |
+| `make test-real-mongo` | ✅ 46 passed（47s） |
+| 目标回归（`core/prompt core/cognitive core/tests Module/system_prompt scripts/tests`） | ✅ 891 passed / 3 skipped |
+| frontend `npm run build` | ✅ |
+| 新增守卫 | 23（KB-77 16 + 验证脚本退出合同 6 + doc-count 新参数化 1） |
+| 变异 | M1–M5 全杀；基线 16 passed |
+
