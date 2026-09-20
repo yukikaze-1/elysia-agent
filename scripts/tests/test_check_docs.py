@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -438,7 +437,9 @@ def test_dg7_h2_explicit_inventory_cannot_widen_git_truth(tmp_path: Path):
     listing = tmp_path / "listing.txt"
     listing.write_text("docs/x.md\ntmp/fake_probe.py\n", encoding="utf-8")
 
-    orig_root, orig_git, orig_env = cd._ROOT, cd._git_tracked, os.environ.get(cd._TRACKED_FROM_ENV)
+    # 显式传 `tracked_from` ⇒ 环境变量通道根本不参与，故本用例**不碰** os.environ
+    # （测试代码里的裸 os.environ 写入由 `core/tests/test_global_state_isolation.py` 守卫）。
+    orig_root, orig_git = cd._ROOT, cd._git_tracked
     cd._TRACKED_CACHE.clear()
     cd._ROOT = tmp_path
     cd._git_tracked = lambda root=None: cd._inventory_from_listing({"docs/x.md"})
@@ -451,8 +452,6 @@ def test_dg7_h2_explicit_inventory_cannot_widen_git_truth(tmp_path: Path):
             raise AssertionError("显式清单放宽 git 真值时必须拒答，而不是采信")
     finally:
         cd._ROOT, cd._git_tracked = orig_root, orig_git
-        if orig_env is None:
-            os.environ.pop(cd._TRACKED_FROM_ENV, None)
         cd._TRACKED_CACHE.clear()
 
 
