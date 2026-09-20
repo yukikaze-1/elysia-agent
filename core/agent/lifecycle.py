@@ -208,6 +208,15 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         # after-response registry 清空、C1 的 started-task 集合清空
         self._cognitive.reset_lifecycle_state()
         self._started_cognitive_tasks.clear()
+        # KB-41：同一实例 restart 时清空"被推迟的后台任务结果"暂存。**不是**丢失——
+        # 那些结果在库里的 `delivered` 仍为 False（推迟路径刻意不写 durable ack），
+        # 由启动步骤 `task_result_redelivery` 从权威库补投；留在这里反而会在新 epoch
+        # 里投递一条属于旧 epoch 的暂存副本（与 RO1/RO2 的 epoch 边界相悖）。
+        # 用 `getattr` 兜底与 `stop()` 侧同理（该队列只在 restart 时才有旧 epoch 内容；
+        # 测试替身不跑 `__init__`，没有这个字段时**无需**清理）。
+        deferred = getattr(self, "_deferred_task_results", None)
+        if deferred is not None:
+            deferred.clear()
         # 预热 build_sha 缓存——git 只跑一次（build_server_info 每次握手构造时读取，
         # 模块级缓存保证此处在启动时完成 subprocess，握手路径零延迟）
         from core.version import get_build_sha
@@ -285,6 +294,20 @@ class AgentLifecycle(_LifecyclePersistence, _LifecycleServices, _LifecycleTools,
         for pending in self._pending_messages:
             self._release_pending_session_work(pending)
         self._pending_messages.clear()
+        # KB-41：停机时"被推迟的后台任务结果"暂存同样结束所有权——库内 `delivered=False`
+        # 是权威副本（推迟路径刻意不写 ack），下次启动由 `task_result_redelivery` 补投。
+        # 这里如实记归因（与上面 pending 的清空同口径），不留静默丢弃。
+        #
+        # `getattr` 兜底的理由与 `AgentLifecycle.status` 的测试替身回退分支同源：
+        # `object.__new__(Agent)` 造的替身只设 `stop()` 真正会碰的字段
+        # （`test_shutdown_steps_matrix.py::_make_stub_agent`），不跑 `__init__`。
+        deferred = getattr(self, "_deferred_task_results", None)
+        if deferred:
+            logger.info(
+                "停机清空推迟的后台任务结果 %d 条 — disposition=deferred_by_shutdown "
+                "task_ids=%s（库内仍 delivered=False，下次启动补投）",
+                len(deferred), [str(d.task_id) for d in deferred])
+            deferred.clear()
         # S2-A4：**不在这里**清 `_background_tasks`（原先在此 clear）。
         # 清在这里等于把停机窗口内到达的后台任务终态事件变成不可达：轮询循环随即
         # 因 `_state != RUNNING` 停转，而 WorkflowEngine 还要好几步之后才停，中间

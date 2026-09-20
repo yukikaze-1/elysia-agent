@@ -538,6 +538,12 @@ class Agent(AgentLifecycle, AgentServer):
         self._turns = AsyncTaskScope("agent-turns")
         # FIFO 消息排队 — FSM != IDLE 时暂存消息
         self._pending_messages: list[_PendingMessage] = []
+        # KB-41：落在 admission 窗口的后台任务终态结果（**推迟**而非丢弃）。
+        # 与 `_pending_messages` 分开的理由：它们不是用户输入，不参与 FIFO 越队判据、
+        # 不进 pending 出队口，也不能被 `discard_user_inputs`/停机清扫按 USER_INPUT 处理。
+        # 必须送达（durable 语义），故这里只做暂存，由 `_drain_after_auxiliary_turn`
+        # 在用户回合落定后重新入队。
+        self._deferred_task_results: list[TaskResultData] = []
         # C1/P1-06：已真正开始执行的 cognitive task 集合——pre-start 任务不被后一
         # handler 取消（第二条消息排队），只在任务真正运行时才允许打断。
         self._started_cognitive_tasks: set[asyncio.Task] = set()
@@ -1188,10 +1194,73 @@ class Agent(AgentLifecycle, AgentServer):
         Args:
             _task: 落定的回合任务（回调签名要求；本方法只用既有状态，不读该参数）。
         """
+        self._drain_after_auxiliary_turn()
+
+    def _turn_is_pre_ownership(self) -> bool:
+        """在途回合是否**尚未接管自己的输入**（KB-41 的抢占判据）。
+
+        与 `_handle_user_input`（C1/P1-06 + KB-24/Batch 12）**同一份**判据：
+        任务已 spawn 但还没跑到 `enter_thinking()` 时，`current_turn_owns_input`
+        是 False（`_generation_ctx` 已被 `process()` 入口清空、尚未赋值）⇒ 此时取消它，
+        那条**已 ACK** 的输入会以 `cancelled_pre_ownership` 收场——不进 session、
+        不进 pending、EventBus 也不重投，即**静默丢失**。
+
+        用户输入路径有这道闸门（KB-24/KB-38）；**非用户来源**的两条
+        （`_handle_system_tick` / `_handle_task_result`）此前没有——它们无条件
+        `cancel_current()`，于是后台任务终态或主动搭话 tick 恰好落在 admission 窗口
+        （会话解析 / runtime registry 的 Mongo 读）时就把用户回合连人带输入抹掉，
+        而用户手里拿着 `accepted`（KB-41，INTERNAL/LOW，窗口窄但真实）。
+        """
+        prev = self._cognitive.current_task
+        return (prev is not None and not prev.done()
+                and (prev not in self._started_cognitive_tasks
+                     or not self._cognitive.current_turn_owns_input))
+
+    def _redeliver_deferred_task_results(self) -> None:
+        """把被推迟的后台任务结果重新入队（KB-41 的**送达**半边）。
+
+        与"被推迟的用户输入"不同：任务结果**不可再生**（用户在等它），故不能像 tick
+        那样放弃。重新入队后走 `_handle_task_result` 的常规路径——届时
+        `_turn_is_pre_ownership()` 已为 False，于是 spawn 宣告回合并写 durable ack。
+
+        条件与 `_drain_pending_after_turn` 同源：**真正空闲**且**无在途回合**
+        （否则刚投的这条会被它自己那一轮再推迟，形成"投—推迟—投"的活锁）。
+        同步调用（`bus.post` 是 `put_nowait`）⇒ 不存在"取走后尚未放回"的窗口。
+        """
+        if not self._deferred_task_results:
+            return
+        if not self.status.is_completely_idle:
+            return
+        current = self._cognitive.current_task
+        if current is not None and not current.done():
+            return
+        deferred = self._deferred_task_results
+        self._deferred_task_results = []      # 搬移而非复制
+        for payload in deferred:
+            logger.info(
+                "推迟的后台任务结果重新入队 task_id=%s（用户回合已落定）", payload.task_id)
+            self._bus.post(payload)
+
+    def _drain_after_auxiliary_turn(self) -> None:
+        """非用户来源回合落定后的**完整**收尾：先补投被推迟的任务结果，再兜底出队。
+
+        顺序有理由：任务结果是**持久化**的工作（durable ack 语义，见
+        `_handle_task_result`），它比"排队等着的用户输入"更该先恢复；两者都不丢。
+
+        `_drain_pending_after_turn` 自带严格条件（`is_completely_idle` + 无在途回合），
+        故这里不必重复判断——重复判断反而会引入两处各自漂移的条件（KB-24 的教训）；
+        它内部同时负责补投被推迟的任务结果（`_redeliver_deferred_task_results`），
+        所以"空闲但 pending 为空"的形态也不会漏。
+        """
         self._drain_pending_after_turn()
 
     def _handle_system_tick(self, data: SystemTickData) -> None:
         """处理 SYSTEM_TICK 事件——silence_timeout 时主动开启话题。
+
+        KB-41：落在 admission 窗口（在途回合尚未接管输入）时**放弃本次 tick**，
+        而不是抢占那个回合。放弃是安全的：tick 由 `IdleMonitor` 以 1s 轮询 + 相位门
+        （`is_completely_idle`）产生，**可重新生成**；而用户输入不可再生。
+        这也满足 liveness——`IdleMonitor` 在 Agent 真正空闲时会再发一次。
 
         Args:
             data: 系统定时事件数据，包含触发原因和已过秒数。
@@ -1200,6 +1269,11 @@ class Agent(AgentLifecycle, AgentServer):
         #       此处只消费 silence_timeout。C5/P2-09：未知 proactive kind 不再静默吞——
         #       记 warning 便于后续实现/观测（明确消费行为）。
         if data.reason == "silence_timeout":
+            if self._turn_is_pre_ownership():
+                logger.info(
+                    "主动搭话 tick 放弃：在途回合尚未接管输入（KB-41）"
+                    "——不抢占已 ACK 的用户输入；IdleMonitor 会在真正空闲时重发")
+                return
             elapsed = data.elapsed or 0
             rid = self.next_request_id()
             set_request_id(rid)
@@ -1240,9 +1314,20 @@ class Agent(AgentLifecycle, AgentServer):
         告知**一次；后者可被用户直接看穿并忽略，前者不可观测。仓库既有的容忍度
         表述见 `_mark_task_result_delivered` 的 docstring（"最坏是下次启动重复投递"）。
 
+        KB-41：落在 admission 窗口时**推迟**（不是放弃）——结果必须送达，故入
+        `_deferred_task_results`，由 `_drain_after_auxiliary_turn` 在用户回合落定后
+        重新入队；**不写 durable ack**（尚未认领，与 Issue B 的语义一致）。
+
         Args:
             data: 任务结果事件数据，包含 task_id、结果文本和原始意图。
         """
+        if self._turn_is_pre_ownership():
+            self._deferred_task_results.append(data)
+            logger.info(
+                "后台任务结果推迟投递 task_id=%s：在途回合尚未接管输入（KB-41）"
+                "——不抢占已 ACK 的用户输入，待其落定后重新入队（不写 durable ack）",
+                data.task_id)
+            return
         rid = self.next_request_id()
         set_request_id(rid)
         self._cognitive.cancel_current()
@@ -1334,6 +1419,7 @@ class Agent(AgentLifecycle, AgentServer):
         消息"会把它当在途回合取消；那条边界本批不修，故这里也**不**越过它。
         """
         if not self._pending_messages:
+            self._redeliver_deferred_task_results()
             return
         if not self.status.is_completely_idle:
             return
