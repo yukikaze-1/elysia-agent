@@ -236,12 +236,12 @@ DEP-5（YAML 那行永不生效，已文档化）。
 | `make lint` / `make pyright` | ✅（0 error） |
 | `make audit` | ✅ pip-audit：`No known vulnerabilities found, 2 ignored`；bandit（`-ll`）：Medium/High = 0（19 Low 为登记基线） |
 | `check-arch` / `check-contract` / `check-types` / `check-timeouts` / `check-debug-auth` / `check-secrets` / `check-test-sets` / `check-compose` / `check-env-lock` / `check-ci-isolation` | ✅ 全绿 |
-| `make test-quick` | ✅ 6472 passed / 2 skipped / 1 xfailed（82s） |
-| `make test-normal` | ✅ 6472 passed / 2 skipped / 1 xfailed（81s） |
-| `make test-full` | ✅ 6504 passed / 71 skipped / 1 xfailed（485s） |
-| `make test-real-mongo` | ✅ 46 passed（47s） |
-| 目标回归（`core/prompt core/cognitive core/tests Module/system_prompt scripts/tests`） | ✅ 891 passed / 3 skipped |
+| `make test-quick` | ✅ 6476 passed / 2 skipped / 1 xfailed（82s） |
+| `make test-normal` | ✅ 6476 passed / 2 skipped / 1 xfailed（81s） |
+| `make test-full` | ✅ 6508 passed / 71 skipped / 1 xfailed（486s） |
+| `make test-real-mongo` | ✅ 46 passed（45s） |
+| 目标回归（`core/prompt core/cognitive Module/system_prompt scripts/tests`） | ✅ 883 passed |
 | frontend `npm run build` | ✅ |
-| 新增守卫 | 23（KB-77 16 + 验证脚本退出合同 6 + doc-count 新参数化 1） |
-| 变异 | M1–M5 全杀；基线 16 passed |
+| 新增守卫 | 28（KB-77 19 + 验证脚本退出合同 6 + 契约/未覆盖类守卫 2 + doc-count 新参数化 1） |
+| 变异 | M1–M5、M6+M7、M8、M8b、M9b、M9c、M10 全杀；M6/M7 单独为**冗余防线**（已在 docstring 写明）；M11（代入记录配方）按设计退役 |
 
