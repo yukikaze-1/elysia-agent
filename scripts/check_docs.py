@@ -369,6 +369,12 @@ PATH_KIND_REPOSITORY = "REPOSITORY_PATH"
 PATH_KIND_RUNTIME = "RUNTIME_PATH"
 PATH_KIND_GENERATED = "GENERATED_PATH"
 PATH_KIND_EXTERNAL = "EXTERNAL_PATH"
+#: 第五类：**被文档如实记载为"不存在"**的路径。
+#: 它不是运行期/构建产物，而是缺陷描述里必须点名的那个"不存在的文件"
+#: （例：KB-14 的 `Module/llm/errors.py`——fake LLM import 了它却从未被调用）。
+#: 与其它四类的区别：它**不应该**存在，也不会有生产者；登记它只是为了不让
+#: "如实记录一个缺陷"被守卫误判成"引用了烂路径"。
+PATH_KIND_DOCUMENTED_ABSENCE = "DOCUMENTED_ABSENCE"
 
 #: **非仓库路径分类表**（exact 或目录前缀，逐条带理由与证据）。
 #:
@@ -420,7 +426,7 @@ _NON_REPOSITORY_PATHS: dict[str, tuple[str, str]] = {
     "static/assets/": (PATH_KIND_GENERATED, "Vite 构建产物目录（.gitignore 第 12 行）"),
     # --- 描述"某个文件不存在"的判据本身 ---
     "Module/llm/errors.py": (
-        PATH_KIND_RUNTIME,
+        PATH_KIND_DOCUMENTED_ABSENCE,
         "**KB-14 描述的正是这个文件不存在**（`core/tests/fake_llm.py` import 它但从未被调用）",
     ),
 }

@@ -237,6 +237,7 @@ canonical 文档**不写**会静默过期的数字：当前测试数、LOC、模
 | `RUNTIME_PATH` | 在 `check_docs.py` 的 `_NON_REPOSITORY_PATHS` 里**登记 + 写理由** | `data/uploads/`、`data/task_result_wal.jsonl` |
 | `GENERATED_PATH` | 同上（构建期生成，干净 checkout 里本就缺席） | `static/index.html`（Vite 输出） |
 | `EXTERNAL_PATH` | 同上（姊妹仓路径） | `elysia-frontend/.../check-backend-contract.mjs` |
+| `DOCUMENTED_ABSENCE` | 同上（**被文档如实记载为"不存在"**的路径，缺陷描述里必须点名） | `Module/llm/errors.py`（KB-14） |
 
 **纪律（不要绕过它）**：
 
