@@ -319,25 +319,26 @@ def test_dg7_t5_stale_exemption_fails(tmp_path: Path):
     """
     import scripts.check_docs as cd
 
-    orig_root, orig_inv = cd._ROOT, cd._tracked_inventory
+    orig_root = cd._ROOT
     try:
         # ① 未被引用
         cd._ROOT = tmp_path
-        cd._tracked_inventory = lambda root=None: ()
-        p1 = cd.check_stale_registrations(scan_texts={})
+        p1 = cd.check_stale_registrations(scan_texts={}, tracked=())
         assert any("data/uploads/" in x for x in p1), p1
 
-        # ② 已被 git 跟踪 ⇒ 不需要豁免
-        cd._tracked_inventory = lambda root=None: ("data/uploads/keep.txt",)
-        p2 = cd.check_stale_registrations(scan_texts={"a.md": "`data/uploads/`"})
+        # ② 已被 git 跟踪（下面有被跟踪内容）⇒ 不需要豁免
+        p2 = cd.check_stale_registrations(
+            scan_texts={"a.md": "`data/uploads/`"}, tracked=("data/uploads/keep.txt",)
+        )
         assert any("已被 git 跟踪" in x for x in p2), p2
 
         # ③ 被引用 + 未被跟踪 ⇒ **不陈旧**（这是 §14 的悖论修复）
-        cd._tracked_inventory = lambda root=None: ()
-        p3 = cd.check_stale_registrations(scan_texts={"a.md": "`data/uploads/`"})
+        p3 = cd.check_stale_registrations(
+            scan_texts={"a.md": "`data/uploads/`"}, tracked=()
+        )
         assert not any("data/uploads/" in x for x in p3), p3
     finally:
-        cd._ROOT, cd._tracked_inventory = orig_root, orig_inv
+        cd._ROOT = orig_root
 
 
 def test_dg7_declared_roots_are_never_tracked():

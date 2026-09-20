@@ -709,6 +709,7 @@ def check_dg5() -> list[str]:
 
 def check_stale_registrations(
     scan_texts: dict[str, str] | None = None,
+    tracked: tuple[str, ...] | None = None,
 ) -> list[str]:
     """登记陈旧也会红——但**"干净 checkout 里不存在"不算陈旧**。
 
@@ -743,10 +744,9 @@ def check_stale_registrations(
             rel: (_ROOT / rel).read_text(encoding="utf-8") for rel in _link_scan_targets()
         }
     corpus = "\n".join(scan_texts.values())
-    try:
-        tracked_set = set(_tracked_inventory())
-    except RuntimeError as exc:  # 取不到仓库真值 ⇒ 拒答（由 main 处理）
-        raise
+    # 仓库真值由 `main()` 解析一次后传入——**不要**在这里各自去问 git：没有 `.git` 的树
+    # （archive / tarball）会因缺清单而抛错，而调用方本已用 `--tracked-from` 提供了真值。
+    tracked_set = set(tracked if tracked is not None else _tracked_inventory())
     for declared, (kind, reason) in _NON_REPOSITORY_PATHS.items():
         base = declared.rstrip("/")
         if len(reason.strip()) < 10:
@@ -834,7 +834,7 @@ def main() -> int:
         ("DG7 行内 code 里的仓库路径对仓库真值成立", check_dg7(files, tracked)),
         ("DG4 core/ 子系统 README 覆盖", check_dg4()),
         ("DG5 AppConfig 环境变量索引一致", check_dg5()),
-        ("DG* 登记陈旧", check_stale_registrations(scan_texts)),
+        ("DG* 登记陈旧", check_stale_registrations(scan_texts, tracked)),
     ]
 
     bad = [(name, probs) for name, probs in failures if probs]
