@@ -49,7 +49,10 @@ export function useWebSocket(approvalRequest?: Ref<{ tool: string; toolParams?: 
       case 'command':       handleCommand(m as CommandMessage); break
       case 'session': {
         const s = m as SessionMessage
-        chat.restoreFromServer(s.messages, s.token_stats)
+        // KB-56：会话身份必须随回放一起交给 store——否则 store 无法把历史分页绑定到
+        // 本回放所属会话（此前 `s.conversationId` 在这里被丢弃，于是"加载更多"只能
+        // 打全库端点，别会话的消息会进当前聊天）。
+        chat.restoreFromServer(s.messages, s.token_stats, s.conversationId)
         break
       }
       case 'capabilities': {

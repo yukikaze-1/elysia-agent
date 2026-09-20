@@ -414,4 +414,9 @@ jobs:
         # `npm run build` = `vue-tsc --noEmit && vite build`（见 frontend/package.json）：
         # 类型检查与构建一条命令，语义与迁移前完全一致。不新增 gate、不跳过 typecheck。
         run: cd frontend && npm run build
+      - name: Frontend unit tests
+        # KB-56（Residual Correctness Closure）：`chatStore` 历史分页的会话归属不变量
+        # （SI1–SI4）只能在 store 层被钉住——`npm run build` 只做类型检查，零行为覆盖。
+        # vitest 是**唯一**新增的前端测试依赖（无 DOM/jsdom：store 是纯状态层）。
+        run: cd frontend && npm test
 

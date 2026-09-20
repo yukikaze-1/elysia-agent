@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "redeploy": "rm -rf ../static/index.html ../static/debug.html ../static/assets && npm run build"
+    "redeploy": "rm -rf ../static/index.html ../static/debug.html ../static/assets && npm run build",
+    "test": "vitest run src"
   },
   "dependencies": {
     "dompurify": "^3.4.12",
@@ -26,6 +27,7 @@
     "@vitejs/plugin-vue": "^6.0.7",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
+    "vitest": "^5.0.1",
     "vue-tsc": "^3.3.5"
   }
 }
