@@ -12,7 +12,7 @@
 
 | workflow | job | 触发 | runs-on | 内容 |
 |---|---|---|---|---|
-| `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / 密钥扫描 / 集合代数 / compose 安全策略 / 环境锁 / 依赖与静态安全扫描 `make audit`）+ **离线**用例 `make test-normal` |
+| `ci.yml` | `backend` | push | `self-hosted` | 静态门禁（lint / pyright / 契约漂移 / 架构 / 超时预算 / 契约可达性 / debug 鉴权 / CI 隔离 / **文档守卫 `make check-docs`** / 密钥扫描 / 集合代数 / compose 安全策略 / 环境锁 / 依赖与静态安全扫描 `make audit`）+ **离线**用例 `make test-normal` |
 | `ci.yml` | `real-mongo` | push | `[self-hosted, Linux, X64]` | 真实 MongoDB 层：job 内自起 `docker-compose.test.yml`，`make test-real-mongo`，收尾 `down` |
 | `ci.yml` | `frontend` | push | `[self-hosted, Linux, X64]` | `npm ci` + `vue-tsc --noEmit && vite build` + `npm test`（vitest） |
 | `contract-frames.yml` | `frames` | push（**路径过滤**：`frontend_contract/**`、`docs/archive/frontend-handoff-v2/traces/**`、`docs/electron-backend-protocol-v2.md`、`docs/**`） | `[self-hosted, Linux, X64]` | `make check-types` 的**三条命令**（ts/schema/raw 漂移 + golden frames 漂移 + 错误码目录 ↔ `errors.py`）+ **`make check-docs`（文档守卫 DG1–DG5）** |
