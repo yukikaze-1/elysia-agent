@@ -17,7 +17,7 @@
 | Sub-agent D | estimator（KB-69..77）+ Batch 18 audit follow-up A–D | 逐项裁决 + 真实 tokenizer 交叉验证 |
 | Sub-agent E | guardrail / test debt（GR-1..25、KB-14、KB-27） | 27 项裁决 + 合成仓复现 R4 漏报 |
 | Sub-agent F | misc correctness long tail（KB-2/4/8/10/11/18..21/39..44/53、F1） | 16 项裁决 + 6 个探针 |
-| **Challenger** | 独立副本（`git archive HEAD`）× 4 组 claim 攻击 | 见 §7 |
+| **Challenger** | 独立副本（`git archive HEAD`）× 4 组 claim 攻击 | 见 §4b（confirmed / falsified / fix weakness / new finding） |
 | Main agent | 决策表、production fix、mutation、全局回归、todo 重写 | 本记录 |
 
 **主 Agent 的独立复核**（不依赖子代理结论）：KB-77 的 pre-fix E2 与真实 tokenizer 交叉验证、Latin-2 的真散文测量（本地权威 tokenizer × Wikipedia REST 散文）、验证脚本的真实运行、`enforce_round_budget` 的记账不变式（60 组随机形状：`outcome.after == estimate_messages_tokens(...)` 零偏差、零孤儿 `role="tool"`、system 恒在 `[0]`）+ 边界形状（空表 / len 1·2 / 无 user 条目 / 孤立 tool 条目）。
@@ -166,6 +166,36 @@ session 里存**完整**结果（裁剪只改 prompt 副本）、max rounds 正�
 - **观察（无 canonical ID，归 GR-9 家族）**：`make audit` 的 bandit 输出有 4 条
   `nosec encountered (B608), but no failed test` ⇒ Batch 18 follow-up 加的抑制**当前是惰性的**
   （与 `# noqa` 陈旧同族：仓库没有"抑制是否仍生效"的门禁）。
+
+## 4b. Challenger 复核（独立副本 + 4 组 claim 攻击）
+
+| 类别 | 内容 |
+|---|---|
+| **confirmed** | KB-77 是真缺陷（独立探针：baseline 第 2 轮 **8279 > 8192**、第 5 轮 **17066 = 2.08× 窗口**；并纠正"单条结果每轮必然超窗"的措辞——单条时 5 轮内只超**预算** 7361，超**窗口**需 ≥2 条并行结果或估算合同内的 1.27× 低估）；tree 版修复在真实路径上 569/569 全绿、每轮 ≤ 预算；`outcome.after` 与真值**逐位相等**（200 组 fuzz，|Δ|=0）；验证脚本退出合同非空（M1 回退 `return 0` → 3 红）；Latin-2 真散文确实击穿（捷克 0.639–0.664 / 波兰 0.709–0.734）。 |
+| **falsified（我方）** | 交给 Challenger 的 **patch 文件本身是坏的**：我在 mutation harness 运行**期间**生成它，捕到了 M2 变异体（`if len(spans) <= 1 or True:`）⇒ patch 的 step ② 是死代码且 3 条自家用例红。**已查明、已重生成干净 patch**（`git diff e11619f1..HEAD`，0 处 `or True`）；**tree/提交件始终是正确的**（`git show HEAD:core/prompt/message_builder.py` 为 `if len(spans) <= 1:`，quick/normal/full 全绿）。 |
+| **witness 的"两次更正"（留痕，§19）** | **原登记**：签入语料闭合需 `latin_ext` qwen 0.86→1.18 / generic 0.20→0.56。**Challenger 第一轮**：判其被证伪，称需 qwen ≈1.48–2.65 / generic ≈0.85–0.87（我据此改了 budget.py / todo / 本记录）。**Challenger 第二轮自我更正**：第一轮的换算模型错了（把 est/actual 当成了"变音密度的仿射函数"，正确斜率是 `n_latin_ext / actual_tokens`，差 ≈1.9×）；直接代入系数实测 = **qwen 0.860→1.181 / generic 0.200→0.503 闭合签入语料**（代入后该类最坏 ≈0.775–0.778，贴线）。**最终准确表述**：原登记正确；本记录与 todo 已恢复；并补上真实散文所需的更高量级（qwen ≈**1.54** / generic ≈**0.34**）。 |
+| **该轮唯一真实残余（已处理）** | 语料样本比真散文更重音密集（czech 19.9% / polish 10.5% vs 真 cs 12.3–14.2% / pl 3.7–8.3%）⇒ **只按语料配方重标定**会在真散文仍 **0.723–0.740（9 篇中 4 篇 < 0.75）**时让守卫退役。已处理：①退役判据从硬下限 0.75 抬到**合同下限 0.775**，并新增"落在 [0.75, 0.775) 之间 ⇒ **fail**（既没达合同、又会被 covered 判据放行）"分支；②budget.py / todo / 本记录写明"下一批必须纳入低密度波兰语**真散文**样本"。 |
+| **fix weakness（已修）** | 无 user 条目形状下 `turn_tail_start` 的退化分支可让 step ① 删掉 assistant(`tool_calls`) 而留下 `role="tool"` ⇒ **孤儿 tool（严格 provider 400）**。修法：退化时保护"**第一组**工具往返"起点 + 新增结构性判据 `_deletion_is_safe`（tool 条目/带 tool_calls 的 assistant 一律不可单独删）。5 条对抗用例（无 user 单组/双组、配对安全、**最后一条 user 消息存活**）已补；并新增**结构性兜底**：
+"最后一条 user 消息永不丢"不再依赖调用方把边界算对（Challenger P3：`turn_start=998` 曾能删掉它）。 |
+| **fix weakness（已修）** | 契约测试的"单一权威"断言是同义反复（`set(EXCLUDED) == set(UNCOVERED)`，后者就是前者构造出来的）⇒ 换成有内容的检查（无重复 / 类别真实存在 / **每类都在 budget.py docstring 写明理由**），并让 `latin_accent` 守卫从"只钉 min/max"改为**钉住击穿下限的配对集合**（部分重标定会红）。 |
+| **fix weakness（接受）** | ① 尽最大努力仍超预算时只 log ERROR、回合继续——已把 TE9 措辞改成"必须重施 + 残留必须可见"，不再声称"已被强制满足"；② 热路径成本实测 ≈23–73 ms/轮（O(n)，同步在事件循环上）：对 30k 字符级 prompt 属可接受但非免费；③ **gate 拒绝轮在预算裁剪里不是一组可丢的往返** ⇒ 预算由截断**更早的合法往返**支付（较早结果 1512→736 token，被拒绝的 assistant 载荷 1257 token 原样留下）——与 KB-82 同根，已并入其小批。 |
+| **new finding** | **KB-82**（USER/MEDIUM/E2）：gate 拒绝轮里 `submit_task` 的 tool_call 无配对回复 ⇒ 严格 provider 下一轮 400。**pre-existing、非本批引入**；主 Agent 已独立复现（`assistant declares ['call_submit','call_bad'] / tool replies ['call_bad']`）。已登记进 §1.1 Active 并给出 8 行修法；**按 §5 的 production fix budget（1 MEDIUM cluster）本批不修**。 |
+| **severity/reachability correction（采纳）** | F17 必须写成"**未关闭的 wrong user-visible truth**（USER/MEDIUM）"而不是纯决策项；KB-67 的实测后果（`ollama/llama3.1:8b` 原生 128K 也被套 8192）写进 §4。两者都已在 todo 里保留 Active 归属。 |
+| **could not verify** | 真实 Ollama 的"超窗静默截断"由 Challenger 侧未复测（不允许加载模型）——**主 Agent 已补做**（§2.1b：HTTP 200 / `prompt_eval_count=8192`）；KB-67 的数值探针 Challenger 只做了代码阅读（主 Agent 侧沿用 subC 的 E2 payload 证据）。 |
+
+**第二组变异（针对 Challenger 驱动的新加固）**：
+
+| 变异 | 结果 |
+|---|---|
+| M6+M7 同时去掉两处配对防线（边界退化 + 无结构判据） | **1 failed / 11 passed**（对抗用例杀死） |
+| M6 或 M7 **单独**去掉 | 12 passed ⇒ **冗余防线**：任一单独存在即可阻止孤儿（已在 docstring 写明是 defense-in-depth） |
+| M8 假 witness：只把 generic `latin_ext` 抬到 0.56 | **1 failed / 47 passed**（配对集合守卫杀死——改进前会静默通过） |
+| M9 子串式改名（`latin_accent` → `latin_accent_X`） | 48 passed ⇒ **未被杀**（我的 M9"已杀"claim 被 Challenger 证伪）——已把检查改成**反引号精确形态** |
+| M9b 删掉未覆盖类的 docstring 理由 | **1 failed / 47 passed** |
+| M9c 反引号式改名（精确检查） | **1 failed / 47 passed** |
+| M10 去掉"最后一条 user 消息永不丢"兜底 | **1 failed / 12 passed**（首版用例因"预算太大、根本没裁"而假通过，已修形状 + 小预算） |
+| M11 代入记录配方（qwen 1.18 / generic 0.56） | `47 passed, 1 skipped` ⇒ 守卫**按设计退役**（该类最坏 ≈0.775–0.778，贴线）；真实散文残余见上表 |
+| 基线 | 61 → 67 passed（含新增对抗用例） |
 
 ## 5. 完成判据对照（§204）
 
