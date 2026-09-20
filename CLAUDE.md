@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Elysia/Agent is a Python 3.11+ AI companion application. The codebase has three top-level packages:
+Elysia/Agent is a Python **3.12** AI companion application (authority: `environment.yml` + `pyrightconfig.json`; preflight 的 `>=3.11` 只是下界判据 —— 见 docs/operations.md §11). The codebase has three top-level packages:
 
 - **`Module/`** — backend-agnostic library for AI companion infrastructure: LLM, STT, TTS, embedding, vector/document databases, output channels, config, logging, system prompt engine, tool framework.
 - **`core/`** — the Elysia Agent application: `Agent`, `CognitiveLoop`, `CharacterEngine`, `CharacterReflector`, `MemoryConsolidator`, `MemoryReflector`, `SessionMemory`, `LongTermMemory`, `IdleMonitor`, task scheduler, debug info, character config.
@@ -16,54 +16,20 @@ Plain Python（无 `pyproject.toml` 等构建系统）。前端 Vue 3 + Vite + T
 
 ### 分层运行
 
-    > **实测（2026-09-14，本机 24 核）**：这里有两道坎，都跨过去了才有下面的数——
-    >  ① **重复**：Quick ⊆ Normal，98.5% 的用例被同一台 runner 跑了两遍（CI 的
-    >     Quick+Normal 是**串行**的：本仓只注册了 1 个 self-hosted runner）；
-    >  ② **teardown**：串行 `-m "unit or service"` 的 567s 里 253.9s（44.7%）是
-    >     teardown，根因是测试里**真加载** `bge-large-zh-v1.5`（详见 docs/testing.md）。
-    > 修完这两道坎，再加 `-n 8 --dist loadfile`：**quick ≈1min03s、normal ≈1min03s**
-    > （串行分别是 ≈9min27s / ≈5min13s；`-n 12` 再快 ~9s）。
-    > 档位实测表见 `docs/testing.md`「并行执行」。日常迭代仍建议**按模块**跑（见下）。
+**档位命令与实测数字的唯一权威是 [`docs/testing.md`](docs/testing.md)**
+（含并行档位曲线、teardown 历史、marker 纪律的完整说明）。这里只留编码时的最小入口：
 
 ```bash
-# 日常开发（unit + service；本机串行 ≈9min，-n 8 后 ≈1min03s）
-make test-quick
-# 或: pytest -m "unit or service" -q -x --tb=short -n 8 --dist loadfile
-
-# 提交前 — 排除 slow/external（**真正离线**，2026-09-17 起；串行 ≈5min13s，-n 8 后 ≈1min03s）
-make test-normal
-# 或: pytest -m "not slow and not external" -q --tb=short -n 8 --dist loadfile
-
-# Normal 中不在 Quick 里的余集（**2026-09-17 起 0 条**；两者互斥，见 docs/testing.md）
-make test-remainder
-
-# 全量（含 slow，无界，慢）
-make test-full
-# 或: pytest -q
-
-# 测试集合代数门禁（Quick ∪ remainder == Normal 且交集为空；约 35s）
-make check-test-sets
-
-# 真实 MongoDB 测试层（S2-R6-1；先 `docker compose -f docker-compose.test.yml up -d`）
-make test-real-mongo
-
-# 导入风格门禁（禁相对导入，秒级）
-make lint
-# 或: ruff check core/ Module/ frontend_contract/ scripts/ --exclude __pycache__
-
-# pyright 类型检查门禁（core + Module + frontend_contract 生产代码，basic + 排除测试；须 Elysia env——base env 无 aiohttp 会漏报 ~25 处）
-make pyright
-# 或: conda run -n Elysia pyright
-
-# 架构边界门禁（ARCH-INC-P1-03/P2-03，纯 AST 无外部依赖，秒级）：依赖方向 + 跨包私有符号 + eager 环 + 裸后台任务登记
-make check-arch
-# 或: python scripts/check_architecture.py [--list]
-
-# CI 信任边界门禁（PR 可达 job 禁 self-hosted / 禁宿主 .env 路径 / 禁死 job /
-# 禁表达式 runs-on（无法静态判定就拒答）/ self-hosted 清理必须密闭、受守卫、
-# 且 fail-closed（显式检查清理退出码，`set -e` 不算）；默认扫全部 workflow）
-make check-ci-isolation
+make test-quick      # 日常：unit + service（-n 8 --dist loadfile）
+make test-normal     # 提交前：not slow and not external（**真正离线**；CI 只跑这一遍）
+make test-full       # 含 slow（无界，慢；无自动执行点）
+make test-external   # 真实 LLM/DB（RUN_EXTERNAL_TESTS=1，刻意 opt-in）
+make test-real-mongo # 真实 MongoDB 层（先 docker compose -f docker-compose.test.yml up -d）
 ```
+
+> **提交前要跑什么**：见本文件「Before you finish non-trivial work」——
+> 那是 `docs/testing.md` §Required pre-push verification 的短摘要，**不是**完整清单。
+
 
 ### 按模块运行
 
@@ -112,7 +78,7 @@ python -m pytest frontend_contract/tests/ -v
 |--------|------|----------|
 | `unit` | 纯函数/类，无 I/O，无 Agent | `make test-quick`（`-m "unit or service"`） |
 | `service` | 单模块 + mock/fake，不连真实依赖 | `make test-quick` |
-| `integration` | 需真实 DB 或外部 API（**当前 7 条，且全部与 slow/external 同标**——`-m "integration and not slow and not external"` 实测为 0） | `make test-full`（它含 slow 层）；**不在 Normal**，也不在 `test-external`（那些是 external-only） |
+| `integration` | 需真实 DB 或外部 API（本仓的 integration 用例**全部**与 slow/external 同标 ⇒ `-m "integration and not slow and not external"` 当前为空集） | `make test-full`（它含 slow 层）；**不在 Normal**，也不在 `test-external`（那些是 external-only） |
 | `slow` | 完整管线或 >1s | `make test-full` 才跑 |
 | `external` | 真实 LLM/DB 凭据（opt-in） | `make test-external`（须 `RUN_EXTERNAL_TESTS=1`）；**`make test-normal` 排除它** |
 | `real_mongo` | 真实 MongoDB 测试层（S2-R6-1，非凭据：走容器） | `make test-real-mongo`（须 `RUN_REAL_MONGO_TESTS=1` + `ELYSIA_TEST_MONGODB_URI`；`tests/real_mongo/`）。**CI 为 push-only + self-hosted**（job 内自起 `docker-compose.test.yml`，不用按分钟计费的 GitHub-hosted `services:`）；PR 侧不跑 |
@@ -120,6 +86,36 @@ python -m pytest frontend_contract/tests/ -v
 marker 纪律由根 `conftest.py` 的收集钩子强制：**每个测试必须有分层 marker**，且
 **不得同时带 `(unit|service)` 与 `(slow|integration|external)`**（否则
 `Quick ∪ remainder == Normal` 的互斥性被破坏）。违规 → 收集阶段报错，失败原因显式打 stderr。**退出码不是契约**：串行下 4，`-n N` 下 xdist 会把它转成 `INTERNALERROR`（退出码 3）——所以原因必须自己打出来，否则控制台只剩一个无辜测试的 nodeid。
+
+## Before you finish non-trivial work
+
+> **`docs/testing.md` §Required pre-push verification 是"提交前该跑什么"的唯一权威。**
+> 它从 `Makefile` 与 CI workflow 反推而来。不要凭记忆跑一个子集，也不要把本文当成清单。
+
+最小入口（完整清单见上面那条链接）：
+
+```bash
+make lint && make pyright && make check-types && make check-arch && make test-normal
+cd frontend && npm ci && npm run build && npm test
+```
+
+## Where current truth lives（读之前先认权威）
+
+| 想知道 | 读 |
+|---|---|
+| 当前架构 | [`docs/architecture.md`](docs/architecture.md)（系统级唯一权威） |
+| 当前不变量 | [`docs/architecture/invariants.md`](docs/architecture/invariants.md) |
+| 验证要求 | [`docs/testing.md`](docs/testing.md) |
+| CI 语义 | [`docs/ci.md`](docs/ci.md) |
+| 运维/配置/环境变量 | [`docs/operations.md`](docs/operations.md) |
+| 待办 | [`todo.md`](todo.md) |
+| 已定的事 | [`docs/decisions.md`](docs/decisions.md) |
+| 文档导航 | [`docs/README.md`](docs/README.md) |
+
+> ⚠️ **`docs/review/**`、`docs/archive/**`、`docs/superpowers/**` 里的报告与规格是历史证据，
+> 不是当前 authority。** 它们描述的是**当时**的系统与结论（有些后来被推翻）。
+> 冲突时**先验证 current code**，再以 `docs/architecture.md` 作为系统级表示——
+> **不要**按"文件日期更新"裁决。
 
 ## Architecture
 
@@ -137,133 +133,74 @@ Module/<service>/
 
 ### core/ layer (Application)
 
-```
-core/
-├── agent/                 # Agent (package): AgentLifecycle mixin + AgentServer mixin + _types + AgentStatus + FSM + 4 lifecycle mixins
-│   ├── agent.py           #   Agent.__init__ + event handling + process_message + 46 公开 @property + background tasks
-│   ├── lifecycle.py       #   AgentLifecycle: start()/stop() 编排 + _STARTUP_STEPS + _SHUTDOWN_STEPS + 3 flush
-│   ├── server.py          #   AgentServer: run_server/run_repl + switch_*/get_wake_words + banner
-│   ├── _types.py          #   RunState, _PendingMessage, _BackgroundTaskEntry
-│   ├── _lifecycle_persistence.py  #   持久化层启停 (MongoDB/Milvus/session/repos)
-│   ├── _lifecycle_services.py     #   LLM/TTS/Output/TokenTracker 启停
-│   ├── _lifecycle_tools.py        #   ToolAdapter/Scheduler/IdleMonitor/event loop 启停
-│   ├── _lifecycle_task_system.py  #   WorkflowEngine/DelegationPreparer/mailbox 启停
-│   └── tests/
-├── status/                # AgentStatus 接口层：protocol.py（ABC）+ fsm.py（FSM-backed 实现）+ agent_fsm.py（底层状态机）
-├── cognitive/             # CognitiveLoop (package): CognitiveTools mixin + timing + TurnPhase
-│   ├── loop.py            #   CognitiveLoop(CognitiveStreaming, CognitiveToolPhase, CognitiveFinalize): process + ReAct 主循环 + TurnPhase 追踪（_build_turn_prompt；每轮目标会话解析后原子换绑 ToolContext.services["session"]/["_session_msg_count"]，BE-S3-RUN-P0-01）
-│   ├── streaming.py       #   CognitiveStreaming mixin：_stream_llm_response / _dispatch_stream_event / _apply_mood（CORE-MOD-P1-04）
-│   ├── tool_phase.py      #   CognitiveToolPhase(CognitiveTools) mixin：_execute_tool_round / _build_tool_result_parts（CORE-MOD-P1-04）
-│   ├── finalize.py        #   CognitiveFinalize mixin：_finalize_turn（CORE-MOD-P1-04）
-│   ├── tools.py           #   CognitiveTools mixin: _execute_tools_directly + _handle_submit_task + _gate_tool_calls
-│   ├── timing.py          #   Timer + TimingClock latency tracking
-│   ├── generation.py      #   GenerationContext: generation_id/assistant_message_id/conversation_id 预分配贯通（ID 字段 NewType；channel/kind 对齐契约层 MessageChannel/SegmentKind StrEnum）
-│   └── generation_registry.py # GenerationRegistry: generation 生命周期持久化（register/mark 终态 + stale 清理，Mongo 离线 no-op）
-├── adapter/               # Adapter layer: wraps Module/ backends for core/ consumption
-│   ├── llm_adapter.py     #   LLMAdapter: tool-calling + retry + streaming + hot-switch
-│   ├── tts_adapter.py     #   TTSStreamManager: sentence queuing + emoji sync + gated playback + async set_enabled 禁用兜底（per-task flush_on_cancel）
-│   ├── tool_call_parser.py #  merge/normalize streaming tool_call deltas
-│   └── tool_adapter.py    #   ToolAdapter: tool subsystem lifecycle + ToolExecutor delegation
-├── prompt/                # System prompt 组装层（CORE-MOD-P1-02 从 adapter 迁入）
-│   ├── message_builder.py #   MessageBuilder: system prompt + history → LLM API messages[]（含 prompt 预算截断：超预算由旧到新逐条丢历史，system 与当前消息永不丢）
-│   └── prompt_assembler.py #  PromptAssembler: creates 12 sections → SystemPromptManager → MessageBuilder（透传 prompt_budget_tokens）
-├── monitoring/             # Monitoring (package): event bus + idle monitor + token tracking
-│   ├── event_bus.py       #   EventBus: pub/sub for agent internal events
-│   ├── idle_monitor.py    #   IdleMonitor: wake-word detection + proactive triggers
-│   ├── token_tracker.py   #   TokenTracker: usage counting + cost estimation
-│   └── tests/
-├── text/                  # Text stream processing (package): 标签注册表 + tokenizer + splitter + parts + 协调器
-│   ├── tags.py            #   标签注册表：PAUSE/STAGE_CN/META/CODE/MARKDOWN 全部定义 + emoji 收口 + **句边界字符集 `SENTENCE_END_CHARS`**（tokenizer 落盘边界与 splitter 判据的唯一来源）
-│   ├── tokenizer.py       #   StreamTokenizer: 结构感知切分，只吐完整 token（跨 chunk 不变式 + 持有上界 + **句末标点即时落盘**，见 S3-G7）
-│   ├── splitter.py        #   SpeechSplitter: 结构感知分句，边界扫描跳过受保护 span，输出 SENTENCE + TEXT_DELTA
-│   ├── parts.py           #   build_parts/rebuild_public_text: 句子 + 块交错 → TextPart + content_type
-│   ├── stream_processor.py #   StreamProcessor: 协调器（tokenizer + splitter + 事件发射 + get_blocks + public_text 重建；META 路由注册表化，未知 emit 降级 warning）
-│   └── __init__.py         #   re-export（content_text_from_content/MessageObj 已迁 core/utils/text_utils）
-├── debug/                 # Debug dashboard (package): DebugInfo aggregation + prompt/response recorders
-│   ├── info.py            #   DebugInfo: aggregates agent state (16 panels) for /debug dashboard
-│   ├── prompt_recorder.py #   PromptRecorder: ring buffer (20) for LLM prompts
-│   └── response_recorder.py # ResponseRecorder: ring buffer (20) for LLM responses
-├── personality/           # CharacterEngine: 4-layer personality model (L1→L2→L3→L4)
-│   ├── protocol.py        #   **接口层**：CharacterEngineProtocol / CharacterReflectorProtocol（结构化契约，消费方不依赖具体类）
-│   ├── engine.py          #   CharacterEngine: L1 Core (file, immutable) → L2 Self (session, slow evolution) → L3 State (session, Reflector-driven) → L4 Mood
-│   ├── reflector.py       #   CharacterReflector: buffers 50 pairs → LLM reflection → submit to engine
-│   ├── awareness.py       #   AwarenessTrigger: C9 觉察判定 + cooldown 管理
-│   ├── compression.py     #   CompressionManager: L3→L2 自我压缩 + C6 联动编辑
-│   ├── emotion.py         #   EmotionEngine: LLM mood tag 解析 + keyword 回退
-│   ├── _utils.py          #   内部工具函数
-│   └── tests/
-├── memory/
-│   ├── session_manager.py  # SessionManager: 会话缓存池 + 活动指针 + resolve/switch/CRUD（批次 3 多会话）
-│   ├── session.py          # SessionMemory: deque (maxlen), MongoDB persistence (无 TTL——删除走显式级联删除), fire-and-forget archive; 专用类型字段 character_state/service_state 经 save/load 同步
-│   ├── long_term.py        # LongTermMemory: Milvus-backed vector search + reranking; count-based _evict_overflow; async mark_absorbed with Milvus cleanup。MemoryEntry.memory_type 用 MemoryType StrEnum，构造/update/search 边界经 try_coerce/coerce 归一（未知→Note，过滤大小写不敏感）
-│   ├── embedding_provider.py # EmbeddingProvider: 嵌入后端懒加载 + 超时 + OpenAI/HuggingFace fallback
-│   ├── memory_reflector.py # MemoryReflector: periodic LTM dedup (round/new-memory triggers, KMeans clustering + LLM review)
-│   ├── consolidator.py     # MemoryConsolidator: buffers 6 msgs → LLM extracts + compares → insert/update/merge/skip
-│   └── consolidator_pending.py # 未整合对话缓冲 journal（#10/决策 #10）：关机 flush 超时即丢 → 每轮/失败/成功三处落盘，构造时读回 + 下次启动补提
-├── storage/                # Storage layer: MongoDB/Milvus repositories
-│   ├── session_repo.py     #   SessionRepository: session CRUD（sessions 集合无 Mongo TTL）
-│   ├── message_repo.py     #   MessageRepository: message archive append-only log
-│   ├── token_repo.py       #   TokenRepository: token usage statistics
-│   ├── memory_repo.py      #   MemoryRepository: LTM Milvus operations
-│   ├── generation_repo.py  #   GenerationRepository: generation 生命周期 upsert/query（BE-024）
-│   ├── character_version_repo.py # CharacterVersionRepository: L2/C6 version history
-│   ├── attachment_repo.py  #   AttachmentRepository: attachments 集合（fail-closed，BE-070——Mongo 离线 raise StorageUnavailableError → 503；refs/ref_count + 软删 status/deleted_at）
-│   ├── attachment_release.py # AttachmentRelease: 会话/消息删除的附件引用释放共享 helper（提取自 debug_routes/archive.py；REST DELETE /api/sessions/{id} 删除前先 release_session_attachments，批次 8a D5）
-│   ├── attachment_gc.py    #   AttachmentGC: 启动兜底扫描四规则（软删超 24h 物理删 / active 文件缺失软删 / 未关联超 7 天软删 / 磁盘孤儿删文件，限四 kind 目录，BE-071）
-│   ├── pending_attachment_release.py # 提交后附件引用释放失败 journal（#41）：主操作已提交、refs 未释放 → 落盘，启动 + 恢复边界重试
-│   ├── background_task_repo.py # BackgroundTaskResultRepository: 后台任务终态结果（#6，task_id unique + 7d TTL，fail-closed）——停机落库 + 启动补投
-│   └── task_result_wal.py  # TaskResultWAL: 终态结果本地 WAL（#6 硬杀窗口）——派发/终态产生那一刻同步 fsync，启动 replay 进仓储（库为权威）
-├── config/                 # Config sub-package: character_config + app_config
-│   ├── character_config.py    # CharacterConfig: loads YAML + L1 Core personality text
-│   ├── app_config.py          # AgentConfig: YAML-loaded app configuration
-│   └── tests/
-├── utils/                  # Utility functions: message_id + log_setup + text_utils
-├── tool_runtime/           # 工具调用运行时（ARCH-INC-P1-01 改名，原 core/task）：即时工具调度
-│   ├── task.py             # QueuedToolCall dataclass + Kind/State enums + Future binding
-│   ├── scheduler.py        # ToolCallDispatcher: worker pool for ReAct tool calls (5 workers)
-│   └── tests/
-└── tools/                 # Tool plugins (filesystem, web, memory, time, reminder, etc.)
-```
+**Coding Agent 只需要 ownership map，不需要完整文件树。** 逐文件/逐模块的权威是
+[`core/README.md`](core/README.md) 的子系统表 + 各子包自己的 README；
+**系统级架构**（层、数据流、组装、并发全景）权威是 [`docs/architecture.md`](docs/architecture.md)。
+
+| 子包 | 归谁 | 一句话职责 |
+|---|---|---|
+| `core/agent/` | 组合根 | `Agent` = `AgentLifecycle` + `AgentServer` mixin；**46 个同名 `@property`** 是跨模块访问的唯一入口（完整枚举见 `core/README.md`，由门禁钉住） |
+| `core/cognitive/` | 回合编排 | ReAct 主循环 + 流式/工具/收口三个 mixin + generation 上下文与注册表 |
+| `core/status/` | 状态接口 | 只读 `AgentStatus` + 对内 `CognitivePhaseController`；底层 `AgentFSM` 不对外暴露 |
+| `core/adapter/` | 后端封装 | 把 `Module/` 后端包成 core 可用的 LLM/TTS/Tool 适配器（含 tool_call 归一） |
+| `core/prompt/` | prompt 组装 | `PromptAssembler`（12 section）→ `MessageBuilder`（历史 + 预算） |
+| `core/character/` + `core/personality/` | 角色域 | Definition/Revision/Instance + RuntimeRegistry；四层性格（L1→L2→L3→L4） |
+| `core/profile/` | 用户身份 | `UserIdentity`（Mongo 权威 + CAS） |
+| `core/memory/` | 记忆 | Session 缓存池 / LTM（Milvus）/ 沉淀 / 反思 / 各类 pending journal |
+| `core/storage/` | 持久化 | 各 Repository + schema 漂移自检 + 附件 GC + 秘密存储。**集合表权威在 [`docs/database-storage.md`](docs/database-storage.md)** |
+| `core/input/` | 输入层 | WS + HTTP：`server`（纯装配）/ `ws_handler` + `ws_handlers/` / 各 `*_routes` / `debug_routes/`；限流器在 `core/network/`，bind 守卫在 `core/utils/server_guard.py` |
+| `core/text/` | 文本流 | 标签注册表 → tokenizer → splitter → parts → 协调器（**句边界字符集单源在这里**） |
+| `core/application/` | 窄用例层 | 跨 input/storage 的用例编排（会话激活、附件签名）；不 import aiohttp |
+| `core/providers/` `core/services/` `core/network/` | 运行时能力 | provider 元数据 / 能力声明广播 / 限流 |
+| `core/tool_runtime/` | 工具调度 | `QueuedToolCall` + `ToolCallDispatcher`（ARCH-INC-P1-01，原 `core/task/`） |
+| `core/tools/` | 工具插件 | 每插件 `plugin.py` + `config.yaml` + `README.md` 三元组 |
+| `core/debug/` `core/utils/` `core/prompts/` `core/schema/` `core/config/` | 支撑 | debug 聚合 / 通用工具（log、ID、守卫）/ prompt 模板 / 共享类型 / 应用配置 |
+
+> **改这些包之前先读该包的 README**——它比本文更细，是那块内部的权威；
+> 但它**不能**重新定义全局层级。
+
 
 ### frontend_contract/ layer (契约层)
 
+**逐文件结构与成员集合的权威是 [`frontend_contract/README.md`](frontend_contract/README.md) +
+代码本身**（本文不抄成员数/模型数——抄的那份不会被门禁发现）：
+
 ```
 frontend_contract/
-├── base.py                 # ContractModel 基类 + TsNull marker + wire_key + wire_dict 序列化
-├── version.py              # TRANSPORT_VERSION="2"（握手头可用值）/ PROTOCOL_VERSION="2.0"（仅展示）——协议版本单源（批次 9B）
-├── ws_message/             # WS 消息契约**包**（ARCH-INC-P2-02 物理拆分，原 1206 行单文件 → 9 模块）
-│   ├── __init__.py         #   **单一装配点**：唯一 ServerMessage/ClientMessage 联合定义位置 + 显式 re-export（97 名）
-│   ├── _types.py           #   共享词汇：ContentPart 联合 + 全部非联合成员类型（零跨模块依赖，426 行）
-│   ├── chat.py             #   chat 域 17 定义（Delta/Message/Token/Audio/Expression/Live2D/State/Typing/Transcription…）
-│   ├── session.py          #   session 域 12 定义（Session/Capabilities/ServerInfo/Command/Wake/SwitchModel/ServiceMode…）
-│   ├── tool.py             #   tool 域 5 定义（ToolStarted/ToolCompleted/ToolRequest/ToolStatus/ToolCall*）
-│   ├── generation.py       #   generation 域 6 定义（Started/SegmentStarted/Delta/SegmentCompleted/Completed/Failed）
-│   ├── voice.py            #   voice 域 21 定义（Voice*/Dictation* + 批次 6 TTS 播放控制 Audio*）
-│   ├── ack.py              #   ack 域 2 定义 + UserAckMessage 嵌套联合
-│   └── character.py        #   character 域 1 定义（CharacterStateChanged）
-# 成员数不变：ServerMessage 42 / ClientMessage 22（不含 TextMessage——type="text" 撞 discriminator）；
-├── rest.py                 # REST 业务契约：providers / images / messages / 多会话 / Desktop / 附件与表情（AttachmentInfo/AttachmentUploadResponse/AttachmentSignResponse/StickerEntry/StickerListResponse，批次 7）等 73 模型（MessagesPageResponse.cursor，批次 9A）
-├── debug.py                # Debug API 契约：/debug/api 响应（DebugData 16 面板等 38 模型）
-├── gen_ts.py               # TS 发射器：BaseModel → contract.generated.ts（拓扑排序 + 同名安全网）+ generate_raw_ts（raw wire 快照，批次 9B）
-├── gen_schema.py           # JSON Schema 发射器：Annotated 判别联合（get_origin 收集）+ BaseModel → contract.schema.json（transportVersion/protocolVersion/schemaHash，批次 9B）
-├── contract.schema.json    # 生成产物（机器契约 JSON Schema，批次 9B）
-├── contract.raw.ts         # 生成产物（Electron 可消费 raw wire 类型快照，批次 9B）
-├── __main__.py             # python -m frontend_contract：动态收集子模块 → 生成 ts/schema/raw_ts 三产物 / --check 漂移检测
-└── tests/                  # 契约建模测试（marker=unit，无 I/O）
+├── base.py             # ContractModel 基类 + TsNull marker + wire_key + wire_dict 序列化
+├── version.py          # TRANSPORT_VERSION / PROTOCOL_VERSION —— 协议版本单源（批次 9B）
+├── ws_message/         # WS 消息契约**包**（ARCH-INC-P2-02 物理拆分）
+│   ├── __init__.py     #   **单一装配点**：唯一 ServerMessage / ClientMessage 联合定义位置
+│   ├── _types.py       #   共享词汇：ContentPart 联合 + 全部非联合成员类型（零跨模块依赖）
+│   ├── chat.py / session.py / tool.py / generation.py / voice.py / ack.py / character.py
+│   └── （按领域分文件；新增消息加到对应领域模块并在 __init__ 的联合里登记）
+├── rest.py             # REST 业务契约
+├── debug.py            # Debug API 契约
+├── errors.py           # 错误码单源（KNOWN_ERROR_CODES / KNOWN_ISSUE_CODES）
+├── gen_ts.py           # TS 发射器（+ generate_raw_ts raw wire 快照）
+├── gen_schema.py       # JSON Schema 发射器（含 schemaHash）
+├── contract.schema.json / contract.raw.ts   # 生成产物（**不要手改**）
+├── __main__.py         # python -m frontend_contract（生成三产物 / --check 漂移门禁）
+└── tests/              # 契约建模测试（marker=unit，无 I/O）
 ```
 
-前后端契约唯一类型来源：可执行 Pydantic 模型 → `gen_ts` 生成 `frontend/src/types/contract.generated.ts`
-（TS 只读快照）+ `gen_schema` 生成 `contract.schema.json` + `gen_ts.generate_raw_ts` 生成 `contract.raw.ts`。
-后端发送点构造契约模型 + `wire_dict()` 序列化；`make gen-types` 重新生成、`make check-types` 漂移门禁
-（CI 强制，覆盖 ts/schema/raw_ts + `scripts/gen_contract_frames.py --check` **17 个 golden frames**——含阶段 4
-普通录音/听写/音频播放/服务切换 WS 流程与 Profile/TTS REST 样例）。零依赖（仅 pydantic + stdlib），不 import core/ Module/。
-**依赖方向（有意，勿"修复"）**：本层是共享底座，**`Module/output` 依赖本层**（`manager.py` / `websocket.py` 直接
-构造 `ActionMessage`/`AudioMessage` 等契约模型，并复用 `MessageChannel`/`SegmentKind`/`AudioFormat`/`FinishReason`
-枚举）。单向无环（本层零依赖、绝不反向 import Module/core）；若改成 Module 自建枚举再在 core 映射，会重复定义这些
-枚举并重新引入漂移风险——正是契约单源要消除的问题。代价仅是 Module 不再是可独立分发的自底向上包。
-**阶段 4 确定性 smoke**：`conda run -n Elysia python scripts/stage4_smoke.py`——进程内 `create_app` + 真 agent(fake LLM) +
-STT/TTS 桩，覆盖 Profile/三语音模式/TTS 播放 5 场景（默认 stub 确定性、失败非零退出；`STAGE4_SMOKE_LIVE=1` 才接真实
-provider，不进 CI）；`scripts/tests/test_stage4_smoke.py` 为 slow pytest 包装。
+契约单源：可执行 Pydantic 模型 → `gen_ts` 生成 `frontend/src/types/contract.generated.ts`（只读快照）
++ `gen_schema` 生成 `contract.schema.json` + `generate_raw_ts` 生成 `contract.raw.ts`。
+后端发送点构造契约模型 + `wire_dict()`；`make gen-types` 重新生成、`make check-types` 漂移门禁
+（= `--check` + `gen_contract_frames.py --check`（golden frames）+ `check_error_codes.py`（错误码目录））。
+
+**`ws_message/` 的三条禁忌**：① 不要在领域模块里 import 联合本身（成环，R4 会红）；
+② 不要在别处再定义一份联合；③ 不要手改生成产物。理由（TS 产物顺序）见包 README。
+
+**依赖方向（有意，勿"修复"）**：本层是共享底座，**`Module/output` 依赖本层**
+（直接构造 `ActionMessage`/`AudioMessage` 等契约模型并复用 `MessageChannel`/`SegmentKind`/
+`AudioFormat`/`FinishReason` 枚举）。单向无环——若改成 Module 自建枚举再在 core 映射，
+就是重复定义这些枚举，正是契约单源要消除的漂移源。代价仅是 Module 不再是可独立分发的自底向上包。
+
+**阶段 4 确定性 smoke**：`conda run -n Elysia python scripts/stage4_smoke.py`——进程内
+`create_app` + 真 agent(fake LLM) + STT/TTS 桩，覆盖 Profile/三语音模式/TTS 播放
+（默认 stub 确定性、失败非零退出；`STAGE4_SMOKE_LIVE=1` 才接真实 provider，不进 CI）。
+
 
 ### Character config (`character/`)
 
@@ -302,29 +239,31 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 
 ## Module index
 
-| Module | Purpose | Backends |
-|--------|---------|----------|
-| `Module.llm` | LLM chat/streaming | `deepseek`, `openai`, `ollama`, `mimo`, `gemini`*、`custom`（* `gemini` 已注册但 `NotImplementedError`；权威 = 各 registry 的 `_UNIMPLEMENTED_PROVIDERS`，预检/下拉都问它） |
-| `Module.stt` | Speech-to-text | `sensevoice`, `custom`（`openai`/`deepgram` 已注册但 `NotImplementedError`，同上） |
-| `Module.tts` | Text-to-speech | `gpt-sovits`, `minimax`, `custom` |
-| `Module.embedding` | Text vectorization | `huggingface`, `openai` |
-| `Module.output` | Multi-channel output | `ConsoleChannel`, `WebSocketChannel` |
-| `Module.config` | Config infrastructure | `ConfigLoader` (YAML + env + validation) |
-| `Module.system_prompt` | System prompt engine | 12-section orchestration + templates |
-| `Module.workflow_engine` | 后台任务引擎（原 `task_system`）：ReAct 编排/规划/执行/子智能体。主类 `WorkflowEngine`；跨边类型经契约层 `Module/workflow_contract` | `orchestrator` + `planner` + `executor` + `sub_agent` |
-| `Module.workflow_contract` | 跨边契约层（core ↔ workflow_engine 唯一类型来源）：类型/枚举/协议 ABC/无状态纯函数/AgentInfra 运行时注入容器，零业务逻辑 | `schema` + `infra` + `utils` |
-| `frontend_contract` | 前后端契约单源（唯一类型来源 + 生成器 + 门禁）：可执行 Pydantic 契约模型（WS/REST/Debug）+ `gen_ts`/`gen_schema` 发射器 → `contract.generated.ts` + `contract.schema.json` + `contract.raw.ts`（机器契约，批次 9B），`make check-types` 漂移检测（含 golden frames --check），零依赖（仅 pydantic + stdlib） | `base` + `version` + `ws_message` + `rest` + `debug` + `gen_ts` + `gen_schema` |
-| `core.schema` | Shared Pydantic types: EventData (discriminated union, 5 event types), ToolCall, ExtractedMemory/CompareAction (discriminated union), ReflectorActions, MemoryType, message types, mood, etc. `types.py`：ID NewType（MessageId/SessionId/ToolCallId/GenerationId/SegmentId/RequestId/AttachmentId/MemoryId/TaskId）——core 内部 ID 流转对齐 NewType，input 边界（wire 裸 str）收口点包一层，frontend_contract 契约层保持裸 str（零依赖，不引 core）。`part.py`：Part 判别联合 6 类（含 StickerPart，批次 7）、Image/File/Audio/Video Part 带 `attachment_id`、FileMime 补值（pdf/zip/markdown） | |
-| `Module.database.vectordb` | Vector DB (ANN search) | `milvus` |
-| `Module.database.documentdb` | Document DB | `mongodb` |
-| `Module.database.graphdb` | Graph DB | stub only |
-| `Module.bench` | Latency benchmarking | Covers LLM/TTS/STT |
-| `core.providers` | Provider 元数据与自定义 provider 持久化（CORE-MOD-P1-01 从 input 迁入） | `custom_providers.py` + `provider_registry.py` |
-| `core.services` | 服务运行时能力声明与广播（CORE-MOD-P1-01 从 input 迁入） | `capabilities.py` |
-| `core.network` | 网络运行时基础设施（CORE-MOD-P2-01 从 input 迁入） | `rate_limiter.py` |
-| `core.prompt` | System prompt 组装层（CORE-MOD-P1-02 从 adapter 迁入） | `message_builder.py` + `prompt_assembler.py` |
-| `core.input` | Input layer: WebSocket + HTTP server | `server.py` (纯装配：create_app + 管理端点；bind 守卫在 core/utils/server_guard.py，批次 D), `middleware.py` (认证/payload/限流中间件工厂 + `_nosniff_uploads`；限流器在 core/network，批次 D), `health.py` (health/ready 探针，批次 D), `ws_handler.py` (协议 framing + 连接生命周期：握手/回放/消息循环；**1210→691 行**，22 个 dispatcher 已按领域迁出，2026-08-14 批次 B + 2026-09-11 ARCH-INC-P2-01), `ws_handlers/` (package：`context.py` 收口连接级状态 `WsRequestContext`——handler 签名由 10 参数收敛为 `(ctx, data, msg, channel)`；`chat/session/tool/voice.py` 四领域 handler；`__init__.py` 单一装配点 `_WS_HANDLERS`——wire 不变), `ws_v2.py` (v2 深业务：`_route_v2_text`/`_handle_voice_commit` + 幂等/ACK helper，批次 B 下移), `_common.py` (跨业务共享：`_send_ack`/`_find_channel`/`_tool_error`/`_archive_*`), `errors.py` (统一错误信封，批次 A 下沉), `provider_routes.py`/`tts_routes.py`/`upload_routes.py`/`tools_routes.py`/`chat_routes.py` (批次 C 拆 5 域，api_routes 退役), `attachment_routes.py` (附件签名下载 + 签发，BE-070), `session_routes.py` (多会话/历史/搜索/资源/状态/pending REST), `voice_sessions.py` (三模式语音状态机：普通录音/实时语音/输入法转写，BE-060~062), `sticker_registry.py` (内置表情注册表，BE-071), `audio_buffer.py` (VAD 分段 + STT 提交), `debug_routes/` (package, 7 modules) |
-| `Module._common` | Shared utility layer | env, registry helpers（含 `inject_logger` / `get_caller_logger` 两种 logger 注入风格）, test helpers, **`task_scope.py`（`AsyncTaskScope`/`cancel_and_drain`——后台协程所有权收口点，ARCH-INC-P2-03）** |
+**provider / backend 的详细说明归各模块 README**——本文只给架构形状，不维护副本
+（§83：一个事实一个权威，其余链接）。
+
+| Module | 职责 | README |
+|---|---|---|
+| `Module.llm` | LLM chat/streaming（deepseek / openai / ollama / mimo / custom；`gemini` 已注册但未实现） | [llm/README.md](Module/llm/README.md) |
+| `Module.stt` | 语音识别（sensevoice / custom；`openai` / `deepgram` 已注册但未实现） | [stt/README.md](Module/stt/README.md) |
+| `Module.tts` | 语音合成（gpt-sovits / minimax / custom） | [tts/README.md](Module/tts/README.md) |
+| `Module.embedding` | 文本向量化（huggingface / openai） | [embedding/README.md](Module/embedding/README.md) |
+| `Module.output` | 多通道输出（Console / WebSocket）。**本模块依赖 `frontend_contract`**，方向有意，勿"修复" | [output/README.md](Module/output/README.md) |
+| `Module.config` | 配置基础设施 + `providers.yaml` 注册表单源 | [config/README.md](Module/config/README.md) |
+| `Module.system_prompt` | 12 段 system prompt 引擎 + **预算唯一执行点** `budget.py` | [system_prompt/README.md](Module/system_prompt/README.md) |
+| `Module.tool` | 工具执行框架（Plugin + SafetyPipeline） | [tool/README.md](Module/tool/README.md) |
+| `Module.database.*` | Milvus（vectordb）/ MongoDB（documentdb）/ graphdb stub | [database/README.md](Module/database/README.md) |
+| `Module.workflow_engine` | 后台任务引擎（原 `task_system`）：Planner / Executor / SubAgent | [workflow_engine/README.md](Module/workflow_engine/README.md) |
+| `Module.workflow_contract` | core ↔ workflow_engine 的跨边契约层（唯一类型来源，零业务逻辑） | [workflow_contract/README.md](Module/workflow_contract/README.md) |
+| `Module._common` | 共享工具：env / registry helpers（两种 logger 注入风格）/ **`task_scope` 后台协程所有权** | [_common/README.md](Module/_common/README.md) |
+| `Module.bench` | 延迟基准 | [bench/README.md](Module/bench/README.md) |
+| `frontend_contract` | 前后端契约单源（模型 + 生成器 + 门禁，零依赖） | [frontend_contract/README.md](frontend_contract/README.md) |
+| `core.schema` | 共享 Pydantic 类型：EventData / ToolCall / Part 判别联合 / ID NewType / StrEnum | [core/schema/README.md](core/schema/README.md) |
+
+> **"已注册但未实现"的判定权威是各 registry 的 `_UNIMPLEMENTED_PROVIDERS` /
+> `Factory.is_implemented()`**——预检、`/api/providers`、debug 面板都问它。
+> **不要在这里抄一份名单**（抄的那份不会被门禁发现）。
+
 
 ## Config system
 
@@ -380,109 +319,31 @@ Prompt 需求文档：`core/prompts/ref/` 目录下的 `*-requirements.md` 和 `
 
 ## Frontend (`frontend/`)
 
-Vue 3 + Vite + Pinia + TypeScript。开发时通过 Vite 代理（:5173 → :8765），生产构建直接输出到 `static/` 由 aiohttp serve。
+Vue 3 + Vite + Pinia + TypeScript。开发时 Vite（:5173）代理 WS/API 到 :8765；
+生产构建（`npm run build` = `vue-tsc --noEmit && vite build`）直接输出到 `static/`。
 
-```
-frontend/
-├── index.html              # Chat 页面 HTML 入口
-├── debug.html              # Debug 页面 HTML 入口（Vite 多页构建）
-├── vite.config.ts          # Vite 配置（代理 :8765 + 多入口构建）
-├── package.json
-├── tsconfig.json
-└── src/
-    ├── main.ts             # Chat 应用入口（Pinia + marked + highlight.js）
-    ├── App.vue             # 根组件（三栏布局 + 全局快捷键）
-    ├── styles/variables.css     # 全局 CSS 变量（从旧版 chat.css 提取）
-    ├── styles/message-layout.css # 共享消息布局样式（ChatMessage + TypingIndicator）
-    ├── types/protocol.ts   # 20+ WebSocket 消息类型定义
-    ├── utils/escape.ts     # HTML 转义工具
-    ├── utils/format.ts     # 数字格式化（fmt: 1.0k）
-    ├── stores/
-    │   ├── connectionStore.ts  # WebSocket 连接生命周期
-    │   ├── chatStore.ts        # 消息列表 + delta 流式追加 + TTS 排队
-    │   ├── audioStore.ts       # TTS 缓冲/播放 + 麦克风
-    │   ├── settingsStore.ts    # 设置项 + localStorage 同步 + 后端模式 toggle（sttEnabled/ttsEnabled → set_service）
-    │   ├── toolsStore.ts       # 工具插件列表
-    │   └── debugStore.ts       # Debug 仪表盘：轮询生命周期 + Tab 切换 + 分页状态
-    ├── composables/
-    │   ├── useWebSocket.ts  # WS 消息路由（替代旧版巨型 switch）
-    │   ├── useAbortController.ts  # AbortController 封装
-    │   ├── useImageUpload.ts      # 图片上传管理
-    │   └── useLightbox.ts   # 全局图片灯箱（任意组件 open(url) 即可全屏查看）
-    ├── components/
-    │   ├── layout/AppLayout.vue           # 三栏布局
-    │   ├── character/                     # 左侧角色面板
-    │   │   ├── CharacterPanel.vue
-    │   │   ├── AvatarDisplay.vue         # Live2D / 静态图
-    │   │   └── CharStatus.vue            # 状态点 + 心情 + 模型名
-    │   ├── chat/                          # 消息渲染
-    │   │   ├── MessageList.vue           # 消息列表（TransitionGroup 动画）
-    │   │   ├── ChatMessage.vue           # 单条消息
-    │   │   ├── ChatBubble.vue            # 气泡内容（文本/markdown/code）
-    │   │   ├── ToolCard.vue              # 工具调用卡片
-    │   │   ├── InnerVoice.vue            # 内心独白气泡
-    │   │   ├── TokenLabel.vue            # Token 统计
-    │   │   ├── TimeDivider.vue           # 时间分隔符
-    │   │   └── TypingIndicator.vue       # 打字指示器
-    │   ├── input/
-    │   │   ├── InputBar.vue              # 输入框 + 附件 + 麦克风 + 发送
-    │   │   └── PreviewBar.vue            # 图片预览条
-    │   ├── panels/
-    │   │   ├── SettingsPanel.vue         # 设置面板
-    │   │   └── ToolsPanel.vue            # 工具管理面板
-    │   ├── ui/
-    │   │   ├── ToggleSwitch.vue          # 开关组件
-    │   │   ├── ApprovalDialog.vue        # HITL 审批弹窗
-    │   │   └── ModelSelector.vue         # 模型选择下拉框
-    │   └── shared/
-    │       ├── Lightbox.vue              # 图片灯箱
-    │       └── CodeBlock.vue             # 代码块（highlight.js + 复制）
-    └── debug/                            # 独立 Debug 应用（Vite 多入口）
-        ├── main.ts                       # 入口 + Pinia
-        ├── App.vue                       # Tab shell（概览 | 数据库 | 任务）+ pause/copy
-        ├── types.ts                      # DebugData 等 TS 接口定义
-        └── components/
-            ├── OverviewTab.vue           # 16 面板 2 列 grid（poll /debug/api）
-            ├── DatabaseTab.vue           # 容器，切换时加载
-            ├── LtmPanel.vue              # LTM CRUD（搜索/筛选/翻页/新增/编辑/删除/批量/清空）
-            ├── SessionPanel.vue          # 会话管理（列表/详情/删除/清空）
-            ├── ArchivePanel.vue          # 消息归档（搜索/筛选/翻页/编辑/删除/清空）
-            ├── TasksTab.vue              # SSE EventSource + 自动重连 + 活跃/完成区
-            ├── TaskCard.vue              # 任务卡片：状态徽章 + 进度条 + vis-network DAG
-            ├── shared/
-            │   ├── PaginationBar.vue     # 分页导航（offset 语义，跳转，perPage 选择）
-            │   ├── ConfirmModal.vue      # 危险操作确认弹窗
-            │   └── ExpandableText.vue    # 文本截断 + 点击展开
-            └── modals/
-                ├── PromptViewer.vue      # LLM Prompt 详情：可折叠消息 + 模板 + 工具列表
-                ├── ResponseViewer.vue    # LLM Response 详情：inner_voice + raw text
-                ├── VersionHistory.vue    # L2/C6 版本历史 + 回滚
-                └── ImageLightbox.vue     # 图片全屏灯箱
-```
+**逐文件结构与组件清单的权威是 [`frontend/README.md`](frontend/README.md)**——本文不抄树。
+上一版这里抄了一整棵树，里面的组件数/store 数已经和实际不符；那是"抄一份会静默过期的事实"的典型。
+Coding Agent 需要知道的只有：
 
-**开发：**
-```bash
-cd frontend && npm install && npm run dev
-# → Vite dev server :5173（自动代理 WS + API 到 :8765）
-```
-
-**构建：**
-```bash
-cd frontend && npm run build
-# → 构建产物直接输出到 static/（index.html + debug.html + assets/）
-```
+- 入口：`index.html`（聊天）+ `debug.html`（Debug 应用，Vite 多入口）
+- `src/types/protocol.ts` 是**契约类型 re-export shim**——真源是 `frontend_contract/` 生成的
+  `src/types/contract.generated.ts`（**禁止手写契约类型**）
+- 状态：Pinia store（connection / chat / audio / settings / tools / debug）
+- WS 路由集中在 `useWebSocket` composable（不要再写成巨型 switch）
+- 构建产物在 `static/`，被 aiohttp serve；`outDir: ../static` + `emptyOutDir: false`
+  ⇒ **CI 的密闭清空是承重的**（见 [docs/ci.md](docs/ci.md)）
 
 ### Debug page panels
 
-**Overview tab**: 16 panels (2-column grid) — System, Memory, Latency, Process Memory, Scheduler, Token, LLM Prompt (→ PromptViewer), LLM Response (→ ResponseViewer), Recent Session (→ ImageLightbox), LTM Recent, Tools, Tool History, Consolidation, Memory Reflector, Character Reflector, CharacterEngine (→ VersionHistory).
+**Overview tab**: 面板聚合（System / Memory / Latency / Process Memory / Scheduler / Token /
+LLM Prompt / LLM Response / Recent Session / LTM Recent / Tools / Tool History / Consolidation /
+Memory Reflector / Character Reflector / CharacterEngine）。**逐面板清单与使用说明见
+[`static/debug.md`](static/debug.md)**。
 
-**Database tab**: LtmPanel (Milvus CRUD: search/filter/paginate/create/edit/delete/batch/clear), SessionPanel (MongoDB sessions: list/detail/delete/clear), ArchivePanel (message archive: search/role-filter/paginate/edit/delete/clear). All destructive ops gated by ConfirmModal.
+**Database tab**: LtmPanel（Milvus CRUD）/ SessionPanel（MongoDB sessions）/ ArchivePanel（消息归档）。
+破坏性操作一律经 ConfirmModal。
 
-**Tasks tab**: SSE stream from `/debug/api/tasks/stream`, vis-network DAG (hierarchical TB, status-colored nodes), auto-reconnect with exponential backoff, active/completed task sections.
-
-**Shared UI**: PaginationBar (offset semantics, perPage 50/100/200, page jump), ConfirmModal (Teleport, confirm/cancel emits), ExpandableText (truncate/expand toggle).
-
-**Stores**: `debugStore.ts` — Pinia (Composition API): poll lifecycle, activeTab switching, pause/resume, LTM/Archive pagination state.
 
 ### Server routing (`core/input/` — `server.py` + `middleware.py` + `health.py` + `ws_handler.py` + `ws_v2.py` + `errors.py` + `provider_routes.py` + `tts_routes.py` + `upload_routes.py` + `tools_routes.py` + `chat_routes.py` + `attachment_routes.py` + `session_routes.py` + `debug_routes/` package)
 
@@ -519,22 +380,30 @@ Each plugin in its own directory: `plugin.py` + `config.yaml` + `README.md`. Plu
 
 ## Memory & storage
 
-| Store | Backend | Purpose |
-|-------|---------|---------|
-| `sessions` | MongoDB `default.sessions` | LLM context window（**无 Mongo TTL**，删除走显式级联删除：`SessionManager.cascade_repos` 清单 = `token_usage`/`generations`/`character_versions`，覆盖由 `test_session_cascade.py` 的 AST 守卫断言） |
-| `message_archive` | MongoDB `default.message_archive` | Permanent append-only message log |
-| `token_usage` | MongoDB `default.token_usage` | LLM token statistics |
-| `long_term_memory` | Milvus `long_term_memory` | ExtractedMemory (Pydantic) → CompareAction (insert/update/merge/skip) → vector with reranking |
-| `attachments` | MongoDB `default.attachments` | 附件元数据（BE-070，fail-closed）：ref_count/refs/status（软删 deleted_at）；TTL 不设，生命周期由 GC 管（24h/7d 规则） |
-| `user_identity_profiles` | MongoDB `default.user_identity_profiles` | 用户最小身份（BE-STAGEH-02，Mongo 权威）：`user_id` 唯一索引 + revision CAS；Agent.start() 装载，重启不回到 bootstrap |
-| `background_task_results` | MongoDB `default.background_task_results` | 后台任务终态结果（#6/决策 #6）：`task_id` 唯一 + `ttl_expires_at` TTL 7d；`delivered=False` 的记录在下次启动补投进总线 |
-| `task_result_wal.jsonl` | 本地文件 `data/task_result_wal.jsonl` | 终态结果本地 WAL（#6 硬杀窗口）：派发/终态记录的**同步 fsync** 副本。落库点在 mailbox 轮询上（0.5s 周期），硬杀窗口内终态只存在于这里；启动 replay 进仓储，**库为权威**（库里已有的跳过） |
+**集合/索引/TTL/GC/删除语义的权威是 [`docs/database-storage.md`](docs/database-storage.md)**——
+本文只留 Coding Agent 真正需要知道的**所有权规则**：
+
+- **会话**：`sessions`（Mongo，`default.sessions`）**无 Mongo TTL**，删除走**显式级联删除**
+  （`SessionManager.cascade_repos` 清单由 `core/tests/test_session_cascade.py` 的 AST 守卫钉住）。
+  运行时状态用 `SessionMemory` 的**专用类型字段**（`character_state` / `service_state`），
+  经 `save()` / `load()` 两侧同步——**没有** `set_param/get_param` 通用接口。
+- **归档**：`message_archive` 是 append-only 的永久消息日志（与 `sessions` 是**两份**数据，
+  别把"会话窗口"和"历史记录"混为一谈）。
+- **长期记忆**：Milvus（生产写 `long_term_memory_v2`，v1 只是 fallback 路径）——
+  **向量库与会话库是两套独立存储**，没有跨库事务。
+- **后台任务终态**：#6/决策 #6——先落 `background_task_results`（`task_id` 唯一 + 7d TTL）
+  再投递；硬杀窗口内终态只在本地 WAL（`data/task_result_wal.jsonl`，fsync）里，
+  启动 replay 进仓储且**库为权威**。
+- **附件**：`attachments` 是 fail-closed 仓储（Mongo 离线 → 503），生命周期由 GC 四规则管，
+  **不设 TTL**。
+- **用户身份**：`user_identity_profiles` 以 **Mongo 为权威**（唯一 `user_id` + revision CAS），
+  启动装载，重启不回到 bootstrap。
 
 **Schema 变更（ARCH-INC-P1-04）**：**不做迁移框架**——新增集合/索引/字段由 `ensure_index`
-（每次 `connect()` 幂等执行）自动覆盖，实测 4 个月 24 次索引变更中约 20 次属此类。
-只有「删/改已有索引」需人工，用 `DocumentDBBackend.drop_index()`（Mongo 对不存在索引不报错，
-故内部先 `list_indexes()` 查存在性）。启动步骤 `schema_drift` 只读比对代码声明与库中实况，
-**孤儿索引**报 warning 并给命令，**绝不自动删**。详见 `docs/database-storage.md` §五。
+（每次 `connect()` 幂等执行）自动覆盖；只有「删/改已有索引」需人工，用
+`DocumentDBBackend.drop_index()`。启动步骤 `schema_drift` **只读**比对代码声明与库中实况，
+孤儿索引报 warning 并给命令、**绝不自动删**。详见 `docs/database-storage.md` §五。
+
 
 ## Conventions
 

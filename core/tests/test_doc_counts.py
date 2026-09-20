@@ -83,10 +83,24 @@ def test_suite_duration_claims_are_not_wildly_stale():
 
     `CLAUDE.md` 曾称 full 套件 "~22min"，实测 ~10min；数字一旦离谱，读者就会
     据此做出错误的时间预算。
+
+    **2026-09-20（文档整理）**：耗时的 canonical 归属从 `CLAUDE.md` 移到
+    `docs/testing.md`（那里是测试体系的唯一权威，含实测档位表）。守卫相应改为扫
+    **两份都扫**——理由是两种退化都要挡住：
+      - 只扫 CLAUDE.md：把它里面的耗时删光就能让守卫无事可做（**判据消失 ≠ 通过**）；
+      - 只扫 testing.md：CLAUDE.md 里重新写一个离谱数字就没人管。
+    同时要求**至少存在一条**声明，否则"两份都没写"会被判成绿。
     """
-    text = (_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    minutes = [int(m) for m in re.findall(r"[~≈](\d+)\s*min", text)]
-    assert minutes, "CLAUDE.md 里找不到耗时声明"
+    docs = ("CLAUDE.md", "docs/testing.md")
+    minutes: list[int] = []
+    for rel in docs:
+        text = (_ROOT / rel).read_text(encoding="utf-8")
+        minutes += [int(m) for m in re.findall(r"[~≈](\d+)\s*min", text)]
+        # 秒级写法（如 `≈9min27s` / `≈63s`）也纳入，避免换单位就绕开守卫
+        minutes += [max(1, int(s) // 60) for s in re.findall(r"[~≈](\d+)s\b", text)]
+    assert minutes, (
+        f"{' 与 '.join(docs)} 里都找不到耗时声明——守卫没有判据可依。"
+        f"耗时快照请写在 docs/testing.md（它是测试体系权威）")
     assert all(m <= 20 for m in minutes), (
         f"耗时声明 {minutes} 有过期嫌疑（实测 full ≈10min / quick ≈9min）——"
         f"请用测得的真实值更新")

@@ -175,7 +175,9 @@ Worker Pool（N=5），执行 AI 规划的工具子任务和后台任务。`disp
 | `core/utils/` | 通用工具：`new_message_id()` 消息 ID 生成 + `set_request_id()`/`get_request_id()` ContextVar 请求追踪 + `log_conversation()` 对话日志 + `content_text_from_content()`/`MessageObj` 文本提取 | [utils/README.md](utils/README.md) |
 | `core/debug/` | Debug 仪表板数据层：`DebugInfo`（16 panel 聚合）+ `PromptRecorder`/`ResponseRecorder`（LLM 交互录制） | [debug/README.md](debug/README.md) |
 | `core/tools/` | 工具插件：filesystem、web、memory、time、reminder、vision 等。每个插件 `plugin.py` + `config.yaml` + `README.md` | [tools/README.md](tools/README.md) |
-| `core/desktop/` | Desktop 工具桥：`bridge.py`（DesktopToolBridge——请求 → 幂等去重 → 定向投递 → 结果回传，批次 4 BE-041/043）+ 配套 `DesktopCallRepository` | -- |
+| `core/desktop/` | Desktop 工具桥：`bridge.py`（DesktopToolBridge——请求 → 幂等去重 → 定向投递 → 结果回传，批次 4 BE-041/043）+ 配套 `DesktopCallRepository` | [desktop/README.md](desktop/README.md) |
+| `core/status/` | Agent 运行时状态接口层：`protocol.py`（只读 `AgentStatus` + 对内 `CognitivePhaseController`）+ `fsm.py`（FSM-backed 实现）+ `agent_fsm.py`（底层状态机） | [status/README.md](status/README.md) |
+| `core/application/` | 窄应用用例层：跨 input/storage 的用例编排（会话激活、附件签名），不 import aiohttp、不认识 HTTP 状态码 | [application/README.md](application/README.md) |
 | `core/tests/` | 测试套件：覆盖 Agent、CognitiveLoop、CharacterEngine、MemoryConsolidator 等核心组件的单元/集成测试 | -- |
 
 ---
