@@ -244,11 +244,11 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 
 | Module | 职责 | README |
 |---|---|---|
-| `Module.llm` | LLM chat/streaming（deepseek / openai / ollama / mimo / custom；`gemini` 已注册但未实现） | [llm/README.md](Module/llm/README.md) |
-| `Module.stt` | 语音识别（sensevoice / custom；`openai` / `deepgram` 已注册但未实现） | [stt/README.md](Module/stt/README.md) |
-| `Module.tts` | 语音合成（gpt-sovits / minimax / custom） | [tts/README.md](Module/tts/README.md) |
-| `Module.embedding` | 文本向量化（huggingface / openai） | [embedding/README.md](Module/embedding/README.md) |
-| `Module.output` | 多通道输出（Console / WebSocket）。**本模块依赖 `frontend_contract`**，方向有意，勿"修复" | [output/README.md](Module/output/README.md) |
+| `Module.llm` | LLM chat/streaming（含 `ollama` 的 native `/api/chat` 形状） | [llm/README.md](Module/llm/README.md) |
+| `Module.stt` | 语音识别 | [stt/README.md](Module/stt/README.md) |
+| `Module.tts` | 语音合成 | [tts/README.md](Module/tts/README.md) |
+| `Module.embedding` | 文本向量化 | [embedding/README.md](Module/embedding/README.md) |
+| `Module.output` | 多通道输出（Console / WebSocket）。**依赖 `frontend_contract`**，方向有意，勿"修复" | [output/README.md](Module/output/README.md) |
 | `Module.config` | 配置基础设施 + `providers.yaml` 注册表单源 | [config/README.md](Module/config/README.md) |
 | `Module.system_prompt` | 12 段 system prompt 引擎 + **预算唯一执行点** `budget.py` | [system_prompt/README.md](Module/system_prompt/README.md) |
 | `Module.tool` | 工具执行框架（Plugin + SafetyPipeline） | [tool/README.md](Module/tool/README.md) |
@@ -260,9 +260,9 @@ Templates at `Module/system_prompt/templates/` — format convention: XML wrappe
 | `frontend_contract` | 前后端契约单源（模型 + 生成器 + 门禁，零依赖） | [frontend_contract/README.md](frontend_contract/README.md) |
 | `core.schema` | 共享 Pydantic 类型：EventData / ToolCall / Part 判别联合 / ID NewType / StrEnum | [core/schema/README.md](core/schema/README.md) |
 
-> **"已注册但未实现"的判定权威是各 registry 的 `_UNIMPLEMENTED_PROVIDERS` /
-> `Factory.is_implemented()`**——预检、`/api/providers`、debug 面板都问它。
-> **不要在这里抄一份名单**（抄的那份不会被门禁发现）。
+> **逐 provider 的协议/端点/能力/限制不在本文维护**：权威是各模块 README +
+> `Module/config/providers.yaml`；**"哪些已注册但未实现"问 `Factory.is_implemented()`**
+> （预检、`/api/providers`、debug 面板都问它）。**不要在这里抄名单**——抄的那份没有门禁。
 
 
 ## Config system

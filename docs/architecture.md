@@ -219,24 +219,27 @@ _BACKENDS: dict[str, dict] = load_provider_defaults("llm")
 # 用户可经 .env / config.yaml 覆盖，无需改代码；"provider/model" 标识在 create() 时拆分
 ```
 
-### 3.2 已实现 Backend
+### 3.2 Backend 形状（**不列 provider 清单**）
 
-| 模块 | Backend | 协议 | 说明 |
-|------|---------|------|------|
-| `Module.llm` | `deepseek`, `openai`, `mimo`, `custom` | OpenAI-compatible | `stream_think()` 结构化流式 (content + tool_calls 并行检测) |
-| `Module.llm` | `ollama` | **Ollama native `/api/chat`**（Batch 17 / AR-16） | 唯一能表达 runtime context（`options.num_ctx`）的协议——OpenAI 兼容端点实测**静默忽略**它，会让 budgeting 权威与 serving window 分叉（KB-13）；语义收口在 `Module/llm/ollama.py` |
-| `Module.llm` | `gemini*` | — | 已注册但 `NotImplementedError` |
+每个服务模块遵循同一形状：`protocol.py`（ABC）→ `registry.py`（`_BACKENDS` 从
+`Module/config/providers.yaml` 装载 + `Factory.create("<provider>/<model>")`）→ 具体 backend。
+**"有哪些 provider、哪些已注册但未实现"的唯一权威是各 registry 的
+`_UNIMPLEMENTED_PROVIDERS` / `Factory.is_implemented()`**——预检（`Module/config/preflight.py`）、
+`/api/providers`、debug 面板都问它，本表**不复制清单**（复制的清单没有门禁，
+只会在新增/删除 provider 时静默过期）。
 
-> \* gemini 已注册但抛出 NotImplementedError（`_UNIMPLEMENTED_PROVIDERS` 是唯一权威）
-| `Module.stt` | `sensevoice`, `custom` | HTTP API | SenseVoice: localhost:20042，返回文本 + 情绪标签 + 音频事件；Custom: OpenAI-compatible。`openai`/`deepgram` 已注册但抛出 NotImplementedError |
-| `Module.tts` | `gpt-sovits`, `minimax`, `custom` | HTTP API | `synthesize_stream()` 异步生成器，逐 chunk WAV；MiniMax: speech-2.8-hd，hex 编码音频 |
-| `Module.embedding` | `huggingface`, `openai` | 本地模型 / API | HF 离线加载 + GPU 兼容 (sm_<70 → CPU fallback) |
-| `Module.database.vectordb` | `milvus`, `pinecone*`, `qdrant*` | gRPC / REST | ANN 语义搜索。`pinecone`/`qdrant` 已注册但抛出 NotImplementedError |
-| `Module.database.documentdb` | `mongodb` | motor async | `serverSelectionTimeoutMS=3000` |
-| `Module.database.graphdb` | stub | — | 预留 |
-| `Module.output` | `ConsoleChannel`, `WebSocketChannel` | — | 多通道广播 + capability 路由 |
-| `Module.config` | `ConfigLoader` | YAML + env | 分层配置 + 类型校验 |
-| `Module.system_prompt` | `PromptManager`, `SystemPromptManager`, `PromptSection` | Jinja2 | Section Provider 架构 + 通用模板渲染。注：`SystemPromptManager` 需通过 `Module.system_prompt.system_prompt_manager` 子模块导入（`__init__.py` 不导出） |
+架构上**值得记住**的只有三处非平凡形状：
+
+| 形状 | 为什么 |
+|---|---|
+| `Module.llm` 的 `ollama` 走**自己的 backend + native `POST /api/chat`** | 只有 native 能表达 runtime context（`options.num_ctx`）；OpenAI 兼容端点实测**静默忽略**它，会让预算权威与 serving window 分叉（KB-13 / Batch 17 / OL1–OL6）。语义收口在 `Module/llm/ollama.py` |
+| `Module.database.*` 的 registry **不用** `providers.yaml`（字面 `_BACKENDS`） | 数据库连接参数与"provider 默认端点"不是同一类东西；详见 [`database-storage.md`](database-storage.md) |
+| `Module.output` **依赖 `frontend_contract`** | 直接构造契约模型（方向有意，单向无环）；理由见 [`frontend_contract/README.md`](../frontend_contract/README.md) |
+
+逐 provider 的协议、端点、能力位与限制见 [`Module/README.md`](../Module/README.md)
+与各模块自己的 README（[`llm`](../Module/llm/README.md) / [`stt`](../Module/stt/README.md) /
+[`tts`](../Module/tts/README.md) / [`embedding`](../Module/embedding/README.md) /
+[`database`](../Module/database/README.md)）。
 
 ### 3.3 Config 系统
 
