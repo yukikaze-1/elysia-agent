@@ -74,7 +74,7 @@
 
 - **索引**: 与 v1 同——IVF_FLAT，metric_type=L2，nlist=1024（`create_collection` 经 `MemoryRepository.connect()` 继承复用，index_preset=`default`，维度 1024）。scope 字段（`user_id` / `character_instance_id` / `visibility`）为 Milvus 动态字段，检索时经 `filter_expr` 做 ANN 阶段过滤（`core/memory/long_term.py :: LongTermMemory.search`），非 ANN 召回后再 Python 过滤——避免其他 scope 条目挤占 top-k 导致本 scope 召回丢失（架构稿 §8.3）。
 - **scope 隔离**: 写/读均经 `MemoryScope` 派生（`ScopedLongTermMemory`，`core/memory/scoped_long_term.py`），`scope=None` 为宽容路径（测试/内部），生产路径恒带 scope；不存在「漏传即全局」默认值。
-- **降级/持久化补齐**: 与 v1 共用 `_dirty_ids` 内存同步 + 离线 journal（`pending_syncs`）与删除 tombstone（`pending_deletes`）——Milvus 离线时记忆落 `data/` journal，重连后补写/清理。
+- **降级/持久化补齐**: 与 v1 共用 `_dirty_ids` 内存同步 + 离线 journal（`pending_syncs`）与删除 tombstone（`pending_deletes`）——Milvus 离线时记忆落本地 journal（`ProjectPath.MEMORY_PENDING_SYNCS` / `MEMORY_PENDING_DELETES`，即 `data/memory_pending_syncs.json` / `data/memory_pending_deletes.json`），重连后补写/清理。
 
 ---
 

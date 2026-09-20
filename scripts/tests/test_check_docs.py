@@ -208,24 +208,215 @@ def test_dg6_detects_unbalanced_fence_and_tagged_closer(tmp_path: Path):
 
 
 def test_dg7_resolves_package_relative_and_flags_missing(tmp_path: Path):
-    """DG7 要能同时处理"根相对"与"包相对"，并对真正不存在的路径报错。"""
-    import scripts.check_docs as cd
-
-    (tmp_path / "core" / "memory" / "tests").mkdir(parents=True)
-    (tmp_path / "core" / "memory" / "tests" / "test_x.py").write_text("", encoding="utf-8")
-    (tmp_path / "core" / "README.md").write_text(
-        "# core\n\n见 `memory/tests/test_x.py` 与 `core/memory/tests/test_x.py`；"
-        "坏引用 `core/tests/test_missing.py`。\n",
-        encoding="utf-8",
+    """DG7 要能同时处理"根相对"与"包相对"（后者相对文档所在目录的各级祖先），
+    并对真正不存在的仓库路径报错——判据是 **git 跟踪清单**，不是磁盘。"""
+    doc = "见 `memory/tests/test_x.py`（包相对）与 `core/agent/agent.py`（根相对）；坏引用 `core/tests/test_missing.py`。\n"
+    problems = _dg7_in_sandbox(
+        tmp_path, doc,
+        tracked=["core/memory/tests/test_x.py", "core/agent/agent.py"],
     )
-    orig = cd._ROOT
-    cd._ROOT = tmp_path
-    try:
-        problems = cd.check_dg7(["core/README.md"])
-    finally:
-        cd._ROOT = orig
     assert len(problems) == 1, problems
     assert "core/tests/test_missing.py" in problems[0]
+
+
+# ---------------------------------------------------------------------------
+# DG7 —— 仓库真值 vs 工作区文件系统（2026-09-21 clean-checkout 跟进）
+# ---------------------------------------------------------------------------
+#
+# 真实 CI 在干净 checkout 里报出 8 条 DG7 失败，而本机全绿。根因：DG7 曾用
+# `Path.exists()` 判定引用有效，于是**只存在于开发者工作区的 untracked/gitignored
+# 文件**（tmp/ 探针、npm build 产物、运行时 data/ 目录）让引用看起来成立。
+#
+# 下面这组用例把语义钉死：**仓库引用必须对仓库真值成立**，
+# 非仓库路径必须**显式分类**（带理由），而不是"碰巧存在"。
+
+
+def _write(path: pathlib.Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _dg7_in_sandbox(tmp_path: pathlib.Path, doc_text: str, *, tracked=(), untracked=(),
+                    extra_files=()) -> list[str]:
+    """在沙箱里跑 DG7：`tracked` 是**仓库真值**，`untracked` 只存在于文件系统。
+
+    模拟的关键点：本函数把"git 说存在的"和"磁盘上碰巧存在的"分开喂进去——
+    旧实现只看后者，所以 `untracked` 能让引用假绿。
+    """
+    import scripts.check_docs as cd
+
+    _write(tmp_path / "core" / "README.md", doc_text)
+    for rel in tracked:
+        _write(tmp_path / rel, "x")
+    for rel in untracked:
+        _write(tmp_path / rel, "x")
+    for rel in extra_files:
+        _write(tmp_path / rel, "x")
+
+    orig_root = cd._ROOT
+    orig_inv = cd._tracked_inventory
+    cd._ROOT = tmp_path
+    cd._tracked_inventory = lambda root=None: tuple(sorted(set(tracked) | {"core/README.md"}))
+    try:
+        return cd.check_dg7(["core/README.md"])
+    finally:
+        cd._ROOT = orig_root
+        cd._tracked_inventory = orig_inv
+
+
+def test_dg7_t1_untracked_local_file_cannot_validate_a_reference(tmp_path: Path):
+    """**DG7-T1（核心回归）**：untracked 的本地文件不能让仓库引用成立。
+
+    这正是真实 CI 的失败形状：`tmp/b14/subA/probe_kb26.py` 在开发者机器上存在，
+    于是本机判绿；干净 checkout 里没有它，CI 判红。同一次提交必须给出同一个结论。
+    """
+    doc = "见 `docs/architecture/invariants.md` 与 `tmp/scratch/probe.py`。\n"
+    problems = _dg7_in_sandbox(
+        tmp_path, doc,
+        tracked=["docs/architecture/invariants.md"],
+        untracked=["tmp/scratch/probe.py"],      # 只在磁盘上，git 里没有
+    )
+    assert len(problems) == 1, problems
+    assert "tmp/scratch/probe.py" in problems[0]
+
+
+def test_dg7_t2_tracked_file_resolves_without_touching_the_filesystem(tmp_path: Path):
+    """**DG7-T2**：仓库真值里的路径必须判过——**即使磁盘上没有该文件**。
+
+    这条把方向也钉住了：判据是"git 里有"，不是"磁盘上有"。
+    """
+    doc = "见 `core/agent/agent.py` 与 `docs/operations.md`。\n"
+    problems = _dg7_in_sandbox(
+        tmp_path, doc,
+        tracked=["core/agent/agent.py", "docs/operations.md"],
+        untracked=[],                       # 磁盘上不创建它们
+    )
+    assert problems == [], problems
+
+
+def test_dg7_t3_exact_reason_bearing_runtime_exemption_passes(tmp_path: Path):
+    """**DG7-T3**：被**显式分类**的运行时路径判过（且不要求它在磁盘上存在）。"""
+    doc = "上传落到 `data/uploads/`，视觉缓存落 `data/cache/vision/`。\n"
+    problems = _dg7_in_sandbox(tmp_path, doc, tracked=[])
+    assert problems == [], problems
+
+
+def test_dg7_t4_unknown_missing_path_fails(tmp_path: Path):
+    """**DG7-T4**：既不在仓库真值里、也不在分类表里的路径必须红。"""
+    doc = "见 `core/agent/does_not_exist.py`。\n"
+    problems = _dg7_in_sandbox(tmp_path, doc, tracked=["core/agent/agent.py"])
+    assert len(problems) == 1, problems
+    assert "core/agent/does_not_exist.py" in problems[0]
+
+
+def test_dg7_t5_stale_exemption_fails(tmp_path: Path):
+    """**DG7-T5**：登记陈旧必须红——两类陈旧都要报。
+
+    ① **没有任何文档再引用它**（登记表不该变成永久垃圾场）；
+    ② **它其实是仓库路径**（那就不需要豁免，留着会让真判据被绕过）。
+    注意：**"干净 checkout 里不存在"不算陈旧**——运行时路径本就该缺席，
+    否则就形成"豁免项必须物理存在"的悖论。
+    """
+    import scripts.check_docs as cd
+
+    orig_root, orig_inv = cd._ROOT, cd._tracked_inventory
+    try:
+        # ① 未被引用
+        cd._ROOT = tmp_path
+        cd._tracked_inventory = lambda root=None: ()
+        p1 = cd.check_stale_registrations(scan_texts={})
+        assert any("data/uploads/" in x for x in p1), p1
+
+        # ② 已被 git 跟踪 ⇒ 不需要豁免
+        cd._tracked_inventory = lambda root=None: ("data/uploads/keep.txt",)
+        p2 = cd.check_stale_registrations(scan_texts={"a.md": "`data/uploads/`"})
+        assert any("已被 git 跟踪" in x for x in p2), p2
+
+        # ③ 被引用 + 未被跟踪 ⇒ **不陈旧**（这是 §14 的悖论修复）
+        cd._tracked_inventory = lambda root=None: ()
+        p3 = cd.check_stale_registrations(scan_texts={"a.md": "`data/uploads/`"})
+        assert not any("data/uploads/" in x for x in p3), p3
+    finally:
+        cd._ROOT, cd._tracked_inventory = orig_root, orig_inv
+
+
+def test_dg7_declared_roots_are_never_tracked():
+    """**分类表不得覆盖任何被跟踪的树**——这是"分类 ≠ 消音"的机械证明。
+
+    豁免之所以成立，是因为登记项**有意不在仓库里**（运行期创建 / 构建期生成 / 外部仓）。
+    一旦某项（或它下面的任何路径）被 git 跟踪，豁免就从"分类"退化成"绕过真判据"，
+    必须红（这条同时是 §11 要求的"证明预期边界的测试"）。
+    """
+    from scripts.check_docs import _NON_REPOSITORY_PATHS, _tracked_inventory
+
+    tracked = set(_tracked_inventory())
+    for declared, (kind, reason) in _NON_REPOSITORY_PATHS.items():
+        base = declared.rstrip("/")
+        covered = sorted(t for t in tracked if t == base or t.startswith(base + "/"))
+        assert not covered, (
+            f"`{declared}`（{kind}）被登记为**非仓库**路径，但下面这些路径被 git 跟踪："
+            f"{covered[:5]} —— 豁免覆盖了仓库内容，请删除该条目或收窄它"
+        )
+        assert len(reason.strip()) >= 10, f"{declared} 的理由太短：{reason!r}"
+
+
+def test_dg7_tmp_is_not_exempt():
+    """`tmp/` **不得**出现在分类表里。
+
+    临时探针是"当次调查"的产物，canonical 文档引用它等于把易腐的 scratch 当成证据；
+    正确做法是改引稳定来源（测试 node id / 符号 / 执行记录）。这条把纪律钉死，
+    防止"下次 CI 红了就把 tmp/ 加进豁免表"。
+    """
+    from scripts.check_docs import _NON_REPOSITORY_PATHS
+
+    offenders = [d for d in _NON_REPOSITORY_PATHS if d.rstrip("/") == "tmp" or d.startswith("tmp/")]
+    assert not offenders, f"`tmp/` 不得被豁免（应改引稳定来源）：{offenders}"
+
+
+def test_dg7_exemptions_are_narrow_not_whole_trees(tmp_path: Path):
+    """**豁免必须窄**：不得出现 `data/`、`static/`、`tmp/` 这类整棵树豁免。
+
+    真实反证（Challenger Q5 的形状）：若豁免了 `data/`，那么 `data/cache/visoin/`
+    这种**拼错**的路径也会通过。本用例把"拼错仍未跟踪的路径必须红"钉住——
+    它是豁免宽度是否可接受的唯一可执行判据。
+    """
+    from scripts.check_docs import _NON_REPOSITORY_PATHS
+
+    for forbidden in ("data", "static", "tmp", "log"):
+        assert forbidden not in {d.rstrip("/") for d in _NON_REPOSITORY_PATHS}, (
+            f"`{forbidden}/` 不允许整棵树豁免（会产生 `{forbidden}/typo/` 也通过的盲区）"
+        )
+
+    # 拼错的运行期路径 + 拼错的仓库路径都必须红
+    doc = "写 `data/cache/visoin/`、`static/index.htmll`、`core/agent/agent_x.py`。\n"
+    problems = _dg7_in_sandbox(tmp_path, doc, tracked=["core/agent/agent.py"])
+    flagged = " ".join(problems)
+    assert "data/cache/visoin/" in flagged, problems
+    assert "static/index.htmll" in flagged, problems
+    assert "core/agent/agent_x.py" in flagged, problems
+    assert len(problems) == 3, problems
+
+
+def test_dg7_refuses_when_tracked_inventory_unavailable(tmp_path: Path):
+    """**拒答契约**：取不到仓库真值时 exit 2 且**不打印通过标记**。
+
+    绝不允许退回文件系统判据——那正是 2026-09-21 clean-checkout 假绿的成因。
+    """
+    import scripts.check_docs as cd
+
+    orig = cd._ROOT
+    cd._ROOT = tmp_path          # 不是 git 仓库
+    cd._TRACKED_CACHE.clear()
+    try:
+        try:
+            cd._tracked_inventory()
+        except RuntimeError as exc:
+            assert "git ls-files" in str(exc)
+        else:
+            raise AssertionError("非 git 目录必须拒答，而不是给出清单")
+    finally:
+        cd._ROOT = orig
+        cd._TRACKED_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------

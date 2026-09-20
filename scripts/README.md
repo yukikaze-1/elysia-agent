@@ -37,7 +37,7 @@
 |------|----------|----------------------|------|
 | MongoDB (`default`) | `sessions`、`message_archive`、`token_usage`、`generations`、`idempotency`、`desktop_calls`、`characters`、`character_revisions`、`character_instances`、`character_versions`、`character_l2_versions`（旧）、`attachments` | `sessions`、`message_archive`、`token_usage`、`generations`、`idempotency`、`desktop_calls` | `delete_many({})` 清空文档，保留 indexes |
 | Milvus | `long_term_memory` | 同左（由 `--milvus-only` 组合控制） | drop 后自动重建（dimension=1024, IVF_FLAT） |
-| 本地文件 | `data/` 下 `token_usage_pending.jsonl`、`scheduler_checkpoint.json`、`memory_pending_deletes.json`、`memory_pending_syncs.json`、`session_*.json`（每会话一个，含 `session_default.json` 与 `session_pending_cleanup.json`）、`data/cache/vision/*.json` | 同左（由 `--files-only` 组合控制） | 逐个删除 |
+| 本地文件 | 运行时数据根（`ProjectPath.DATA`）下的 journal：`token_usage_pending.jsonl`、`scheduler_checkpoint.json`、`memory_pending_deletes.json`、`memory_pending_syncs.json`、`session_*.json`（每会话一个，含 `session_default.json` 与 `session_pending_cleanup.json`）、`data/cache/vision/*.json` | 同左（由 `--files-only` 组合控制） | 逐个删除 |
 
 - **永不删除**：`user_identity_profiles`——用户身份是 Stage H 的 Mongo 权威（BE-STAGEH-02），删了会退回 bootstrap 默认身份。
 - `attachments` 只在全量模式清（且仅清 MongoDB 记录）；对话模式保留附件记录，删掉 `message_archive` 后的孤儿记录由 `AttachmentGC` 的「未关联超 7 天软删」规则回收，`data/uploads/` 磁盘文件不在本脚本范围。

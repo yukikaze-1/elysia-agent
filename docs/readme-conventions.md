@@ -219,6 +219,40 @@ canonical 文档**不写**会静默过期的数字：当前测试数、LOC、模
 
 > 历史 Batch report **允许**保留旧行号——那记录的是当时的事实（Rule 3 优先）。
 
+### Rule 5b — 路径引用必须对**仓库真值**成立，非仓库路径必须**显式分类**
+
+`scripts/check_docs.py` 的 DG7 校验 canonical/supporting 文档里行内 code 的路径引用。
+它的判据是 **`git ls-files`**（仓库真值），**不是** `Path.exists()`——这条区别是花钱买来的：
+
+> **2026-09-21 真实 CI 假绿**：DG7 曾用文件系统存在性判定，于是**只存在于开发者工作区**的
+> untracked / gitignored 文件（临时探针、`npm run build` 产物、运行期数据根 `ProjectPath.DATA` 下的目录）
+> 让引用"看起来成立"。本机全绿、干净 checkout 里红 11 条——**同一个提交给出两个结论**，
+> 而"本机过了"完全不能推出"CI 会过"。
+
+引用按四种身份判定：
+
+| 身份 | 判据 | 写法 |
+|---|---|---|
+| `REPOSITORY_PATH`（默认） | 必须在 `git ls-files` 清单里（文件或其祖先目录） | `core/storage/session_repo.py`、`docs/testing.md` |
+| `RUNTIME_PATH` | 在 `check_docs.py` 的 `_NON_REPOSITORY_PATHS` 里**登记 + 写理由** | `data/uploads/`、`data/task_result_wal.jsonl` |
+| `GENERATED_PATH` | 同上（构建期生成，干净 checkout 里本就缺席） | `static/index.html`（Vite 输出） |
+| `EXTERNAL_PATH` | 同上（姊妹仓路径） | `elysia-frontend/.../check-backend-contract.mjs` |
+
+**纪律（不要绕过它）**：
+
+- **`tmp/` 禁止登记**：临时探针是"当次调查"的产物，canonical 文档引用它等于把 scratch 当证据。
+  正确做法是改引**稳定来源**——当前回归测试 node id → 当前不变量测试 → 执行记录。历史事实可以
+  保留为文字（"当次用临时探针证伪，证据见 <记录>"），但**路径本身不要写**。
+- **不得整棵顶层目录豁免**（`data` / `static` / `log` 这一级）：那会让 `data/cache/visoin/` 这种**拼错**的
+  路径也通过。豁免只对**精确目录/文件**开放，由 `test_dg7_exemptions_are_narrow_not_whole_trees` 强制。
+- **豁免必须窄且可证**：`test_dg7_declared_roots_are_never_tracked` 机械证明登记项下**没有**
+  任何被 git 跟踪的内容——一旦有，豁免就从"分类"退化成"绕过真判据"。
+- **陈旧判定不看"干净 checkout 里在不在"**（那会形成"运行时路径必须物理存在"的悖论），
+  只看：没有文档再引用它 / 理由太短 / 它其实已被 git 跟踪。
+- 没有 `.git` 的树（`git archive`、tarball）**必须显式喂清单**：
+  `python scripts/check_docs.py --tracked-from <(git ls-files)` 或 `ELYSIA_TRACKED_PATHS`；
+  取不到就**拒答**（exit 2，不打印通过标记），绝不退回文件系统判据。
+
 ### Rule 6 — New `core/` subsystem README requirement is enforced or explicitly exempted
 
 `core/<name>/` 里只要有生产 `.py`，就**必须**有 `README.md`（模板见上文）。

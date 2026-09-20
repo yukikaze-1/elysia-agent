@@ -143,7 +143,7 @@ PEM 私钥 0 命中）。
 - 它按**形态**匹配，不是熵分析——自定义格式的密钥（无前缀、无赋值语法）会漏；
   更强的方案是 `gitleaks detect --log-opts="--all"` 或 `trufflehog git --only-verified`，
   需要引入外部二进制（本仓门禁偏好零依赖 + 可在 PR job 跑的纯 stdlib 脚本）
-- 它**不扫** `data/`、`log/`、`node_modules/`、`static/assets/`
+- 它**不扫**运行时与构建产物目录（判据是 `scripts/check_secrets.py :: _SKIP_DIR_PARTS` 的字面量片段：`/data/`、`/log/`、`/static/assets/`、`node_modules/`、`__pycache__/`、`/.model_cache/`）
 - `--all-refs`（全历史）在**浅克隆下拒答**：退出码 2、不打印通过标记。CI 的 checkout
   就是 `--depth 1`（self-hosted `git fetch --depth 1`、GitHub-hosted
   `actions/checkout@v4` 默认亦然），那里 `rev-list --all` 只看得到最后一个提交，
