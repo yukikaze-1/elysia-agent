@@ -129,16 +129,26 @@ def test_unknown_tool_cascades_to_all():
     assert "整轮取消" in c2_msg["content"]
 
 
-def test_unknown_tool_does_not_affect_submit_task():
-    """未知工具被拒时，submit_task 不受连坐影响。"""
+def test_unknown_tool_cascades_to_submit_task():
+    """未知工具被拒时，submit_task 也连坐——但只补**终态回执**、绝不执行。
+
+    KB-82（Residual Correctness Closure）：此前这里断言 submit_task "不受连坐影响"
+    （即不注入任何回执），而调用方在 gate 返回 False 时**直接 return**、submit_task
+    根本不执行 ⇒ assistant 声明的 id 永久缺配对，严格 provider 下一轮 400。
+    正确语义是「连坐取消 + 补齐终态配对」（配对 ≠ 执行）。
+    """
     ok, msgs = _gate([
         _make_tc("delete_everything", "c1"),
         _make_tc("submit_task", "c2"),
     ])
     assert ok is False
-    # submit_task 被跳过，不应出现在 messages 中
+    # submit_task 必须有一条终态失败回执（否则配对缺口）
     submit_msgs = [m for m in msgs if m["tool_call_id"] == "c2"]
-    assert len(submit_msgs) == 0
+    assert len(submit_msgs) == 1
+    assert "整轮取消" in submit_msgs[0]["content"]
+    assert "未提交后台任务" in submit_msgs[0]["content"]
+    # 每个声明的 call 恰好一条回执（集合与重数都对）
+    assert sorted(m["tool_call_id"] for m in msgs) == ["c1", "c2"]
 
 
 def test_multiple_unknown_tools():

@@ -111,7 +111,15 @@ class CognitiveTools:
         """校验 LLM 产出的 tool_calls。全部通过返回 True。
         任一被拒 → 注入 GATE_REJECTED tool messages 到 messages，返回 False。
 
-        submit_task 被跳过——它是合成工具，有自己的 _handle_submit_task 校验。
+        submit_task 不参与**校验**——它是合成工具，有自己的 _handle_submit_task
+        校验；但它仍必须参与**配对**（KB-82）。
+
+        **协议不变量（TP1/TP2/TP3，KB-82）**：每一个已经出现在 assistant 消息里的
+        tool call，在进入下一次 provider generation 前都必须有**恰好一个**结构化
+        tool-result 配对，无论该调用是 executed / rejected / denied / gated /
+        invalid / failed。严格 OpenAI 兼容 provider（含仓内默认 `deepseek`）在下一轮
+        看到"声明了 N 个、只回复了 M<N 个"会直接 400，而 400 不在重试集合里 ⇒ 该回合
+        响亮失败。**配对 ≠ 执行**：被拒绝的调用只补一条终态失败回执，绝不执行。
 
         Args:
             tool_calls: LLM 产出的 ToolCall 列表。
@@ -121,8 +129,9 @@ class CognitiveTools:
         Returns:
             True 表示全部通过，False 表示有工具被拒绝。
         """
-        # 1. 拆分：submit_task 单独放行
+        # 1. 拆分：submit_task 单独放行（不校验），但记下它的 id 供配对用
         gate_tcs = [tc for tc in tool_calls if tc.function.name != "submit_task"]
+        submit_tcs = [tc for tc in tool_calls if tc.function.name == "submit_task"]
 
         # 2. 构建已知工具名集合：definitions() 暴露脱点名（desktop.* → desktop_*），
         #    反查回运行时名后与 _execute_tool_round 反查过的 tc.function.name 对齐。
@@ -177,6 +186,22 @@ class CognitiveTools:
                     "tool_call_id": tc.id,
                     "content": tr.llm_content,
                 })
+            # 5. submit_task 同样连坐——调用方（`_execute_tool_round`）在本方法返回
+            #    False 时**直接 return**，submit_task 一个都不会执行；若不给它补回执，
+            #    assistant 声明的 id 就永久缺配对（KB-82）。这里显式写进 rejected_ids，
+            #    避免"被拒 id 集合"与"已回执 id 集合"两个概念漂移成不同集合。
+            for tc in submit_tcs:
+                tr = ToolResult.fail(
+                    name="submit_task",
+                    error="本轮其他工具校验失败，整轮取消（未提交后台任务）",
+                    error_type=ErrorType.GATE_REJECTED,
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": tr.llm_content,
+                })
+                rejected_ids.add(tc.id)
             return False
 
         return True
