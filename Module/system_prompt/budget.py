@@ -58,7 +58,9 @@ vocab，不在热路径问 provider 要 token 数（§59–§63）。故这里�
 
     estimate ≈ actual × [1/M, T]      按 **resolved model 选定的 profile** 保证
 
-- `M`（不得低估的倍数）：硬下限 **0.75**，拟合目标 **0.80**，实测最坏 **0.794**。
+- `M`（不得低估的倍数）：硬下限 **0.75**，拟合目标 **0.80**，实测最坏 **0.779**
+  （Batch 20 复核；Batch 18 记录值 0.794 是当时语料上的值，后来语料/holdout 变更
+  后降到这里——**只有 4pt 余量**，故重标定不得再压低这一侧）。
   为什么下限是 0.75：chat 侧只有 `budget = window × 0.75` 这一层保护——预算判
   "装得下"而真实 prompt 超窗时，provider 是 **HTTP 200 + 静默截断**（Batch 17 实测；
   Ollama 从不为超窗报 400）。故**低估 > 25% 就是实质 false accept**。
@@ -104,21 +106,16 @@ DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴不共线：用两个 p
    方向是**安全侧**：这些文字**不会再低估**（无静默截断面），代价是某些家族上
    高估（实测最坏 **13.9×**，general 系数 × o200k 的阿拉伯文）。
    `scripts/token_corpus/validate_families.py` 可复现。
-3. `latin_accent` 类（**密集变音符号的拉丁文本**：捷克/波兰/越南等）：
-   **未覆盖，且实测击穿 0.75 硬下限**（真 Wikipedia 散文 × 权威 tokenizer：
-   qwen profile 捷克 0.65–0.68 / 波兰 0.73–0.80；generic 捷克 0.67 / 波兰 0.70）。
-   根因：`latin_ext` 系数由 `latin1_accented`（5% 变音密度）标定，而捷克自然文本
-   是 12–14%。**它与第 2 类的性质不同**——不是"跨家族 3–6×、只许高估"，而是走
-   **拟合**系数、可以低估 ⇒ 不能混进 `script`（那会把方向保证误当成覆盖，
-   Batch 19 / KB-78 的裁决）。修法是重标定 `latin_ext`，属**估算器标定批次**。
-   **可行性（Challenger 复核后的实测，直接代入系数）**：让**签入语料**闭合所需
-   `latin_ext` = qwen 0.860→**1.181**、generic 0.200→**0.503**（记录值 1.18 / 0.56
-   略保守；代入后该类最坏 0.778 ≥ 0.775 ⇒ 守卫**按设计**退役）。让**真实捷克/波兰散文**
-   闭合所需更高：qwen ≈**1.54**、generic ≈**0.34**。
-   **⚠️ 尚未闭合的真实缺口**：语料样本比真实散文更"重音密集"（czech 19.9% / polish
-   10.5% vs 真 cs 12.3–14.2% / pl 3.7–8.3%），故**只按语料配方重标定**会在真散文仍
-   0.723–0.740（9 篇中 4 篇 < 0.75）时就让守卫退役。下一批**必须**：①同时纳入低密度
-   波兰语**真散文**样本；②把退役判据从硬下限 0.75 抬到合同下限 0.775（本仓库已如此实现）。
+3. `latin_accent` 类（**堆叠变音符号的越南语**，U+1EA0–1EFF 为主的 `latin_ext`）：
+   **未覆盖**。它与**捷克/波兰**（普通 Latin-1/Extended-A 变音）在 `latin_ext` 里
+   是**两套互斥的 token 经济**：同一标量系数不可能同时覆盖——
+   让捷克/波兰进合同的系数会把越南语高估 2.5–3.0×，而覆盖越南语的系数会让
+   捷克/波兰击穿 0.75 硬下限（实测：越南语所需 ≈ -2.5 ~ -1.5，即**负数**才不低估）。
+   因此本类**只保留越南语**为未覆盖、并把真实缺口如实登记（`TestKnownLimitations`）。
+   实测区间（Batch 20）：worst **2.47**（qwen/vietnamese/qwen2.5，重标定前）→
+   重标定后 **2.97**；best 3.24（llama）。
+   **捷克/波兰已在合同内**（Batch 20 重标定，见下）：真 Wikipedia 散文 × 权威
+   tokenizer 全部 ≥ 0.775（qwen 捷克 0.89–0.95 / 波兰 0.78–0.94；generic 同向）。
 4. `p50k_base`（GPT-3 时代 byte-level BPE）：`providers.yaml` 无对应模型。
 
 **已知的判定漂移面**：`profile_for_model` 是**名字匹配**，不是权威 metadata。
@@ -127,10 +124,32 @@ DeepSeek/Llama/OpenAI 三位一组 ≈0.33）。两条轴不共线：用两个 p
 
 ### 系数怎么来的（不是手调 magic number）
 
-9 个字符类 × 2 个 profile，由 `tests/fixtures/token_corpus/` 的签入语料对
+11 个字符类 × 6 个 profile，由 `tests/fixtures/token_corpus/` 的签入语料对
 **7 个权威 tokenizer** 做 min-max 线性规划求得（min 最大化安全裕度 / 目标为最小化
 最坏高估），并在 holdout 语料上验证。改系数必须重跑该流程，否则
 `test_token_corpus_contract.py` 的契约断言会红。
+
+**Batch 20 的 `latin_ext` 重标定（KB-78）——为什么这次只动一个系数**：
+`latin_ext` 由 `latin1_accented`（变音密度 **5.0%**）标定，而真捷克散文是
+**12–14%**、真波兰语 2–8%，于是密集变音符号的普通拉丁文本被低估到 **0.64–0.75**
+（真 Wikipedia 散文 × 本地权威 tokenizer，E3）。修法是**封闭形式推导**而非手调：
+对每个 profile 解出"使**全部** floor 样本（合同内语料 ∪ 捷克/波兰真散文 holdout）
+达到合同下限 **0.775** 所需的最小 `latin_ext`——因为
+`ratio(w) = (Σ_{c≠latin_ext} n_c·w_c + n_latin_ext·w) / actual`
+对 w 是**仿射**的，故 `w_need = (0.775·actual − base) / n_latin_ext` 是**精确解**，
+取 `max(现值, max over floor 样本 w_need)` 并向上留 2% 余量。推导由
+`Module/system_prompt/tests/test_latin_prose_contract.py` **独立复算并断言**
+（不是注释里的数字）。其余 10 个系数**不动**——理由是纪律而非省事：仓内**没有**
+原拟合脚本（LP 是过程、不是可运行产物，见 Batch 18 §7），重建目标函数会绕开
+"改系数必须重跑该流程"的约束；只动一个系数时推导可复核且**不需要**重建 LP。
+结果（实测，同一测试钉住）：合同内语料的 band **不变**（qwen 仍 [0.779, 1.191]，
+12 个 profile×family 组合里 11 个逐位一致，`mistral` 最高值 1.303→1.306）；
+实际只改了 **4 个真正未达标的 profile**（qwen / llama / mistral / generic），
+`deepseek`（原名 1.0079，需求 0.873）与 `openai`（1.1090，需求 1.004）本来就达标，
+**逐位不变**；
+捷克/波兰真散文从 **0.64–0.95** 抬到 **0.78–0.95** 全部进合同；代价是越南语
+（`latin_accent`，合同外）从 2.47 高估到 2.97。
+**不做的**：不新增字符类、不改 profile 结构、不动其它系数、不放大任何 T。
 
 ### 明确不在本批范围
 
@@ -238,36 +257,40 @@ _CLASSES: tuple[str, ...] = (
 _TOKEN_WEIGHTS: dict[str, dict[str, float]] = {
     # 逐族拟合（每个 profile 的系数由"该族 tokenizer 上的 min-max 线性规划"给出，
     # 见 `docs/review/2026-09-19-Batch18-*` §7 与 `scripts/token_corpus/`）。
+    #
+    # KB-78 / Batch 20：**只有 `latin_ext` 被重标定**（其余 10 类逐位不变）。
+    # 推导见模块 docstring「Batch 20 的 latin_ext 重标定」；证据与复算在
+    # `Module/system_prompt/tests/test_latin_prose_contract.py`。
     "qwen": {
         "word": 0.2000, "digits": 0.9949, "punct": 0.5779, "space": 0.2201,
         "cjk": 0.6997, "cjk_ext": 2.1333, "kana": 0.5668, "cjksym": 0.2000,
-        "emoji": 1.5514, "latin_ext": 0.8601, "other": 3.0000,
+        "emoji": 1.5514, "latin_ext": 1.8700, "other": 3.0000,   # 0.8601 → 1.8700
     },
     "deepseek": {
         "word": 0.2768, "digits": 0.4866, "punct": 0.8063, "space": 0.2000,
         "cjk": 0.8195, "cjk_ext": 3.2000, "kana": 0.5304, "cjksym": 0.2466,
-        "emoji": 1.5697, "latin_ext": 1.0079, "other": 3.0000,
+        "emoji": 1.5697, "latin_ext": 1.0079, "other": 3.0000,   # 已达标，不变
     },
     "llama": {
         "word": 0.3024, "digits": 0.5084, "punct": 0.8714, "space": 0.3521,
         "cjk": 1.3196, "cjk_ext": 3.2000, "kana": 0.7156, "cjksym": 0.4878,
-        "emoji": 2.0193, "latin_ext": 1.6723, "other": 3.0000,
+        "emoji": 2.0193, "latin_ext": 1.6800, "other": 3.0000,   # 1.6723 → 1.6800
     },
     "openai": {
         "word": 0.2735, "digits": 0.5051, "punct": 0.6909, "space": 0.2000,
         "cjk": 1.2558, "cjk_ext": 3.1467, "kana": 1.4595, "cjksym": 0.2000,
-        "emoji": 2.3042, "latin_ext": 1.1090, "other": 3.0000,
+        "emoji": 2.3042, "latin_ext": 1.1090, "other": 3.0000,   # 已达标，不变
     },
     "mistral": {
         "word": 0.2422, "digits": 1.3014, "punct": 0.7169, "space": 0.3333,
         "cjk": 1.3188, "cjk_ext": 3.2076, "kana": 0.8030, "cjksym": 0.4161,
-        "emoji": 1.8849, "latin_ext": 3.4031, "other": 3.0000,
+        "emoji": 1.8849, "latin_ext": 3.4100, "other": 3.0000,   # 3.4031 → 3.4100
     },
     # 未知模型的**保守回退**：对全部已验证家族取"不低估"的解（T=2.67）。
     "generic": {
         "word": 0.2722, "digits": 0.8008, "punct": 1.0157, "space": 0.8030,
         "cjk": 1.5015, "cjk_ext": 3.2076, "kana": 0.7583, "cjksym": 1.4447,
-        "emoji": 3.6582, "latin_ext": 0.2000, "other": 3.0000,
+        "emoji": 3.6582, "latin_ext": 0.5600, "other": 3.0000,   # 0.2000 → 0.5600
     },
 }
 

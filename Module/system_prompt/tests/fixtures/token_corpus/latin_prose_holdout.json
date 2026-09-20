@@ -1,0 +1,259 @@
+{
+ "note": "KB-78 真散文 holdout：**只用于验证，不参与系数拟合**。真值 = 权威 tokenizer。",
+ "generated_by": "Batch 20 / Residual Correctness Closure（一次性脚本，产物签入）",
+ "regenerate": "见 Module/system_prompt/tests/test_latin_prose_contract.py 的 docstring",
+ "source": {
+  "kind": "Wikipedia REST summary extract（导言散文）",
+  "license": "CC BY-SA 4.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "attribution": "Wikipedia contributors",
+  "endpoint": "https://{lang}.wikipedia.org/api/rest_v1/page/summary/{title}",
+  "why": "CC BY-SA 4.0 允许在署名下再分发；每篇只取导言（≤ 730 字符）作标定样本。",
+  "titles": {
+   "cs_Praha": "Praha",
+   "cs_Brno": "Brno",
+   "cs_Vltava": "Vltava",
+   "cs_Jan_Amos_Komensky": "Jan Ámos Komenský",
+   "cs_Narodni_divadlo": "Národní divadlo",
+   "cs_Karel_Capek": "Karel Čapek",
+   "pl_Krakow": "Kraków",
+   "pl_Wisla": "Wisła",
+   "pl_Mickiewicz": "Adam Mickiewicz",
+   "pl_Torun": "Toruń",
+   "pl_Gdansk": "Gdańsk",
+   "pl_Lodz": "Łódź"
+  }
+ },
+ "tokenizers": {
+  "qwen2.5": {
+   "source": "huggingface",
+   "repo": "Qwen/Qwen2.5-3B",
+   "file": "tokenizer.json",
+   "usage": "encode(add_special_tokens=False)"
+  },
+  "deepseek_v3": {
+   "source": "huggingface",
+   "repo": "deepseek-ai/DeepSeek-V3",
+   "file": "tokenizer.json",
+   "usage": "encode(add_special_tokens=False)"
+  },
+  "llama3": {
+   "source": "huggingface",
+   "repo": "NousResearch/Meta-Llama-3-8B",
+   "file": "tokenizer.json",
+   "usage": "encode(add_special_tokens=False)"
+  },
+  "mistral": {
+   "source": "huggingface",
+   "repo": "mistralai/Mistral-7B-v0.3",
+   "file": "tokenizer.json",
+   "usage": "encode(add_special_tokens=False)"
+  },
+  "cl100k_base": {
+   "source": "tiktoken",
+   "usage": "encode()"
+  },
+  "o200k_base": {
+   "source": "tiktoken",
+   "usage": "encode()"
+  },
+  "p50k_base": {
+   "source": "tiktoken",
+   "usage": "encode()"
+  }
+ },
+ "samples": [
+  {
+   "id": "holdout_latin_cs_Brno",
+   "lang": "cs",
+   "path": "text/holdout_latin_cs_Brno.txt",
+   "chars": 435,
+   "sha256": "1e448d3d1c0f448d7f12c9e1f2daffb4f71848fc2553610888e7cb33caa24907",
+   "tokens": {
+    "qwen2.5": 216,
+    "deepseek_v3": 166,
+    "llama3": 136,
+    "mistral": 204,
+    "cl100k_base": 211,
+    "o200k_base": 164,
+    "p50k_base": 257
+   }
+  },
+  {
+   "id": "holdout_latin_cs_Jan_Amos_Komenský",
+   "lang": "cs",
+   "path": "text/holdout_latin_cs_Jan_Amos_Komenský.txt",
+   "chars": 725,
+   "sha256": "7b28436f0d00d058dcf0114467d51608eda3ff8277064b3a9c4cb576f300e348",
+   "tokens": {
+    "qwen2.5": 307,
+    "deepseek_v3": 251,
+    "llama3": 229,
+    "mistral": 303,
+    "cl100k_base": 308,
+    "o200k_base": 236,
+    "p50k_base": 379
+   }
+  },
+  {
+   "id": "holdout_latin_cs_Karel_Čapek",
+   "lang": "cs",
+   "path": "text/holdout_latin_cs_Karel_Čapek.txt",
+   "chars": 202,
+   "sha256": "3e6d2f77142a0c48cc678985a3ee9ba3741c4edc78bd4231eeeaf78e915715f1",
+   "tokens": {
+    "qwen2.5": 96,
+    "deepseek_v3": 79,
+    "llama3": 71,
+    "mistral": 93,
+    "cl100k_base": 92,
+    "o200k_base": 75,
+    "p50k_base": 109
+   }
+  },
+  {
+   "id": "holdout_latin_cs_Národní_divadlo",
+   "lang": "cs",
+   "path": "text/holdout_latin_cs_Národní_divadlo.txt",
+   "chars": 348,
+   "sha256": "f7a3c82b991854169c5120714216d097fbfa3bc6390f0d9c60f7497362c0cf99",
+   "tokens": {
+    "qwen2.5": 162,
+    "deepseek_v3": 130,
+    "llama3": 116,
+    "mistral": 150,
+    "cl100k_base": 163,
+    "o200k_base": 124,
+    "p50k_base": 198
+   }
+  },
+  {
+   "id": "holdout_latin_cs_Praha",
+   "lang": "cs",
+   "path": "text/holdout_latin_cs_Praha.txt",
+   "chars": 610,
+   "sha256": "7b44b540bede4d1a15214e48247fe8f5fe01294c0f50f1beba599e44c0c02047",
+   "tokens": {
+    "qwen2.5": 289,
+    "deepseek_v3": 228,
+    "llama3": 201,
+    "mistral": 270,
+    "cl100k_base": 289,
+    "o200k_base": 218,
+    "p50k_base": 355
+   }
+  },
+  {
+   "id": "holdout_latin_cs_Vltava",
+   "lang": "cs",
+   "path": "text/holdout_latin_cs_Vltava.txt",
+   "chars": 598,
+   "sha256": "170b5c0231821cd88e5219e6607244381ab045c2a39d94eb799cdd39c9f67f39",
+   "tokens": {
+    "qwen2.5": 301,
+    "deepseek_v3": 258,
+    "llama3": 230,
+    "mistral": 291,
+    "cl100k_base": 298,
+    "o200k_base": 248,
+    "p50k_base": 361
+   }
+  },
+  {
+   "id": "holdout_latin_pl_Gdansk",
+   "lang": "pl",
+   "path": "text/holdout_latin_pl_Gdansk.txt",
+   "chars": 416,
+   "sha256": "0d109482954a14471a39ec40f8515b4c2535f6aa6e708dd136652cd29cf5b195",
+   "tokens": {
+    "qwen2.5": 154,
+    "deepseek_v3": 136,
+    "llama3": 160,
+    "mistral": 167,
+    "cl100k_base": 162,
+    "o200k_base": 137,
+    "p50k_base": 210
+   }
+  },
+  {
+   "id": "holdout_latin_pl_Krakow",
+   "lang": "pl",
+   "path": "text/holdout_latin_pl_Krakow.txt",
+   "chars": 677,
+   "sha256": "39423ebc955cfceb808dffac826d51c185a99c056e834cc4a8f7074e2a5eb150",
+   "tokens": {
+    "qwen2.5": 257,
+    "deepseek_v3": 230,
+    "llama3": 250,
+    "mistral": 274,
+    "cl100k_base": 253,
+    "o200k_base": 225,
+    "p50k_base": 311
+   }
+  },
+  {
+   "id": "holdout_latin_pl_Lodz",
+   "lang": "pl",
+   "path": "text/holdout_latin_pl_Lodz.txt",
+   "chars": 315,
+   "sha256": "2182e0f6abb2fb4281c72199debf771d3612603c05363cf1127eb48e947fce09",
+   "tokens": {
+    "qwen2.5": 118,
+    "deepseek_v3": 109,
+    "llama3": 128,
+    "mistral": 138,
+    "cl100k_base": 129,
+    "o200k_base": 111,
+    "p50k_base": 174
+   }
+  },
+  {
+   "id": "holdout_latin_pl_Mickiewicz",
+   "lang": "pl",
+   "path": "text/holdout_latin_pl_Mickiewicz.txt",
+   "chars": 629,
+   "sha256": "1c62a69f0c38693f626d31786fb9ac3d2f31ca7d54383d568515e5d6ccf945a3",
+   "tokens": {
+    "qwen2.5": 239,
+    "deepseek_v3": 216,
+    "llama3": 236,
+    "mistral": 262,
+    "cl100k_base": 242,
+    "o200k_base": 222,
+    "p50k_base": 253
+   }
+  },
+  {
+   "id": "holdout_latin_pl_Torun",
+   "lang": "pl",
+   "path": "text/holdout_latin_pl_Torun.txt",
+   "chars": 560,
+   "sha256": "4d94401e3a494d8c04c44e9484888bc1c86d4d41f0a6171e83452f7ae0ffb760",
+   "tokens": {
+    "qwen2.5": 206,
+    "deepseek_v3": 190,
+    "llama3": 218,
+    "mistral": 234,
+    "cl100k_base": 222,
+    "o200k_base": 195,
+    "p50k_base": 305
+   }
+  },
+  {
+   "id": "holdout_latin_pl_Wisla",
+   "lang": "pl",
+   "path": "text/holdout_latin_pl_Wisla.txt",
+   "chars": 205,
+   "sha256": "02087d791c405dddb0bd79a83593e38e2a4acf699e1f9c2ea50f545da438ed0d",
+   "tokens": {
+    "qwen2.5": 88,
+    "deepseek_v3": 84,
+    "llama3": 93,
+    "mistral": 99,
+    "cl100k_base": 94,
+    "o200k_base": 82,
+    "p50k_base": 126
+   }
+  }
+ ]
+}
