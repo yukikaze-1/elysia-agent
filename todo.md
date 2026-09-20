@@ -47,7 +47,7 @@
 |---|---|---|---|---|---|---|
 | **GR-24** | `_option_mismatches` **不比对 `partialFilterExpression`**（且 `EXPECTED_INDEX_OPTIONS` 根本不登记该索引）⇒ `character_instances.owner_user_id_1_character_id_1_canonical_1` 若在库里是**普通**唯一索引（同样 `unique:true`）时**不报冲突**，而 `create_index(partialFilterExpression=…)` 必抛 `IndexKeySpecsConflict`（**E3 实测 code=86**）⇒ 仓储 `_db` 永久 None、整个 character_instances 域 503，而启动自检报健康。历史窗口：`0962fb88`(09-04) 建普通唯一 → `c10d3a52`(09-07) 改 partial，无迁移（本地开发库当前正确） | DEPLOYMENT | MEDIUM | **E3**(19) | **ARCHITECTURE_DEBT**（无 required CI 门禁对它变红） | 给「部分索引」建独立登记语义（登记表 + 比对 + 静态守卫 `_OPTION_KWARGS` 补维度）；**不要**自动迁移（§154） |
 
-### 1.3 Guardrail / CI（7 条；其中 GR-4/GR-16 是**已复现的假绿**）
+### 1.3 Guardrail / CI（4 条；其中 GR-4/GR-16 是**已复现的假绿**）
 
 | ID | 标题 | Reach | Sev | Ev | State | Reopen / 下一步 |
 |---|---|---|---|---|---|---|
@@ -55,11 +55,8 @@
 | **GR-16** | desktop golden **未从 runtime 单源**：`gen_contract_frames.py:242` 的 `tool.request` 携带 `offset/limit`，而 runtime 的 `FileReadParams` 只有 `path`（`plugin.py:64-68`，`:119` 发 `model_dump()`）⇒ 该 payload **不可产生**；`--check` 只做 generator↔archive 自洽 | CI_ONLY | MEDIUM | E1 | **PARTIALLY_GUARDED** | 要么 golden 按真实 `FileReadParams` 重新生成，要么 `FileReadParams` 真加这两字段（需前端契约决策）；`--check` 增一条"golden 参数 ⊆ runtime param model"的交叉断言 |
 | **KB-27** | `_AFTER_RESPONSE_DRAIN_TIMEOUT`（`loop.py:54`）以 `drain(drain_timeout=…)` 传入，而 `check_timeout_budget.py` 只认 `wait_for/wait/timeout` + `timeout=` kwarg ⇒ 该预算**对门禁不可见**，门禁却打印"R3 具名预算全部表态" | INTERNAL | LOW | **E2**(19：`--list` 零命中) | **PARTIALLY_GUARDED** | 扩 `_wait_kind`/kwarg 匹配到 `*timeout*` 形参名（保守方向：宁可多要求表态）|
 | **KB-32** | 同族：`_turns.drain(timeout=3.0)`（`lifecycle.py:387`，裸字面量）与 `_CHANNEL_SEND_TIMEOUT=5.0`（`output/manager.py:40`）的"外层 3.0 < 内层 5.0"不对称对门禁不可见（正是 S2-A3 那条规则要防的形状） | INTERNAL | LOW | E1 | **ARCHITECTURE_DEBT** | 与 KB-27 同批：门禁要能表达**跨模块**预算（或把这两个常量收口成同一处可登记的形状）|
-| **GR-15** | `pytest.ini` 未启用 `--strict-markers`：漏 marker/拼错**分层** marker 已被根 `conftest.py` 钩子挡住，但"合法分层 marker + 拼错的附加 marker"仍静默影响选择 | CI_ONLY | LOW | E1 | **PARTIALLY_GUARDED** | 加 `--strict-markers`（先跑一遍确认无未注册 marker 在用）|
-| **GR-1** | 文档数字门禁**硬编码三份**文档（`test_doc_counts.py:43`）⇒ `docs/architecture.md:381` 的「43 个 `@property`」（真值 46）永不被检查 | INTERNAL | LOW | E1 | **PARTIALLY_GUARDED** | 把 `docs/architecture.md` 加进 parametrize（立刻变红 ⇒ 顺手把 43 改成 46）|
-| **GR-14** | `docs/testing.md` 档位计数陈旧（自称脚本生成）：实测 Quick=Normal=**6450**、全量 **6551**，文档写 6002/5952 | INTERNAL | LOW | **E2**(19) | **OPEN**（文档） | 下次改 `docs/testing.md` 时用 `make check-test-sets` 的实测数字 |
 
-### 1.4 Observability / Tooling（9 条；不影响 runtime correctness）
+### 1.4 Observability / Tooling（10 条；不影响 runtime correctness）
 
 | ID | 标题 | Reach | Sev | Ev | State | 说明 / 触发 |
 |---|---|---|---|---|---|---|
@@ -98,13 +95,11 @@
 | **KB-74** | 估算合同外的**两条轴**：家族（generic 保守并集）与内容。**内容轴在 Batch 20 收窄**：`latin_accent` 只剩越南语（捷克/波兰已按 KB-78 进合同，见 TE10）；`repeat`（[0.58, 5.34]）与 `script`（只许高估，实测最坏高估 **13.9×**）**不可闭合**——它们由 `UNCOVERED_CONTENT_CLASSES` 单一定义 + `TestKnownLimitations` 钉住区间 | 出现新的"有限字符类无法闭合"的内容轴，或某 provider 的词表使 `repeat` 区间越界 |
 | **KB-76** | 工具 schema 结构化常量在"参数量多而描述极短"的形状上高估到 1.57×（方向安全；preview 不传 tools ⇒ 无 false reject 路径）| 出现真实的高参数低描述工具集（自动生成的 CRUD），按实测重标定 |
 | **KB-2** | LLM 偶不发 `<mood>`：回退链是**设计好的**降级路径（确定性、有用例），omission 是模型合规问题，不产生假状态 | mood 明显错误/冻结 ⇒ 才考虑结构化输出能力 |
-| **KB-4** | VAD 易被环境音触发：`aggressiveness=3` 已在两处硬编码，且已有 5 道缓解（最短段/最短语音块/冷却/短丢弃/空转写丢弃）；残余漏触发率是**产品选择**（PD-15）| 用户报告"嘈杂环境里角色自打断"|
 | **KB-8** | tokenizer NORMAL 态 `_pending`/`_held` 无上界：增长**按未中断 run**（每个 `\n`/空格/句末/`<`/`（(` 都 flush）、每轮 reset，同文本调用方也已持有 ⇒ 无额外 MB 级驻留；代价是二次拼接（100k 字符 0.78s）| 真实回合出现 >64KB 未中断 run（内联 base64/data-URI），或非 chat 消费者喂无界流 |
+| **KB-4** | VAD 易被环境音触发：`aggressiveness=3` 已在两处硬编码，且已有 5 道缓解（最短段/最短语音块/冷却/短丢弃/空转写丢弃）；残余漏触发率是**产品选择**（PD-15）| 用户报告"嘈杂环境里角色自打断"|
 | **KB-20** | `_download_and_forward` 的宽 `except` 把输出侧**契约/编程错误**也记成"TTS 失败"（有意为之：SP1/SP2 门控要释放），但遥测无法区分；中途失败会留 stale `_audio_forwarding` 且不发 `audio_end` | "TTS failed" 事件最终追到契约 bug，或客户端卡在无 `audio_end` 的播放上 |
 | **KB-11** | `_retarget_default_character` 重试循环读**缓存** revision（冲突路径刻意不刷）⇒ 权威模式下并发改档案会 3 轮重放同一 expected、必然 `RevisionConflictError`（fail-closed、无损坏、假失败）| 两个 agent 进程/`mongosh` 与角色归档写并发（跨进程 409）|
 | **KB-19** | `flush_emojis` 并发 pop ⇒ KeyError（形状已复现）：两个调用者都与 live popper 有序（`wait_all` 之后 / drain 完成后；超时分支**不做** flush）| 新的 `flush_emojis` 调用者可能与在途播放 pop 重叠 |
-| **KB-10** | TTS 取消 + HTTP 流清理：**FALSIFIED**——per-request client 在 `finally` 关闭，探针实测 `aclose` 1 次、0 泄漏任务（2026-06-22 记录指向重构前的**共享** client）| 重新引入共享/pooled client，或流式消费者被放弃且不 `aclose()` |
-| **KB-18** | `_task_by_sid` 保留已完成任务：**FALSIFIED**——每次 `stream_sentence` 都剪枝，48 句/8 回合峰值 5 条 | 移除逐句剪枝 |
 | **KB-21** | SPEAKING 语义（"服务端正在输出本轮 response"，与"用户听到什么"无关）已写进 `invariants.md` §4.2 并有守卫用例；缺的只是 wire 契约注释 | 有消费方把 SPEAKING 当"音频播完"（UI 指示/打断策略）|
 | **KB-3** | INTERRUPT + TTS emoji 合并残留竞态：后端那半已修（`4bb8aff7`，S3-G7），**剩余在外部前端仓** | 前端仓修（前端批次）|
 | **KB-39** | `accepted` 的边界承诺（Transport Accepted + 幂等决策；**不**承诺持久化/一定被回复）写在 Batch 12 记录 §3.2，但**没有**写进消费方可见的 wire 文档 | v2 客户端据 `accepted`/`idempotency_durable` 推导超时/重试策略 |
@@ -112,22 +107,15 @@
 | **KB-17** | `PATCH /api/sessions/{id}` 的 title **无长度上限**，而 `POST` 限 200、搜索词上限也是 200 ⇒ >200 字标题只能用 ≤200 字搜索词命中（两条写路径契约不对称，**无错误真值**：搜索是转义子串匹配，≤200 字词仍能命中；`SessionSummary.title` 无上限 ⇒ 不会 500）| **PRODUCT_DECISION_REQUIRED**（PD-16）| 触发：出现"改了名却搜不到"的报告 ⇒ 对齐上限 |
 | **KB-33** | `finish_turn` 12 组合里 5 组抛 `ValueError`：唯一调用链（`_finalize_turn`→`_transition_idle`）处 FSM ∈ {THINKING, SPEAKING} ⇒ 5 组不可达；矩阵覆盖只存在于 `tmp/`（被 `norecursedirs` 排除）| 出现 `finish_turn` 的新调用者/相位，或补 gated 组合矩阵 |
 | **KB-35 / KB-36 / KB-37** | `handle_interrupt` 的 `try` 起点/`finally` 抛异常顶替 `CancelledError`（KB-35）、并发第二调用者重复广播（KB-36）、`_notify` 顺序 best-effort 让后续订阅者收不到（KB-37）——三者都在 `invariants.md` §4.4 落纸，且各自前提（能抛的 `finally`、第二个并发调用者、会挂起的 `on_change` 订阅者）仓内均**不存在** | `finally` 里新增可能抛异常的语句 / 引入第二个并发调用者 / 注册第二个 `on_change` 订阅者 |
-| **KB-30** | ~~回合级多写入无 rollback~~：**FALSIFIED**（E2：回合级写入都在最后一个 pre-claim await **之后**，post-claim 取消会清 `_clock`，`_session` 未被污染 ⇒ 没有需要回滚的状态）| 在 `_prepare_turn` 最后一个挂起点**之前**新增回合级写入 |
-| **KB-45** | ~~`_handle_user_input` 抢占分支不可达~~：**FALSIFIED**（E2：直投 barge-in 正常走到该分支，历史/归因完整）| 直投入口开始按相位门控（该分支可能重新变死代码）|
 | **KB-26 / KB-54** | `_current_task` 陈旧句柄：5 个（KB-54 补第 6 个：`ws_handler.py:522` 读 generation ctx，守卫是**连接归属**而非 `.done()`）读者全部良性；ownership truth 已由 `_generation_ctx` + `_started_cognitive_tasks` 接管 | 出现**无** `.done()`/连接归属守卫的新读者 |
 | **KB-28** | `IDLE 已广播 / 锁未释放`：主形态已被 Batch 12/13 判据覆盖；残留的"严格两发停止静默丢失"需要仓内**不存在**的挂起 `on_change` 订阅者 | 引入第二个 `on_change` 订阅者或让 `_notify` 可挂起 |
-| **KB-34** | 第二发取消落在 `bridge.pending_calls()` 上时在途 desktop 调用不会被逐条 `cancel_call`（§4.4 的 best-effort 分层，明确不修）| 出现运行期 sweep，或残留 pending 调用对用户可见 |
 | **F16** | `terminal_payload.get(k, default)` 在值为 `null` 时不生效 | 出现 `null` 值载荷 |
 | **F12** | 失败细节长度上界（现文本是引擎编写的短诊断串）| 某 provider 回显长文本 |
-| **RB-1** | **FALSIFIED as a risk**（Batch 19）：三个字段都是**只写不读**（`sha256` 不在 `AttachmentInfo`；`delivered_at` 只写一处；`metadata.incomplete` 由 finalize 写、读取按 dict 默认值）⇒ 无"旧记录不可读"风险 | 触发：出现需要这三个字段的读者（完整性校验 / UI 展示不完整）|
 | **N-12** | 存量文档 `pronouns: ""` 会让 `GET /api/me` 500（**CURRENTLY_UNREACHABLE**：PUT 与响应契约都拒空串，仓内无写入者）| 出现写入者或存量数据出现空串 |
 | **N-2** | `ProfileStore._load_from_file` 读回失败会**重新 bootstrap**（静默重置）：**仅本地/单测模式**可达（生产装配恒定权威 repo；前半 `_update_local` 绕过 pydantic 已由 `fb438167` 关闭）| 本地模式被产品化 / `_load_from_file` 路径进入生产 |
 | **KB-14** | `core/tests/fake_llm.py` 的 `fault="http_429"/"http_503"` 路径 import 不存在的 `Module/llm/errors.py`（唯一 fault 调用者不用这两个值 ⇒ CURRENTLY_UNREACHABLE）| 第一个使用这两个 fault 值的测试 |
 | **GR-2 / GR-5 / GR-6 / GR-7 / GR-8 / GR-9 / GR-10 / GR-11 / GR-12 / GR-13 / GR-17 / GR-18 / GR-21 / GR-22 / GR-23 / GR-25** | 见 [Batch 19 执行记录](docs/review/2026-09-20-Batch19-long-tail-backlog-closure-执行记录.md) 的逐条裁决。要点：GR-2 弱用例（`test_minimax_key_present_passes` 随 ambient `.env` 走）/GR-5 私有穿透同名遮蔽（KEEP_AS_IS，回归网非完备审计）/GR-6 扫描面不含 `scripts/`·`frontend_contract/`/GR-7 非字面量私有访问不可见/GR-8 R6 条数漂移分支零覆盖（fixture 里 `entry` 恒 None）/GR-9 RUF100 未启用（1069 处 `# noqa`；同族观察：bandit 的 B608 抑制当前**惰性**）/GR-10 CI 未扫 `env:`/`with:`/`working-directory:`（**CURRENTLY_UNREACHABLE**：当前无 PR 可达 job）/GR-11 清空形态长尾（0 实例，KEEP_AS_IS）/GR-12 `if:` 守卫是 token 存在性（保守方向，KEEP_AS_IS）/GR-13 `print_test_stats.py` 不查返回码（非门禁，KEEP_AS_IS）/GR-17 `use_mocks` 死支路（7/7 调用点显式 False，**默认值仍是 True**）/GR-18 3 个 0 字节测试包/GR-21 token 结构 4 项低残留/GR-22 前端遗留（a11y/CSP/Worklet，属前端仓）/GR-23 `# type: ignore` 60 处（旧记 23）/GR-25 测试鉴别力（① 无 repo 模式覆盖了权威模式走不到的路径） | 各自触发：弱用例改为 hermetic / 首次跨包私有访问 / 新私有访问形态 / 新增 fixture 语义测试 / `# noqa` 审计批次 / 重新开启 PR CI / 新调用方省略 kwarg / 动该测试树 / 观察到重复 token 行 / 前端批次 / ignore 掩盖真实类型错误 / 补权威模式冲突用例 |
- 见 `docs/review/2026-09-20-Batch19-long-tail-backlog-closure-执行记录.md` 的逐条裁决：R6 条数漂移分支零覆盖（fixture 里 `entry` 恒 None）、`use_mocks` 死支路（7/7 调用点显式 False，默认值仍是 True）、3 个空测试包、token 结构 4 项低残留、`# type: ignore` 60 处（旧记 23）、RUF100（1069 处 `# noqa`）、前端遗留（a11y/CSP/Worklet，属前端仓）| 各自触发：新增 fixture 语义测试 / 新调用方省略 kwarg / 动该测试树 / 观察到重复 token 行 / ignore 掩盖真实类型错误 / 私有穿透纪律迁进 ruff / 前端批次 |
 | **OBS-1** | 间歇性 xdist worker 死亡（8 轮 soak 中 1 次且被并发改动污染）| 复现一次干净环境下的 worker 死亡 |
-| **OBS-2** | `context_window` 六家 provider 数值是**估算值**：其"只影响截断时机、不影响正确性"的从句经 Batch 19 复核 **FALSIFIED**（Ollama 侧该值已是真实 `num_ctx` 请求且是预算权威）| **SUPERSEDED_BY KB-13**；触发：声明窗口内的请求被 provider 400/静默截断 |
-| **OBS-3 / OBS-4** | 均 **FALSIFIED**（Batch 19）：`openai_tts.test()` 已走真实 `GET /health`；`consolidator` 持 adapter 逐次 `think()`（无冻结 raw client），Batch 1.6 §12#6 的实例早在 `_lifecycle_task_system.py:225-249` 修掉，`get_raw_client()` 生产零调用 | 触发：出现无 `GET /health` 的 TTS provider / 新的长期持有 raw client 者 |
 | **F18r** | Mongo 补投对坏文档：永久 `delivered=False` + 每次启动告警，无人工清理入口 | 出现坏文档（给一条 CLI 清理入口）|
 | **DEP-5** | `config.yaml::database.milvus_token` 带 `secret=True` ⇒ loader 显式跳过 YAML，**该行永不生效**（真凭据只走 env `MILVUS_TOKEN`）| **DOCUMENTED_LIMITATION**（loader docstring + YAML 注释已写明）；触发：运维试图用该 YAML 行启用 Milvus 认证 ⇒ 顺手改成占位注释 |
 | **DEP-2** | 无数据库迁移机制（新增集合/索引由 `ensure_index` 覆盖；删/改索引只能人工 `drop_index`）——发生频率低、影响单集合 | 需要"删/改已有索引"的部署 |
@@ -135,12 +123,11 @@
 | **SEC-1** | 真实 DeepSeek key 仍在公开 remote 历史里且**有效**（owner 裁定暂不处理；最低成本止血=只轮换 ≈10 分钟）| owner 决定 |
 | **SEC-2** | bandit Low 19 项已知基线（B603/B607 17 + B112 2）；门禁判据是 Medium+ 为 0 | 出现新的 Low 或规则变更 |
 | **DEP-7 / DEP-8 / DEP-9** | preflight truthfulness 残留（**都 fail-safe，无假绿**）：DEP-7 `sensevoice` 假 WARN（合法无地址，真默认值在代码里；**OBSERVABILITY_DEBT**）；DEP-8 model 级假 PASS（`tts.model` 音色不存在 ⇒ 预检 PASS 但启动**响亮**失败；**OBSERVABILITY_DEBT**）；DEP-9 缺 SDK 时 `run()` 裸 `ImportError`（`[FAIL]` 已先打印，只是丢了汇总；**DEFERRED_LOW_PRIORITY**）。根：DEP-7+DEP-8 同机制（preflight 自己重推可用性而不问运行期权威），DEP-9 独立 | DEP-8：model 级解析 API 出现时；DEP-7：运维按 WARN 行动时 |
-| **F5 / N-6 / N-7 / F5d** | **F5 = OBSERVABILITY_DEBT**（debug 只报主模型，task/workflow 模型无面）；**N-6/N-7 = DEFERRED_LOW_PRIORITY**（`invariants.md:1210` 陈旧行；`clean_db.py` docstring 自称有守卫而守卫不读该常量）；**F5d = FALSIFIED**（`docs/database-storage.md` 已覆盖存储/GC/删除/TTL/restart，`README.md:309` 已链接）| F5：运维需要"哪个模型跑了我的后台任务"；N-6/N-7：顺手维护；F5d：— |
+| **F5 / N-6 / N-7 / F5d** | **F5 = OBSERVABILITY_DEBT**（debug 只报主模型，task/workflow 模型无面）；**N-6/N-7 = DEFERRED_LOW_PRIORITY**（`invariants.md` 里的一处陈旧行（Batch 19 已登记；不写行号，位置随文档重排会变）；`clean_db.py` docstring 自称有守卫而守卫不读该常量）；**F5d = FALSIFIED**（`docs/database-storage.md` 已覆盖存储/GC/删除/TTL/restart，`README.md:309` 已链接）| F5：运维需要"哪个模型跑了我的后台任务"；N-6/N-7：顺手维护；F5d：— |
 | **F2 / FEAT-1** | reminder **无持久化**（进程重启即丢，用户已收到"已设置提醒"）——修法是 feature 形状（durable store + 启动恢复）| 见 §5 FEAT-1 |
 | **DEP-3** | `scripts/clean_db.py` 清 **v1** `long_term_memory`，而生产写 v2 ⇒ 从不触碰真实记忆（代码内标注"勿擅自改"）| PD-7 |
 | **DEP-4** | S2-H9 的**写侧**长度上限未做（owner 选的是运行期截历史 + 定预算）| PD-11 |
 | **P2-02r** | **PARTIALLY_GUARDED / 多半 FALSIFIED**：附件已有 ≤20 的契约上限 + 16MB 帧 / 64MB body 传输上限；残余仅 `content`/ID 无 `max_length` | 触发：新增无界契约字段，或传输上限被移除 |
-| **KB-5** | `_execute_tool` 的 60s 超时手工场景 | ≡ **GR-19**（已被 `test_tool_retry_idempotency.py` 覆盖 ⇒ FALSIFIED）|
 
 ---
 
@@ -224,9 +211,19 @@ PD-2（409 报**权威库现值**，未知则省略，Batch 6 `616e4993`）、PD
 ## 6. Closed / Superseded / Falsified Archive（一行索引）
 
 > ✅ = 已关闭/重分类。详细证据在对应 `docs/review/` 执行记录（Batch 19 与 Batch 20 的记录各一行）。
+>
+> **单一定位规则（§38）**：每条的 **canonical 状态行只有一处**。
+> **终态**（`FIXED` / `FALSIFIED` / `SUPERSEDED_BY` / `GUARDED` / `CLOSED` / `ALREADY_FIXED` / `DUPLICATE_OF`）
+> 写在本表；**未终结**（`DEFERRED_*` / `CURRENTLY_UNREACHABLE` / `ACCEPTED_RISK` /
+> `DOCUMENTED_LIMITATION` / `KEEP_AS_IS` / `OBSERVABILITY_DEBT` / `PARTIALLY_GUARDED` /
+> `PRODUCT_DECISION_REQUIRED` / `ARCHITECTURE_DEBT`）写在 §1–§5，本表**只留指针、不复制状态**。
+> 这样读者不会在两处读到同一条的两种状态。
 
 | ID | 一句话 | 关闭于 |
 |---|---|---|
+| **GR-1** | ✅ 文档数字门禁**硬编码三份**文档 ⇒ `docs/architecture.md` 的「43 个 `@property`」（真值 46）永不被检查 | **FIXED** `Batch 19`：`core/tests/test_doc_counts.py::test_property_count_matches_code` 的参数化补齐为四份（`CLAUDE.md` / `core/README.md` / `README.md` / `docs/architecture.md`）|
+| **GR-15** | ✅ `pytest.ini` 未启用 `--strict-markers` ⇒ "合法分层 marker + 拼错的附加 marker"静默影响选择 | **FIXED**：`pytest.ini` 的 `addopts` 已是 `--strict-markers` |
+| **GR-14** | ✅ `docs/testing.md` 档位计数陈旧（自称脚本生成，实为手抄；实测 6450/6551 vs 文档 6002/5952） | **FIXED**（本轮文档整理）：canonical 测试文档**不再抄写当前收集数**——图层表删掉「测试数」列、集合代数块与并行曲线里的当前值删除，一律指向 `scripts/print_test_stats.py` |
 | **KB-82** | ✅ gate 拒绝轮的协议完整性：整轮连坐时 `submit_task` 的 tool_call 只有声明、没有 `role="tool"` 配对 ⇒ 严格 provider 下一轮 400。**协议不变量 = 声明的 tool call 集合与终态回执集合相等**（集合与重数），配对 ≠ 执行 | **FIXED** `Batch 20`：`core/cognitive/tools.py::_gate_tool_calls` 第 5 步为 submit id 补终态失败回执；守卫 `core/cognitive/tests/test_tool_pairing.py`(14，修前 5 红) + `test_tool_gate.py` 语义更正的 1 条；变异 M82-1/2/3/4 全杀 |
 | **KB-78** | ✅ 密集变音符号**普通拉丁**文本（捷克/波兰真散文）击穿估算硬下限（实测 0.637–0.749 < 0.75）⇒ 预算判"装得下"而 provider 静默截断。根因：`latin_ext` 由 5.0% 变音密度的合成样本标定 | **FIXED** `Batch 20`：封闭形式重标定 `latin_ext`（只动实际未达标的 4 个 profile；qwen 0.860→1.870 / llama 1.672→1.680 / mistral 3.403→3.410 / generic 0.200→**1.149**，后者含外部队列 Yi-1.5-6B/Phi-3-mini）+ **真散文 holdout**（12 篇 Wikipedia 导言 CC BY-SA 4.0 × 7 权威 tokenizer）+ 生成脚本 `scripts/token_corpus/build_latin_prose_holdout.py`；守卫 `Module/system_prompt/tests/test_latin_prose_contract.py`(31)；合同内语料 band **不变**（qwen 仍 [0.779, 1.191]）；不变量 **TE10/TE11**；代价（越南语 2.47→3.31）登记并钉住；变异 M78-1/2/3/4/5 全杀；`validate_families.py` 复跑 6 家族全 OK |
 | **KB-56** | ✅ 「加载更多」打**全库**端点 + 回放项无 `_id` ⇒ 首页恒为全局最新 50 条、且全库 `_id` 会被 latch 成游标（跨会话污染**无界**） | **FIXED** `Batch 20`（前端）：store 绑定会话身份（`restoreFromServer(…, conversationId)`）+ 请求发起时冻结 `(sessionId, epoch)`、改打会话域端点、陈旧响应在**任何 store 变更之前**丢弃（SI1–SI4）；守卫 `frontend/src/stores/chatStore.test.ts`(11，修前 **11 红**)；接入 `frontend/package.json::test` 与 CI；变异 M56-1/2/3 全杀 |
@@ -243,13 +240,7 @@ PD-2（409 报**权威库现值**，未知则省略，Batch 6 `616e4993`）、PD
 | **GR-20** | `test_phase2/phase3` 裸 `setdefault(DEEPSEEK_API_KEY)` 污染进程 env | **FALSIFIED**（Batch 19）：已改 autouse+monkeypatch fixture |
 | **KB-10** | TTS 取消 + HTTP 流清理泄漏 | **FALSIFIED**（Batch 19，E2）：per-request client 在 finally 关闭，0 泄漏 |
 | **KB-18** | `_task_by_sid` 保留已完成任务 | **FALSIFIED**（Batch 19，E2）：逐句剪枝，峰值 5 |
-| **KB-2** | LLM 偶不发 `<mood>` | **KEEP_AS_IS**（设计好的降级链，有用例）|
-| **KB-19 / KB-33 / KB-35 / KB-36 / KB-37 / F1 / KB-42 / KB-28** | 形状真实但前提仓内不存在（并发/挂起订阅者/相位）| **CURRENTLY_UNREACHABLE**（E1/E2，Batch 19）；各自 reopen trigger 见 §2 |
 | **KB-34** | 第二发取消 + 在途 desktop 调用 | **ACCEPTED_RISK**（§4.4 best-effort 分层）|
-| **KB-8** | tokenizer `_pending`/`_held` 无上界 | **KEEP_AS_IS**（增长按未中断 run、每轮 reset、调用方已持有）|
-| **KB-51 / KB-59 / KB-21 / KB-39** | 崩溃持久化 / 改名抬升 / SPEAKING 语义 / accepted 边界 | **DOCUMENTED_LIMITATION**（合同已落纸，见 §2）|
-| **KB-20 / KB-44 / KB-55 / KB-60 / KB-63 / OBS-5 / OBS-7 / OBS-8** | 诊断/可观测缺口 | **OBSERVABILITY_DEBT**（§1.4 / §2）|
-| **KB-61 / KB-68 / KB-76 / KB-69 / KB-70 / KB-71 / KB-73 / KB-74 / KB-75** | 估算/provider 的**已知边界**（合同外或方向安全）| **ACCEPTED_RISK / DOCUMENTED_LIMITATION**（§2，各自触发条件）|
 | **AR-16** | Ollama Provider Adapter（`KB-13` 的架构出口）| **CLOSED** `11755751`（Batch 17；不变量 OL1–OL6）|
 | **KB-13** | Ollama runtime context authority mismatch（声明 8192 ≠ 服务窗口）| **GUARDED** `11755751`（Batch 17；configured=requested=observed=8192）|
 | **KB-15** | 缺/null/非字符串 `updated_at` 在 keyset 下不可达 + 游标毒化 | **GUARDED** `Batch 16`（真库 E3）|
@@ -262,9 +253,10 @@ PD-2（409 报**权威库现值**，未知则省略，Batch 6 `616e4993`）、PD
 | **N-1 / N-11** | `/ready` 探 ping 假绿 + 装载失败无可查状态 | **GUARDED** `82b80e2e` + `fc648e20`（Batch 4；PD-1 落纸 §3.1）|
 | **N-3** | 409 `details.currentRevision` 读陈旧缓存 ⇒ 谎报 | **GUARDED** `616e4993`（Batch 6；CM1–CM5）|
 | **N-10 / F6 / F7** | provider 能力假绿 / provider-test 缺省模型读 config / `/debug` 面板标志语义混用 | **GUARDED** `c70312de` + `7ef3202b` + `87cc7e38`（Batch 5）；F7 的"存在性"半 **FALSE_POSITIVE** |
-| **N-4 ≡ N-13 / N-8(guard) / B3-CB-1…B3-CB-7** | 索引选项表守卫 / `_IMAGES_DIR` 隔离守卫 / 早期 correctness 批次（B3-CB-1 `pronouns:null` 写读不一致 · `B3-CB-2` `idempotency_claims` 键永不生效 · `B3-CB-3` preflight 把可用配置判死 · `B3-CB-4` `PROTECTED_COLLECTIONS` 自称有守卫 · `B3-CB-5` 文档门禁漏根 README · `B3-CB-6` 两份 `UPDATABLE_FIELDS` · `B3-CB-7` `_IMAGES_DIR` import 期固化）| **GUARDED / FIXED / ALREADY_FIXED / FALSE_POSITIVE / KEEP_AS_IS**（Batch 3.x；见旧 §5）|
+| **N-4 ≡ N-13 / N-8(guard) / B3-CB-1…B3-CB-7** | 索引选项表守卫 / `_IMAGES_DIR` 隔离守卫 / 早期 correctness 批次（B3-CB-1 `pronouns:null` 写读不一致 · `B3-CB-2` `idempotency_claims` 键永不生效 · `B3-CB-3` preflight 把可用配置判死 · `B3-CB-4` `PROTECTED_COLLECTIONS` 自称有守卫 · `B3-CB-5` 文档门禁漏根 README · `B3-CB-6` 两份 `UPDATABLE_FIELDS` · `B3-CB-7` `_IMAGES_DIR` import 期固化）| **GUARDED / FIXED / ALREADY_FIXED / FALSE_POSITIVE / KEEP_AS_IS**（Batch 3.x；证据见 `docs/review/archive/2026-08/*` 与 `git show e11619f1:todo.md` 的旧 §5）|
 | **M19 / M20** | resume 后 pause 被销毁 / cancel 规划期不推终态 | FIXED（E2/E3，`bb69485`…`5aa7368`）|
-| **F9 / F1(旧) / 其它基础设施** | Batch 2 的 F401/CI/privacy guard；`LoggerFactory`；空 LLM 响应；`flush_after_response` 超时层不匹配；STT 运行时切换/env；WS Bearer；`.env` 模板；`memory_repo.clear_all` 守卫；后台协程所有权 43 站点；`Module/llm/registry` 反向依赖；input 层拆分；`llm_adapter.close` drain；token 统一结构；两个偶发 external 用例；`Module/tool/safety.py` 不拆；Claude 原生持久记忆 | FIXED / CLOSED（见旧 §5 与 `docs/review/archive/2026-08/*`）|
+| **（未终结项不在本表）** | `KEEP_AS_IS` / `CURRENTLY_UNREACHABLE` / `ACCEPTED_RISK` / `DOCUMENTED_LIMITATION` / `OBSERVABILITY_DEBT` / `PARTIALLY_GUARDED` / `PRODUCT_DECISION_REQUIRED` / `ARCHITECTURE_DEBT` 各条 | canonical 状态行在 §1–§5（按 §38 单一定位规则，**不在此复制**）：`KB-2` `KB-4` `KB-8` `KB-11` `KB-14` `KB-17` `KB-19` `KB-20` `KB-21` `KB-26` `KB-28` `KB-33` `KB-34` `KB-35` `KB-36` `KB-37` `KB-39` `KB-42` `KB-44` `KB-51` `KB-54` `KB-55` `KB-59` `KB-60` `KB-61` `KB-63` `KB-68` `KB-69` `KB-70` `KB-71` `KB-73` `KB-74` `KB-75` `KB-76` `F12` `F16` `N-2` `N-12` `N-6` `N-7` `F5` `OBS-5` `OBS-6` `OBS-7` `OBS-8` `DEP-2` `DEP-5` `DEP-7` `DEP-8` `DEP-9` `SEC-1` `SEC-2` `P2-02r` `KB-3` `KB-29` `KB-49` `KB-50` `KB-52` `KB-57` `KB-62` `AR-18` `KB-64` `KB-65` `KB-72` |
+| **F9 / F1(旧) / 其它基础设施** | Batch 2 的 F401/CI/privacy guard；`LoggerFactory`；空 LLM 响应；`flush_after_response` 超时层不匹配；STT 运行时切换/env；WS Bearer；`.env` 模板；`memory_repo.clear_all` 守卫；后台协程所有权 43 站点；`Module/llm/registry` 反向依赖；input 层拆分；`llm_adapter.close` drain；token 统一结构；两个偶发 external 用例；`Module/tool/safety.py` 不拆；Claude 原生持久记忆 | FIXED / CLOSED（证据在 `docs/review/archive/2026-08/*` 与 `git show e11619f1:todo.md` 的旧 §5）|
 
 ---
 
@@ -321,7 +313,7 @@ PD-2（409 报**权威库现值**，未知则省略，Batch 6 `616e4993`）、PD
 
 ---
 
-## 8. Batch 20 新发现（只登记，**不**立即修）
+## 10. Batch 20 新发现（只登记，**不**立即修）
 
 | ID | 标题 | Reach | Sev | Ev | State | Reopen trigger |
 |---|---|---|---|---|---|---|
