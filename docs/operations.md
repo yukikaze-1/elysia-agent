@@ -469,7 +469,7 @@ backup/dump/snapshot/restore 目标；`app.py` 没有 `backup` 子命令；没�
 
 ### 9.3 数据重置（**不是**备份）
 
-`scripts/clean_db.py` 清理 Mongo 集合 / Milvus 集合 / 本地 `data/` journal
+`scripts/clean_db.py` 清理 Mongo 集合 / Milvus 集合 / 运行时数据根（`ProjectPath.DATA`）下的 journal
 （`--dry-run` / `--conversation-only` / `--mongo-only` / `--milvus-only` / `--files-only`，
 带类型化确认）。它**永不删除** `user_identity_profiles`。
 

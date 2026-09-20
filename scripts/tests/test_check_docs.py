@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -396,6 +397,104 @@ def test_dg7_exemptions_are_narrow_not_whole_trees(tmp_path: Path):
     assert "static/index.htmll" in flagged, problems
     assert "core/agent/agent_x.py" in flagged, problems
     assert len(problems) == 3, problems
+
+
+def test_dg7_h1_prose_marker_must_not_blind_the_next_lines(tmp_path: Path):
+    """**洞 #1 回归**（Challenger 2026-09-21 反证）：散文里的普通标记词不得让**后面几行**免检。
+
+    曾经用"本行 + 上文 6 行"判历史语境，于是捏造一个路径、把它放在含 `归档`/`历史`/`不再`
+    这类**散文词**的行后面 1 行，整道守卫就报绿（实测 `EXIT=0`）。这等于给文档开了
+    "在这些词附近随便写路径"的后门。现在只认**同一行**或**同一张表**的标记。
+
+    表格特例仍必须保留：改名映射表的标记在表头（`| 旧 | 新 |`），数据行本身干净。
+    """
+    marker_line = "- 会话删除后由归档清理重试负责。\n"
+    bogus = "core/tool_runtime/checkpoint_typo.py"
+
+    problems = _dg7_in_sandbox(tmp_path, marker_line + f"- 检查点见 `{bogus}`。\n")
+    assert len(problems) == 1, f"标记词后的下一行必须仍被检查：{problems}"
+    assert bogus in problems[0]
+
+    # 同一张表：表头带标记 ⇒ 表内数据行放行（改名映射表的正当形态）
+    table = (
+        "> | 旧 | 新 |\n"
+        "> |---|---|\n"
+        "> | `core/task/` | `core/tool_runtime/` |\n"
+    )
+    assert _dg7_in_sandbox(tmp_path, table) == [], "改名映射表应被放行"
+
+
+def test_dg7_h2_explicit_inventory_cannot_widen_git_truth(tmp_path: Path):
+    """**洞 #2 回归**：手工喂入的清单**不得**放宽仓库真值（不得制造假绿）。
+
+    Challenger 反证：`git ls-files` + 一条 untracked 路径作为 `--tracked-from`，
+    旧实现直接采信 ⇒ `EXIT=0` + 通过标记，恢复了"本机绿 / CI 红"的同一形状。
+    现在的语义：**git 永远优先**；同时给了显式清单就只做子集校验，冲突即拒答。
+    """
+    import scripts.check_docs as cd
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "x.md").write_text("x", encoding="utf-8")
+    listing = tmp_path / "listing.txt"
+    listing.write_text("docs/x.md\ntmp/fake_probe.py\n", encoding="utf-8")
+
+    orig_root, orig_git, orig_env = cd._ROOT, cd._git_tracked, os.environ.get(cd._TRACKED_FROM_ENV)
+    cd._TRACKED_CACHE.clear()
+    cd._ROOT = tmp_path
+    cd._git_tracked = lambda root=None: cd._inventory_from_listing({"docs/x.md"})
+    try:
+        try:
+            cd._tracked_inventory(tracked_from=listing)
+        except RuntimeError as exc:
+            assert "冲突" in str(exc)
+        else:
+            raise AssertionError("显式清单放宽 git 真值时必须拒答，而不是采信")
+    finally:
+        cd._ROOT, cd._git_tracked = orig_root, orig_git
+        if orig_env is None:
+            os.environ.pop(cd._TRACKED_FROM_ENV, None)
+        cd._TRACKED_CACHE.clear()
+
+
+def test_dg7_h3_explicit_listing_handles_cquoted_cjk(tmp_path: Path):
+    """**洞 #3 回归**：显式清单两种格式都要能读对（`-z` 与 C-quoted 行）。
+
+    `git ls-files`（无 `-z`）会把非 ASCII 路径 C-quote 成 `"docs/\346\211\247..."`，
+    按行直读会**丢掉真实路径**并造出 `"docs` 之类的假条目——实测差 63 条，
+    于是同一份清单在"有 .git"与"没 .git"两种环境下给出**两个结论**。
+    """
+    import scripts.check_docs as cd
+
+    cjk = "docs/review/2026-09-16-Batch1-correctness-durability-\u6267\u884c\u8bb0\u5f55.md"
+    quoted = '"' + "".join(
+        ch if ord(ch) < 128 else "".join(f"\\{o:03o}" for o in ch.encode("utf-8"))
+        for ch in cjk
+    ) + '"'
+    lines = tmp_path / "q.txt"
+    lines.write_text(f'README.md\n{quoted}\n', encoding="utf-8")
+    assert cd._parse_explicit_listing(lines) == {"README.md", cjk}
+
+    nul = tmp_path / "q.bin"
+    nul.write_bytes(f"README.md\0{cjk}\0".encode("utf-8"))
+    assert cd._parse_explicit_listing(nul) == {"README.md", cjk}
+
+
+def test_dg7_low_whole_tree_exemption_is_rejected_by_the_guard():
+    """**LOW 回归**：整棵顶层目录豁免必须**在代码层**被拒（不只靠一个硬编码单测名单）。
+
+    Challenger 反证：`covers_tracked` 只抓得到"覆盖了被跟踪内容"的树；一棵**当前未被跟踪**
+    的整树（例如 `.model_cache/`）画不出任何机械反对票——于是 `<树>/<拼错>/` 会通过。
+    """
+    import scripts.check_docs as cd
+
+    orig = dict(cd._NON_REPOSITORY_PATHS)
+    cd._NON_REPOSITORY_PATHS["model_cache"] = (cd.PATH_KIND_RUNTIME, "MUTANT：整棵树豁免（应被拒）")
+    try:
+        problems = cd.check_stale_registrations(scan_texts={"a.md": "`model_cache/`"}, tracked=())
+    finally:
+        cd._NON_REPOSITORY_PATHS.clear()
+        cd._NON_REPOSITORY_PATHS.update(orig)
+    assert any("整棵顶层目录" in p for p in problems), problems
 
 
 def test_dg7_refuses_when_tracked_inventory_unavailable(tmp_path: Path):

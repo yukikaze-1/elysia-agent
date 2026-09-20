@@ -137,9 +137,20 @@ _HISTORICAL_MARKERS: tuple[str, ...] = (
     "→",  # 改名映射（`core/task/` → `core/tool_runtime/`）
 )
 
-#: 判定历史语境时一并看**上文两行**：改名映射表的数据行本身通常不含标记词，
-#: 标记在它的表头（`| 旧 | 新 |`）或引导句里。只看本行会把这些行误判为"失效引用"。
-_MARKER_LOOKBACK = 6
+#: **历史语境的判定范围**（2026-09-21 Challenger 修的洞 #1）。
+#:
+#: 曾经用"本行 + 上文 6 行"里的任意标记词（`归档`/`历史`/`不再`/`拆分`/`→`…）来放行。
+#: 后果被实测证明是**静默停用判据**：一个捏造的路径只要紧跟在含这类**普通散文词**的行
+#: 后面 6 行之内，DG7 就完全不看它——干净 clone 上 `EXIT=0`（整道守卫报绿）。
+#: 而且它已经在真实语料里生效：`docs/operations.md` 的 `` `data/` `` 藏在表格行
+#: "…引用/归档清理失败的重试…" 之后 4 行处，从未被报出。
+#:
+#: 现在只认两种**显式**语境：
+#:   ① **同一行**含标记词（"当时 / 已归档 / 原名 / `→`"…）；
+#:   ② 本行是**表格行**且**同一张表**的表头行含标记词（改名映射表的典型形态：
+#:      `| 旧 | 新 |` 表头 + 旧名在新名左边，数据行本身不含标记词）。
+#: 散文段落不再能"顺带"豁免后面 6 行。
+_MARKER_LOOKBACK = 6  # 仅保留给历史语料的扫描面判断，不再用于 DG2/DG7
 
 # 文件级豁免：整个文件都在讲"旧名与新名的关系"。**陈旧也会红**。
 _DG2_FILE_EXEMPTIONS: dict[str, str] = {
@@ -159,6 +170,29 @@ _DG4_EXEMPTIONS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # DG5：机器可导出的事实
 # ---------------------------------------------------------------------------
+
+
+def _marker_context(lines: list[str], lineno: int) -> str:
+    """返回判定"历史语境"用的文本：**本行**（+ 同表的表头行）。
+
+    为什么不是"上文 N 行"：那会让散文里的普通词（`归档`/`历史`/`不再`）把**后面 N 行**
+    全部变成不检查区域——实测可以据此让一个捏造路径整道守卫报绿。详见 `_MARKER_LOOKBACK`
+    的注释。表格特例是必要的：改名映射表的标记在**表头**（`| 旧 | 新 |`），数据行本身干净。
+    """
+    idx = lineno - 1
+    if not (0 <= idx < len(lines)):
+        return ""
+
+    def _is_table_row(text: str) -> bool:
+        # 允许 blockquote 前缀（`> | 旧 | 新 |`）——改名映射表常写在引用块里。
+        return text.lstrip().lstrip(">").lstrip().startswith("|")
+
+    if not _is_table_row(lines[idx]):
+        return lines[idx]
+    start = idx
+    while start > 0 and _is_table_row(lines[start - 1]):
+        start -= 1
+    return "\n".join(lines[start:idx + 1])
 
 
 def _link_scan_targets() -> list[str]:
@@ -316,7 +350,7 @@ def check_dg2(files: list[str]) -> list[str]:
         exempt = rel in _DG2_FILE_EXEMPTIONS
         lines = (_ROOT / rel).read_text(encoding="utf-8").splitlines()
         for lineno, line in enumerate((_ROOT / rel).read_text(encoding="utf-8").splitlines(), 1):
-            context = "\n".join(lines[max(0, lineno - 1 - _MARKER_LOOKBACK):lineno])
+            context = _marker_context(lines, lineno)
             for pattern, why in _FORBIDDEN:
                 if not pattern.search(line):
                     continue
@@ -394,7 +428,7 @@ _NON_REPOSITORY_PATHS: dict[str, tuple[str, str]] = {
         PATH_KIND_EXTERNAL,
         "**外部仓**（elysia-frontend）路径；本仓不存在是正常的",
     ),
-    # --- 运行期数据根（ProjectPath.DATA 下的运行期产物；见 .gitignore 第 19-24 行） ---
+    # --- 运行期数据根（ProjectPath.DATA 下的运行期产物；见 .gitignore 第 19-22 行） ---
     "data/uploads/": (
         PATH_KIND_RUNTIME,
         "运行期上传目录（`ProjectPath.DATA_UPLOADS`；core/input/upload_routes.py 写入）",
@@ -407,7 +441,7 @@ _NON_REPOSITORY_PATHS: dict[str, tuple[str, str]] = {
         PATH_KIND_RUNTIME,
         "运行期密钥存储目录（SecretStore 落盘处，0600）",
     ),
-    "data/live2d-assets": (
+    "data/live2d-assets/": (
         PATH_KIND_RUNTIME,
         "运行期资源目录（`ProjectPath.LIVE2D_ASSETS`）",
     ),
@@ -419,7 +453,18 @@ _NON_REPOSITORY_PATHS: dict[str, tuple[str, str]] = {
     "data/pending_attachment_release.json": (PATH_KIND_RUNTIME, "运行期 journal（附件引用释放重试）"),
     "data/consolidator_pending.json": (PATH_KIND_RUNTIME, "运行期 journal（未整合对话缓冲）"),
     "data/task_result_wal.jsonl": (PATH_KIND_RUNTIME, "运行期 WAL（后台任务终态，fsync）"),
-    "data/secrets/profiles.json": (PATH_KIND_RUNTIME, "运行期密钥文件（0600 + gitignore）"),
+    # --- 运行期日志文件（`core/utils/log_setup.py :: setup` 固定写出；`log/` 目录本身
+    #     部分被跟踪（有 README.md），所以不能整棵树豁免，只能逐文件登记）。
+    #     这里**只登记"在扫文档里以 `log/<name>` 形式、且在围栏外被引用"的那些**——
+    #     `log/torch.log` 目前只出现在 `docs/architecture.md` 的代码块里（DG7 不校验围栏内容），
+    #     按"登记陈旧也会红"的纪律不入表；哪天它被写进正文，DG7 会报出来再登记。 ---
+    "log/app.log": (PATH_KIND_RUNTIME, "运行期日志（log_setup.py 的 RotatingFileHandler 写出）"),
+    "log/app-debug.log": (PATH_KIND_RUNTIME, "运行期日志（DEBUG 级，始终写）"),
+    "log/conversation.log": (PATH_KIND_RUNTIME, "运行期日志（core.conversation logger 专用）"),
+    "log/mongo.log": (PATH_KIND_RUNTIME, "运行期日志（Mongo/仓储 logger 分流）"),
+    "log/milvus.log": (PATH_KIND_RUNTIME, "运行期日志（Milvus/记忆 logger 分流）"),
+    "log/http.log": (PATH_KIND_RUNTIME, "运行期日志（httpx/openai 等库 logger 分流）"),
+    "log/embedding.log": (PATH_KIND_RUNTIME, "运行期日志（嵌入模型 logger 分流）"),
     # --- 构建产物（Vite 输出到 static/；见 frontend/vite.config.ts 的 outDir） ---
     "static/index.html": (PATH_KIND_GENERATED, "Vite 构建产物（`npm run build` 写出；.gitignore 第 10 行）"),
     "static/debug.html": (PATH_KIND_GENERATED, "Vite 构建产物（多入口第二页；.gitignore 第 11 行）"),
@@ -453,19 +498,71 @@ def _inventory_from_listing(entries: set[str]) -> frozenset[str]:
     return frozenset(entries | dirs)
 
 
+def _parse_explicit_listing(path: Path) -> set[str]:
+    """解析显式清单。**两种格式都支持**（修 Challenger 洞 #3）：
+
+    - `git ls-files -z`（NUL 分隔）：首选，**不转义**，中文路径原样保留；
+    - `git ls-files`（行分隔）：非 ASCII 路径会被 git **C-quoted**（`"docs/\346\211\247…"`），
+      直接按行读会得到一堆 `"docs` 之类的假条目，同时**丢掉真实路径**（实测差 63 条）。
+      这里对 `"` 包裹的行做反转义（`ast.literal_eval` 解八进制转义）复原原名。
+    """
+    raw = path.read_bytes()
+    if b"\0" in raw:
+        return {p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p}
+    out: set[str] = set()
+    for line in raw.decode("utf-8", "surrogateescape").splitlines():
+        item = line.strip()
+        if not item:
+            continue
+        if len(item) >= 2 and item.startswith('"') and item.endswith('"'):
+            try:
+                item = ast.literal_eval(item)
+            except (ValueError, SyntaxError):
+                item = item[1:-1]
+            # git 的 C-quoting 是**字节**取向（`\346\211\247` 是 UTF-8 字节），
+            # 而 `ast.literal_eval` 把它解成**码点** 0xE6…（mojibake）。所以还要
+            # "按 latin-1 回捞字节 → 按 UTF-8 解码"才拿得到原名。
+            if any(ord(ch) > 127 for ch in item):
+                try:
+                    item = item.encode("latin-1").decode("utf-8")
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    pass
+        out.add(item)
+    return out
+
+
+def _git_tracked(root: Path) -> frozenset[str] | None:
+    """`git ls-files -z` 的仓库真值；git 不可用/不是仓库时返回 None（**不抛**）。"""
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=root, capture_output=True, text=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    entries = {p for p in proc.stdout.split("\0") if p}
+    return _inventory_from_listing(entries) if entries else None
+
+
+#: 本次运行实际使用的清单来源（`main()` 打进通过标记——**来源必须可见**）。
+_INVENTORY_SOURCE = ""
+
+
 def _tracked_inventory(
     root: Path | None = None, tracked_from: Path | None = None
 ) -> tuple[str, ...]:
     """返回**仓库真值**里的路径（文件 + 其各级祖先目录）。
 
-    权威来源，按优先级：
-    1. `--tracked-from <file>` / `ELYSIA_TRACKED_PATHS`（显式清单，供无 `.git` 的树）；
-    2. `git ls-files`（开发者工作区 / 干净 clone / CI checkout —— 正常路径）。
+    **优先级与一致性（Challenger 洞 #2 的修复）**：
 
-    这是 DG7 唯一的"存在性"权威：工作区文件系统可以被 untracked/gitignored 文件污染，
-    `git ls-files` 不会。两者都取不到就抛 `RuntimeError`——调用方必须**拒答**，
-    **绝不**退回文件系统判据（那正是 2026-09-21 clean-checkout 假绿的成因）。
+    1. `git ls-files`（开发者工作区 / 干净 clone / CI checkout）——**永远优先**。
+       若同时给了显式清单，它只被当作**交叉校验**：显式清单里出现 git 不知道的路径 ⇒
+       **拒答**（exit 2）。否则"手工喂一份含 untracked 路径的清单"就能制造假绿——
+       正是这次 clean-checkout 事故的同一形状。
+    2. git 不可用（`git archive` / tarball）时，才使用显式清单
+       （`--tracked-from` / `ELYSIA_TRACKED_PATHS`）；用哪个来源会打进通过标记。
+    3. 两者都没有 ⇒ 抛 `RuntimeError`（调用方拒答）。**绝不**退回文件系统判据。
     """
+    global _INVENTORY_SOURCE
     root = root or _ROOT
     key = f"{root}|{tracked_from}|{os.environ.get(_TRACKED_FROM_ENV, '')}"
     if key in _TRACKED_CACHE:
@@ -475,35 +572,41 @@ def _tracked_inventory(
     if explicit is None:
         env_value = os.environ.get(_TRACKED_FROM_ENV, "").strip()
         explicit = Path(env_value) if env_value else None
+    explicit_entries: set[str] | None = None
     if explicit is not None:
         if not explicit.is_file():
             raise RuntimeError(
                 f"显式跟踪清单 {explicit} 不存在（{_TRACKED_FROM_ENV} / --tracked-from）——拒答"
             )
-        entries = {ln.strip() for ln in explicit.read_text(encoding="utf-8").splitlines() if ln.strip()}
-        if not entries:
+        explicit_entries = _parse_explicit_listing(explicit)
+        if not explicit_entries:
             raise RuntimeError(f"显式跟踪清单 {explicit} 为空——拒答（不是通过）")
-        inventory = _inventory_from_listing(entries)
-        _TRACKED_CACHE[key] = inventory
-        return tuple(sorted(inventory))
 
-    try:
-        proc = subprocess.run(
-            ["git", "ls-files", "-z"], cwd=root, capture_output=True, text=True, check=True
-        )
-    except (OSError, subprocess.CalledProcessError) as exc:
+    git_inv = _git_tracked(root)
+    if git_inv is not None:
+        bare = {p.rstrip("/") for p in git_inv}
+        if explicit_entries is not None:
+            bogus = sorted(e for e in explicit_entries if e.rstrip("/") not in bare)
+            if bogus:
+                raise RuntimeError(
+                    f"显式跟踪清单与 git 真值冲突：以下 {len(bogus)} 条 git 并不跟踪 "
+                    f"（例如 {bogus[:3]}）——手工喂入的清单不得放宽仓库真值。"
+                    f"若这是有意的（某个路径确实应当被视为在仓库里），请改为把它登记进 "
+                    f"_NON_REPOSITORY_PATHS 并写明理由。**拒答**"
+                )
+        inventory, _INVENTORY_SOURCE = git_inv, "git ls-files -z"
+    elif explicit_entries is not None:
+        inventory = _inventory_from_listing(explicit_entries)
+        _INVENTORY_SOURCE = f"显式清单 {explicit}"
+    else:
         raise RuntimeError(
-            f"无法从 {root} 读取 git 跟踪清单（git ls-files 失败：{exc}）——"
+            f"无法从 {root} 读取 git 跟踪清单（git 不可用或不是仓库），也没有显式清单——"
             f"DG7 的判据是**仓库真值**，取不到时必须拒答，不得退回文件系统判据。"
             f"若这是一棵没有 `.git` 的树（archive / tarball），请显式喂入清单："
-            f"`--tracked-from <git ls-files 输出>` 或设 {_TRACKED_FROM_ENV}"
-        ) from exc
-    entries = {p for p in proc.stdout.split("\0") if p}
-    if not entries:
-        raise RuntimeError(
-            f"{root} 的 git 跟踪清单为空——这不是一个可判定的 checkout（拒答）"
+            f"`git ls-files -z > /tmp/paths` 后 `--tracked-from /tmp/paths`（或设 {_TRACKED_FROM_ENV}）"
         )
-    inventory = _inventory_from_listing(entries)
+    if not inventory:
+        raise RuntimeError(f"{root} 的跟踪清单为空——这不是一个可判定的 checkout（拒答）")
     _TRACKED_CACHE[key] = inventory
     return tuple(sorted(inventory))
 
@@ -533,7 +636,7 @@ _PATH_PLACEHOLDER_RE = re.compile(r"(your_|path/to/|/to/|foo/|xxx|示例)")
 def check_dg7(files: list[str], tracked: tuple[str, ...] | None = None) -> list[str]:
     """DG7：行内 code 里**像仓库路径**的引用必须对**仓库真值**成立。
 
-    **2026-09-21 语义修复**：真实 CI 在干净 checkout 里报了 8 条，而本机全绿。根因是
+    **2026-09-21 语义修复**：真实 CI 在干净 checkout 里报了 11 条（8 个不同路径），而本机全绿。根因是
     本判据曾用 `Path.exists()`——只存在于开发者工作区的 untracked/gitignored 文件
     （`tmp/` 探针、`npm run build` 产物、运行期 `data/`）让引用"看起来成立"。
     **同一次提交必须在开发者工作区、干净 clone、CI checkout 里给出同一个结论**，
@@ -550,6 +653,13 @@ def check_dg7(files: list[str], tracked: tuple[str, ...] | None = None) -> list[
 
     解析候选目录为"文档所在目录 + 其各级祖先"（覆盖"根相对"与"包相对"两种写法）；
     含占位符/示例的 code span、带历史标记的行照旧跳过。
+
+    **刻意的判据收窄（写在这里以免被当成漏判）**：
+      - 以 `/`、`./`、`~` 开头或含 `..` 的 token **不检查**——它们不是"仓库相对路径"的
+        主张（绝对路径与遍历写法在文档里通常表示宿主机路径/示例），
+        要判它们需要另一套语义，本判据刻意不猜；
+      - 无 `/` 的裸文件名不检查（依赖上下文，判"必须存在"会大量误报）；
+      - 历史语境的判定见 `_marker_context`（**同一行**或**同一张表**，不再回看散文段落）。
     """
     problems: list[str] = []
     tracked_set = set(tracked if tracked is not None else _tracked_inventory())
@@ -558,8 +668,7 @@ def check_dg7(files: list[str], tracked: tuple[str, ...] | None = None) -> list[
         candidates_dirs = [doc_dir, *doc_dir.parents]
         doc_lines = _mask_fences((_ROOT / rel).read_text(encoding="utf-8")).splitlines()
         for lineno, line in enumerate(doc_lines, 1):
-            context = "\n".join(doc_lines[max(0, lineno - 1 - _MARKER_LOOKBACK):lineno])
-            if any(marker in context for marker in _HISTORICAL_MARKERS):
+            if any(marker in _marker_context(doc_lines, lineno) for marker in _HISTORICAL_MARKERS):
                 continue
             for span in _INLINE_SPAN_RE.findall(line):
                 tok = span.strip().strip("`").strip()
@@ -749,12 +858,28 @@ def check_stale_registrations(
         scan_texts = {
             rel: (_ROOT / rel).read_text(encoding="utf-8") for rel in _link_scan_targets()
         }
-    corpus = "\n".join(scan_texts.values())
+    # **"被引用"的判定语料要遮蔽围栏代码块**：围栏里的路径 DG7 从校不校验，
+    # 若把围栏里的提及也算引用，一条只在示例代码里出现过的路径会让登记项永久免检。
+    # 另外排除**规则文档自身**（`readme-conventions.md` 用 `data/uploads/` 等**举例**
+    # 说明本表怎么用）——否则那几个条目永远不可能被判为陈旧。
+    corpus = "\n".join(
+        _mask_fences(text)
+        for rel, text in scan_texts.items()
+        if rel != "docs/readme-conventions.md"
+    )
     # 仓库真值由 `main()` 解析一次后传入——**不要**在这里各自去问 git：没有 `.git` 的树
     # （archive / tarball）会因缺清单而抛错，而调用方本已用 `--tracked-from` 提供了真值。
     tracked_set = set(tracked if tracked is not None else _tracked_inventory())
     for declared, (kind, reason) in _NON_REPOSITORY_PATHS.items():
         base = declared.rstrip("/")
+        # **整棵树豁免**（`data` / `static` / `tmp` 这一级）必须有父目录才可能被接受：
+        # 只靠"覆盖了被跟踪内容就红"是不够的——它抓不到"当前未被跟踪的整棵树"
+        # （例如 `.model_cache/`），而那同样会让 `<树>/<拼错>/` 通过。
+        if "/" not in base:
+            problems.append(
+                f"_NON_REPOSITORY_PATHS 的 `{declared}`（{kind}）是**整棵顶层目录**豁免 —— "
+                f"那会产生 `{base}/<拼错>/` 也通过的盲区。请收窄到精确子目录/文件"
+            )
         if len(reason.strip()) < 10:
             problems.append(
                 f"_NON_REPOSITORY_PATHS 的 `{declared}`（{kind}）理由太短，等于没写：{reason!r}"
@@ -788,8 +913,9 @@ def main() -> int:
     parser.add_argument(
         "--tracked-from",
         metavar="FILE",
-        help="显式跟踪清单（git ls-files 输出，每行一条）——供没有 .git 的树"
-             f"（git archive / tarball）；也可用环境变量 {_TRACKED_FROM_ENV}",
+        help="显式跟踪清单——**仅**供没有 .git 的树（git archive / tarball）。"
+             "有 .git 时以 git 为准，本清单只做交叉校验（冲突即拒答）。"
+             f"推荐生成方式：git ls-files -z > PATHS；也可用环境变量 {_TRACKED_FROM_ENV}",
     )
     args = parser.parse_args()
 
@@ -856,8 +982,8 @@ def main() -> int:
         f"文档守卫通过：DG1（{len(files)} 份文档内部链接与锚点可解析）/ "
         f"DG2（无失效引用）/ DG3（错误码双向一致）/ "
         f"DG4（core 子系统 README 覆盖）/ DG5（{len(_appconfig_env_names())} 个 AppConfig env 名在册）/ "
-        f"DG6（围栏成对）/ DG7（{len(tracked)} 条仓库真值路径；非仓库分类 "
-        f"{len(_NON_REPOSITORY_PATHS)} 条）"
+        f"DG6（围栏成对）/ DG7（{len(tracked)} 条仓库真值路径，来源 = {_INVENTORY_SOURCE}；"
+        f"非仓库分类 {len(_NON_REPOSITORY_PATHS)} 条）"
     )
     return 0
 

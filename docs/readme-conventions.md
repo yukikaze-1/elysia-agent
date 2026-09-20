@@ -244,15 +244,26 @@ canonical 文档**不写**会静默过期的数字：当前测试数、LOC、模
 - **`tmp/` 禁止登记**：临时探针是"当次调查"的产物，canonical 文档引用它等于把 scratch 当证据。
   正确做法是改引**稳定来源**——当前回归测试 node id → 当前不变量测试 → 执行记录。历史事实可以
   保留为文字（"当次用临时探针证伪，证据见 <记录>"），但**路径本身不要写**。
-- **不得整棵顶层目录豁免**（`data` / `static` / `log` 这一级）：那会让 `data/cache/visoin/` 这种**拼错**的
-  路径也通过。豁免只对**精确目录/文件**开放，由 `test_dg7_exemptions_are_narrow_not_whole_trees` 强制。
+- **不得整棵顶层目录豁免**（`data` / `static` / `log` 这一级）：那会让 `data/cache/<拼错>/` 这种路径也通过。豁免只对**精确目录/文件**开放，由 `test_dg7_exemptions_are_narrow_not_whole_trees` 强制。
 - **豁免必须窄且可证**：`test_dg7_declared_roots_are_never_tracked` 机械证明登记项下**没有**
   任何被 git 跟踪的内容——一旦有，豁免就从"分类"退化成"绕过真判据"。
 - **陈旧判定不看"干净 checkout 里在不在"**（那会形成"运行时路径必须物理存在"的悖论），
-  只看：没有文档再引用它 / 理由太短 / 它其实已被 git 跟踪。
+  只看：①没有（**围栏外**的）在扫文档再引用它 ②理由太短 ③它其实已被 git 跟踪
+  ④它是**整棵顶层目录**豁免。
+- **不得整棵顶层目录豁免，且在代码层被拒**：只靠"覆盖了被跟踪内容就红"抓不到
+  "当前未被跟踪的整棵树"（`.model_cache/` 这类），所以 `check_stale_registrations`
+  还要求每个登记项**必须含 `/`**（即必须有父目录）。
+- **历史语境的判定范围只有"同一行"或"同一张表"**：曾经用"上文 6 行内出现
+  `归档`/`历史`/`不再` 等**散文词**"放行，实测可让一个捏造路径整道守卫报绿
+  （把路径写在含这类词的行后面一行即可）。改名映射表仍可用，因为它的标记在**表头**。
 - 没有 `.git` 的树（`git archive`、tarball）**必须显式喂清单**：
-  `python scripts/check_docs.py --tracked-from <(git ls-files)` 或 `ELYSIA_TRACKED_PATHS`；
-  取不到就**拒答**（exit 2，不打印通过标记），绝不退回文件系统判据。
+  `git ls-files -z > /tmp/paths` 然后 `python scripts/check_docs.py --tracked-from /tmp/paths`
+  （或设 `ELYSIA_TRACKED_PATHS`；`-z` 形式免转义，行分隔的 C-quoted 形式也已支持）。
+  **有 `.git` 时 git 永远优先**，显式清单只做交叉校验——冲突（清单里有 git 不知道的路径）
+  即**拒答 exit 2**，因为"手工喂一份含 untracked 路径的清单"正是这次事故的同一形状。
+  取不到任何清单就拒答（exit 2，不打印通过标记），绝不退回文件系统判据。
+- **通过标记里会打印清单来源**（`来源 = git ls-files -z` / `显式清单 <path>`）——
+  看到"来源"不是 git 就说明这次判定不基于仓库真值。
 
 ### Rule 6 — New `core/` subsystem README requirement is enforced or explicitly exempted
 

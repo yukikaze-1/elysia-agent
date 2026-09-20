@@ -135,7 +135,7 @@
 > 被 `make check-types` 门禁、被**跨仓**消费者逐行读取。路径叫 `archive` 只是历史原因。
 > **Relocation requires a coordinated change with the external frontend consumer**
 > （`elysia-frontend/apps/desktop/scripts/check-backend-contract.mjs` 硬编码该绝对路径）。
-> 清单与说明：[`traces/README.md`](archive/frontend-handoff-v2/traces/README.md)。
+> 清单与说明见 [traces 的说明](archive/frontend-handoff-v2/traces/README.md)。
 
 ## Generated Artifacts
 
