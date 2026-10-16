@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 import pytest
 from core.monitoring.token_tracker import TokenTracker
@@ -10,6 +11,8 @@ from core.schema.token import TokenUsage
 from core.schema.types import SessionId
 
 pytestmark = pytest.mark.unit
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class TestTokenTracker:
@@ -492,3 +495,92 @@ class TestTokenTrackerClearAll:
         deleted = await TokenTracker.clear_all(repo_mock)
         assert deleted == 42
         repo_mock.clear_all.assert_awaited_once()
+
+
+@pytest.mark.unit
+class TestPendingFileLifecycle:
+    """`_pending_file` 的解析时机与隔离（2026-09-27 测试隔离专项）。
+
+    ## 修的是什么
+
+    旧实现是**类属性**：`_pending_file = str(ProjectPath.TOKEN_PENDING.resolve())`，
+    在模块 import 时求值一次 ⇒ `ELYSIA_PATH_TOKEN_PENDING` 被永久固化。于是
+    根 `conftest.py :: _isolate_shared_journals` 那套 env 覆盖（7 个 journal 都靠它
+    隔离到 `tmp_path`）**对它无效**——测试可以写到仓库真实的
+    `data/token_usage_pending.jsonl`。本类把新契约钉死。
+
+    注意本类的用例**不**用 `monkeypatch` 去改实例属性：契约要的正是"按**构造时**
+    的环境解析"，所以判据必须走 `monkeypatch.setenv` + 新建实例。
+    """
+
+    @pytest.fixture
+    def output_mock(self):
+        output = MagicMock()
+        output.token_usage = AsyncMock()
+        return output
+
+    def _make(self, output_mock, **kwargs):
+        return TokenTracker(
+            session_id=SessionId("lifecycle"), output_manager=output_mock, **kwargs)
+
+    def test_default_path_is_unchanged(self, output_mock, monkeypatch):
+        """无 env 覆盖 → 仍是 `data/token_usage_pending.jsonl`（默认行为不变）。"""
+        monkeypatch.delenv("ELYSIA_PATH_TOKEN_PENDING", raising=False)
+        tracker = self._make(output_mock)
+        assert tracker._pending_file.endswith("data/token_usage_pending.jsonl")
+
+    def test_env_a_then_env_b_yield_different_paths(self, output_mock, monkeypatch):
+        """**核心契约**：env A → 实例 A 用 A；改到 B → **新建**实例用 B。"""
+        monkeypatch.setenv("ELYSIA_PATH_TOKEN_PENDING", "/tmp/lifecycle_a.jsonl")
+        tracker_a = self._make(output_mock)
+        assert tracker_a._pending_file == "/tmp/lifecycle_a.jsonl"
+
+        monkeypatch.setenv("ELYSIA_PATH_TOKEN_PENDING", "/tmp/lifecycle_b.jsonl")
+        tracker_b = self._make(output_mock)
+        assert tracker_b._pending_file == "/tmp/lifecycle_b.jsonl"
+
+        # 已构造的实例不被后续 env 改动影响（一个实例一个路径，flush 才安全）
+        assert tracker_a._pending_file == "/tmp/lifecycle_a.jsonl"
+
+    def test_already_imported_module_still_sees_new_env(self, output_mock, monkeypatch):
+        """反证旧缺陷：模块**早已 import**（本文件顶部就 import 了）也不能固化。
+
+        旧实现下这条必红——类属性在 import 时就定格，env 改了也不变。
+        """
+        monkeypatch.setenv("ELYSIA_PATH_TOKEN_PENDING", "/tmp/after_import.jsonl")
+        assert self._make(output_mock)._pending_file == "/tmp/after_import.jsonl"
+
+    def test_explicit_injection_wins_over_env(self, output_mock, monkeypatch):
+        """显式注入（构造参数）优先于环境解析——测试不必再穿透私有属性。"""
+        monkeypatch.setenv("ELYSIA_PATH_TOKEN_PENDING", "/tmp/from_env.jsonl")
+        tracker = self._make(output_mock, pending_file="/tmp/injected.jsonl")
+        assert tracker._pending_file == "/tmp/injected.jsonl"
+
+    @pytest.mark.asyncio
+    async def test_persist_writes_to_the_instance_path(self, output_mock, tmp_path,
+                                                       monkeypatch):
+        """行为判据：降级落盘真的写在这个实例的路径上（不只是属性好看）。"""
+        target = tmp_path / "pending.jsonl"
+        monkeypatch.setenv("ELYSIA_PATH_TOKEN_PENDING", str(target))
+        tracker = self._make(output_mock)  # repo=None → 走本地 JSONL 降级
+        await tracker.record(
+            usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            model="m", round_num=0,
+        )
+        assert target.exists(), "落盘必须走实例解析出的路径"
+        assert json.loads(target.read_text().strip())["total_tokens"] == 15
+
+    def test_conftest_journal_isolation_reaches_the_tracker(self, output_mock):
+        """跨层判据：根 conftest 的 journal 隔离必须**真的**作用到 TokenTracker。
+
+        这是修复前不可能成立的一条：`_isolate_shared_journals` 用
+        `ELYSIA_PATH_TOKEN_PENDING` 把它导到 `tmp_path`，而 import 期固化的类属性
+        让该 env 形同虚设。判据写成"不落在仓库真实 `data/` 下"而不是比对具体路径，
+        免得绑死 conftest 的实现细节。
+        """
+        tracker = self._make(output_mock)
+        resolved = Path(tracker._pending_file).resolve()
+        assert "token_pending.json" in resolved.name, (
+            f"根 conftest 的隔离没生效，解析到 {resolved}")
+        assert Path(_REPO_ROOT / "data") not in resolved.parents, (
+            f"TokenTracker 仍指向仓库真实 data/：{resolved}")

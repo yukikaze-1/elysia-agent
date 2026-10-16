@@ -78,30 +78,51 @@ make test-normal      # pytest -m "not slow and not external"（**真正离线**
 `make test-quick` / `make test-normal` 默认带 `-n 8 --dist loadfile`
 （`PYTEST_N` 可覆盖：`make test-normal PYTEST_N=12`）。
 
-**实测档位曲线**（本机 24 核；`-m "not slow and not external"`。下表 passed/skipped 数是 2026-09-14 的实测快照，仅用于比较**并行档位曲线**——其中的 passed/skipped 数是**那一天的快照**，不是当前值；
-当前值见 `scripts/print_test_stats.py`）。
-两列是**同一天的两次扫描**——"修复前"是还没动 embedding 替身（见下节，它占了 teardown
-的 44.7%）时测的，"修复后"是打上替身之后：
+**实测档位曲线**（本机 24 核；`-m "unit or service"`）。
+两列是**同一天、同一台机器、同一命令**的两次扫描，中间只隔本轮的优化改动
+（见下文「测试性能专项」，`--durations` 证据在同一批产出里）。
+**两列 passed 数都是 6571**——即下表是纯耗时对比，没有靠少跑用例换速度：
 
-| workers | 修复前 pytest / wall | 修复后 pytest / wall | 串行加速比（后） |
-|---------|---------------------|---------------------|----------------|
-| 串行 | 544.1s / 551s | **313.7s / 320s** | 1.0× |
-| `-n 4` | 156.7s / 159s | 未重测 | — |
-| **`-n 8`（默认）** | 104.5s / 107s | **63.2s / 66s** | 5.0× |
-| `-n 12` | 84.6s / 87s（另 3 次 81.4–82.3s） | **53.3–54.1s / 56–57s** | 5.9× |
-| `-n 16` | 88.0s / 91s | 未重测 | — |
-| `-n 24`（≈`auto`） | 96.8s / 100s，**那一次少报 1 条**（见下） | 63.9s / 65s | 4.9× |
+| workers | 优化前 pytest / wall | 优化后 pytest / wall | 加速比（后） | 并行加速比（对串行 297s） |
+|---------|---------------------|---------------------|-------------|--------------------------|
+| 串行 | 463.7s / 470.5s | **297.3s / 304.0s** | **1.56×** | 1.0× |
+| **`-n 8`（默认）** | 95.4s / 98.0s | **81.3s / 83.9s** | 1.17× | 3.7× |
+| `-n 12` | 82.8s / 85.3s | **75.3s / 77.9s** | 1.10× | 3.9× |
+| `-n 16` | 79.2s / 81.9s | **74.9s / 77.5s** | 1.06× | 4.0× |
+| `-n 24`（≈`auto`） | 80.8s / 83.3s | **72.3s / 74.9s** | 1.12× | 4.1× |
 
 **结论与取舍**：
 
-- **`-n auto` 不是答案**：24 worker 并不比 12 快（修复前 96.8s vs 84.6s，甚至更慢；
-  每个 worker 都要独立 import torch/sentence-transformers，数百 MB），而默认 8 与它的
-  差距只有 ~1s。**CI 明确禁止 `-n auto`**：worker 数不应随 runner 核数漂移。
-- 默认取 **8** 而不是更快的 12：修复 embedding 之后曲线已经变平（12 只比 8 快 9s，
-  约 7%），而 8 个 worker 在"这台机器同时跑 mongod / milvus / neo4j / 开发工具"
-  的前提下留更多余量。要更快就 `PYTEST_N=12`（实测 5 次全绿，81–84s → 53–54s）。
+- **串行收益（1.56×）远大于并行档位（1.06–1.17×）**，且这不矛盾：本轮消掉的主要是
+  **与判据无关的固定等待**，它们在串行下逐条累加，在 `-n N` 下被并行吸收掉一部分。
+  换句话说——**并行已经把等待藏起来了，串行没有**。所以"今天 `-n 8` 仍然要 84s"
+  不等于"优化没生效"：真正的改善是 `-n 8` 的**关键路径**短了。
+- **`-n auto` 仍不是答案**：24 worker 只比 12 快 ~3s（4%），代价是 CPU 时间从
+  n12 的 449s 涨到 n24 的 **905s**（`/usr/bin/time` 的 user+sys）——2 倍 CPU 换 4% 墙钟。
+  **CI 明确禁止 `-n auto`**：worker 数不应随 runner 核数漂移。
+- 默认取 **8** 而不是更快的 12：12 比 8 快 ~6s（7%），而 8 个 worker 在"这台机器同时跑
+  mongod / milvus / neo4j / 开发工具"的前提下留更多余量。要更快就 `PYTEST_N=12`。
+- **CPU 已是瓶颈**：`-n 8` 实测 CPU 时间 371s / wall 84s ≈ **440%**（8 核的 55%），
+  `-n 24` ≈ **1210%**——继续加 worker 的边际收益已被每进程 import 与调度开销吃掉。
+
+#### 调度策略实测（`-n 16`，各一次，同日同机）
+
+| `--dist` | wall | 相对 |
+|-----------|------|------|
+| `loadscope` | 72.3s | 1.00× |
+| **`loadfile`（默认）** | **73.3s** | 1.01× |
+| `worksteal` | 76.1s | 1.05× |
+| `load` | 79.1s | 1.09× |
+
+四者相差 <10%。`loadscope` 领先 `loadfile` **1.4%**，单次测量下落在噪声内，不足以推翻
+`loadfile`——本仓多处测试共享"按文件划分的假替身/模块状态"（见下方「已知边界」），
+`loadfile` 是**按语义**选定的，不是按速度。**无 benchmark 支撑，故不改。**
 
 #### `-n 24` 那次少报 1 条：结论是「一次性偶发，未复现」（2026-09-14 RC 复核）
+
+> **2026-09-21 补记（测试性能专项）**：本轮共跑 **8 次** `-n 12/16/24` 全量（优化前 4 次
+> + 优化后 4 次）+ **6 次** `-n 12` 稳定性重跑，**每次报数都恰好 6571 passed**，与此前的
+> 「未复现」结论一致。下方 2026-09-14 的原始记录保留（它记的是当时的选择集与证据）。
 
 **现象**：修复 embedding 之前的 `-n 24` 那一次报告 `4985 passed, 2 skipped`（=4987），
 而当时选择集是 4988——**少 1 条，且输出里没有任何报错行**。
@@ -140,11 +161,36 @@ make test-normal      # pytest -m "not slow and not external"（**真正离线**
 - 需要跨 worker 隔离的资源在根 `conftest.py` 收口到各自测试的 `tmp_path`：
   `ELYSIA_PATH_SESSION_PENDING`、`ELYSIA_PATH_SCHEDULER_CHECKPOINT`、
   `ELYSIA_PATH_MEMORY_PENDING_DELETES`、`ELYSIA_PATH_MEMORY_PENDING_SYNCS`、
-  `ELYSIA_PATH_SESSION_PENDING_CLEANUP`（这些 journal 的原子写用 `<path>.tmp`，
-  同名文件在多进程下会互相覆盖/删除/串读）。
-  **已知缺口**：`TokenTracker._pending_file`（`data/token_usage_pending.jsonl`）
-  在 import 期就把路径固化进**类属性**，`ELYSIA_PATH_*` 覆盖对它无效
-  （它的测试用实例属性覆盖）。目前没有测试从"未隔离目录"走到它，属潜在项。
+  `ELYSIA_PATH_SESSION_PENDING_CLEANUP`、`ELYSIA_PATH_TOKEN_PENDING`
+  等 8 个 journal（这些 journal 的原子写用 `<path>.tmp`，同名文件在多进程下会互相
+  覆盖/删除/串读）。**前提是路径在"使用时/构造时"解析**——见下条。
+- **禁止 import 期固化路径**（2026-09-27 收口）：`ProjectPath.resolve()` 每次调用都读
+  环境变量，所以 `ELYSIA_PATH_*` 覆盖能生效的**前提**是代码不在 `import` 时把
+  `resolve()` 的结果存进类属性/模块常量。`TokenTracker._pending_file` 曾经就是这种写法
+  （`data/token_usage_pending.jsonl` 在模块 import 时定格），后果是上面那套 env 隔离
+  **对它完全无效**——测试可以写到仓库真实的运行期 journal。现已改为**实例构造时**解析
+  （`core/monitoring/token_tracker.py`，含 `pending_file=` 显式注入参数），
+  `ELYSIA_PATH_TOKEN_PENDING` 因此真正可用，隔离清单也补上了它。
+  契约与回归判据：`core/monitoring/tests/test_token_tracker.py :: TestPendingFileLifecycle`
+  （env A 建实例用 A、改到 B 建新实例用 B；默认路径不变；降级落盘真的写在该实例的路径上；
+  根 conftest 的隔离确实作用到 tracker）。
+
+### 测试里的环境变量：只走 `monkeypatch`
+
+`os.environ` 是**进程级**状态。xdist 下每个 worker 是独立进程，所以"worker A 改了
+worker B 也变"并不存在；真实风险是另一组：**同 worker 内跨测试污染**、**import 期捕获**
+（上面那条）、**执行顺序依赖**、**subprocess 继承**。
+
+规则：测试代码（`**/tests/**`、`test_*.py`、`conftest.py`）**不得裸写 `os.environ`**
+（`os.environ[k]=v` / `setdefault` / `update` / `pop` / `clear` / `putenv` / `del`），
+一律走 `monkeypatch.setenv` / `delenv`（用例结束自动还原）。需要"缺什么补什么"语义时，
+写 module/session 级 autouse fixture + `monkeypatch`（范例：
+`core/tests/test_phase3.py :: _fake_deepseek_key`）。
+
+由 `core/tests/test_global_state_isolation.py` 守卫：全仓 AST 扫描 + **空的**豁免表
+（新增裸写必须同时登记理由，登记项陈旧同样报红）。2026-09-27 收尾后全仓 0 处裸写；
+同一批还补了扫描器的失败语义——枚举后**消失**的文件忽略（TOCTOU），但
+`PermissionError` / 编码错误 / 真 parser 错误一律冒泡（"扫不了 ≠ 没写"）。
 
 
 ### 真实数据库防线（unit/service 不碰生产库）
@@ -169,6 +215,11 @@ Mongo 在跑就会连上并写入（`agent.stop()` 的 `save_all()` 回写 `sess
 |------|------|--------|
 | **Mongo**（生产连接串） | 导流到内存 `FakeDocumentDBBackend` | `agent.start()`/`stop()` 会读写 `sessions` / `message_archive` |
 | **Milvus**（LTM 集合） | 集合名重定向到 `long_term_memory*__test` | `clear_all()` 是 **drop + recreate collection**——`TestDebugDbApi::test_ltm_clear_all` 实测**清空了整个 `long_term_memory_v2`** |
+
+> **测试集合的残留行**（2026-09-28 起）：写真实 Milvus 的两处用例
+> （`TestMemoryIntegration` / `TestLongTermMemory::test_insert_and_search_async`）挂
+> `core/tests/conftest.py::fresh_ltm_collection`——**先清后跑**，不做收尾清理。
+> 依据与实测数据见下文「`long_term_memory_v2__test` 的残留：结论与依据」。
 
 Mongo 的判据是**实际连接串**而非只看 provider_id——测试若显式把 `MONGODB_URI` 改到别处
 （如指向不可达端口验证失败分支），不受影响。unit/service 另把 Milvus 客户端拦截为抛错桩
@@ -236,6 +287,7 @@ docker compose -f docker-compose.test.yml down        # 用完即弃（无 volum
 | 显式 opt-in | `RUN_REAL_MONGO_TESTS=1`（`Module/conftest.py` 的 external 门禁对 `real_mongo` 放行，由本层自查） | 未设 → 整层 `skip`（带原因，不是"跑过了"） |
 | 目标必须是测试库 | `tests/real_mongo/conftest.py` 校验库名含 `test`，且**核验仓储真连到哪个库** | 不像测试库 → **fail**（本层会 `drop_database`） |
 | 环境必须真满足 | 显式要求时连不上 → `pytest.fail` | 容器没起来 → **fail** 而非 skip（假绿③） |
+| **禁止并行** | 根 `conftest.py` 的 `pytest_runtest_setup`：选中本层却并行 → `pytest.fail` + `shouldstop` | `-n 2` → 每个 worker 一条明确原因、零 DB 操作（见下节） |
 
 **CI 归属（2026-09-16 迁移）**：`ci.yml` 的 `real-mongo` job 是 **push-only + self-hosted**，
 job 内自己 `docker compose -f docker-compose.test.yml up -d`（等 healthy 才跑用例）、跑完
@@ -263,6 +315,108 @@ runner 上，`check-ci-isolation` 会拒答）。本层是 `external` 档、任�
 `Module/workflow_engine/tests/helpers/fake_llm.py`：`FakeLLM`（对齐 `chat.completions.create`
 的 `tool_calls`/`content`/`usage` 访问面 + `gate`/`calls`/`prompts`）、`with_deadline`（gated 测试
 挂死防线，`asyncio.wait_for` 封装）、`CountingLLM`（外部成本计数包装，委托透传 `messages`）。
+
+### 共用真实资源的层禁止并行（2026-09-27）
+
+两条约束此前**只写在 Makefile 注释与文档里**（"不要给 real_mongo 加 `-n`"），而
+`make test-quick` 默认就是 `-n 8`、`PYTEST_N` 还能往上调——"大家记得别加"不是机制。
+
+| 层 | 共用资源 | 并行下的破坏 |
+|---|---|---|
+| `tests/real_mongo/` | 一个真实 MongoDB 测试库 | 每个用例前后 `drop_database`，worker 互相抹库 |
+| `slow`/`integration`/`external` 中会用真实 Milvus 的用例 | `long_term_memory_v2__test` 集合 | `TestDebugDbApi` drop + recreate 它，`TestMemoryIntegration` 做 `count+1`/召回断言（该用例另挂 `fresh_ltm_collection` **先清后跑**，避免残留累积——见下） |
+
+**实测证据**（本轮复现）：把真实 Milvus 用例按文件分给 4 个 worker
+（`--dist loadfile -n 4`）连跑 3 次，第 3 次 `test_search_memory_tool` 以
+`ToolResult(success=False, error='执行超时 (30.0s)')` 失败——另一个 worker 的
+`test_ltm_clear_all` 把集合 drop 掉了。
+
+**判据（`core/tests/_pytest_parallel.py`）**：
+
+- **并行度**只用 xdist 标准信号：worker 读注入的 `config.workerinput["workercount"]`，
+  controller 读解析后的 `--numprocesses`/`--dist`。`-n 0`/`-n 1` 算**串行**——判据是
+  "会不会有两个测试同时在跑"，不是"有没有起子进程"。
+- **精确而非整层**：只有"可能读写共享真实 Milvus 集合"的用例才拒绝并行，条件与
+  `_guard_real_database` 的换桩决策**同源**（非豁免层且未自带内存替身）。
+  全仓 44 条 slow 里有 23 条请求了 `fake_storage`（内存替身），并行完全安全——一律禁掉是
+  白白损失并行度。
+- **挂点必须是 `pytest_runtest_setup`**（每条用例执行前）。三条备选路都实测失败过：
+  ① `pytest_collection_modifyitems` 拿到的是 `-m`/`-k` 过滤**之前**的全量 → 会误伤
+  `make test-quick -n 8`；② `tests/real_mongo/conftest.py::pytest_configure` 装在
+  "conftest 被**加载**"上而不是"用例被**选中**"上 → `pytest -m "unit or service" -n 2 tests/`
+  直接 `ERROR tests/real_mongo`；③ `pytest_collection_finish` 里 `UsageError`/`pytest.exit`
+  会被 xdist 当成 **worker 崩溃** → 整轮退化成 `INTERNALERROR … assert not crashitem`，
+  报错里夹着一个无辜用例的 nodeid。
+- **失败形态**：`pytest.fail(..., pytrace=False)` + `session.shouldstop = True`
+  ——正常的 setup error（实测 `-n 2` 下报 `2 errors`、3.4s 结束、**无 INTERNALERROR**），
+  且每个 worker 只报**一条**（没有 `shouldstop` 时 40 条用例会各报一遍同一段原因）。
+
+**验证入口**：
+
+```bash
+make test-real-mongo                        # 串行 → 正常跑（容器起来时 46 passed）
+pytest tests/real_mongo -n 2                # 未 opt-in → 46 skipped（该层自己的 opt-in 门先拦）；
+                                            # 带 RUN_REAL_MONGO_TESTS=1 → 拒答，退出码非 0、原因写明
+pytest -m slow -n 2 core/tests/test_phase3.py::TestDebugDbApi   # → 拒答（Milvus 那条）
+pytest -m slow -n 2 core/input/tests/test_server.py             # → **不拒答**（10 条 slow 都带
+                                            # fake_storage，内存替身、并行安全）——精确判据的反证
+make test-quick                             # → 必须**不**被拒答（-m 不选这两层）
+```
+
+> 档位数字的**测量方式**（照抄会过期）：`SLOW_TOTAL` / `FAKE_STORAGE` 由遍历
+> `item.fixturenames` 现算，不是维护在文档里的常量。2026-09-28 实测
+> **44 / 23**（另一侧 21 条是"可能读写共享真实 Milvus"的候选）。数字属于描述，
+> 判据在 `core/tests/_pytest_parallel.py` 的 `uses_shared_test_milvus()`。
+
+**边界（有意）**：判据是"这次运行**会真的执行**共用真实资源的用例吗"，不是"选中了吗"。
+整层被 `skip` 时（未 opt-in）没有可拒的风险，故不拒答——那条路径上该层自己的 skip 原因
+已经写明"未设置 `ELYSIA_TEST_MONGODB_URI`"。**不**把自己的 hook 标 `tryfirst` 去抢在
+skip 判定之前，因为那依赖 pluggy 对 `tryfirst` 实现的注册顺序，是脆弱假设。
+
+判据与反向判据都由 `core/tests/test_pytest_parallel_guard.py`（unit，23 条）与
+`core/tests/test_parallel_guard_e2e.py`（slow，子进程跑真实 CLI，5 条）钉住；后者含
+**反向判据**——"`-m "unit or service" -n 2` **不得**被误伤"，因为本批第一版实现正是在
+这里把 `make test-quick -n 8` 弄红的。
+
+> **Milvus 为什么选 Guard 而不是 worker 级 collection 隔离**：这层的真实 Milvus 用例
+> 只有 8 条、只在 `make test-full`（串行、无自动执行点）里跑，并行化收益为零；
+> 而 worker 隔离要额外承担 collection 泄漏（结束残留 `__test_gw0…` 需 session 级清理）
+> 与清理时序（哪个 worker 有权 drop）的风险。按"能用机制保证的不变量不依赖文档"，
+> 一个**精确**的 guard 已经足够；真要做隔离，`install_test_milvus_collection` 加
+> worker 维度即可（`__test` 后缀必须保留，它是生产集合的唯一区分手段）。
+
+#### `long_term_memory_v2__test` 的残留：结论与依据（2026-09-28）
+
+**集合名是固定的**（不是每个 worker 一份），所以"collection 数量无限增长"不成立；
+真正会增长的是**行数**。实测（直接 `query` 集合，不信 `get_collection_stats` 的
+`row_count`——它在 flush 前恒为 0，会把残留读成"干净的"）：
+
+```
+pytest core/tests/test_phase2.py::TestMemoryIntegration   跑 1 次 → 2 行
+                                                          连跑 4 次 → 8 行
+```
+
+`TestMemoryIntegration` / `TestLongTermMemory::test_insert_and_search_async` 都往
+测试集合写条目且从不删除，于是**每次 targeted run 单调增长**。后果有两条，第二条更要紧：
+
+1. `test_save_memory_tool` 的 `top_k=20` 召回会随条目增多而**越来越 flaky**——
+   嵌入被根 conftest 的 `_no_real_embedding` 换成常量 `[0.1]*1024`，所有向量相同 ⇒
+   排序无意义、返回哪 20 条是任意的，新写的那条可能被挤出；
+2. `any("测试保存" in r.text …)` / `"香山"` 断言可被**上一轮的残留**满足 ⇒
+   真 insert 断了也照绿（假绿）。
+
+**决策：加 cleanup，但只加"先清后跑"，不加 session 收尾清理。**
+
+| 判据（§十九的决策规则） | 本方案 |
+|---|---|
+| 实现简单 | `core/tests/conftest.py::fresh_ltm_collection`，约 20 行，只被需要的用例请求 |
+| 生命周期明确 | fixture 作用域内、**测试集合**上；调用方是那两条真实 Milvus 用例 |
+| 不削弱生产隔离 | 清理前**断言** `MemoryRepositoryV2.COLLECTION` 以 `__test` 结尾（fail-closed：断言在前、drop 在后），防线失效时直接红而不是 drop 生产集合 |
+| 不引入 flaky teardown | **没有 teardown**——清在用例之前。CI 被 kill 不留"清理没跑"窗口；Milvus 不可达时失败是本用例的正常 setup error（它本来就要真库） |
+| 无 worker ownership 问题 | 这些用例已由并行 guard 保证串行 |
+
+实测（fixture 落地后连跑 4 次）：集合稳定在 1 行、无 setup/teardown 抖动。
+`TestDebugDbApi::test_ltm_clear_all`（它自己 drop + recreate 该集合）不受影响。
 
 ## Required pre-push verification（提交前的唯一权威清单）
 
@@ -353,11 +507,13 @@ make check-types      # 再确认无漂移（与 A 节同一条命令）
 ```bash
 conda activate Elysia
 
-# 日常开发（unit + service；串行 ≈9min27s，xdist 默认 -n 8 后 ≈1min03s）
+# 日常开发（unit + service；串行 ≈4min57s，xdist 默认 -n 8 后 ≈1min21s）
 make test-quick
 # 或: pytest -m "unit or service" -q -x --tb=short -n 8 --dist loadfile
 
-# 提交前 — 排除 slow/external（**真正离线**；串行 ≈5min13s，-n 8 后 ≈1min03s）
+# 提交前 — 排除 slow/external（**真正离线**；2026-09-21 起 Quick == Normal）
+#          当前规模 Quick = Normal = 6665 条、全量收集 6771 条（2026-09-28
+#          `make check-test-sets` 实测；数字会随新增测试变，**以该门禁的输出为准**）
 make test-normal
 # 或: pytest -m "not slow and not external" -q --tb=short -n 8 --dist loadfile
 
@@ -376,9 +532,156 @@ make lint
 make check-test-sets
 ```
 
-> **时间数字的来源**：上表的串行值来自 2026-09-14 本机 `--durations` 基线；xdist 值来自
-> 同日的档位实测（表见上文「并行执行」）。CI 侧的耗时以 runner 自身日志为准，
-> 两者不要混用——本机 24 核，CI 的 GitHub-hosted runner 只有 4 核。
+> **时间数字的来源**：上表的数字来自 **2026-09-21 本机实测**（24 核、空载、同一命令的
+> 前后对照，见上文「并行执行」的档位表）。CI 侧的耗时以 runner 自身日志为准，两者不要
+> 混用——本机 24 核且 CPU 已是瓶颈（`-n 8` 实测 ≈440%），核数不同的 runner 曲线会不同。
+
+## 测试性能专项（2026-09-21）
+
+一次针对 `-m "unit or service"`（当时 6575 条）的耗时审计与优化。**判据是 `--durations`
+的实测数字**，每条改动都跑过前后对照；**没有**减少用例、放宽断言、隐藏失败或加重试。
+
+### 找到并消掉的四类「与判据无关的等待」
+
+| # | 位置 | 代价（实测） | 处置 |
+|---|------|-------------|------|
+| 1 | `Module/workflow_engine/tests/unit/test_workflow_engine.py::test_pause_sets_pause_requested` | 单条 **30.06s** | 判据只是 `pause_requested is True`（`lifecycle.pause()` 在**进入轮询前**同步置位），却不传 `timeout` → 用生产默认 30s，且没有 orchestrator 会去确认 PAUSED → 必然跑满。改为显式 `timeout=0.5`。确认路径仍由 `test_pause_confirmed` / `test_pause_timeout` 覆盖。**30.06s → 0.51s** |
+| 2 | `core/tests/test_phase3.py::TestAudioBufferErrors::test_stt_timeout` | 单条 **30.13s** | 判据是「超时 → 整段丢弃、不触发回调」，与预算多大无关，却用生产默认 `STT_TIMEOUT=30.0`。`AudioBuffer` 新增 `stt_timeout` 构造参数（**生产默认不变**，仍 30s），测试注入 0.5s。**30.13s → 0.61s** |
+| 3 | `core/cognitive/tests/test_v2_generation.py` 的 5 条 `fault="http_503"` 用例 | 各 **7.13–7.14s** | 退避 `_RETRY_BACKOFF_BASE=1.0` × `_MAX_RETRIES=3` = **1+2+4=7s** 的真实等待；判据是「重试耗尽后发终态」，与退避时长无关。`LLMAdapter` 新增 `retry_backoff_base` 构造参数 + `set_retry_backoff_base()`（**生产默认不变**），测试注入 0。**重试次数与代码路径完全不变** |
+| 4 | `core/input/tests/test_v2_ws.py::_drain` / `test_desktop_ws.py::_connect` | 3× **5.04s** + 5× **3.04s** | 两个 helper 的终止判据要求"看到某个特定握手帧"，而那帧在 v2 下**根本没上 wire** → 空转到 5s/3s 超时才靠 `TimeoutError` 退出。见下节 |
+
+### 建连帧顺序：把终止判据改成语义的
+
+`core/input/ws_handler.py` 的建连帧是**背靠背同步**发出的，顺序固定：
+`session` → `server_info`(v2)/`capabilities`(v1) → `expression`。三者之间没有 await 让出点。
+
+- `_drain`：终止集从 `{capabilities, server_info}` 扩到 `{session, capabilities, server_info}`
+  ——收到**第一帧**即判定建连序列已开始。若 `session` 都没来，行为与之前完全一致。
+- `_connect(collect=True)`：`break` 条件从 `seen_cap and want_command and ...` 改为
+  `seen_cap and (not want_command or d["command"] == want_command)`
+  ——只要 cap 帧的调用方不再空转到 3s 超时。有 `want_command` 时语义不变。
+
+效果：`test_v2_ws.py` 27.6s → **12.5s**，`test_desktop_ws.py` 15.2s → **2.5s**。
+
+### v2 `server_info` 静默缺失：根因与修复（2026-09-27 测试隔离专项）
+
+**现象**：`_drain` 等不到 `server_info` → 空转到 5s 超时。当时的结论是"该帧在这条路径上
+根本没上 wire"。**实际不是**——用真 Agent 建连实测，v2 建连帧是
+`session → server_info → character.state.changed → expression`，帧正常。
+
+**根因**（实测复现，非推断）：`core/services/capabilities.py :: build_server_info` 裸读
+`agent.tts.model`（以及 `agent.stt.model`）。`model` 是 `Module/{tts,stt}/protocol.py`
+的协议成员，而测试里的 `_FakeTtsBackend`（`core/input/tests/test_v2_ws.py`）**只实现了
+`list_voices`**，于是构造 `server_info` 时抛：
+
+```
+AttributeError: '_FakeTtsBackend' object has no attribute 'model'
+```
+
+该异常被建连发送点 `core/input/ws_handler.py` 的 `except Exception: logger.debug(...)`
+吞成**一行 debug** ⇒ 客户端**永远收不到 server_info**，日志里毫无痕迹。
+
+**为什么以前没被发现**：① 生产后端（`TTSBackend` 子类）都带 `model` 的默认实现，只有
+测试替身违反协议；② 唯一的观测点是"客户端等帧超时"，而当时的测试把超时当作"排空建连帧
+的正常出口"（等不到也继续）——**"协议帧缺失"与"没有更多帧"在测试里长得一模一样**。
+
+**修法（三层，缺一不可）**：
+
+| 层 | 改动 |
+|---|---|
+| 不让字段缺失升级成整帧丢失 | `build_server_info` / `build_capabilities` 的后端模型读取收口到 `_backend_model()`：读不到 → 该字段降级为 `null` + `logger.warning`（指名缺失的协议成员），**绝不抛** |
+| 让异常可观察 | 建连发送点的 `except` 从 `logger.debug` 升为 **`logger.error(..., exc_info=True)`**——`server_info`/`capabilities` 是协议必须帧，本连接内不可恢复，属"必须上报"而非"可忽略噪声" |
+| 让测试替身守协议 | `_FakeTtsBackend`（`core/input/tests/test_v2_ws.py`）改为继承标准替身 `Module/tts/testing.py::FakeTTSBackend`——它补齐的不只是 `model`，还有当时同样缺失、失败被 shutdown 步骤吞掉的 `close()` |
+
+**防回归判据**：`core/input/tests/test_v2_ws.py :: TestV2HandshakeProtocolFrames`（3 条）
+——① v2 建连必须收到 `session → server_info → … → expression`（**缺失即 fail**，不再
+"等不到就继续"）且不得出现 `capabilities`；② v1 必须收到 `capabilities`、不得出现
+`server_info`（钉住"v1 行为不变"）；③ 故意违反协议的后端（无 `model`）下**必须帧仍到达**、
+字段降级为 `null`、且有 warning 指名协议成员。
+
+协议口径见 [electron-backend-protocol-v2.md](electron-backend-protocol-v2.md)。
+
+### 后端协议的两层强制：运行期韧性 ≠ 契约强制（2026-09-28）
+
+`server_info` 那次修复后留下的问题是：**`_backend_model()` 的降级会不会变成"backend
+可以不守协议"的长期兜底**。答案是把两件事彻底分层——
+
+| 层 | 问题 | 手段 |
+|----|------|------|
+| 开发/测试 | backend 违反 Protocol，**必须尽早失败** | ① `make pyright` 的 `reportAbstractUsage`；② contract test（下节） |
+| 生产运行 | 坏 backend 真的漏进来，**协议必须帧不许消失** | `_backend_model()` 降级 + 分级日志 |
+
+**静态层实测覆盖到哪（`typeCheckingMode: basic` + 排除 `**/tests/**`）**：
+
+- ✅ 抓得住：继承者**漏实现抽象成员** → `Cannot instantiate abstract class`（实例化点即红）。
+- ❌ 抓不住（实测均报 `0 errors`）：把 `async def` 覆写成同步 `def`、把 `model` 覆写成
+  返回 `None`、把关键字参数 `character` 改名——**且测试替身整片在静态视野之外**
+  （`pyrightconfig.json` 的 `exclude: ["**/tests/**"]`）。
+
+所以补一层运行期可执行的契约检查：
+
+| 构件 | 作用 |
+|------|------|
+| `Module/_common/protocol_contract.py` | `public_members(protocol)`（从协议类 `dir()` 推导，不手抄）+ `violations(obj, protocol)`——逐项检查成员存在性与**形态**（property 声明 ⇒ 实现要能读出值；`async` 声明 ⇒ 实现得是协程/异步生成器） |
+| `Module/tts/tests/test_tts_contract.py`、`Module/stt/tests/test_stt_contract.py` | 对**全部 5 个生产后端**（经工厂与直接构造两条路径）断言协议面 + `model` 语义 + `synthesize_stream`/`transcribe_stream` 真的是异步生成器 + **构造不触网**（socket 守卫）+ 守卫非空转 |
+| `Module/tts/testing.py::FakeTTSBackend`、`Module/stt/testing.py::FakeSTTBackend` | **标准合法替身**：继承 ABC 且实现全部成员，子类只 override 关心的那几个 ⇒ "漏字段"不再是少写一行 |
+| `core/services/tests/test_backend_model.py` | `_backend_model()` 的四种情形：缺成员（WARNING）/ 空串（合法、静默）/ 非字符串（WARNING）/ **getter 自己抛异常（ERROR + traceback）** |
+
+**两条判据必须同时存在**（它们回答两个不同问题）：
+
+```
+契约测试   ：违反协议 ⇒ 这个对象**不合法**（violations() 非空 ⇒ FAIL）
+运行时韧性 ：非法对象真漏进系统 ⇒ server_info **仍然必须发出**，字段 null + warning
+```
+
+删掉后者会让"一个字段读不到 = 整帧消失"复辟；删掉前者则降级会变成长期兜底。
+
+> **`_backend_model()` 为什么把 getter 异常单列**：`getattr(obj, "model", default)`
+> 会把「成员不存在」与「property getter 内部抛 `AttributeError`」**都**变成 default——
+> 于是 getter 的真 bug 被误报成"后端没实现协议成员"，两种情形用同一行 WARNING，
+> 无法区分。现在先直接取（单参 `getattr`，异常照抛），只在 `AttributeError` 时用
+> 静态声明判定（`_declares_model()`）；getter 真抛异常走 **ERROR + `exc_info`**。
+> 降级本身保留（帧不许消失），但**不再与契约违规共用一条日志**。
+
+### 消除 eager 的 torch/transformers 导入（每个进程 −3.8s）
+
+`Module/embedding/registry.py` 顶部 `from Module.embedding.huggingface import HuggingFaceBackend`，
+而 `huggingface.py` 顶层 `import torch` + `from langchain_huggingface import HuggingFaceEmbeddings`。
+
+传导链：`core.input.__init__`（re-export `create_app`）→ `core.input.server` → `core.agent`
+→ `core.agent._lifecycle_persistence` → `Module.embedding` → … → **torch + transformers**。
+
+实测（冷解释器，`-X importtime` 交叉验证）：
+
+| 导入 | 优化前 | 优化后 |
+|------|-------|-------|
+| `Module.embedding.registry` | 4.216s | **0.841s** |
+| `core.agent` | 5.648s | **1.868s** |
+| `core.input` | 5.483s | **1.910s** |
+
+代价**不止**于 worker 启动：本仓有 37 处 subprocess，其中多条**正是验 import 期语义的**
+（`test_cli_overrides` / `test_upload_dir_isolation` / `test_dotenv_side_effect` /
+`test_ready_identity_truthfulness` / `test_external_optin_gate`），无法用 mock 替代——
+它们各自起一个全新解释器，于是每条都白付这 3.8s。实测那些用例 6.2s → 2.3s，
+`test_RHT7` 12.9s → 4.5s。
+
+修法：`registry.py` 把该导入移进 `create()` 的 `provider == "huggingface"` 分支
+（`Module/config/preflight.py` 第 426 行早已是同形状的懒导入，本处只是漏了）。
+**语义不变**——走到那个分支就一定会用到它。
+
+### 测试基建：把"按让出次数计"的等待改成"按墙上时钟计"
+
+`core/agent/tests/test_runtime_epoch_input_ownership.py` 的 `_pump_until` / `_drain_turns`
+此前是 `for _ in range(4000): await asyncio.sleep(0)`。`sleep(0)` **不消耗真实时间**，
+4000 次让出在空闲机器上几十毫秒就跑完——期间只要被测消费者有一次真实 await
+（磁盘写 / 线程池 / 锁），谓词就没机会变真。
+
+实测（`-n 12` 稳定性重跑）：8 次里偶发失败 1 次，报
+`AssertionError: 等待超时：新 epoch 处理新输入`；同类 15 次对照全绿 ⇒ **既有的负载敏感
+脆弱点**（该文件未被本批改动过）。改为 **10s 墙上时钟预算 + 10ms 轮询步长**
+（与 `test_v2_generation.py::_wait_until` 同形状）：判据与失败信息不变、快路径不变
+（谓词本就为真时零 sleep）、不掩盖真实回归（谓词恒假仍报同一个 AssertionError）。
+改后 **6/6 次稳定性重跑全绿**。
 
 ## 已修复：teardown 占了 44.7%（2026-09-14）
 

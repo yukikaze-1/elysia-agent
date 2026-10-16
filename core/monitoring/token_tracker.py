@@ -32,9 +32,31 @@ class TokenTracker:
     - 内存累计（session 内按模型分类）
     - WebSocket 广播（前端实时显示）
     - MongoDB 持久化（不可用时降级到本地 JSONL 文件）
-    """
 
-    _pending_file = str(ProjectPath.TOKEN_PENDING.resolve())
+    ## `_pending_file` 的解析时机（2026-09-27 测试隔离专项修复）
+
+    **路径在实例构造时解析**，不是 `import` 时固化，也不是每次访问重读环境变量。
+
+    旧实现在类体里写 `_pending_file = str(ProjectPath.TOKEN_PENDING.resolve())`——
+    该表达式在**模块 import 时**求值一次，于是 `ELYSIA_PATH_TOKEN_PENDING` 被永久固化：
+
+        os.environ["ELYSIA_PATH_TOKEN_PENDING"] = "/tmp/x.jsonl"
+        import core.monitoring.token_tracker        # ← 此刻定格
+        os.environ["ELYSIA_PATH_TOKEN_PENDING"] = "/tmp/y.jsonl"
+        TokenTracker(...)._pending_file             # 仍是 /tmp/x.jsonl（错）
+
+    后果不是"洁癖"：根 `conftest.py :: _isolate_shared_journals` 用 env 把 7 个
+    journal（scheduler checkpoint / consolidator pending / task result WAL …）
+    重定向到 `tmp_path`，**唯独这一个不能用同一机制**——env 改了也不生效，测试因此
+    可以写到仓库真实的 `data/token_usage_pending.jsonl`。修法两条一起上：
+    ① 本处改为实例级解析；② 该 env 补进 `_isolate_shared_journals`。
+
+    为什么不做成 `@property` 每次 `os.getenv`：路径是**配置**，不是每次访问都要重新
+    决策的量；同一实例的读写必须落在同一个文件（`flush_pending` 读完就 `os.remove`）。
+    构造时解析一次既满足"测试能按环境隔离"，又保持"一个实例一个路径"。
+    副作用（有意）：同进程内**先构造**的实例不会跟着后续 env 变化——这是延迟无关的
+    确定性，而不是缺陷；生产环境变量在进程启动后就固定。
+    """
 
     @staticmethod
     async def clear_all(repo: "TokenRepository") -> int:
@@ -46,6 +68,7 @@ class TokenTracker:
         session_id: SessionId,
         output_manager: "OutputManager",
         repo: "TokenRepository | None" = None,
+        pending_file: str | None = None,
     ):
         """初始化 TokenTracker。
 
@@ -53,10 +76,18 @@ class TokenTracker:
             session_id: 当前会话 ID。
             output_manager: 输出管理器，用于 WebSocket 广播。
             repo: Token 持久化仓库，为 None 时仅使用本地 JSONL 文件。
+            pending_file: pending JSONL 路径覆盖（显式注入，优先于环境解析）。
+                缺省按**构造时**的 `ELYSIA_PATH_TOKEN_PENDING`（无则
+                `data/token_usage_pending.jsonl`）解析。
         """
         self.session_id = session_id
         self._output = output_manager
         self._repo = repo
+        # 实例级路径：构造时按当时环境解析一次（见类 docstring）
+        self._pending_file = (
+            pending_file if pending_file is not None
+            else str(ProjectPath.TOKEN_PENDING.resolve())
+        )
 
         # Session 内存累计
         self.session_total: int = 0

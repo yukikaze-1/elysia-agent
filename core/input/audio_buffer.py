@@ -93,6 +93,14 @@ class AudioBuffer:
     #: 与秒数上限互为冗余：采样率变更或非常规 chunk 尺寸时仍能兜住。
     def _max_segment_bytes(self) -> int:
         return int(self._sample_rate * self.MAX_SEGMENT_SECONDS * 2)
+
+    #: 单次 STT 调用超时（秒）——`_process_segment` 用 `wait_for` 包住转写协程。
+    #: 与 `voice_sessions.STT_TIMEOUT`（同值 30.0）是**两条独立路径的同一语义**：
+    #: 那一层包的是 `VoiceSession` 自己的转写调用，这一层包的是 legacy VAD 分段路径。
+    #: 刻意**不**从 `voice_sessions` 导入：`voice_sessions` 已 `from core.input.audio_buffer
+    #: import ...`，反向导入即成环（`make check-arch` R4 会红）。故此处保留本层常量，
+    #: 值必须与 `voice_sessions.STT_TIMEOUT` 一致（两侧都由测试断言与外部 provider 预算对齐）。
+    STT_TIMEOUT = 30.0
     # WOKEN 超时 —— 唤醒词后用户须在该秒数内开始说话
     WOKEN_TIMEOUT = 5.0
     # 触发打断前所需的连续语音块数（避免
@@ -110,6 +118,7 @@ class AudioBuffer:
         stt_transcribe: "Callable[[bytes], Coroutine[object, object, str]] | None" = None,
         wake_words: list[str] | None = None,
         on_wake_notify: Callback | None = None,
+        stt_timeout: float | None = None,
     ):
         """用 VAD 与 STT 管线初始化音频缓冲。
 
@@ -122,6 +131,11 @@ class AudioBuffer:
             stt_transcribe: 语音转文本的异步 callable(bytes) -> str。
             wake_words: 用于语音激活的唤醒词列表。
             on_wake_notify: 检测到唤醒词时的回调。
+            stt_timeout: 单次 STT 调用超时（秒）。``None`` 用类默认
+                :data:`AudioBuffer.STT_TIMEOUT`（30s）——**生产路径一律走默认**，
+                本参数存在的唯一目的是让测试能注入短预算，从而在**不真等 30 秒**的
+                前提下走到"超时 → 整段丢弃、不触发 on_transcription"这条分支
+                （2026-09-21 测试性能专项：该分支此前只能靠真等 30s 覆盖）。
         """
         self._aggressiveness = aggressiveness
         self._silence_dur = silence_duration       # 结束片段的静音秒数
@@ -130,6 +144,9 @@ class AudioBuffer:
         self._on_transcription = on_transcription
         self._stt_transcribe = stt_transcribe      # STT 可调用对象
         self._on_wake_notify = on_wake_notify
+        self._stt_timeout = (
+            self.STT_TIMEOUT if stt_timeout is None else stt_timeout
+        )
 
         self._chunks: list[bytes] = []
         # WebSocket BINARY 是网络分包，边界不保证等于 VAD 的 640B/20ms 帧。
@@ -353,7 +370,7 @@ class AudioBuffer:
         try:
             text = await asyncio.wait_for(
                 self._stt_transcribe(wav),
-                timeout=30.0,
+                timeout=self._stt_timeout,
             )
             if text and text.strip() and self._on_transcription:
                 stripped = text.strip()

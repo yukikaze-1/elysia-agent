@@ -11,6 +11,7 @@ Module/ 内部共享的零依赖工具函数，供各子模块的 registry、con
 | `env.py` | `dotenv` 统一入口——`ensure_dotenv()` 查找项目根 `.env` 并加载。所有 `__main__.py` 应通过此函数加载环境变量 |
 | `registry_helpers.py` | Registry 共享工具：`resolve_api_key()` / `resolve_base_url()`（从 env var / YAML / kwargs 解析）、`inject_logger()`（调用方**显式**给模块名）、`get_caller_logger()`（经**单跳 `f_back`** 自动探测调用方模块；2026-09-12 自已删除的 `Module/logger/` 迁入，与原 `inject_logger` 并列） |
 | `test_helpers.py` | `make_test_method()` 工厂——消除 5 个 backend（LLM/STT/TTS/Embedding/DocumentDB）中逐字相同的连通性测试实现 |
+| `protocol_contract.py` | 后端**协议面检查**——`public_members()` / `violations(obj, protocol)`。协议要求的成员清单从协议类 `dir()` 推导（不手抄），逐项回答"这个对象真的满足吗"。它补的是 `isinstance`（duck-typed 替身恒 False）与 `make pyright`（排除 `**/tests/**`、`basic` 模式不查覆写形态）都覆盖不到的那一半；消费方是 `Module/{tts,stt}/tests/test_*_contract.py` 与各标准替身 |
 | `config_test_helpers.py` | Config 测试工厂——`make_config_test_classes()` 参数化生成 `TestDefaults` + `TestFromConfig` 两个 test class |
 | `main_runner.py` | 统一 `__main__` 入口——`ensure_dotenv()` + `asyncio.run()`，一行启动集成烟雾测试 |
 | `error_type.py` | `ErrorType` 工具错误分类枚举（纯 enum，零依赖）——Module.tool 与 core.schema 共用，`core.schema.error_type` 为此处的重导出壳 |

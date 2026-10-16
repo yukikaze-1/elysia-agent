@@ -61,7 +61,12 @@ async def _connect(client, headers, *, collect: bool = False, cap_type: str = ""
         frames.append(d)
         if d.get("type") == cap_type:
             seen_cap = True
-        if seen_cap and want_command and d.get("command") == want_command:
+        # 终止判据（2026-09-21 测试性能专项）：**不要求 `want_command` 时，
+        # 收齐 cap 帧即可停**。此前 break 要求 `want_command` 非空，于是"只要 cap 帧"
+        # 的调用方（`want_command=""`）即使 cap 帧首轮就到了，仍会空转到 `timeout=3`
+        # 靠 TimeoutError 退出——实测 `TestServerInfoConnectionId` 五条用例各 3.04s。
+        # 有 `want_command` 时语义完全不变（须同时见到 cap 帧与目标 command）。
+        if seen_cap and (not want_command or d.get("command") == want_command):
             break
     return ws, frames
 

@@ -18,9 +18,10 @@ tts/
 ├── minimax_tts_api.md        # MiniMax 官方 API 参考文档
 ├── minimax_voices.yaml       # MiniMax 音色映射（character → voice_id）
 ├── text_preprocess.py        # 文本预处理函数
+├── testing.py                # FakeTTSBackend — 全协议面、零 I/O 的标准测试替身
 ├── config.py                 # TTSConfig dataclass
 ├── __main__.py               # 冒烟测试
-└── tests/                    # 单元测试
+└── tests/                    # 单元测试（含 test_tts_contract.py 后端契约）
 ```
 
 ## 快速开始
@@ -70,6 +71,23 @@ class TTSBackend(ABC):
 
 - `character` — 角色名/音色名。MiniMax 通过 `minimax_voices.yaml` 映射到 `voice_id`
 - `emotion` — 情绪标签，可选。GPT-SoVits 忽略；MiniMax 传至 `voice_setting.emotion`
+
+## 契约强制（两层，别混用）
+
+`TTSBackend` 是 ABC，但**注入生产路径的对象大多不继承它**（测试替身是 duck-typed
+的普通类），而 `make pyright` 排除 `**/tests/**`，在 `typeCheckingMode: basic` 下也
+不检查覆写形态。所以约束分三层：
+
+| 层 | 手段 | 覆盖什么 |
+|----|------|---------|
+| 静态 | `make pyright` | `reportAbstractUsage`：**继承者漏实现抽象成员** → 实例化即红（实测有效）。它**不**检查 async/sync 形态、`model` 返回类型、关键字参数改名（实测均报 0 error） |
+| 运行期可执行 | `Module/_common/protocol_contract.py::violations()` + [tests/test_tts_contract.py](tests/test_tts_contract.py) | 协议面齐备（成员存在 + 形态正确）、`model` 语义、`synthesize_stream` 真的是异步生成器、构造不触网 |
+| 结构 | `Module/tts/testing.py::FakeTTSBackend` | 测试替身继承它就自动齐备——"漏字段"不再是少写一行 |
+
+写测试替身时**用 `FakeTTSBackend`**（`from Module.tts.testing import FakeTTSBackend`），
+只 override 自己关心的成员。不要手写只实现"这条测试用得到的那几个"的裸类——
+历史上正是这种替身缺 `model` 让 v2 的 `server_info` 整帧消失、缺 `close()` 让
+`Agent.stop()` 的失败被 shutdown 步骤静默收走。
 
 ## 音色配置
 

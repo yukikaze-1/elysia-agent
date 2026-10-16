@@ -3,11 +3,18 @@
 CONDA_ENV = Elysia
 PYTEST = conda run -n $(CONDA_ENV) python -m pytest
 
-# pytest-xdist worker 数（2026-09-14 CI 性能专项）。CI 与本地同源，避免两套行为；
-# 取值是**实测 sweet spot**（档位表见 docs/testing.md「并行执行」）而非"越多越好"——
-# 每个 worker 都要独立 import torch/sentence-transformers（数百 MB），
-# 且 `-n 24`(≈auto) 并不比 `-n 12` 快，还曾在竞争下少报过一条用例（RC 复核未复现，
-# 见 docs/testing.md）。**CI 明确禁止 `-n auto`**：worker 数不应随 runner 核数漂移。
+# pytest-xdist worker 数。CI 与本地同源，避免两套行为；取值是**实测 sweet spot**
+# （档位表见 docs/testing.md「并行执行」）而非"越多越好"。
+#
+# 2026-09-21 测试性能专项重测（本机 24 核、空载、-m "unit or service"）：
+#   n8  84s（CPU 371s） / n12 78s（CPU 449s） / n16 77s（CPU 563s） / n24 75s（CPU 905s）
+# 即 n12 只比 n8 快 7%，n24 用 2 倍 CPU 只换 4%。**保持 8**：给"本机同时跑
+# mongod / milvus / neo4j / 开发工具"留余量（CPU 已是瓶颈：n8 实测 ≈440%）。
+# 要更快：`make test-normal PYTEST_N=12`。
+#
+# **CI 明确禁止 `-n auto`**：worker 数不应随 runner 核数漂移。
+# （历史注：此前每个 worker 都要独立 import torch/sentence-transformers 数百 MB；
+#  该 eager 导入已于 2026-09-21 改为懒加载，每进程省约 3.8s——见 testing.md 同节。）
 # 覆盖：`make test-normal PYTEST_N=12`。
 PYTEST_N ?= 8
 PYTEST_XDIST = -n $(PYTEST_N) --dist loadfile

@@ -1,26 +1,16 @@
-"""pytest conftest — 集成测试模块级 .env 加载。
+"""pytest conftest — 集成测试的 `.env` 兜底加载。
 
-在测试收集阶段自动加载项目根目录的 .env 文件。
-各测试文件中分散的 .env 加载代码可逐步删除。
+委托给**唯一实现** `Module._common.env.ensure_dotenv()`（2026-09-27 测试隔离专项）。
+
+原实现是本仓的**第二份**手写 `.env` 解析器，在收集阶段逐键裸写 `os.environ` 且
+**永不还原**——Batch 1.5 全局状态审计把它登记成豁免项。它与根 `conftest.py` 的
+pytest 入口引导**完全重复**（后者在收集任何测试文件之前就已执行，且带一次性缓存），
+故这里连"兜底"都不需要重复实现：直接委托给同一份缓存即可。
+
+`ensure_dotenv()` 的两点语义差别（都更严）：① 带一次性缓存，对**被删掉的键**
+不会"删掉又回来"；② `override=False`，外部显式设置的环境变量优先于 `.env`。
 """
 
-from pathlib import Path
+from Module._common.env import ensure_dotenv
 
-# ── 加载 .env ────────────────────────────────────────────────────────────────────
-
-_env_file = Path(__file__).resolve().parents[4] / ".env"
-# 路径：conftest.py → integration/ → tests/ → workflow_engine/ → Module/ → Agent/ → .env
-# parents[0] = conftest.py 所在目录 (integration/)
-# parents[4] = Agent/（仓库根目录）
-
-if _env_file.exists():
-    with open(_env_file) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _key, _, _value = _line.partition("=")
-                _key = _key.strip()
-                _value = _value.strip().strip('"').strip("'")
-                import os
-                if _key not in os.environ:
-                    os.environ[_key] = _value
+ensure_dotenv()

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 from Module._common.registry_helpers import resolve_api_key, resolve_base_url, inject_logger
 from Module.config.providers import load_provider_defaults
-from Module.embedding.huggingface import HuggingFaceBackend
 from Module.embedding.openai_compat import OpenAICompatEmbeddingBackend
 
 if TYPE_CHECKING:
@@ -72,6 +71,26 @@ class EmbeddingFactory:
         if provider == "huggingface":
             if "logger" not in kwargs:
                 kwargs["logger"] = inject_logger(__name__)
+            # **函数内懒导入**（2026-09-21 测试性能专项）：本模块此前在顶部
+            # `from Module.embedding.huggingface import HuggingFaceBackend`，而
+            # `huggingface.py` 顶层 `import torch` + `from langchain_huggingface import
+            # HuggingFaceEmbeddings`。后果是**任何**触到本模块的导入都会拖进
+            # torch + transformers ——实测（2026-09-21，冷解释器）：
+            #     Module.embedding                     4.206s
+            #     Module.embedding.registry            4.216s
+            #     Module.embedding.huggingface         4.095s
+            # 而 `Module/config/preflight.py:426` 早已用同形状的懒导入拿 `find_local_model`，
+            # 本处只是漏了。传导链：`core.input.__init__` → `server` → `core.agent` →
+            # `_lifecycle_persistence` → `Module.embedding` ——于是**每个 pytest worker
+            # 进程**、以及每条"起新解释器"的测试（本仓有 37 处 subprocess，其中多条正是
+            # 验 import 期语义的，无法用 mock 替代）都要白付这 4 秒。
+            #
+            # 语义不变：走到这个分支就一定会用到 HuggingFaceBackend，导入时机从
+            # "import registry 时" 变成 "首次 create(huggingface/…) 时"。
+            # 唯一可观测差异：provider 拼错时的报错时机（`Unknown provider` 来自下面的
+            # 白名单校验，本来就在导入之后，不受影响）。
+            from Module.embedding.huggingface import HuggingFaceBackend
+
             instance = HuggingFaceBackend(model_name=model, **kwargs)
         elif provider == "openai":
             if "logger" not in kwargs:

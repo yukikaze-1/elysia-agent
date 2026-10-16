@@ -17,6 +17,8 @@ from aiohttp import WSMsgType
 
 from core.cognitive.tests.test_v2_generation import _UsageLLM, _make_agent_with
 from core.storage.idempotency import reset_store
+from Module.stt.testing import FakeSTTBackend
+from Module.tts.testing import FakeTTSBackend
 
 
 async def _noop_ref(self, aid, mid):
@@ -32,14 +34,36 @@ def fresh_idempotency():
 
 
 async def _drain(client, headers):
-    """建连并排空建连帧，返回 ws。"""
+    """建连并排空建连帧，返回 ws。
+
+    ## 为什么把 `session` 也当终止帧（2026-09-21 测试性能专项）
+
+    建连帧由 `core/input/ws_handler.py` **背靠背**同步发出，顺序固定：
+    `session`（`_send_session_replay`）→ `server_info`（v2）/ `capabilities`（v1）
+    → `expression`（mood）→ 待批工具审批帧。三者之间**没有 await 让出点**，
+    所以「收到第一帧 `session`」已经足以判定建连序列开始灌注。
+
+    此前只在 `capabilities`/`server_info` 上 break，于是**v2 用例**收到 `session`
+    后继续空转等 `server_info`。实测（2026-09-21）：v2 下 `server_info` 这一帧
+    **根本没上 wire**，等待于是跑满 `timeout=5`——`TestSetTtsVoice` 三条用例
+    各 5.04s（其中 `set_tts_voice` 本身的往返实测只有 **0.001s**）。
+
+    ⚠️ 注意这不是"把 timeout 调小"：终止判据仍是**语义的**（建连序列已开始），
+    且第一帧由服务端在 ws_connect 后立即发出——不引入时序竞态。若连 `session`
+    都没来，行为与之前完全一致（5s 后 TimeoutError break）。
+
+    另注：本轮（2026-09-27）已修掉当时只记录的那个 **v2 `server_info` 缺失**缺陷
+    ——根因是 `build_server_info` 裸读 `agent.tts.model`，未实现该协议成员的 TTS
+    后端抛 `AttributeError`，被建连发送点的 `except Exception: logger.debug` 吞掉。
+    修法与判据见 `TestV2HandshakeProtocolFrames`（本文件末尾）。
+    """
     ws = await client.session.ws_connect(client.make_url("/ws"), headers=headers)
     for _ in range(5):
         try:
             m = await asyncio.wait_for(ws.receive(), timeout=5)
             if m.type == WSMsgType.TEXT:
                 t = json.loads(m.data).get("type")
-                if t in ("capabilities", "server_info"):
+                if t in ("session", "capabilities", "server_info"):
                     break
         except asyncio.TimeoutError:
             break
@@ -245,15 +269,23 @@ class TestV2MoodConnectInstanceState:
             await agent.stop()
 
 
-class _FakeTtsBackend:
-    """假 TTS 后端：list_voices 返回固定列表（set_tts_voice 校验用）。"""
+class _FakeTtsBackend(FakeTTSBackend):
+    """假 TTS 后端：list_voices 返回固定列表（set_tts_voice 校验用）。
 
-    def __init__(self, voices, provider_name="minimax"):
-        self._voice_list = voices
-        self.provider_name = provider_name
+    继承 ``Module/tts/testing.py::FakeTTSBackend`` 而不是手写几个成员——这个对象被
+    注入**真实 Agent** 的 ``_tts`` 槽位，生产路径会读它的 ``model``
+    （``build_server_info``）并 ``await close()``（``Agent.stop()``）。
 
-    async def list_voices(self):
-        return self._voice_list
+    历史（2026-09-27 / 09-28 审计）：本类当时是 duck-typed 的，只写了
+    ``list_voices`` + ``provider_name`` + ``model``——**没有 ``close()``**，于是
+    ``Agent.stop()`` 的 ``await self._tts.close()`` 抛 AttributeError，被 shutdown
+    步骤的 ``except BaseException`` 收走，只在日志里留一行；更早一次是缺 ``model``，
+    让 v2 的 ``server_info`` **整帧消失**。继承标准替身后这两类"漏字段"在结构上
+    不再可能（详见 ``Module/_common/protocol_contract.py``）。
+    """
+
+    def __init__(self, voices, provider_name="minimax", model="speech-2.8-hd"):
+        super().__init__(provider_name=provider_name, model=model, voices=voices)
 
 
 async def _send_set_tts_voice_and_read(ws, voice: str) -> dict:
@@ -456,16 +488,21 @@ class TestV2BinaryNoLegacy:
     必须用响度波形才能让旧代码真正红。
     """
 
-    class _CountingSTT:
-        provider_name = "fake"
-        model = "fake/model"
-        def __init__(self, calls):
+    class _CountingSTT(FakeSTTBackend):
+        """记录每次 ``transcribe`` 的音频长度（v2 二进制门对照实验用）。
+
+        继承 ``Module/stt/testing.py::FakeSTTBackend``——本对象注入**真实 Agent**
+        的 ``_stt`` 槽位，协议面必须齐备（此前是 duck-typed 的，只写了
+        ``transcribe``/``close``，缺 ``transcribe_stream``/``test``）。
+        """
+
+        def __init__(self, calls: list[int]):
+            super().__init__(provider_name="fake", model="model", text="你好")
             self._calls = calls
-        async def transcribe(self, audio: bytes, **kwargs):
+
+        async def transcribe(self, audio: bytes, **kwargs: object) -> str:
             self._calls.append(len(audio))
             return "你好"
-        async def close(self):
-            pass
 
     @staticmethod
     def _loud(samples=1600):   # 0.1s @16kHz
@@ -1793,6 +1830,156 @@ class TestWsRateLimitCorrelation:
             assert err is not None, f"应收到 generic error RATE_LIMITED: {err}"
             assert err["retryable"] is True
             assert err["retryAfterMs"] >= 1000
+            await ws.close()
+        finally:
+            await agent.stop()
+
+
+async def _collect_connect_frames(ws, *, timeout: float = 5.0) -> list[dict]:
+    """收齐建连帧（直到协议定义的**最后一帧** `expression`），按到达顺序返回。
+
+    与 `_drain` 的区别：`_drain` 只排空到"建连序列已开始"就返回（性能考虑），
+    本函数是**协议判据**用的——必须收完整个序列，否则无法断言顺序与完整性。
+
+    终止判据是语义的（`expression` 是 docs/electron-backend-protocol-v2.md
+    定义的最后一个建连帧），不是"等不到就继续"：若 `expression` 之前一直不来，
+    由 timeout 兜底退出，**随后由断言判失败**——不会静默放过缺失帧。
+    """
+    frames: list[dict] = []
+    while True:
+        try:
+            m = await asyncio.wait_for(ws.receive(), timeout=timeout)
+        except asyncio.TimeoutError:
+            break
+        if m.type != WSMsgType.TEXT:
+            break
+        d = json.loads(m.data)
+        frames.append(d)
+        if d.get("type") == "expression":
+            break
+    return frames
+
+
+@pytest.mark.service
+class TestV2HandshakeProtocolFrames:
+    """v2 建连帧完整性 + 顺序（docs/electron-backend-protocol-v2.md「v2 连接建连帧」）。
+
+    ## 为什么需要它（2026-09-27 回归）
+
+    `server_info` 是 v2 的**协议必须帧**（能力协商，取代 v1 的 `capabilities`）。
+    它此前会被静默丢掉：`build_server_info` 裸读 `agent.tts.model`，一个未实现该
+    协议成员的 TTS 后端就抛 `AttributeError`，而建连发送点的
+    `except Exception: logger.debug(...)` 把它吞成一行 debug ⇒ **客户端永远收不到
+    server_info**，日志里毫无痕迹。本类把「必须帧必须到、且顺序固定」钉成可执行断言。
+    """
+
+    @pytest.mark.asyncio
+    async def test_v2_connect_sends_server_info_right_after_session(
+            self, aiohttp_client, fresh_idempotency):
+        """v2 建连：`session` → `server_info` → … → `expression`，server_info 必须存在。"""
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await client.session.ws_connect(
+                client.make_url("/ws"), headers={"X-Protocol-Version": "2"})
+            frames = await _collect_connect_frames(ws)
+            types = [f["type"] for f in frames]
+
+            # 1) 必须帧存在——缺失即失败（不是"等不到就继续"）
+            assert "session" in types, f"缺 session 帧: {types}"
+            assert "server_info" in types, f"v2 缺协议必须帧 server_info: {types}"
+            assert "expression" in types, f"缺 expression 帧: {types}"
+
+            # 2) 顺序：session → server_info →（可选 character.state.changed）→ expression
+            assert types.index("session") < types.index("server_info"), types
+            assert types.index("server_info") < types.index("expression"), types
+            # v2 不再发 v1 的 capabilities（同一事实两个帧会漂移）
+            assert "capabilities" not in types, f"v2 不应发 capabilities: {types}"
+
+            # 3) 帧内容：能力协商的实际载荷
+            info = next(f for f in frames if f["type"] == "server_info")
+            assert info["protocol_version"] == "2.0"
+            assert set(info["services"]) == {"llm", "stt", "tts"}
+            features = info["features"]
+            assert features["multi_conversation"] is True
+            assert features["structured_generation"] is True
+            # 非 electron 的 v2 连接不下发 connectionId（None → wire 省略）
+            assert "connectionId" not in info
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_v1_connect_sends_capabilities_not_server_info(
+            self, aiohttp_client, fresh_idempotency):
+        """v1 建连：`session` → `capabilities` → `expression`；不得出现 server_info。
+
+        与 v2 用例成对——保证「v1 行为逐字节不变」这条不变量有可执行判据。
+        """
+        from core.input.server import create_app
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            ws = await client.session.ws_connect(
+                client.make_url("/ws"), headers={"X-Protocol-Version": "1"})
+            frames = await _collect_connect_frames(ws)
+            types = [f["type"] for f in frames]
+
+            assert "capabilities" in types, f"v1 缺 capabilities 帧: {types}"
+            assert "server_info" not in types, f"v1 不应发 server_info: {types}"
+            assert types.index("session") < types.index("capabilities"), types
+            await ws.close()
+        finally:
+            await agent.stop()
+
+    @pytest.mark.asyncio
+    async def test_server_info_survives_tts_backend_missing_model(
+            self, aiohttp_client, fresh_idempotency, caplog):
+        """TTS 后端未实现协议成员 `model` → 必须帧仍到达，字段降级 + 显式告警。
+
+        钉住的核心不变量：**一个能力字段读不到，不能让整帧消失**。同时要求
+        这次降级是**可观测的**（warning 指名后端协议），不是静默 null。
+        """
+        import logging
+
+        from core.input.server import create_app
+
+        class _NoModelTtsBackend:
+            """故意违反 Module/tts/protocol.py：只有 list_voices，无 model。"""
+
+            async def list_voices(self):
+                return []
+
+            async def close(self):
+                """Agent.stop() 会关后端——保证 teardown 不掩盖断言失败。"""
+
+        agent = _make_agent_with(_UsageLLM())
+        await agent.start()
+        agent._tts = _NoModelTtsBackend()  # noqa: SLF001 — 测试注入违规后端
+        app = create_app(agent, serve_static=False)
+        client = await aiohttp_client(app)
+        try:
+            with caplog.at_level(logging.WARNING, logger="core.services.capabilities"):
+                ws = await client.session.ws_connect(
+                    client.make_url("/ws"), headers={"X-Protocol-Version": "2"})
+                frames = await _collect_connect_frames(ws)
+                types = [f["type"] for f in frames]
+
+            assert "server_info" in types, f"协议必须帧仍应到达: {types}"
+            info = next(f for f in frames if f["type"] == "server_info")
+            # available=True（后端已挂）+ model 降级为显式 null
+            assert info["services"]["tts"]["available"] is True
+            assert info["services"]["tts"]["model"] is None
+            # 降级可观测：warning 指名缺失的协议成员
+            assert any("model" in r.message for r in caplog.records
+                       if r.levelno == logging.WARNING), caplog.text
             await ws.close()
         finally:
             await agent.stop()

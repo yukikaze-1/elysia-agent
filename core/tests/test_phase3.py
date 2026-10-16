@@ -928,17 +928,23 @@ class TestAudioBufferErrors:
         from core.input.audio_buffer import AudioBuffer
 
         async def slow_stt(wav):
-            await asyncio.sleep(99)  # Will timeout
+            await asyncio.sleep(99)  # 一定不会在预算内返回
             return "result"
 
         trans_calls = []
         async def on_trans(text):
             trans_calls.append(text)
 
+        # 注入短预算（2026-09-21 测试性能专项）：判据是「STT 超时 → 整段丢弃、
+        # on_transcription 不被调用」，与预算**具体多大**无关。此前用生产默认
+        # `STT_TIMEOUT=30.0`，于是这条用例真的空等 30s——实测 call 阶段 30.13s，
+        # 是当时全仓最慢的用例之一（串行总时长 481s 中占约 6%）。
+        # 0.5s 仍远小于 slow_stt 的 99s，「必然超时」这一前提不变。
         buf = AudioBuffer(
             stt_transcribe=slow_stt,
             on_transcription=on_trans,
             silence_duration=0.01,
+            stt_timeout=0.5,
         )
 
         # 喂入足够大的响度音频以形成分段

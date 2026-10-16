@@ -293,7 +293,14 @@ async def _open_ws_connection(
         else:
             await ws.send_json(build_capabilities(agent).wire_dict())
     except Exception:
-        logger.debug("Failed to send capabilities on connect", exc_info=True)
+        # **error 而非 debug**（2026-09-27）：server_info / capabilities 是协议
+        # 必须帧（docs/electron-backend-protocol-v2.md「v2 连接建连帧」），发不出去
+        # 等于客户端这一整个连接的能力协商失败——不可在本连接内恢复，必须上报。
+        # 历史缺陷：此处原为 logger.debug，于是「帧缺失」在日志里完全不可见，
+        # 只在别处表现为客户端等帧超时（详见 core/services/capabilities.py 模块 docstring）。
+        logger.error("Failed to send %s on connect（协议必须帧缺失）",
+                     "server_info" if protocol_version >= 2 else "capabilities",
+                     exc_info=True)
 
     try:
         # Task 12（§6.5 读端迁移）：v1/v2 统一读当前 instance 的 engine.state（实例权威）。

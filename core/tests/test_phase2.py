@@ -147,8 +147,18 @@ class TestSessionPersistence:
 # ============================================================================
 
 class TestLongTermMemory:
+    """LTM 单测（service/unit：Milvus 被防线换成操作即抛的桩）。
+
+    唯一会写**真实** Milvus 的是 `test_insert_and_search_async`（`external`）——
+    那一条单独挂 `fresh_ltm_collection`：它会往 `long_term_memory_v2__test` 写
+    "今天天气很好"等条目且从不删除，与 `TestMemoryIntegration` 是同一类残留源
+    （见 `core/tests/conftest.py` 的 fixture docstring）。**不能把 fixture 挂到类上**
+    ——那会让 service/unit 的用例也去连真库，而它们的 Milvus 客户端是抛错桩。
+    """
+
     @pytest.mark.external
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("fresh_ltm_collection")
     async def test_insert_and_search_async(self):
         from core.memory.long_term import LongTermMemory
         mem = LongTermMemory()
@@ -306,7 +316,14 @@ class TestLongTermMemory:
 # ============================================================================
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("fresh_ltm_collection")
 class TestMemoryIntegration:
+    """真实 Milvus 集成：先清 `long_term_memory_v2__test` 再跑。
+
+    `fresh_ltm_collection` 的必要性（残留会让断言被上一轮满足 / 让 top_k 召回变
+    flaky）见 `core/tests/conftest.py` 里该 fixture 的 docstring。
+    """
+
     @pytest.mark.asyncio
     async def test_search_memory_tool(self, real_env):
         """search_memory 工具应能找到相关条目。"""

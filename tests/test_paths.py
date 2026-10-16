@@ -58,10 +58,19 @@ class TestProjectPathResolve:
         result = ProjectPath.DATA_SANDBOX.resolve(session_id="abc")
         assert str(result).endswith("data/sandbox/abc")
 
-    def test_resolve_without_placeholder(self):
-        """无占位符时不需要 kwargs。"""
+    def test_resolve_without_placeholder(self, monkeypatch):
+        """无占位符时不需要 kwargs，且解析到声明的默认文件。
+
+        **默认路径断言要先清掉防线覆盖**（同 `test_resolve_with_placeholder`）：
+        根 conftest 的 `_isolate_shared_journals` 会把 `data/token_usage_pending.jsonl`
+        重定向到当前用例的 `tmp_path`（2026-09-27 起——此前该覆盖对 TokenTracker
+        无效，因为它把路径固化在 import 期，见 docs/testing.md）。
+        本用例的主题是"**无占位符**也能解析"，所以必须拿默认值来断言。
+        """
+        monkeypatch.delenv("ELYSIA_PATH_TOKEN_PENDING", raising=False)
         result = ProjectPath.TOKEN_PENDING.resolve()
         assert result.name == "token_usage_pending.jsonl"
+        assert result == get_project_root() / "data" / "token_usage_pending.jsonl"
 
     def test_resolve_returns_path(self):
         """返回值是 pathlib.Path。"""

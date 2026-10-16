@@ -1159,7 +1159,7 @@ core/utils/log_setup.py:
 2026-09-14 CI 性能专项后，两个合并门禁集合**互斥**：`make test-quick`（`-m "unit or service"`）
 与 `make test-remainder`（Normal − Quick），由 `make check-test-sets` 机械验证
 `Quick ∪ remainder == Normal` 且交集为空；`make test-quick` / `make test-normal` 默认带
-`pytest-xdist`（`-n 8 --dist loadfile`：`make test-normal` 串行 ≈5min13s → ≈1min03s，档位实测表见 testing.md）。
+`pytest-xdist`（`-n 8 --dist loadfile`：`make test-normal` 串行 ≈4min57s → ≈1min21s，档位实测表见 testing.md）。
 
 完整分层体系、测试文件索引、按模块运行命令 → [docs/testing.md](testing.md)
 

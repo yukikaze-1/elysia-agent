@@ -98,14 +98,21 @@ async def agent(llm: _RecordingFakeLLM):
 
 
 async def _drain_turns(a: Agent) -> None:
-    """等**所有**回合落定（含 pending 出队 spawn 的那些）。"""
-    for _ in range(400):
-        await asyncio.sleep(0)
+    """等**所有**回合落定（含 pending 出队 spawn 的那些）。
+
+    与 `_pump_until` 同一处修正（2026-09-21）：此前是 `for _ in range(400)` +
+    `sleep(0)`，即"400 次调度让出"——那**不代表**任何真实时长，消费者一旦卡在真实
+    await 上就必然报超时。改为 10s 墙上时钟预算，轮询步长 10ms；判据与失败信息不变。
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 10.0
+    while loop.time() < deadline:
         task = a._cognitive.current_task  # noqa: SLF001 — 只读任务句柄
         if task is not None and not task.done():
             await _settle(task)
             continue
         if a.pending_messages or a.bus.pending_user_inputs:
+            await asyncio.sleep(0.01)
             continue
         return
     raise AssertionError(
@@ -114,11 +121,34 @@ async def _drain_turns(a: Agent) -> None:
 
 
 async def _pump_until(predicate: Any, what: str) -> None:
-    """让出事件循环直到谓词为真（结构化推进，不用固定 sleep 造 race）。"""
-    for _ in range(4000):
+    """推进事件循环直到谓词为真；**总预算按墙上时钟计**，不是按让出次数。
+
+    2026-09-21 测试性能专项修正：此前是 `for _ in range(4000): await asyncio.sleep(0)`。
+    `sleep(0)` 只是"让出一次调度机会"，**不消耗任何真实时间**——4000 次让出在空闲机器上
+    约几十毫秒就跑完，而这期间只要消费者有一次真实的 await（磁盘写、线程池、锁），
+    谓词就没有机会变真。
+
+    实测（`-m "unit or service" -n 12`）：本条用例在 8 次重跑里偶发失败 1 次，报
+    `AssertionError: 等待超时：新 epoch 处理新输入`，而同类 15 次对照（优化前 4 档 +
+    优化后 4 档 + 最终 4 档）全绿——是**既有的负载敏感脆弱点**（本文件此前未被本批改动），
+    不是本批优化引入的。
+
+    改法刻意**不是**"把数字调大"：调大让出次数在 CPU 争抢下仍不可靠（它压根不给
+    真实 I/O 时间），且会让空闲路径更慢。改为 10s 的**墙上时钟**预算 + 10ms 轮询步长
+    ——与 `core/cognitive/tests/test_v2_generation.py::_wait_until` 同形状：
+      - 判据不变（谓词为假即抛同一个 AssertionError，不会静默放过）；
+      - 快路径不变（谓词本就为真时立即返回，无 sleep）；
+      - 慢路径从"必定超时的空转"变成"最多等 10s 的真实等待"。
+    10s 远超本仓库任何单条用例的正常推进时间，故不掩盖真实回归。
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 10.0
+    while loop.time() < deadline:
         if predicate():
             return
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
+    if predicate():          # 收尾再判一次：避免"刚好在 deadline 后变真"被误报
+        return
     raise AssertionError(f"等待超时：{what}")
 
 

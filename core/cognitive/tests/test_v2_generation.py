@@ -123,8 +123,20 @@ def _inject_fake_storage(agent) -> "Agent":
 
 
 def _make_agent_with(fake) -> "Agent":
-    import os as _os
-    _os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+    """装配 fake LLM 的 Agent（本 helper 被 10 个测试模块复用）。
+
+    **不需要假 `DEEPSEEK_API_KEY`**（2026-09-27 测试隔离专项）：原实现在这里裸写
+    `os.environ.setdefault("DEEPSEEK_API_KEY", "test")`，理由是"Agent 构造要求该 key
+    非空"。实测不成立——`Agent(config=AppConfig())` 在构造期不读它（真后端从不在
+    `agent.llm._backend = fake` 之前被创建）：把 `.env` 引导也一并关掉
+    （`ELYSIA_PATH_DOTENV=/nonexistent/absent.env` + 取消本写入）跑本 helper 的
+    **全部 10 个使用模块** → 243 passed / 2 skipped。故直接删除。
+
+    删掉它是**修隔离**，不只是清 lint：`setdefault` 有两个缺陷（Batch 1.5 全局状态
+    审计的原始结论）——① 写完永不还原，同进程后续测试都看得见；② 取值依赖进程历史
+    （冷进程得 `"test"`，若更早的 `ConfigLoader.load()` 已把真实 `.env` 灌进
+    `os.environ` 则得**开发者真实 key**），测试于是不再控制自己的输入。
+    """
     from core.config import AppConfig
     from core.agent import Agent
     config = AppConfig()
@@ -132,6 +144,11 @@ def _make_agent_with(fake) -> "Agent":
     config.stt.enabled = False
     agent = Agent(config=config)
     agent.llm._backend = fake
+    # 退避注入（2026-09-21 测试性能专项）：本文件有 5 条用例用 `fault="http_503"`
+    # 驱动"重试耗尽 → 发终态"的错误路径，判据是**终态事件**，与退避时长无关。
+    # 生产默认退避 1+2+4=7s，5 条用例实测各 7.13–7.14s（共约 35s）。
+    # 注入 0 后重试**次数与路径不变**，只是不再真等——实测单条 7.1s → ~0.2s。
+    agent.llm.set_retry_backoff_base(0.0)
     # 批次 3（Task 13 + review 修复 I3）：注入内存 fake 存储 + GenerationRegistry——
     # 取消/断线测试断言终态 mark（真 Mongo 离线自建 registry 为 no-op），且不碰生产 default。
     _inject_fake_storage(agent)

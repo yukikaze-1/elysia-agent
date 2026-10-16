@@ -32,6 +32,8 @@ import pytest
 
 from core.agent.agent import Agent
 from core.schema.service_state import ServiceState
+from Module.stt.testing import FakeSTTBackend
+from Module.tts.testing import FakeTTSBackend
 
 pytestmark = pytest.mark.service
 
@@ -41,18 +43,20 @@ pytestmark = pytest.mark.service
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class _FakeBackend:
-    """LLM/STT/TTS 后端的统一替身（只需 model / test / close / raw_client）。"""
+class _FakeBackend(FakeTTSBackend, FakeSTTBackend):
+    """LLM/STT/TTS 后端的统一替身（`switch_*` 会把它放进运行期槽位）。
+
+    继承两个标准替身而不是手写几个成员——本对象既是 registry 的返回值也是
+    `Agent._tts` / `Agent._stt` 的内容，协议面必须齐备（`core/adapter/tts_adapter.py`
+    在流式合成路径读 `stream_format`，`Agent.stop()` 读 `close`）。
+    额外的 LLM 面（`chat`）与 `raw_client` 由本类补上。
+    """
 
     def __init__(self, model_id: str) -> None:
-        self.model = model_id
+        provider, _, name = model_id.partition("/")
+        FakeTTSBackend.__init__(self, provider_name=provider, model=name)
+        FakeSTTBackend.__init__(self, provider_name=provider, model=name)
         self.raw_client = SimpleNamespace(model=model_id)
-
-    async def test(self) -> dict:
-        return {"ok": True}
-
-    async def close(self) -> None:
-        return None
 
     async def chat(self, messages: list[dict], **kwargs: Any) -> str:
         return ""

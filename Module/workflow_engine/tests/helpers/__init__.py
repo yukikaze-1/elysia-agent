@@ -142,19 +142,20 @@ def get_tools_from_manager(tm: ToolManager) -> list[Tool]:
 # ── 内部 helper ──────────────────────────────────────────────────────────────────
 
 def _ensure_env() -> None:
-    """兜底 .env 加载（conftest.py 已覆盖，此处防止直接导入 helpers 时不加载）。"""
-    from pathlib import Path
-    _env_file = Path(__file__).resolve().parents[4] / ".env"
-    if _env_file.exists():
-        with open(_env_file) as _f:
-            for _line in _f:
-                _line = _line.strip()
-                if _line and not _line.startswith("#") and "=" in _line:
-                    _key, _, _value = _line.partition("=")
-                    _key = _key.strip()
-                    _value = _value.strip().strip('"').strip("'")
-                    if _key not in os.environ:
-                        os.environ[_key] = _value
+    """兜底 .env 加载（conftest.py 已覆盖，此处防止直接导入 helpers 时不加载）。
+
+    委托给**唯一实现** `Module._common.env.ensure_dotenv()`（2026-09-27 测试隔离专项）。
+    原实现是本仓的**第三份**手写 `.env` 解析器（另两份在
+    `Module/workflow_engine/tests/integration/conftest.py` 与
+    `core/cognitive/tests/test_delegation_preparer.py`），逐键裸写 `os.environ` 且
+    **永不还原**——Batch 1.5 全局状态审计把它登记成豁免项。
+
+    `ensure_dotenv()` 是同一件事的单源实现，且语义更严：带一次性缓存（对**被删掉的
+    键**不会"删掉又回来"）、`override=False`（外部显式 env 优先）、入口点语义
+    （与根 `conftest.py` 的引导同一份缓存，故这里是真 no-op 而非重复写入）。
+    """
+    from Module._common.env import ensure_dotenv
+    ensure_dotenv()
 
 
 def _wrap_llm_client(llm: AsyncOpenAI) -> AsyncOpenAI:

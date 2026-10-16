@@ -39,43 +39,33 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from Module.stt.testing import FakeSTTBackend
+from Module.tts.testing import FakeTTSBackend
 
-class _FakeSTT:
-    """最小 STT 后端替身。"""
 
-    provider_name = "sensevoice"
+class _FakeSTT(FakeSTTBackend):
+    """最小 STT 后端替身。
+
+    继承 ``Module/stt/testing.py::FakeSTTBackend``——本对象经 ``STTFactory.create``
+    的替身被 ``switch_stt`` 挂进**真实 Agent** 的 ``_stt`` 槽位（先过连通性探测）。
+    此前是 duck-typed 的，成员恰好齐备但没有任何机制保证它继续齐备。
+    """
 
     def __init__(self, model: str) -> None:
-        self._model = model
-
-    @property
-    def model(self) -> str:
-        return f"{self.provider_name}/{self._model}"
-
-    async def transcribe(self, audio: bytes, **kwargs) -> str:
-        return "测试转写"
-
-    async def transcribe_stream(self, audio: bytes, **kwargs):
-        yield "测试转写"
-
-    async def test(self) -> dict:
-        return {"ok": True, "latency_ms": 1, "error": ""}
-
-    async def close(self) -> None:
-        return None
+        super().__init__(provider_name="sensevoice", model=model, text="测试转写")
 
 
-class _FakeTTS:
-    """最小 TTS 后端替身（报告只读 `.model`，故只需一个真字符串）。"""
+class _FakeTTS(FakeTTSBackend):
+    """最小 TTS 后端替身。
 
-    provider_name = "gpt-sovits"
+    继承 ``Module/tts/testing.py::FakeTTSBackend``：本对象直接写进**真实 Agent**
+    的 ``_tts`` 槽位，而协议面必须齐备（报告只读 ``.model``，但槽位上的对象会被
+    ``Agent.stop()`` 调 ``close()``、被前端契约路径调 ``list_voices()``）。
+    此前是 duck-typed 的，只写了 ``provider_name`` / ``model`` 两个成员。
+    """
 
     def __init__(self, model: str = "default") -> None:
-        self._model = model
-
-    @property
-    def model(self) -> str:
-        return f"{self.provider_name}/{self._model}"
+        super().__init__(provider_name="gpt-sovits", model=model)
 
 
 def _make_agent():

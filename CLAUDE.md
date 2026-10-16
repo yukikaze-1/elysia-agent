@@ -293,6 +293,11 @@ Hierarchical: `env var > YAML file > dataclass default`. Main config at `config.
 - **子系统接口层**: 会被跨模块消费、且可能被单独迭代/替换的子系统，把消费方契约抽成 `typing.Protocol`（`core/personality/protocol.py` 是首个）。**刻意不用 ABC**：替换实现不该反向依赖原包。补偿是「pyright 结构校验 + `core/tests/test_character_engine_protocol.py` 逐项断言成员与签名」，并守住「实现**不得继承**协议」——继承会让协议里 `...` 的空方法体变成静默 no-op。
   > ⚠️ Protocol 无实例化期强制：新增接口成员后必须同步跑 `make pyright` 与契约测试；只加成员不加实现，静态检查会红，但运行期不会。
 
+- **TTS/STT 后端契约（ABC，两层强制）**: `Module/{tts,stt}/protocol.py` 是 **ABC**（不是 `Protocol`），但**注入生产路径的对象大多不继承它**——测试替身是 duck-typed 普通类，而 `make pyright` 的 `exclude: ["**/tests/**"]` 整片跳过测试，`typeCheckingMode: basic` 下也**不检查覆写形态**（实测：把 `async def` 覆写成同步 `def`、把 `model` 覆写成返回 `None`，均报 `0 errors`；它唯一抓得住的是 `reportAbstractUsage`＝继承者漏实现抽象成员 → 实例化即红）。
+  - **写替身一律继承标准替身**：`from Module.tts.testing import FakeTTSBackend` / `from Module.stt.testing import FakeSTTBackend`，只 override 关心的成员。**不要**手写"这条测试用得到的那几个成员"的裸类——历史缺陷正是替身缺 `model` 让 v2 `server_info` 整帧消失、缺 `close()` 让 `Agent.stop()` 的失败被 shutdown 步骤静默收走。
+  - 运行期可执行的契约检查：`Module/_common/protocol_contract.py::violations(obj, protocol)`（协议面从协议类 `dir()` 推导，不手抄）；消费方是 `Module/{tts,stt}/tests/test_{tts,stt}_contract.py`（5 个生产后端 + 工厂路径 + 构造不触网 + 守卫非空转）。
+  - **分层纪律**：`core/services/capabilities.py::_backend_model()` 的降级是**运行期韧性**（协议必须帧不许被一个字段拖死），**不是**"backend 可以不守协议"的许可证；"违反协议"必须在 contract test 里失败。两种判据必须同时存在；`_backend_model()` 的四种情形（缺成员 WARNING / 空串合法静默 / 非字符串 WARNING / getter 抛异常 **ERROR + traceback**）见 [docs/testing.md](docs/testing.md) §后端协议的两层强制。
+
 ## Prompt files (`core/prompts/`)
 
 模板（`.j2`），PascalCase 命名。多数活跃模板使用 `str.replace()` 注入变量（因 JSON 示例中 `{}` 与 `.format()` 冲突）；`AwarenessJudge.j2` 和 `SpeakingStyleEdit.j2` 使用 Jinja2 宏，通过 `PromptManager.render_macro()` 渲染。通过 `Path(__file__)` 相对路径加载，不受 cwd 影响。详见 `core/prompts/README.md`。

@@ -1,29 +1,21 @@
-"""DelegationPreparer 单元测试——不依赖真实 LLM，测试解析、校验、格式化、集成（mock LLM）。"""
+"""DelegationPreparer 单元测试——不依赖真实 LLM，测试解析、校验、格式化、集成（mock LLM）。
+
+`.env` 无需在此加载（2026-09-27 测试隔离专项）：原实现在**模块 import 期**手写解析
+仓库根 `.env`、逐键裸写 `os.environ`（Batch 1.5 全局状态审计的登记项）。它与根
+`conftest.py` 的 pytest 入口引导**完全重复**——后者在收集任何测试文件之前就已把
+`.env` 注入完毕，且带一次性缓存（见 `Module/_common/env.py::ensure_dotenv`）。
+本模块只用 mock，不读任何真实凭据。
+"""
 
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from core.schema.message import Message, UserMessage, AssistantMessage, MessageId
 from core.schema.part import TextPart, ImagePart
-
-# 加载项目根目录的 .env（CI/本地开发环境）
-_env_path = Path(__file__).resolve().parents[3] / ".env"
-if _env_path.exists():
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _key, _, _value = _line.partition("=")
-                _key = _key.strip()
-                _value = _value.strip().strip('"').strip("'")
-                if _key not in os.environ:
-                    os.environ[_key] = _value
 
 from core.cognitive.delegation import (
     DelegationPreparer,

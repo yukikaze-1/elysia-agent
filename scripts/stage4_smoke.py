@@ -25,6 +25,8 @@ from aiohttp import WSMsgType  # noqa: E402
 from aiohttp.test_utils import TestClient, TestServer  # noqa: E402
 
 from frontend_contract.version import PROTOCOL_VERSION  # noqa: E402
+from Module.stt.testing import FakeSTTBackend  # noqa: E402
+from Module.tts.testing import FakeTTSBackend  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 PCM_FIXTURE = ROOT / "core" / "input" / "tests" / "fixtures" / "sample_16k_mono.pcm"
@@ -72,29 +74,26 @@ async def _drain_errors(ws: Any, rounds: int = 3) -> dict | None:
     return err
 
 
-class _SmokeSTTBackend:
-    """固定文本 STT 桩（spec §5.1 默认 stub；构造不发网络）。"""
+class _SmokeSTTBackend(FakeSTTBackend):
+    """固定文本 STT 桩（spec §5.1 默认 stub；构造不发网络）。
+
+    继承 ``Module/stt/testing.py::FakeSTTBackend``——桩会被挂进**真实 Agent** 的
+    ``_stt`` 槽位（``agent.stt``），协议面必须齐备；此前是 duck-typed 的，缺
+    ``provider_name``（抽象成员）。
+    """
 
     def __init__(self, text: str = "你好，这是阶段4 smoke 转写。"):
-        self._text = text
+        super().__init__(provider_name="sensevoice", model="sense-voice", text=text)
         self.transcribed = 0
-        # capabilities 广播读 backend.model（core/services/capabilities.py:54）——桩补 model
-        # 属性，消除 WS 建连后 traceback
-        self.model = "sensevoice/sense-voice"
 
     async def transcribe(self, audio: bytes, **kw: Any):
         self.transcribed += 1
-        return self._text
+        return await super().transcribe(audio, **kw)
 
     async def transcribe_stream(self, audio: bytes, **kw: Any):
         self.transcribed += 1
-        yield self._text
-
-    async def test(self) -> dict:
-        return {"ok": True, "latency_ms": 1}
-
-    async def close(self):
-        pass
+        async for chunk in super().transcribe_stream(audio, **kw):
+            yield chunk
 
 
 class _Smoke:
@@ -189,41 +188,36 @@ async def _profile_scenarios(smoke: _Smoke, agent: Any, client: TestClient) -> N
             smoke.check("Profile delete 成功", r.status == 200 and d.get("ok") is True, str(d)[:120])
 
 
-class _SmokeTTSBackend:
+class _SmokeTTSBackend(FakeTTSBackend):
     """TTS 桩（spec §5.1 默认 stub）：voices/preview 走真实路由（_active_tts_profile 读
     agent.tts 槽位——**不经过 TTSFactory**，故 main() 直接挂 agent.tts + agent.tts_enabled）。
 
     provider_name 非 minimax → source=static；synthesize 对未知 voice_id 抛异常 → 路由
     结构化 {ok: False, error}；offline=True 模拟 provider 离线。
+
+    继承 ``Module/tts/testing.py::FakeTTSBackend``（此前是 duck-typed 的，缺
+    ``stream_format`` / ``default_voice`` / ``get_preprocess`` 三个具体成员）。
     """
 
-    provider_name = ""
+    _SAMPLE_WAV = ROOT / "Module" / "stt" / "tests" / "fixtures" / "sample.wav"
 
     def __init__(self):
-        # capabilities 广播读 backend.model（capabilities.py:56）——桩补 model 消除 traceback
-        self.model = "gpt-sovits/default"
+        super().__init__(
+            provider_name="gpt-sovits",     # ≠ "minimax" ⇒ tts_routes 报 source=static
+            model="default",                # capabilities 下发 gpt-sovits/default
+            voices=[{"id": "elysia_test_001", "name": "Elysia 测试音"}],
+            audio=self._SAMPLE_WAV.read_bytes(),
+        )
         self.offline = False
 
-    async def list_voices(self) -> list[dict]:
-        return [{"id": "elysia_test_001", "name": "Elysia 测试音"}]
-
-    async def synthesize(self, text: str, *, character: str | None = None,
-                         emotion: str | None = None, voice_id: str | None = None) -> bytes:
+    async def synthesize(self, text: str, *, character: str, emotion: str | None = None,
+                         voice_id: str | None = None) -> bytes:
         if self.offline:
             raise RuntimeError("无法连接 TTS 服务 (localhost:9880): connection refused")
         if voice_id and voice_id != "elysia_test_001":
             raise RuntimeError("voice 不存在")
-        return (Path(__file__).resolve().parent.parent / "Module/stt/tests/fixtures/sample.wav").read_bytes()
-
-    async def synthesize_stream(self, text: str, *, character: str | None = None,
-                                emotion: str | None = None, voice_id: str | None = None):
-        yield (Path(__file__).resolve().parent.parent / "Module/stt/tests/fixtures/sample.wav").read_bytes()
-
-    async def test(self) -> dict:
-        return {"ok": True, "latency_ms": 1}
-
-    async def close(self) -> None:
-        pass
+        return await super().synthesize(
+            text, character=character, emotion=emotion, voice_id=voice_id)
 
 
 async def _tts_rest_scenarios(smoke: _Smoke, tts_stub: _SmokeTTSBackend, client: TestClient) -> None:
@@ -470,20 +464,26 @@ async def _tts_playback_scenarios(smoke: _Smoke) -> None:
         async def audio_cancelled(self, stream_id: int, **kw: Any):
             self.calls.append(("cancelled", stream_id))
 
-    class _StubTTS:
-        stream_format = "wav"
-        def get_preprocess(self) -> None:
-            return None
-        async def synthesize(self, text: str, *, character: str | None = None,
-                             emotion: str | None = None, voice_id: str | None = None) -> bytes:
-            wav = (Path(__file__).resolve().parent.parent / "Module/stt/tests/fixtures/sample.wav").read_bytes()
-            return wav
+    class _StubTTS(FakeTTSBackend):
+        """确定性 TTS 桩：返回 fixture 里的真实 WAV 字节。
+
+        继承标准替身 ⇒ 协议面齐备，``TTSStreamManager`` 不必再收一个
+        ``# type: ignore[arg-type]`` 的最小面桩（那些缺口只在被走到时才炸）。
+        """
+
+        def __init__(self) -> None:
+            super().__init__(
+                provider_name="gpt-sovits", model="default",
+                audio=(Path(__file__).resolve().parent.parent
+                       / "Module/stt/tests/fixtures/sample.wav").read_bytes(),
+            )
 
     # ── 完成序列：audio_start → chunk×N → audio_end ──
+    # `tts=` 已是完整协议面（_StubTTS 继承标准替身）；`# type: ignore[arg-type]` 现在
+    # 只豁免 `output=`——`_Recorder` 是"够用的最小面"记录器，与 OutputManager 结构不匹配。
     rec = _Recorder()
-    # smoke 桩为最小面（_StubTTS/_Recorder 仅实现被调用方法），与 TTSBackend/OutputManager
-    # 协议结构不匹配——确定性契约 smoke 专用桩，`# type: ignore[arg-type]` 显式豁免
-    mgr = TTSStreamManager(tts=_StubTTS(), output=rec, character_name="elysia")  # type: ignore[arg-type]
+    mgr = TTSStreamManager(
+        tts=_StubTTS(), output=rec, character_name="elysia")  # type: ignore[arg-type]
     mgr.reset_for_turn()          # 必需：预置 seq=1 门控
     mgr.stream_sentence("你好")
     await mgr.wait_all()
@@ -497,7 +497,8 @@ async def _tts_playback_scenarios(smoke: _Smoke) -> None:
     # ── 取消：gate 停在转发段 → cancel_all → audio_cancelled（无孤儿 chunk 续发）──
     rec2 = _Recorder()
     rec2.gate = asyncio.Event()
-    mgr2 = TTSStreamManager(tts=_StubTTS(), output=rec2, character_name="elysia")  # type: ignore[arg-type]
+    mgr2 = TTSStreamManager(
+        tts=_StubTTS(), output=rec2, character_name="elysia")  # type: ignore[arg-type]
     mgr2.reset_for_turn()
     mgr2.stream_sentence("你好")
     deadline = time.monotonic() + 3

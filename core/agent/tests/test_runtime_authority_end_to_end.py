@@ -25,6 +25,8 @@ import pytest
 
 from core.agent.agent import Agent
 from core.config import AppConfig
+from Module.stt.testing import FakeSTTBackend
+from Module.tts.testing import FakeTTSBackend
 
 #: `fake_storage` 是"本测试不碰真实库"的显式声明（见根 conftest 的「真实库防线」）。
 pytestmark = [pytest.mark.service, pytest.mark.usefixtures("fake_storage")]
@@ -44,17 +46,20 @@ class _RawClient:
         self.closed = True
 
 
-class _FakeBackend:
+class _FakeBackend(FakeTTSBackend, FakeSTTBackend):
+    """LLM/STT/TTS 三槽位的统一替身（一次替换三个工厂的 `create`）。
+
+    继承 `Module/tts/testing.py` 与 `Module/stt/testing.py` 的标准替身：本对象会经
+    **真 `Agent.start()`** 落进 `_tts` / `_stt` 运行期槽位，协议面必须齐备。
+    此前是 duck-typed 的，缺 `stream_format`（`core/adapter/tts_adapter.py:556`
+    在流式合成路径读它）等 7 个成员——只是那条路径当前没被走到，所以缺口被藏住了。
+    """
+
     def __init__(self, model_id: str) -> None:
-        self.model = model_id
+        provider, _, name = model_id.partition("/")
+        FakeTTSBackend.__init__(self, provider_name=provider, model=name)
+        FakeSTTBackend.__init__(self, provider_name=provider, model=name)
         self.raw_client = _RawClient(model_id)
-
-    async def test(self) -> dict:
-        return {"ok": True}
-
-    def get_preprocess(self) -> None:
-        """TTS 后端协议的一部分（`_cognitive.configure(tts=…)` 会读它）。"""
-        return None
 
     async def close(self) -> None:
         await self.raw_client.close()

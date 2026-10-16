@@ -34,14 +34,23 @@ class LLMAdapter:
     """统一的 LLM 接口，支持工具调用。"""
 
     def __init__(self, model: str | None = None, *,
-                 _test_backend: "LLMBackend | None" = None):
+                 _test_backend: "LLMBackend | None" = None,
+                 retry_backoff_base: float = _RETRY_BACKOFF_BASE):
         """初始化 LLM 适配器。
 
         Args:
             model: LLM 模型标识符（如 "deepseek/deepseek-chat"），为 None 时使用默认值。
             _test_backend: 测试用后端实例，为 None 时通过工厂创建。
+            retry_backoff_base: 可重试状态码的退避基数（秒），第 n 次重试实际等待
+                ``base * 2**n``。**生产路径一律走默认** :data:`_RETRY_BACKOFF_BASE`；
+                该注入点存在的唯一目的是让"错误路径"测试不必真的空等
+                ``1+2+4=7s`` 退避（2026-09-21 测试性能专项：
+                `core/cognitive/tests/test_v2_generation.py` 有 5 条用例只需验证
+                "503 重试耗尽后发终态"，却在退避上共花约 35s）。
+                注入 0 时**重试次数与代码路径完全不变**，只是不再真的等待。
         """
         self._requested_model = model or "deepseek/deepseek-chat"
+        self._retry_backoff_base = retry_backoff_base
         # ARCH-INC-P2-03：热切换时旧后端的关闭任务作用域（见 switch_model / close）
         self._closing_backends = AsyncTaskScope("llm-adapter")
 
@@ -130,7 +139,7 @@ class LLMAdapter:
                     if started:
                         logger.warning("LLM 流已开始输出，跳过重试（避免重复内容）")
                     raise
-                backoff = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                backoff = self._retry_backoff_base * (2 ** attempt)
                 logger.warning("LLM 调用失败 (status=%s), %d/%d 重试 (%.0fs)",
                               status, attempt + 1, _MAX_RETRIES, backoff)
                 await asyncio.sleep(backoff)
@@ -175,6 +184,22 @@ class LLMAdapter:
         reconnect_meth = getattr(self._backend, 'reconnect', None)  # type: ignore[union-attr]
         if reconnect_meth is not None:
             await reconnect_meth()
+
+    def set_retry_backoff_base(self, seconds: float) -> None:
+        """覆盖重试退避基数（秒）——**测试专用缝**，生产无调用方。
+
+        与构造参数 `retry_backoff_base` 同一语义两类入口：构造参数供
+        `LLMAdapter(...)` 直建（如单测），本方法供**已经建好**的适配器改
+        （如 `Agent` 内部自建、测试随后注入 fake backend 的场景）。
+
+        Args:
+            seconds: 新的退避基数。0 表示重试之间不等待——**重试次数与代码路径不变**。
+
+        为什么需要它：错误路径测试（如 503 重试耗尽后发终态）的判据是**终态事件**，
+        与退避时长无关，但生产默认退避是 ``1+2+4=7s``。此前只能靠
+        `agent.llm._retry_backoff_base = 0` 这样的私有穿透，且要求调用方知道实现细节。
+        """
+        self._retry_backoff_base = seconds
 
     def switch_model(self, new_model_id: str, **kwargs: Any) -> None:
         """热切换 LLM 模型。先建后换——创建失败时旧后端与旧请求模型均保留。

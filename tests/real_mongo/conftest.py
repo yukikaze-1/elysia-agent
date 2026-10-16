@@ -20,6 +20,22 @@
 3. **库名必须像测试库（含 `test`）**：不像就 **fail**（不是 skip）——本层会
    `drop_database`，指错库即数据事故。`RUN_REAL_MONGO_TESTS=1` 时连不上同样 **fail**：
    "显式要求了却做不到"按本仓「门禁的三种假绿③」的约定必须**拒答**。
+4. **禁止并行**（2026-09-27 补）：本层每个用例前后 `drop_database`（见
+   `real_mongo_backend`），worker 之间会互相抹库；且身份/会话断言基于**固定的
+   库状态**。此前这条只写在 Makefile 注释里（"不要给 real_mongo 加 -n"）——
+   `pytest tests/real_mongo -n 8` 随时可以加上，然后跑几百条、随机互相 drop、
+   最后给出一堆莫名其妙的失败。现在它是机器不变量：根 `conftest.py` 的
+   `pytest_collection_finish` 在**每个 worker 开跑任何用例之前**检查最终选择集，
+   发现并行且选中了本层即拒答（判据与文案见
+   `core/tests/_pytest_parallel.py::real_mongo_parallel_violation`）。
+
+   **为什么守卫不写在本文件里**（本批实测结论，值得记下来）：conftest 只要被
+   **加载**，它的 `pytest_configure` 就会被调用——而 xdist worker 在收集期会加载
+   `tests/` 下所有 conftest。于是"本层禁止并行"写在本地会变成"任何并行运行都
+   禁止"：实测 `pytest -m "unit or service" -n 2 tests/`（根本不选本层）直接报
+   `ERROR tests/real_mongo - pytest.UsageError`，`make test-quick -n 8` 会整轮变红。
+   判据必须装在"**选中**"上，而"选中"只有 `pytest_collection_finish(session)`
+   才拿得到（`session.items` 是 `-m`/`-k` 过滤**之后**的结果）。
 
 ## ⚠️ 实测踩到过的坑（本层最重要的设计输入）
 

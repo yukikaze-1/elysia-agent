@@ -1,11 +1,26 @@
 """真实数据库访问防线的单元测试（marker=unit）。
 
-覆盖 `core/tests/_real_db_guard.py` 的两个可测构件：
+覆盖 `core/tests/_real_db_guard.py` 的三个可测构件：
 - `is_exempt`：marker 豁免判定（integration/slow/external 允许连真实库）
 - `make_blocked_client`：替换真实客户端的桩——**构造成功、任何操作即抛并记录**
+- `install_fake_mongo` / `install_test_milvus_collection`：两个导流/改名装置
 
-端到端效果（防线真的拦住写库）由 `core/tests/test_real_db_guard_e2e.py` 以子进程验证，
-因为「测试试图连库」在正常会话里会被 autouse 防线直接判失败，无法自测。
+## 端到端效果在哪里被验证（2026-09-28 更正）
+
+**本文件此前写的是"由 `core/tests/test_real_db_guard_e2e.py` 以子进程验证"——
+那个文件从来不存在**，是一个指向不存在测试的失效引用。实际分布是：
+
+| 判据 | 在哪 |
+|------|------|
+| 装置本身的行为（导流/改名/幂等/豁免表） | **本文件**（`TestInstallFakeMongo` / `TestInstallTestMilvusCollection`） |
+| **autouse 接线**（根 conftest 真的把它们装到了用例上吗） | 本文件 `TestAutouseWiring`——在**会话内**断言，不需要子进程 |
+| 协议帧在坏 backend 下的可达性 | `core/input/tests/test_v2_ws.py`（与防线无关，同属"必须帧不许消失"族） |
+| 并行跑共用真实资源被拒答 | `core/tests/test_parallel_guard_e2e.py`（真子进程，因为它要跑**真实 CLI 会话**） |
+
+**为什么不需要子进程**：防线的失败形态是**导流**（不是 `pytest.fail`），所以在同一个
+会话里直接断言"这次用例的工厂已被换掉"就足够了。"必须起新会话才验得了"的只有
+"整轮被拒答"那条（守卫用 `pytest.fail` + `shouldstop`）——那才是
+`test_parallel_guard_e2e.py` 存在的理由。
 """
 
 from __future__ import annotations
@@ -23,6 +38,9 @@ from core.tests._real_db_guard import (
 )
 
 pytestmark = pytest.mark.unit
+
+#: 防线装置的宿主模块——用它判定"根 conftest 是否真的装上了"。
+_GUARD_MODULE = "core.tests._real_db_guard"
 
 
 class TestIsExempt:
@@ -189,3 +207,61 @@ class TestInstallTestMilvusCollection:
         install_test_milvus_collection(monkeypatch)
         assert MemoryRepositoryV2.COLLECTION == once
         assert once.endswith("__test") and not once.endswith("__test__test")
+
+
+class TestAutouseWiring:
+    """根 `conftest.py::_guard_real_database` 的**接线**判据。
+
+    这一组补的是最隐蔽的一类假绿：「装置写对了，但没装在改动上」。把 autouse
+    fixture 摘掉 / 改错判据 / 拼错 fixture 名，上面那些直接调装置的用例**照样全绿**，
+    而防线已经不再保护任何测试——本文件此前声称由 `test_real_db_guard_e2e.py`
+    覆盖的正是这件事，但那个文件并不存在。
+
+    本类**被 autouse 防线覆盖**（marker=unit ⇒ 非豁免层）因此它断言的是自己的
+    运行环境，而不是某个显式安装的副本。
+    """
+
+    def test_mongo_guard_is_installed_by_autouse(self):
+        """`DocumentDBFactory.create` 已被换成防线里的包装函数。
+
+        先证接线、再验行为：**顺序是判据的一部分**——接线不在时直接红，
+        绝不落到真工厂去构造生产库客户端（见下一个用例）。
+        """
+        from Module.database.documentdb.registry import DocumentDBFactory
+
+        assert DocumentDBFactory.create.__module__ == _GUARD_MODULE, (
+            "autouse 防线没有装到本用例上：`DocumentDBFactory.create` 仍是 "
+            f"{DocumentDBFactory.create.__module__} 里的原件——"
+            "继续调用会真的去构造生产库客户端，故在此失败而不是往下走"
+        )
+
+    def test_production_mongo_redirects_to_in_memory_fake(self):
+        """行为判据：生产标识 + 生产连接串 → 内存 fake（不是真后端）。"""
+        from Module.database.documentdb.registry import DocumentDBFactory
+        from core.storage.tests._fake_documentdb import FakeDocumentDBBackend
+
+        # 与上一个用例同样的 fail-closed 前置：接线不在就停在这里
+        assert DocumentDBFactory.create.__module__ == _GUARD_MODULE
+
+        backend = DocumentDBFactory.create("mongodb/default")
+        assert isinstance(backend, FakeDocumentDBBackend), (
+            f"生产 Mongo 没有被导流到内存 fake，实际拿到 {type(backend).__name__}"
+        )
+
+    def test_milvus_client_is_blocked_for_unit_tests(self):
+        """unit/service 层：Milvus 客户端被换成「操作即抛」的桩（它们不需要向量库）。"""
+        from Module.database.vectordb.milvus import MilvusClient
+
+        assert MilvusClient.__module__ == _GUARD_MODULE, (
+            f"MilvusClient 仍是 {MilvusClient.__module__} 里的真件——"
+            "unit/service 层应当被换成操作即抛的桩"
+        )
+
+    def test_ltm_collection_is_redirected_for_this_test(self):
+        """LTM 集合名在本用例内以 `__test` 结尾（autouse 防线已生效）。"""
+        from core.storage.memory_repo import MemoryRepository
+        from core.storage.memory_repo_v2 import MemoryRepositoryV2
+
+        assert MemoryRepositoryV2.COLLECTION.endswith("__test")
+        assert MemoryRepository.COLLECTION.endswith("__test")
+        assert MemoryRepositoryV2.COLLECTION != "long_term_memory_v2"

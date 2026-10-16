@@ -15,7 +15,8 @@ stt/
 ├── sensevoice.py        # SenseVoiceBackend — 本地 SenseVoice API
 ├── openai_stt.py        # OpenAICompatibleSTTBackend — OpenAI-compatible STT
 ├── config.py            # STTConfig — dataclass 配置
-├── tests/              # 单元测试
+├── testing.py           # FakeSTTBackend — 全协议面、零 I/O 的标准测试替身
+├── tests/              # 单元测试（含 test_stt_contract.py 后端契约）
 
 └── README.md
 ```
@@ -56,6 +57,21 @@ class STTBackend(ABC):
 - `audio` — 原始音频 bytes（WAV 等格式，由后端决定支持哪些）
 - `kwargs` — 透传 language / task 等参数，直接传给 API
 - `provider_name` + `model` — 对齐 `TTSBackend`（`model` 返回 `provider_name/_model` 完整 id，capabilities 下发当前模型用；空 `_model` 返回 `""`）
+
+### 契约强制（两层，别混用）
+
+`STTBackend` 是 ABC，但注入生产路径的对象**大多不继承它**（测试替身是 duck-typed
+的普通类），而 `make pyright` 排除 `**/tests/**`，在 `typeCheckingMode: basic` 下也
+不检查覆写形态。约束因此分三层：
+
+| 层 | 手段 | 覆盖什么 |
+|----|------|---------|
+| 静态 | `make pyright` | `reportAbstractUsage`：继承者漏实现抽象成员 → 实例化即红（**不**检查 async/sync 形态与返回类型） |
+| 运行期可执行 | `Module/_common/protocol_contract.py::violations()` + [tests/test_stt_contract.py](tests/test_stt_contract.py) | 协议面齐备（成员存在 + 形态正确）、`model` 语义、`transcribe_stream` 真的是异步生成器、构造不触网 |
+| 结构 | `Module/stt/testing.py::FakeSTTBackend` | 测试替身继承它就自动齐备；还会主动维护 docstring 里声明的可选属性 `last_emotion` / `last_events` |
+
+写测试替身时**用 `FakeSTTBackend`**（`from Module.stt.testing import FakeSTTBackend`），
+只 override 自己关心的成员——不要手写只实现"这条测试用得到的那几个"的裸类。
 
 ## 支持的后端
 

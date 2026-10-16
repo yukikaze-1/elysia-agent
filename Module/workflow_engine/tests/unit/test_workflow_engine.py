@@ -251,7 +251,21 @@ async def test_stop_cleans_up_remaining_tasks():
 
 @pytest.mark.asyncio
 async def test_pause_sets_pause_requested():
-    """正常暂停——设置 exec_state.pause_requested = True。"""
+    """正常暂停——设置 exec_state.pause_requested = True。
+
+    **显式传 timeout**（2026-09-21 测试性能专项）：本用例的判据只有
+    `pause_requested is True`——它由 `lifecycle.pause()` 在进入轮询**之前**同步置位。
+    而不传 timeout 时用的是 `WorkflowEngine.pause()` 的**生产默认值 30.0s**：
+    这里没有真实 orchestrator 会去写 PAUSED，于是轮询必然跑满整个预算再返回 False。
+
+    实测（串行 `-m "unit or service" --durations`）：本条 call 阶段 **30.06s**，
+    是当时全仓第二慢的用例、占 481s 串行总时长约 6%——而且**与判据无关的等待**。
+
+    "确认 PAUSED 后返回 True" 与 "不响应时超时返回 False" 分别由
+    `test_pause_confirmed` / `test_pause_timeout` 覆盖（它们本就显式传 timeout），
+    故此处不削覆盖能力：只把这次必然落空的等待压到与判据匹配的量级。
+    0.5s 仍是 `lifecycle.pause()` 内部 0.1s 轮询周期的整数倍，行为不变。
+    """
     ts = await _build_task_system()
 
     tid = WorkflowId("t1")
@@ -261,7 +275,7 @@ async def test_pause_sets_pause_requested():
 
     ts._tasks[tid] = sub_agent
 
-    await ts.pause(tid)
+    await ts.pause(tid, timeout=0.5)
 
     assert exec_state.pause_requested is True
 

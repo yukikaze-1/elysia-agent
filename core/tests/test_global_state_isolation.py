@@ -47,22 +47,23 @@ pytestmark = pytest.mark.service
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # ── 守卫 1 的豁免表 ────────────────────────────────────────────────────
-_ENV_WRITE_ALLOWLIST: dict[str, str] = {
-    "Module/workflow_engine/tests/helpers/__init__.py":
-        "external e2e 辅助 `_ensure_env()`：按需把宿主 .env 读进进程 env，供真实 LLM "
-        "e2e 使用。属 external 层（`make test-external`，默认任何档位都不跑），"
-        "本批次不改——改它属 external 层的独立议题。",
-    "Module/workflow_engine/tests/integration/conftest.py":
-        "同上（integration 目录级 conftest，为真实 LLM 集成测试备环境）。",
-    "core/cognitive/tests/test_delegation_preparer.py":
-        "import 期解析 .env 写 os.environ（14 键）。**已与根 conftest 的 pytest 入口引导"
-        "重复**（后者在收集前就把 .env 注入完毕，故此处实际是 no-op），但仍留着裸写。"
-        "本批次不可改 `core/cognitive/**`（路径所有权），待 owner 收口。",
-    "core/cognitive/tests/test_v2_generation.py":
-        "`_make_agent_with()` 里裸写 `os.environ.setdefault(\"DEEPSEEK_API_KEY\",\"test\")`。"
-        "同上：属 `core/cognitive/**`，本批次不可改，待 owner 收口（修法：module 级 "
-        "autouse + monkeypatch，缺失才设）。",
-}
+_ENV_WRITE_ALLOWLIST: dict[str, str] = {}
+"""裸 `os.environ` 写入的豁免表——**2026-09-27 起为空**（测试隔离专项收尾）。
+
+四条历史豁免项全部收口，不再是"登记了就算了"：
+
+| 原豁免项 | 收口方式 |
+|---|---|
+| `core/cognitive/tests/test_v2_generation.py` | **删除**：`_make_agent_with()` 里那句 `setdefault("DEEPSEEK_API_KEY","test")` 实测无必要——关掉 `.env` 引导后跑它的全部 10 个使用模块仍 243 passed / 2 skipped（`Agent(AppConfig())` 构造期不读该 key，真后端从不在注入 fake 之前被创建） |
+| `core/cognitive/tests/test_delegation_preparer.py` | **删除**：import 期手写 `.env` 解析器与根 conftest 的入口引导完全重复（后者收集前已注入完毕） |
+| `Module/workflow_engine/tests/helpers/__init__.py` | **委托**：`_ensure_env()` 改为调 `Module._common.env.ensure_dotenv()`（同一件事的单源实现，带一次性缓存） |
+| `Module/workflow_engine/tests/integration/conftest.py` | **同上**：整个手写解析器换成一行 `ensure_dotenv()` |
+
+留空表是**承重**的：它让"新增一处裸写"必须同时改这张表并写出理由（`setdefault`
+的 `MutableMapping` 路径也扫得到），而不是靠 reviewer 记得。**净效果**：全仓测试
+代码里不再有任何一处裸写 `os.environ`，测试环境变量的改与还原全部交给
+`monkeypatch`（用例结束自动还原）。
+"""
 
 _FORBIDDEN_WRITE_ATTRS = frozenset({"setdefault", "update", "pop", "clear", "popitem"})
 
@@ -97,9 +98,17 @@ def _scan_env_writes() -> dict[str, list[tuple[int, str]]]:
         if not is_test_code:
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover
+            source = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            # **只吞这一种**：枚举（`rglob`）与读取之间的 TOCTOU——文件在两步之间
+            # 消失（并发清理、临时目录被删、编辑器原子替换）。它没有"没被扫到"的
+            # 语义歧义，忽略即可（2026-09-27 测试隔离专项顺手收口）。
             continue
+        # PermissionError / UnicodeDecodeError / SyntaxError **一律向上抛**：
+        # 扫不了 ≠ 没写。默默 `continue` 会让该文件变成守卫的静默盲区——正是
+        # 「门禁的三种假绿③：环境不满足时门禁必须拒答，而不是报绿」。
+        # （实测：当前扫描面 470 个测试文件全部可解析，故启用这条不会误伤。）
+        tree = ast.parse(source)
 
         hits: list[tuple[int, str]] = []
         for node in ast.walk(tree):
@@ -145,6 +154,55 @@ class TestNoBareEnvironWrites:
         assert not stale, (
             "以下豁免项已不再需要（文件里没有裸 os.environ 写入了），请从 "
             f"_ENV_WRITE_ALLOWLIST 删除：{stale}")
+
+
+class TestScannerFailureSemantics:
+    """扫描器的失败语义（2026-09-27 测试隔离专项顺手收口）。
+
+    判据是**"扫不了 ≠ 没写"**：枚举与读取之间的 TOCTOU（文件消失）可以忽略，
+    但权限/编码/解析错误必须向上抛——默默 `continue` 会让那个文件变成守卫的
+    静默盲区，而盲区里的裸写永远不会被判红（「门禁的三种假绿③」）。
+    """
+
+    def test_vanished_file_is_ignored(self, monkeypatch, tmp_path):
+        """枚举之后消失的文件 → 忽略该文件，扫描继续（TOCTOU 的正当处理）。"""
+        probe = tmp_path / "test_vanished.py"
+        probe.write_text("import os\nos.environ['X'] = '1'\n", encoding="utf-8")
+
+        real_read_text = Path.read_text
+
+        def _flaky_read_text(self, *args, **kwargs):
+            if self == probe:
+                raise FileNotFoundError(self)
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _flaky_read_text)
+        monkeypatch.setattr("core.tests.test_global_state_isolation._REPO_ROOT", tmp_path)
+        assert _scan_env_writes() == {}, "消失的文件应被忽略，而不是让整次扫描失败"
+
+    def test_permission_error_is_not_swallowed(self, monkeypatch, tmp_path):
+        """`PermissionError` 必须冒泡——"读不了"不能当"没写"。"""
+        probe = tmp_path / "test_denied.py"
+        probe.write_text("import os\nos.environ['X'] = '1'\n", encoding="utf-8")
+
+        real_read_text = Path.read_text
+
+        def _denied_read_text(self, *args, **kwargs):
+            if self == probe:
+                raise PermissionError(self)
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _denied_read_text)
+        monkeypatch.setattr("core.tests.test_global_state_isolation._REPO_ROOT", tmp_path)
+        with pytest.raises(PermissionError):
+            _scan_env_writes()
+
+    def test_syntax_error_is_not_swallowed(self, monkeypatch, tmp_path):
+        """真实 parser 错误必须冒泡——否则该文件成为静默盲区。"""
+        (tmp_path / "test_broken.py").write_text("def (:\n", encoding="utf-8")
+        monkeypatch.setattr("core.tests.test_global_state_isolation._REPO_ROOT", tmp_path)
+        with pytest.raises(SyntaxError):
+            _scan_env_writes()
 
 
 class TestPluginSafetyProfileIsolation:

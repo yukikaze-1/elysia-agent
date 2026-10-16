@@ -16,6 +16,7 @@ import base64
 import pytest
 
 from core.input.server import create_app
+from Module.tts.testing import FakeTTSBackend
 
 
 def _make_app_agent():
@@ -25,19 +26,18 @@ def _make_app_agent():
     return Agent(config=AppConfig())
 
 
-class _FakeBackend:
-    """可注入的假 TTS 后端（list_voices 返回固定列表，provider_name 可配）。"""
+class _FakeBackend(FakeTTSBackend):
+    """可注入的假 TTS 后端（list_voices 返回固定列表，provider_name 可配）。
+
+    继承 ``Module/tts/testing.py::FakeTTSBackend``——本对象注入**真实 Agent** 的
+    ``_tts`` 槽位，``/api/tts/voices`` 会读 ``list_voices()`` / ``provider_name`` /
+    ``default_voice()``。此前是 duck-typed 的，缺 ``model`` / ``close`` /
+    ``synthesize`` 等 8 个协议成员。
+    """
 
     def __init__(self, voices, provider_name="minimax"):
-        self._voices = voices
-        self.provider_name = provider_name
-
-    async def list_voices(self):
-        return self._voices
-
-    def default_voice(self, character: str = "") -> str:
-        """对齐 TTSBackend.default_voice（假后端无 voice map → 空串）。"""
-        return ""
+        # 假后端无 voice map → default_voice 恒空串（对齐原实现语义）
+        super().__init__(provider_name=provider_name, voices=voices, default_voice_id="")
 
 
 @pytest.mark.service
@@ -177,20 +177,26 @@ async def test_tts_voices_default_current_no_service_state(aiohttp_client):
 # ────────────────────── POST /api/tts/preview（Task 10 试听） ──────────────────────
 
 
-class _FakePreviewBackend:
-    """可注入的假 TTS 后端：synthesize 记录调用并返回固定 bytes，stream_format 可配。"""
+class _FakePreviewBackend(FakeTTSBackend):
+    """可注入的假 TTS 后端：synthesize 记录调用并返回固定 bytes，stream_format 可配。
+
+    继承 ``Module/tts/testing.py::FakeTTSBackend``——本对象注入**真实 Agent** 的
+    ``_tts`` 槽位（``tts_routes`` 读 ``stream_format`` 并 ``await synthesize``）。
+    此前是 duck-typed 的，只写了 ``synthesize`` + ``stream_format``，缺 8 个协议成员。
+    这里保留 ``{text, character, voice_id}`` 字典形态的调用记录（断言逐字段比对）。
+    """
 
     def __init__(self, audio: bytes = b"RIFF\x00fake-wav", stream_format: str = "wav"):
-        self._audio = audio
-        self.stream_format = stream_format
+        self._preview_audio = audio
+        super().__init__(audio=audio, stream_format=stream_format)
         self.calls: list[dict] = []
         self.fail = False
 
-    async def synthesize(self, text, *, character, emotion=None, voice_id=None):
+    async def synthesize(self, text, *, character, emotion=None, voice_id=None) -> bytes:
         if self.fail:
             raise RuntimeError("合成失败")
         self.calls.append({"text": text, "character": character, "voice_id": voice_id})
-        return self._audio
+        return self._preview_audio
 
 
 @pytest.mark.service

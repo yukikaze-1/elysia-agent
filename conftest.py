@@ -73,6 +73,7 @@ from core.tests._real_db_guard import (  # noqa: E402
     install_test_milvus_collection,
     is_exempt,
 )
+from core.tests._pytest_parallel import fail_fast_on_parallel  # noqa: E402
 
 
 def _bootstrap_dotenv() -> dict[str, object]:
@@ -224,6 +225,26 @@ def pytest_collection_modifyitems(config, items):
             continue
         if not external_ok:
             item.add_marker(skip_external)
+
+
+def pytest_runtest_setup(item):
+    """共用真实资源的测试层禁止并行 —— 每条用例执行前判据（2026-09-27）。
+
+    ## 为什么挂在 setup
+
+    `tests/real_mongo/` 会 drop 共享测试库，slow/integration 中会用真实 Milvus 集合的
+    用例会互相 drop collection。这两条此前只写在 Makefile 注释与文档里，而
+    `pytest -n` 随手就能加（`make test-quick` 默认就是 `-n 8`）。
+
+    setup 是唯一既**精确**又**干净**的挂点：只对真的会被执行的用例触发，
+    且在用例体内任何 I/O（含 `drop_database`）之前；`pytest.fail` 是正常 setup error
+    （`UsageError`/`pytest.exit` 在 worker 里会被 xdist 变成 `INTERNALERROR`）。
+    三条备选路都实测失败过，逐条理由见 `core/tests/_pytest_parallel.py` 模块 docstring。
+
+    串行时（含 `make test-quick`/`test-full`/`test-real-mongo` 的默认路径）本 hook
+    在第一行就返回——零成本。
+    """
+    fail_fast_on_parallel(item)
 
 
 @pytest.fixture(scope="session")
@@ -433,14 +454,19 @@ def _isolate_shared_journals(tmp_path, monkeypatch):
     隔离手段是 `ProjectPath.resolve()` 自带的环境变量覆盖（`ELYSIA_PATH_<NAME>`），
     对被测代码零侵入——与既有 `_isolate_session_pending_jsonl` 同模式。
     注意 `ProjectPath.resolve()` 是**每次调用**读环境变量，所以 monkeypatch 生效；
-    反过来说，**在 import 期就把路径固化下来的写法不受本 fixture 影响**——
-    `TokenTracker._pending_file`（`core/monitoring/token_tracker.py`，类属性，
-    定义时求值）就是这种情况，它的测试用实例属性覆盖
-    （见 `core/monitoring/tests/test_token_tracker.py`）。这条是**已知缺口**：
-    目前没有测试从"未隔离目录"走到它，但同一类缺陷的下一个实例不会自己暴露。
+    反过来说，**在 import 期就把路径固化下来的写法不受本 fixture 影响**。
 
-    **串行下同样需要**：它同时消除"测试写进真实 `data/` 目录"的残留（本仓 `data/`
-    是真实运行时目录，不是测试沙箱）。
+    ## `TOKEN_PENDING`：曾经的"已知缺口"，2026-09-27 已补
+
+    本 fixture 此前**只能隔离 7 个** journal，而 `data/token_usage_pending.jsonl`
+    不在其中——不是漏写，是**写了也不生效**：`TokenTracker._pending_file` 是类属性、
+    在模块 import 时求值，env 改了也不变（这条缺口原本就写在本 docstring 里）。
+    现在路径改在**实例构造时**解析（`core/monitoring/token_tracker.py`），env 覆盖
+    因此真正生效，本 fixture 把它一并纳入——测试再也写不到仓库真实的 `data/`。
+
+    **边界（仍要诚实）**：生效前提是 TokenTracker 在 fixture 之后构造。function-scope
+    的 `tmp_path`/`monkeypatch` 决定了它对本 fixture 之前的**模块级/session 级**构造
+    无效（那种构造本来也不该拿 `tmp_path`）。当前无此用法。
     """
     for name in (
         "SCHEDULER_CHECKPOINT",
@@ -453,6 +479,9 @@ def _isolate_shared_journals(tmp_path, monkeypatch):
         "CONSOLIDATOR_PENDING",
         # #6 硬杀窗口：后台任务终态本地 WAL（Agent 构造即用、每次派发/终态同步追加）。
         "TASK_RESULT_WAL",
+        # TokenTracker 的 pending JSONL（Mongo 不可用时的降级落盘）。
+        # 2026-09-27 才**真正**可隔离——见 docstring「曾经的已知缺口」。
+        "TOKEN_PENDING",
     ):
         monkeypatch.setenv(f"ELYSIA_PATH_{name}", str(tmp_path / f"{name.lower()}.json"))
 
